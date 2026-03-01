@@ -210,7 +210,9 @@ Responda APENAS com um resumo do insight extraído (máx 3 frases).
             logger.info(f"🎨 Gerando link da pintura via Pollinations.ai (Tema: {symbolic_theme})...")
             
             # Pollinations gera a imagem sob demanda pela URL fornecida
-            encoded_prompt = urllib.parse.quote(image_prompt[:800])
+            # Limitamos o tamanho e damos .strip() para evitar %20 soltos perto do '?'
+            clean_prompt = image_prompt[:800].strip()
+            encoded_prompt = urllib.parse.quote(clean_prompt)
             # Usando seed baseado no ID para que a URL sempre retorne a mesma imagem
             image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true&seed={dream_id*42}"
             

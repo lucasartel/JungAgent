@@ -77,9 +77,11 @@
             <div class="bg-black/30 rounded-lg p-5 border border-purple-500/10 relative">
 
                 {% if dream.image_url %}
-                <div class="mb-4 rounded-lg overflow-hidden border border-purple-500/30">
+                <div
+                    class="mb-4 rounded-lg overflow-hidden border border-purple-500/30 bg-gray-900 flex items-center justify-center relative group">
                     <img src="{{ dream.image_url }}" alt="Visão Onírica"
-                        class="w-full h-auto object-cover hover:scale-105 transition-transform duration-500">
+                        class="w-full h-auto object-cover hover:scale-105 transition-transform duration-500"
+                        onerror="this.parentElement.style.display='none';">
                 </div>
                 {% endif %}
 
