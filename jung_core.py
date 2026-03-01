@@ -3954,7 +3954,7 @@ class JungianEngine:
                     for _ri_row in _ri_rows:
                         _ri_text = (_ri_row[0] or _ri_row[1] or "").strip()
                         if _ri_text:
-                            _ri_lines.append(f"- {_ri_text[:400]}")
+                            _ri_lines.append(f"- {_ri_text}")
                     semantic_context = semantic_context + "\n".join(_ri_lines)
                     logger.info(f"✅ [RUMINATION] {_ri_cursor.rowcount} insights (os mais recentes) injetados no contexto do admin")
 
@@ -3973,7 +3973,7 @@ class JungianEngine:
                         _er_text = (_er_row[1] or "").strip()
                         if _er_text:
                             _er_lines.append(f"Tópico Estudado: {_er_row[0]}")
-                            _er_lines.append(f"- {_er_text[:600]}")
+                            _er_lines.append(f"- {_er_text}")
                     semantic_context = semantic_context + "\n".join(_er_lines)
                     logger.info(f"📚 [SCHOLAR] {_ri_cursor.rowcount} temas de pesquisa (Caminho Extrovertido) injetados.")
 
