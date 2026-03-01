@@ -1501,6 +1501,22 @@ Resposta: {ai_response}
                 logger.error(f"❌ Erro ao atualizar sonho com insight: {e}")
                 return False
 
+    def update_dream_image(self, dream_id: int, image_url: str, image_prompt: str) -> bool:
+        """Salva a URL e o Prompt da imagem gerada (DALL-E/Pollinations)"""
+        with self._lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("""
+                    UPDATE agent_dreams 
+                    SET image_url = ?, image_prompt = ?
+                    WHERE id = ?
+                """, (image_url, image_prompt, dream_id))
+                self.conn.commit()
+                return cursor.rowcount > 0
+            except Exception as e:
+                logger.error(f"❌ Erro ao atualizar imagem do sonho: {e}")
+                return False
+
     def get_latest_dream_insight(self, user_id: str) -> Optional[Dict]:
         """Busca o insight onírico mais recente, independente de status"""
         with self._lock:

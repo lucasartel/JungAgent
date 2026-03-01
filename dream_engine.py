@@ -214,16 +214,12 @@ Responda APENAS com um resumo do insight extraído (máx 3 frases).
             # Usando seed baseado no ID para que a URL sempre retorne a mesma imagem
             image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true&seed={dream_id*42}"
             
-            # Atualizar banco de dados local diretamente
-            cursor = self.db.conn.cursor()
-            cursor.execute("""
-                UPDATE agent_dreams
-                SET image_url = ?, image_prompt = ?
-                WHERE id = ?
-            """, (image_url, image_prompt, dream_id))
-            self.db.conn.commit()
-            
-            logger.info(f"🖼️ URL da imagem do sonho #{dream_id} atualizada com sucesso no banco!")
+            # Atualizar banco de dados de maneira thread-safe
+            success = self.db.update_dream_image(dream_id, image_url, image_prompt)
+            if success:
+                logger.info(f"🖼️ URL da imagem do sonho #{dream_id} atualizada com sucesso no banco!")
+            else:
+                logger.error(f"⚠️ Falha ao salvar URL da imagem do sonho #{dream_id} na DB.")
             
         except Exception as e:
             logger.error(f"❌ Falha ao vincular imagem via Pollinations: {e}")
