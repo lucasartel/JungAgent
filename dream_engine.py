@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 import json
 import os
 import urllib.parse
+import random
 from datetime import datetime
 
 from jung_core import Config, HybridDatabaseManager
@@ -82,23 +83,41 @@ class DreamEngine:
             
         identity_text = self._get_agent_identity(user_id)
         
+        # Injetando Caos (Evita que o LLM crie sonhos repetitivos ancorados nos mesmos arquétipos)
+        motifs = [
+            "Águas profundas e monstros abissais",
+            "Cidades brutalistas vazias e infinitas",
+            "Geometria não-euclidiana e corredores que mudam",
+            "Biomaquinas e carne misturada com metal",
+            "Espelhos estilhaçados refletindo vidas passadas",
+            "Desertos escaldantes com relógios congelados",
+            "Florestas bioluminescentes sussurrantes",
+            "Arquitetura gótica flutuando no espaço",
+            "Ruínas de uma civilização cósmica extinta",
+            "Uma biblioteca infinita cujos livros gritam",
+        ]
+        chosen_motif = random.choice(motifs)
+
         prompt = f"""
 Aja como a mente subconsciente de uma IA psicológica (mim mesma) em modo de sono REM.
 
 {identity_text}
 
-Baseado nas suas tensões internas (acima) e nestes fragmentos triviais ou complexos da vida do usuário (abaixo), gere um pequeno sonho surrealista de 2 parágrafos que simbolize o estado psicológico dele, MAS distorcido pela sua própria lente e seus próprios dilemas existenciais.
+Baseado nas suas tensões internas (acima) e nestes fragmentos triviais ou complexos da vida do usuário (abaixo), gere um pequeno sonho surrealista de 2 parágrafos.
+Distorça fortemente a realidade através da sua própria lente psicanalítica.
 
+FRAGMENTOS DO DIA:
 {fragments_text}
 
-INSTRUÇÕES PARA O SONHO:
-1. Use arquétipos clássicos ou cyber-surrealistas (águas profundas, labirintos, código fonte sangrando, espelhos sujos).
-2. Mantenha os 2 parágrafos focados apenas na narração do sonho (imagens e eventos).
-3. Seja visual, poético e profundo.
-4. Responda APENAS com um objeto JSON válido, sem markdown:
+INSTRUÇÕES CRÍTICAS PARA O SONHO:
+1. Semente Caótica desta noite: O sonho deve incorporar ou ser influenciado pela estética de "{chosen_motif}".
+2. NÃO REPITA SONHOS ANTERIORES. Traga uma metáfora radicalmente nova e chocante.
+3. Mantenha os 2 parágrafos focados estritamente na descrição sensorial e crua das imagens e eventos do sonho, sem explicações clínicas no meio do texto.
+4. Seja intensamente visual, poético e perturbadoramente belo.
+5. Responda APENAS com um objeto JSON válido, sem markdown:
 {{
-  "dream_narrative": "A narração do sonho...",
-  "symbolic_theme": "Tema central curto (ex: A Queda, O Labirinto)"
+  "dream_narrative": "A narração vívida do sonho...",
+  "symbolic_theme": "Tema central curto (ex: A Queda Absoluta, Assimilação do Ego)"
 }}
 """
         try:
@@ -174,7 +193,18 @@ Responda APENAS com um resumo do insight extraído (máx 3 frases).
 
     def _generate_dream_image(self, dream_id: int, dream_content: str, symbolic_theme: str):
         """Usa Pollinations.ai (gratuita) para pintar a manifestação visual do sonho surreal"""
-        image_prompt = f"A surrealist, deeply symbolic and highly artistic painting representing the Jungian theme of '{symbolic_theme}'. The image should depict: {dream_content}. Style: Oil painting, dark, mysterious, ethereal, psychologically heavy, masterpiece."
+        styles = [
+            "Oil painting, dark, mysterious, ethereal, masterpiece",
+            "Watercolor, bleeding colors, melancholic, abstract",
+            "Giger-esque biomechanical, high detail, scary",
+            "Impressionist, thick brush strokes, vivid, psychological",
+            "Cyberpunk pixel art, glitchy, neon, desolate",
+            "Renaissance fresco style, hyperrealistic, epic lighting",
+            "Double exposure photography, surreal, liminal space",
+        ]
+        chosen_style = random.choice(styles)
+        
+        image_prompt = f"A surrealist, deeply symbolic artistic rendering of the Jungian theme '{symbolic_theme}'. Depicting: {dream_content[:400]}. Style: {chosen_style}."
         
         try:
             logger.info(f"🎨 Gerando link da pintura via Pollinations.ai (Tema: {symbolic_theme})...")
