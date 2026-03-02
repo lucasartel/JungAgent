@@ -1690,6 +1690,34 @@ async def dreams_dashboard(
     })
 
 # ============================================================
+# SCHOLAR ENGINE - PESQUISA AUTÔNOMA (Admin Dashboard)
+# ============================================================
+
+@router.get("/research", response_class=HTMLResponse)
+async def research_dashboard(
+    request: Request,
+    admin: Dict = Depends(require_master)
+):
+    """Dashboard da Pesquisa Autônoma (Extroverted Path)"""
+    db = get_db()
+    cursor = db.conn.cursor()
+    
+    # Buscar todas as pesquisas do banco
+    cursor.execute("""
+        SELECT id, user_id, topic, source_url, raw_excerpt, synthesized_insight, status,
+               datetime(created_at, 'localtime') as created_at
+        FROM external_research
+        ORDER BY created_at DESC
+        LIMIT 100
+    """)
+    researches = [dict(row) for row in cursor.fetchall()]
+    
+    return templates.TemplateResponse("dashboards/research.html", {
+        "request": request,
+        "researches": researches
+    })
+
+# ============================================================
 # JUNG LAB - SISTEMA DE RUMINAÇÃO (Admin Dashboard)
 # ============================================================
 

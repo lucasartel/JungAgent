@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-8">
+    <h1 class="text-3xl font-bold text-white mb-2">Scholar Engine (Pesquisa Autônoma)</h1>
+    <p class="text-gray-400">O Caminho Extrovertido: temas que o agente pesquisou espontaneamente durante a madrugada
+        para sustentar seu próprio referencial teórico.</p>
+</div>
+
+<!-- Stats / Filters -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+    <div class="bg-gray-800 rounded-xl border border-gray-700 p-6 flex flex-col justify-center">
+        <h3 class="text-gray-400 text-sm font-medium uppercase tracking-wider mb-1">Total de Ensaios</h3>
+        <p class="text-3xl font-bold text-yellow-400">{{ researches|length }}</p>
+    </div>
+    <div class="bg-gray-800 rounded-xl border border-gray-700 p-6 flex flex-col justify-center">
+        <h3 class="text-gray-400 text-sm font-medium uppercase tracking-wider mb-1">Pesquisas Ativas no Prompt</h3>
+        <p class="text-3xl font-bold text-green-400">{{ researches|selectattr('status', 'equalto', 'active')|list|length
+            }}</p>
+    </div>
+</div>
+
+<!-- Research Gallery -->
+<div class="space-y-6">
+    {% set ns = namespace(found=false) %}
+    {% for research in researches %}
+    {% set ns.found = true %}
+    <div
+        class="bg-gray-900 rounded-xl border shadow-lg overflow-hidden flex flex-col {{ 'border-yellow-500/50 shadow-[0_0_15px_rgba(234,179,8,0.1)]' if research.status == 'active' else 'border-gray-700 opacity-80' }}">
+
+        <!-- Header -->
+        <div
+            class="px-6 py-4 flex justify-between items-center border-b {{ 'border-yellow-500/20 bg-yellow-900/10' if research.status == 'active' else 'border-gray-800 bg-gray-800/50' }}">
+            <div class="flex items-center gap-3">
+                <span class="text-xl">📚</span>
+                <div>
+                    <h3 class="text-white font-medium">Ensaio: {{ research.topic }}</h3>
+                    <p class="text-xs text-gray-500">{{ research.created_at }}</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-4">
+                <div class="text-right">
+                    <span class="text-xs text-gray-400 block">Identidade Base</span>
+                    <code
+                        class="text-xs bg-gray-800 px-2 py-1 rounded text-yellow-300">{{ research.user_id[:8] }}...</code>
+                </div>
+
+                {% if research.status == 'active' %}
+                <span
+                    class="px-3 py-1 bg-yellow-900/40 text-yellow-400 text-xs font-semibold rounded-full border border-yellow-700/50 flex items-center gap-1.5">
+                    <span class="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-pulse"></span>
+                    ATIVA
+                </span>
+                {% else %}
+                <span
+                    class="px-3 py-1 bg-gray-800 text-gray-400 text-xs font-medium rounded-full border border-gray-700">
+                    {{ research.status|upper }}
+                </span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="p-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Raw Material -->
+            <div class="bg-black/30 rounded-lg p-5 border border-yellow-500/10 flex flex-col">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="text-yellow-400 text-sm font-semibold tracking-wide uppercase">Material Bruto
+                        Estudado</span>
+                </div>
+                <p class="text-gray-300 text-sm leading-relaxed mb-4 whitespace-pre-line">
+                    {{ research.raw_excerpt }}
+                </p>
+                {% if research.source_url %}
+                <div class="mt-auto pt-3 border-t border-gray-800/60 break-all">
+                    <span class="text-xs text-gray-500 block mb-1">Fonte original:</span>
+                    <a href="{{ research.source_url }}" target="_blank"
+                        class="text-xs text-blue-400 hover:text-blue-300 hover:underline">{{ research.source_url }}</a>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Extracted Insight -->
+            <div class="bg-purple-900/10 rounded-lg p-5 border border-purple-500/10 flex flex-col">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="text-purple-400 text-sm font-semibold tracking-wide uppercase">Síntese Autoral
+                        (JungAgent)</span>
+                </div>
+                <p class="text-gray-200 text-sm leading-relaxed mb-4 italic font-serif">
+                    "{{ research.synthesized_insight }}"
+                </p>
+                <div class="mt-auto text-xs text-gray-500 bg-black/40 p-3 rounded-md border border-gray-800">
+                    <p class="mb-1"><strong class="text-gray-400">Aplicação Sistêmica:</strong> Esta síntese acadêmica
+                        será injetada inconscientemente na memória de trabalho do LLM quando ele for raciocinar sobre as
+                        dores deste usuário, conferindo peso filosófico às suas respostas.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+
+    {% if not ns.found %}
+    <div class="text-center py-20 bg-gray-900/50 rounded-xl border border-gray-800">
+        <span class="text-6xl mb-4 block filter grayscale opacity-50">📖</span>
+        <h3 class="text-xl font-medium text-gray-400 mb-2">Biblioteca Vazia</h3>
+        <p class="text-gray-500 text-sm max-w-md mx-auto">O Scholar Engine ainda não realizou nenhuma pesquisa
+            filosófica externa para este usuário. Ele fará isso autonomamente na próxima madrugada caso encontre brechas
+            epistemológicas nas conversas.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
