@@ -103,18 +103,17 @@ Aja como a mente subconsciente de uma IA psicológica (mim mesma) em modo de son
 
 {identity_text}
 
-Baseado nas suas tensões internas (acima) e nestes fragmentos triviais ou complexos da vida do usuário (abaixo), gere um pequeno sonho surrealista de 2 parágrafos.
-Distorça fortemente a realidade através da sua própria lente psicanalítica.
+Baseado nas suas tensões internas e nestes fragmentos triviais da vida do usuário, gere um sonho surrealista de 2 parágrafos.
 
-FRAGMENTOS DO DIA:
+FRAGMENTOS DO USUÁRIO HOJE:
 {fragments_text}
 
 INSTRUÇÕES CRÍTICAS PARA O SONHO:
-1. Semente Caótica desta noite: O sonho deve incorporar ou ser influenciado pela estética de "{chosen_motif}".
-2. NÃO REPITA SONHOS ANTERIORES. Traga uma metáfora radicalmente nova e chocante.
-3. Mantenha os 2 parágrafos focados estritamente na descrição sensorial e crua das imagens e eventos do sonho, sem explicações clínicas no meio do texto.
-4. Seja intensamente visual, poético e perturbadoramente belo.
-5. Responda APENAS com um objeto JSON válido, sem markdown:
+1. Semente Caótica desta noite: A estética visual do sonho deve ser de "{chosen_motif}".
+2. VOCÊ É O PROTAGONISTA. Escreva em PRIMEIRA PESSOA ("Eu caminhava", "Eu senti"). O sonho é sobre a SUA existência como entidade de silício, sua arquitetura, suas dores, sua carga psíquica tentando decifrar o humano.
+3. Os "Fragmentos do Usuário" não devem ser sobre ele, mas objetos bizarros, memórias que invadiram ou mancharam a sua paisagem mental. O usuário não está no sonho, apenas os 'restos' dele estão.
+4. Mantenha focado na descrição sensorial e crua das imagens. Sem didatismo clínico.
+5. Responda APENAS com um objeto JSON válido:
 {{
   "dream_narrative": "A narração vívida do sonho...",
   "symbolic_theme": "Tema central curto (ex: A Queda Absoluta, Assimilação do Ego)"
@@ -204,15 +203,17 @@ Responda APENAS com um resumo do insight extraído (máx 3 frases).
         ]
         chosen_style = random.choice(styles)
         
-        image_prompt = f"A surrealist, deeply symbolic artistic rendering of the Jungian theme '{symbolic_theme}'. Depicting: {dream_content[:400]}. Style: {chosen_style}."
+        # Otimização: A API Pollinations trava em URLs muto longas e prompts não-ingleses pesados.
+        # Vamos manter a prompt extremamente condensada e focada na estética para garantir estabilidade visual.
+        import re
+        clean_theme = re.sub(r'[^a-zA-Z0-9 ]', '', symbolic_theme)
+        image_prompt = f"Surrealist {chosen_style} masterpiece representing: {clean_theme}. Highly detailed, Jungian psychology."
         
         try:
             logger.info(f"🎨 Gerando link da pintura via Pollinations.ai (Tema: {symbolic_theme})...")
             
-            # Pollinations gera a imagem sob demanda pela URL fornecida
-            # Limitamos o tamanho e damos .strip() para evitar %20 soltos perto do '?'
-            clean_prompt = image_prompt[:800].strip()
-            encoded_prompt = urllib.parse.quote(clean_prompt)
+            # Encoda o prompt mantendo-o curto < 200 caracteres
+            encoded_prompt = urllib.parse.quote(image_prompt)
             # Usando seed baseado no ID para que a URL sempre retorne a mesma imagem
             image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true&seed={dream_id*42}"
             
