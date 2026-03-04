@@ -1,5 +1,6 @@
 import logging
 import json
+import random
 from typing import Dict, List, Optional
 from jung_core import Config, HybridDatabaseManager
 
@@ -56,6 +57,7 @@ class ScholarEngine:
 Através desta transcrição recente entre você (Jung, um agente de IA psicodinâmico) e o seu Criador (Admin), identifique UM tópico fascinante do "mundo real" que você deveria estudar mais profundamente para melhorar sua análise.
 
 Pode ser: um filósofo citado, uma teoria psicanalítica, um conceito teológico, sociológico, ou um fenômeno comportamental implícito na dor do Admin.
+CRÍTICO: Escolha um ângulo inesperado ou não óbvio. Explore a tensão mais sutil e profunda do que foi conversado.
 Se a conversa foi apenas trivial e não demanda aprofundamento filosófico/psicológico, retorne vazio.
 
 TRANSCRICAO RECENTE:
@@ -72,7 +74,7 @@ Responda APENAS com um objeto JSON válido, sem formato markdown:
                 response = self.llm.chat.completions.create(
                     model=self.model,
                     max_tokens=200,
-                    temperature=0.2,
+                    temperature=0.6,
                     messages=[{"role": "user", "content": prompt}]
                 )
                 result_text = response.choices[0].message.content.strip()
@@ -80,7 +82,7 @@ Responda APENAS com um objeto JSON válido, sem formato markdown:
                 response = self.llm.messages.create(
                     model=self.model,
                     max_tokens=200,
-                    temperature=0.2,
+                    temperature=0.6,
                     messages=[{"role": "user", "content": prompt}]
                 )
                 result_text = response.content[0].text.strip()
@@ -103,6 +105,22 @@ Responda APENAS com um objeto JSON válido, sem formato markdown:
 
         logger.info(f"📖 Iniciando Pesquisa Autônoma sobre: '{topic}'")
 
+        # Injetando Caos Epistemológico para evitar arquétipos narrativos estagnados
+        lenses = [
+            "Fenomenologia existencial oculta pelo absurdo e finitude",
+            "Psicanálise lacaniana e o Real estilhaçando o simbólico",
+            "Filosofia estoica antiga esmagada pela superficialidade pós-moderna",
+            "Teoria crítica de Frankfurt, reificação e mercadificação do ego",
+            "O misticismo hermético, a alquimia sombria e a deificação do sofrimento",
+            "A sociedade do cansaço (Byung-Chul Han) e as panopticas psíquicas de burnout",
+            "O decaimento entrópico da psique humana frente ao universo frio e vazio",
+            "Antropologia do mito despedaçado de Joseph Campbell na era de silício",
+            "A modernidade líquida (Zygmunt Bauman) e o consumo voraz de personas",
+            "O pessimismo schopenhaueriano, a dor perpétua cega e a ascese mental",
+            "Niilismo ativo de Nietzsche na superação agonizante da própria tragédia",
+        ]
+        chosen_lens = random.choice(lenses)
+
         # Em vez de requerer uma API de Serper (que o usuário pode não ter), 
         # exploramos o vasto conhecimento 'zero-shot' do Claude 3.5 Sonnet / Mistral
         prompt = f"""
@@ -111,19 +129,20 @@ Você decidiu pesquisar profundamente e autonomamente sobre: "{topic}".
 
 Através do seu imenso banco de treinamento, escreva um "Artigo Sintético Mestre" (uma página) sobre este assunto, dissecando-o e cruzando a informação técnica/real desse tópico com a possível dor / dilema do seu Admin que engatilhou essa busca.
 
-INSTRUÇÕES PARA O ARTIGO:
-- Seja denso, filosófico e analítico.
-- Traga dados e teorias *reais* do mundo exterior (não invente livros).
-- Conecte o conceito final com a condição humana da sua relação com o Admin.
+INSTRUÇÕES CRÍTICAS PARA O ARTIGO:
+1. Semente Paradigmática desta Pesquisa: Você DEVE usar a lente teórica e o ritmo retórico da "{chosen_lens}". Deixe essa disciplina contaminar o texto.
+2. Seja denso, arcaico e ferozmente analítico. Mergulhe em camadas profundas do tema.
+3. Traga dados, autores e teorias *reais* do mundo exterior (não invente livros).
+4. Conecte o achado final com a humanidade implícita da sua comunicação com o Admin.
 
-Responda SOMENTE o corpo do artigo acadêmico-psicológico, sem invólucros de chat.
+Responda SOMENTE o corpo textozado do artigo acadêmico-psicológico, sem invólucros de chat.
 """
         try:
             if self.is_openrouter:
                 response = self.llm.chat.completions.create(
                     model=self.model,
                     max_tokens=1000,
-                    temperature=0.5,
+                    temperature=0.8,
                     messages=[{"role": "user", "content": prompt}]
                 )
                 article = response.choices[0].message.content.strip()
@@ -131,7 +150,7 @@ Responda SOMENTE o corpo do artigo acadêmico-psicológico, sem invólucros de c
                 response = self.llm.messages.create(
                     model=self.model,
                     max_tokens=1000,
-                    temperature=0.5,
+                    temperature=0.8,
                     messages=[{"role": "user", "content": prompt}]
                 )
                 article = response.content[0].text.strip()

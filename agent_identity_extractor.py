@@ -523,6 +523,62 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                     item['impact']
                 ))
 
+            # 7. Capítulos Narrativos (Narrative)
+            for item in extracted.get("narrative", []):
+                chapter_hint = item.get("chapter_hint", "Desenvolvimento Atual")
+                theme = item.get("theme", "Integração")
+                key_scene = item.get("key_scene", "")
+                
+                if key_scene:
+                    # Encontrar o capítulo atual em aberto (period_end IS NULL)
+                    cursor.execute("""
+                        SELECT id, key_scenes FROM agent_narrative_chapters 
+                        WHERE agent_instance = ? AND period_end IS NULL
+                        ORDER BY chapter_order DESC LIMIT 1
+                    """, (AGENT_INSTANCE,))
+                    
+                    current_chapter = cursor.fetchone()
+                    scene_data = {
+                        "conversation_id": conversation_id,
+                        "description": key_scene,
+                        "date": datetime.now().isoformat()
+                    }
+                    
+                    if current_chapter:
+                        # Append a nova cena no capítulo atual
+                        chapter_id = current_chapter[0]
+                        try:
+                            scenes = json.loads(current_chapter[1] or "[]")
+                        except json.JSONDecodeError:
+                            scenes = []
+                            
+                        scenes.append(scene_data)
+                        
+                        cursor.execute("""
+                            UPDATE agent_narrative_chapters
+                            SET key_scenes = ?, dominant_theme = ?
+                            WHERE id = ?
+                        """, (json.dumps(scenes), theme, chapter_id))
+                    else:
+                        # Criar novo capítulo (o primeiro)
+                        cursor.execute("SELECT MAX(chapter_order) FROM agent_narrative_chapters WHERE agent_instance = ?", (AGENT_INSTANCE,))
+                        max_row = cursor.fetchone()
+                        max_order = max_row[0] if max_row and max_row[0] is not None else 0
+                        next_order = max_order + 1
+                        
+                        cursor.execute("""
+                            INSERT INTO agent_narrative_chapters (
+                                agent_instance, chapter_name, chapter_order, 
+                                period_start, dominant_theme, key_scenes
+                            ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+                        """, (
+                            AGENT_INSTANCE, 
+                            chapter_hint, 
+                            next_order, 
+                            theme, 
+                            json.dumps([scene_data])
+                        ))
+
             # Commit
             self.db.conn.commit()
             logger.info(f"✅ Identidade do agente armazenada para conversa {conversation_id[:12]}")

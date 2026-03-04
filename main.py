@@ -120,6 +120,11 @@ async def lifespan(app: FastAPI):
 
     logger.info("✅ Bot Telegram iniciado e rodando!")
 
+    # Iniciar scheduler de consolidação de identidade do agente
+    from agent_identity_consolidation_job import identity_consolidation_scheduler
+    asyncio.create_task(identity_consolidation_scheduler())
+    logger.info("✅ Job de consolidação de identidade agendado!")
+
     # AVISO: Schedulers de background migrados para a rota /cron/
     app.state.telegram_app = telegram_app
 
