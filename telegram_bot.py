@@ -985,99 +985,73 @@ O que você decide?
 
     # ========== PROCESSAR MENSAGEM NORMAL ==========
 
-    # ----- VERIFICAÇÃO DE ASSINATURAS E LIMITES (STRIPE) -----
-    # DESATIVADO TEMPORARIAMENTE A PEDIDO DO USUÁRIO (Livre e Gratuito)
-    """
+    # ----- VERIFICAÇÃO DE ASSINATURAS E LIMITES (GRATUITO) -----
     telegram_id_str = str(user.id)
     is_admin = telegram_id_str in ADMIN_IDS
 
     if not is_admin:
         try:
             cursor = bot_state.db.conn.cursor()
-            from datetime import datetime
+            from datetime import datetime, timedelta
             
-            # Buscar assinatura ativa
-            cursor.execute('''
-                SELECT plan_type, expires_at FROM user_subscriptions 
-                WHERE user_id = ? AND status = 'active'
-            ''', (user_id,))
-            subscription = cursor.fetchone()
+            # Buscar data de registro
+            cursor.execute("SELECT registration_date FROM users WHERE user_id = ?", (user_id,))
+            user_data = cursor.fetchone()
+
+            now_utc = datetime.utcnow()
             
-            now = datetime.now()
-            has_active_plan = False
-            plan_type = None
-
-            if subscription:
-                expires_at = datetime.strptime(subscription[1], "%Y-%m-%d %H:%M:%S")
-                if now < expires_at:
-                    has_active_plan = True
-                    plan_type = subscription[0]
-                else:
-                    # Marcar como expirada
-                    cursor.execute("UPDATE user_subscriptions SET status = 'expired' WHERE user_id = ?", (user_id,))
-                    bot_state.db.conn.commit()
-
-            if not has_active_plan:
-                # Gerar link via gatweay
-                from payment_gateway import create_checkout_session
-                checkout_url = create_checkout_session(telegram_id_str, "basic_7_days")
+            # 1. Verificar período de 7 dias
+            if user_data and user_data[0]:
+                # SQLite CURRENT_TIMESTAMP usa UTC e formato YYYY-MM-DD HH:MM:SS
+                reg_date = datetime.strptime(user_data[0], "%Y-%m-%d %H:%M:%S")
                 
-                await update.message.reply_text(
-                    "⚠️ **Seu período de acesso terminou ou você não possui um plano ativo.**\n\n"
-                    "Para continuar nossa jornada de autoconhecimento, por favor assine um dos nossos planos:\n"
-                    f"👉 [Assinar Plano Básico (7 dias)]({checkout_url})\n\n"
-                    "*(Leva menos de 1 minuto e libera seu acesso na mesma hora!)*",
-                    parse_mode='Markdown',
-                    disable_web_page_preview=True
-                )
-                return
-
-            # Verificar limite diário se for plano básico
-            if plan_type == 'basic_7_days':
-                today_str = now.strftime("%Y-%m-%d")
-                
-                cursor.execute('''
-                    SELECT message_count FROM user_daily_usage 
-                    WHERE user_id = ? AND date_str = ?
-                ''', (user_id, today_str))
-                usage = cursor.fetchone()
-                
-                current_count = usage[0] if usage else 0
-                
-                if current_count >= 7:
-                    # Gerar link pro plano companion
-                    from payment_gateway import create_checkout_session
-                    companion_url = create_checkout_session(telegram_id_str, "premium_companion")
-                    
+                if now_utc > reg_date + timedelta(days=7):
                     await update.message.reply_text(
-                        "🛑 **Você atingiu o limite de 7 mensagens por dia do Plano Básico.**\n\n"
-                        "Nosso processamento profundo (memória, arquétipos e análises) exige bastante energia. "
-                        "Seus limites serão renovados amanhã.\n\n"
-                        "✨ **Quer conversar sem limites e receber análises proativas diárias?**\n"
-                        f"👉 [Fazer Upgrade para o Companion Mensal]({companion_url})",
-                        parse_mode='Markdown',
-                        disable_web_page_preview=True
+                        "⚠️ **Seu período de autoconhecimento de 7 dias terminou.**\n\n"
+                        "Nossa jornada inicial chegou ao fim. Espero que as descobertas que fizemos juntos tenham sido valiosas para você. "
+                        "No momento não estamos recebendo novas inscrições, mas agradeço profundamente por ter se aberto comigo!",
+                        parse_mode='Markdown'
                     )
                     return
+
+            # 2. Verificar limite diário de 7 mensagens
+            today_str = now_utc.strftime("%Y-%m-%d")
+            
+            cursor.execute('''
+                SELECT message_count FROM user_daily_usage 
+                WHERE user_id = ? AND date_str = ?
+            ''', (user_id, today_str))
+            usage = cursor.fetchone()
+            
+            current_count = usage[0] if usage else 0
+            
+            if current_count >= 7:
+                # Formatar próxima meia-noite UTC (simplificado para amanhã de manhã)
+                await update.message.reply_text(
+                    "🛑 **Você atingiu o limite de 7 mensagens de hoje.**\n\n"
+                    "Nosso processamento profundo (memória, arquétipos e análises) exige bastante tempo e energia para manter a qualidade. "
+                    "Por favor, reflita sobre as ideias de hoje e continue nossa jornada amanhã. Suas mensagens serão renovadas!\n\n"
+                    "*(Dica de Jung: É no silêncio entre as falas que a verdadeira compreensão se consolida)*",
+                    parse_mode='Markdown'
+                )
+                return
+            else:
+                # Incrementar uso diário
+                if usage:
+                    cursor.execute('''
+                        UPDATE user_daily_usage SET message_count = message_count + 1 
+                        WHERE user_id = ? AND date_str = ?
+                    ''', (user_id, today_str))
                 else:
-                    # Incrementar uso diário
-                    if usage:
-                        cursor.execute('''
-                            UPDATE user_daily_usage SET message_count = message_count + 1 
-                            WHERE user_id = ? AND date_str = ?
-                        ''', (user_id, today_str))
-                    else:
-                        cursor.execute('''
-                            INSERT INTO user_daily_usage (user_id, date_str, message_count) 
-                            VALUES (?, ?, 1)
-                        ''', (user_id, today_str))
-                    bot_state.db.conn.commit()
+                    cursor.execute('''
+                        INSERT INTO user_daily_usage (user_id, date_str, message_count) 
+                        VALUES (?, ?, 1)
+                    ''', (user_id, today_str))
+                bot_state.db.conn.commit()
 
         except Exception as e:
-            logger.error(f"❌ Erro ao verificar assinaturas e limites: {e}", exc_info=True)
-            # Em caso de erro no banco, permitimos a mensagem para não travar o usuário, 
-            # mas logamos para consertar.
-    """
+            logger.error(f"❌ Erro ao verificar limites gratuitos: {e}", exc_info=True)
+            # Em caso de erro no banco, permitimos a mensagem para não travar o usuário
     # ---------------------------------------------------------
 
     await update.message.chat.send_action(action="typing")
