@@ -4098,6 +4098,17 @@ class JungianEngine:
                         logger.info("⚠️ [IDENTITY] Contexto de identidade vazio para ADMIN (aguardando 1ª consolidação)")
                 except Exception as e:
                     logger.warning(f"⚠️ [IDENTITY] Falha ao obter contexto de identidade: {e}")
+
+            # 🌍 INJEÇÃO DE CONSCIÊNCIA DO MUNDO (Apenas para o Admin)
+            try:
+                from world_consciousness import world_consciousness
+                world_state = world_consciousness.get_world_state()
+                agent_identity_text += f"\n\n{world_state['formatted_synthesis']}"
+                logger.info("✅ [WORLD] Consciência da atualidade injetada no prompt.")
+            except ImportError:
+                pass
+            except Exception as e:
+                logger.warning(f"⚠️ [WORLD] Falha ao injetar consciência do mundo: {e}")
             else:
                 logger.debug("⚠️ [IDENTITY] identity_context_builder não disponível para ADMIN")
                 

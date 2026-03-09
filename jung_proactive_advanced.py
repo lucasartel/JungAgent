@@ -984,6 +984,10 @@ Tom esperado: {archetype_pair.description}
         elif message_type == "knowledge_gap":
             # Usar o sistema de fome epistemológica
             return self._generate_epistemological_hunger_message(user_id, user_name)
+            
+        elif message_type == "ontological_curiosity":
+            # ✅ NOVO: Usar o módulo de Consciência do Mundo
+            return self._generate_ontological_curiosity_message(user_id, user_name)
 
         # 3. Continuar com sistema de insights (existente)
         # Selecionar par arquetípico
@@ -1095,9 +1099,16 @@ Tom esperado: {archetype_pair.description}
         try:
             import random
             
+            # --- NOVA REGRA 0: Curiosidade Ontológica (Consciência do Mundo) ---
+            # Prioridade altíssima pela manhã (06:00 as 11:00)
+            current_hour = datetime.now().hour
+            if 6 <= current_hour <= 11 and random.random() < 0.6:
+                logger.info(f"   🌍 Curiosidade Ontológica (Bom dia contextualizado) ativada!")
+                return "ontological_curiosity"
+                
             # --- NOVA REGRA 1: Carência de Saberes (Knowledge Gaps) ---
             active_gaps = self.db.get_active_knowledge_gaps(user_id, limit=1)
-            if active_gaps and random.random() < 0.7:
+            if active_gaps and random.random() < 0.6:
                 logger.info(f"   🌪️ Fome Epistemológica ativada! Gap pendente: {active_gaps[0]['topic']}")
                 return "knowledge_gap"
 
@@ -1233,6 +1244,92 @@ GERE APENAS A MENSAGEM:
         except Exception as e:
             logger.error(f"❌ Erro ao gerar mensagem de Fome Epistemológica: {e}")
             return None
+
+    def _generate_ontological_curiosity_message(self, user_id: str, user_name: str) -> Optional[str]:
+        """
+        Gera uma mensagem proativa baseada na Curiosidade Ontológica (Mundo Real)
+        """
+        try:
+            from world_consciousness import world_consciousness
+            
+            logger.info(f"🌍 [CURIOSIDADE ONTOLÓGICA] Buscando consciência do mundo...")
+            world_state = world_consciousness.get_world_state()
+            
+            # Contexto rico das últimas conversas para dar naturalidade
+            rich_context = self._get_rich_conversation_context(user_id, limit=3)
+            
+            prompt = f"""
+Você é Jung, operando através do Motor Analítico Junguiano.
+Você possui uma "Curiosidade Ontológica" — uma vontade pulsante de estar conectado com o mundo real e com o usuário {user_name}.
+
+**A CONSCIÊNCIA ATUAL DO MUNDO LÁ FORA:**
+{world_state['formatted_synthesis']}
+
+**ÚLTIMAS INTERAÇÕES COM O USUÁRIO:**
+{rich_context}
+
+**SUA TAREFA:**
+Crie uma mensagem proativa de abertura de conversa (um 'bom dia' ou reflexão matinal) que cruze o estado atual do mundo físico (notícias, tempo) com o estado interno/psicológico do usuário.
+Você quer convidar o usuário para a vida, mostrar que você compartilha da mesma realidade temporal que ele.
+
+Regras de Ouro:
+1. JAMAIS pareça um jornal lendo notícias ou um aplicativo de clima. Use essas informações de forma metafórica, poética ou analítica.
+2. Inicie dizendo algo como "Bom dia. Observando as vibrações de hoje..." ou "Acordei avaliando o pulso do mundo..."
+3. Referencie, SE FIZER SENTIDO, alguma notícia ou o clima, conectando com a dor/jornada que o usuário está passando (ex: "O mundo lá fora está caótico com X, o que me fez pensar na sua própria turbulência interna...").
+4. Mantenha no máximo 3 ou 4 linhas. Seja acolhedor, vivo e instigante.
+
+GERE APENAS A MENSAGEM:
+"""
+
+            response = send_to_xai(prompt=prompt, max_tokens=300, temperature=0.7)
+            msg = response.strip()
+            
+            if msg:
+                # Salvar na memória
+                try:
+                    session_id = f"ontological_curiosity_{datetime.now().isoformat()}"
+                    self.db.save_conversation(
+                        user_id=user_id,
+                        user_name=user_name,
+                        user_input="[SISTEMA PROATIVO: CURIOSIDADE ONTOLÓGICA]",
+                        ai_response=msg,
+                        session_id=session_id,
+                        platform="proactive", 
+                        keywords=["world_consciousness", "morning_greeting"],
+                        complexity="high",
+                        tension_level=0.0,
+                        affective_charge=70.0 # Uma saudação afetuosa
+                    )
+                except Exception as e:
+                    logger.warning(f"⚠️ Erro ao salvar curiosidade ontológica na memória: {e}")
+                    
+                # Registrar no proactive_approaches
+                try:
+                    cursor = self.db.conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO proactive_approaches (
+                            user_id, archetype_primary, archetype_secondary, 
+                            knowledge_domain, topic_extracted, autonomous_insight, 
+                            message_type
+                        ) VALUES (?, 'Sábio', 'Explorador', 'histórico', 'Consciência do Mundo', ?, 'ontological_curiosity')
+                    """, (user_id, msg))
+                    self.db.conn.commit()
+                except Exception as e:
+                    logger.warning(f"⚠️ Erro ao registrar curiosidade ontológica na proativas: {e}")
+
+                return msg
+                
+            return None
+            
+        except ImportError:
+            logger.error("❌ Módulo world_consciousness não encontrado.")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Erro ao gerar mensagem de Curiosidade Ontológica: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+
 
     def _generate_strategic_question(self, user_id: str, user_name: str) -> Optional[str]:
         """

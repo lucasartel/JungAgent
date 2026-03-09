@@ -125,6 +125,42 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(identity_consolidation_scheduler())
     logger.info("✅ Job de consolidação de identidade agendado!")
 
+    # Iniciar scheduler de Curiosidade Ontológica (Consciência do Mundo)
+    async def world_consciousness_scheduler():
+        """Verifica a cada hora se deve gerar a mensagem matinal de curiosidade ontológica."""
+        from telegram_bot import bot_state
+        while True:
+            try:
+                # Verificação ativa entre 6h e 11h
+                current_hour = datetime.now().hour
+                if 6 <= current_hour <= 11:
+                    logger.info("🌍 [SCHEDULER] Acionando verificação de Curiosidade Ontológica...")
+                    users = bot_state.db.get_all_users()
+                    for user in users:
+                        user_id = user.get('user_id')
+                        user_name = user.get('user_name', 'Usuário')
+                        platform_id = user.get('platform_id')
+                        
+                        if user_id and platform_id:
+                            msg = bot_state.proactive.check_and_generate_advanced_message(user_id, user_name)
+                            if msg:
+                                telegram_id = int(platform_id)
+                                await telegram_app.bot.send_message(
+                                    chat_id=telegram_id,
+                                    text=msg,
+                                    parse_mode='Markdown'
+                                )
+                                logger.info(f"✅ [PROATIVO] Mensagem enviada para {user_name} ({telegram_id})")
+                                await asyncio.sleep(2)
+            except Exception as e:
+                logger.error(f"❌ Erro no scheduler de Consciência do Mundo: {e}")
+            
+            # Dorme por 1 hora
+            await asyncio.sleep(3600)
+
+    asyncio.create_task(world_consciousness_scheduler())
+    logger.info("✅ Job de Curiosidade Ontológica (World Consciousness) agendado!")
+
     # AVISO: Schedulers de background migrados para a rota /cron/
     app.state.telegram_app = telegram_app
 
