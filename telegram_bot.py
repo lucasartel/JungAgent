@@ -986,6 +986,8 @@ O que você decide?
     # ========== PROCESSAR MENSAGEM NORMAL ==========
 
     # ----- VERIFICAÇÃO DE ASSINATURAS E LIMITES (STRIPE) -----
+    # DESATIVADO TEMPORARIAMENTE A PEDIDO DO USUÁRIO (Livre e Gratuito)
+    """
     telegram_id_str = str(user.id)
     is_admin = telegram_id_str in ADMIN_IDS
 
@@ -993,13 +995,12 @@ O que você decide?
         try:
             cursor = bot_state.db.conn.cursor()
             from datetime import datetime
-            import pytz
             
             # Buscar assinatura ativa
-            cursor.execute("""
+            cursor.execute('''
                 SELECT plan_type, expires_at FROM user_subscriptions 
                 WHERE user_id = ? AND status = 'active'
-            """, (user_id,))
+            ''', (user_id,))
             subscription = cursor.fetchone()
             
             now = datetime.now()
@@ -1035,10 +1036,10 @@ O que você decide?
             if plan_type == 'basic_7_days':
                 today_str = now.strftime("%Y-%m-%d")
                 
-                cursor.execute("""
+                cursor.execute('''
                     SELECT message_count FROM user_daily_usage 
                     WHERE user_id = ? AND date_str = ?
-                """, (user_id, today_str))
+                ''', (user_id, today_str))
                 usage = cursor.fetchone()
                 
                 current_count = usage[0] if usage else 0
@@ -1061,21 +1062,22 @@ O que você decide?
                 else:
                     # Incrementar uso diário
                     if usage:
-                        cursor.execute("""
+                        cursor.execute('''
                             UPDATE user_daily_usage SET message_count = message_count + 1 
                             WHERE user_id = ? AND date_str = ?
-                        """, (user_id, today_str))
+                        ''', (user_id, today_str))
                     else:
-                        cursor.execute("""
+                        cursor.execute('''
                             INSERT INTO user_daily_usage (user_id, date_str, message_count) 
                             VALUES (?, ?, 1)
-                        """, (user_id, today_str))
+                        ''', (user_id, today_str))
                     bot_state.db.conn.commit()
 
         except Exception as e:
             logger.error(f"❌ Erro ao verificar assinaturas e limites: {e}", exc_info=True)
             # Em caso de erro no banco, permitimos a mensagem para não travar o usuário, 
             # mas logamos para consertar.
+    """
     # ---------------------------------------------------------
 
     await update.message.chat.send_action(action="typing")

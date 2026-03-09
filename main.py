@@ -1417,6 +1417,7 @@ async def force_identity_migration(request: Request):
 # ============================================================================
 # STRIPE WEBHOOKS
 # ============================================================================
+"""
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
     import stripe
@@ -1483,16 +1484,16 @@ async def stripe_webhook(request: Request):
                 existing = cursor.fetchone()
                 
                 if existing:
-                    cursor.execute("""
+                    cursor.execute('''
                         UPDATE user_subscriptions 
                         SET plan_type = ?, status = 'active', stripe_customer_id = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE user_id = ?
-                    """, (plan_type, stripe_customer_id, expires_at.strftime("%Y-%m-%d %H:%M:%S"), internal_user_id))
+                    ''', (plan_type, stripe_customer_id, expires_at.strftime("%Y-%m-%d %H:%M:%S"), internal_user_id))
                 else:
-                    cursor.execute("""
+                    cursor.execute('''
                         INSERT INTO user_subscriptions (user_id, plan_type, status, stripe_customer_id, expires_at)
                         VALUES (?, ?, 'active', ?, ?)
-                    """, (internal_user_id, plan_type, stripe_customer_id, expires_at.strftime("%Y-%m-%d %H:%M:%S")))
+                    ''', (internal_user_id, plan_type, stripe_customer_id, expires_at.strftime("%Y-%m-%d %H:%M:%S")))
                 
                 bot_state.db.conn.commit()
                 logger.info(f"✅ Pagamento registrado com sucesso para o usuário {telegram_user_id} - Plano {plan_type}")
@@ -1510,6 +1511,7 @@ async def stripe_webhook(request: Request):
                 bot_state.db.conn.rollback()
 
     return {"status": "success"}
+"""
 
 if __name__ == "__main__":
     # Rodar com uvicorn
