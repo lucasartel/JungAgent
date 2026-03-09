@@ -17,7 +17,7 @@ os.environ["ANONYMIZED_TELEMETRY"] = "False"
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Importar o bot
-from telegram_bot import bot_state, start_command, help_command, stats_command, mbti_command, desenvolvimento_command, reset_command, meu_perfil_command
+from telegram_bot import bot_state, start_command, help_command, stats_command, mbti_command, minha_jornada_command, reset_command, meu_perfil_command
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 # Importar rotas do admin (serão criadas)
@@ -47,9 +47,9 @@ async def setup_bot_commands(telegram_app):
     commands = [
         BotCommand("start", "Iniciar conversa com Jung"),
         BotCommand("help", "Ver comandos disponíveis"),
-        BotCommand("stats", "Ver estatísticas do agente"),
+        BotCommand("stats", "Ver estatísticas completas (Admin)"),
         BotCommand("mbti", "Ver análise MBTI de personalidade"),
-        BotCommand("desenvolvimento", "Ver estado de desenvolvimento do agente"),
+        BotCommand("minha_jornada", "Ver como nossa conexão evoluiu"),
         BotCommand("reset", "Resetar conversa (apaga todo histórico)")
     ]
 
@@ -97,7 +97,7 @@ async def lifespan(app: FastAPI):
     telegram_app.add_handler(CommandHandler("help", help_command))
     telegram_app.add_handler(CommandHandler("stats", stats_command))
     telegram_app.add_handler(CommandHandler("mbti", mbti_command))
-    telegram_app.add_handler(CommandHandler("desenvolvimento", desenvolvimento_command))
+    telegram_app.add_handler(CommandHandler("minha_jornada", minha_jornada_command))
     telegram_app.add_handler(CommandHandler("reset", reset_command))
     telegram_app.add_handler(CommandHandler("meu_perfil", meu_perfil_command))
 
@@ -1413,6 +1413,103 @@ async def force_identity_migration(request: Request):
             "error": str(e)
         }
 
+
+# ============================================================================
+# STRIPE WEBHOOKS
+# ============================================================================
+@app.post("/stripe/webhook")
+async def stripe_webhook(request: Request):
+    import stripe
+    import os
+    from payment_gateway import stripe, logger
+    
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    endpoint_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+
+    event = None
+
+    try:
+        if endpoint_secret:
+            event = stripe.Webhook.construct_event(
+                payload, sig_header, endpoint_secret
+            )
+        else:
+            # Fallback for testing without signature
+            import json
+            event = json.loads(payload)
+            logger.warning("Stripe Webhook signature not verified (no secret set)")
+    except Exception as e:
+        logger.error(f"Stripe Webhook Error: {e}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    if event['type'] == 'checkout.session.completed':
+        session = event['data']['object']
+        
+        # Obter informacoes
+        telegram_user_id = session.get('metadata', {}).get('telegram_user_id')
+        plan_type = session.get('metadata', {}).get('plan_type')
+        stripe_customer_id = session.get('customer')
+
+        if telegram_user_id and plan_type:
+            try:
+                # Obter o user id real interno se necessario
+                users = bot_state.db.get_all_users()
+                internal_user_id = None
+                for u in users:
+                    if str(u.get('platform_id')) == str(telegram_user_id):
+                        internal_user_id = u.get('user_id')
+                        break
+                
+                if not internal_user_id:
+                     logger.error(f"Usuário telegram não encontrado no banco: {telegram_user_id}")
+                     return {"status": "user_not_found"}
+
+                cursor = bot_state.db.conn.cursor()
+                
+                # Calcular expiração
+                from datetime import datetime, timedelta
+                if plan_type == 'basic_7_days':
+                    expires_at = datetime.now() + timedelta(days=7)
+                elif plan_type == 'premium_companion':
+                    expires_at = datetime.now() + timedelta(days=30)
+                else:
+                    expires_at = datetime.now() + timedelta(days=1)
+                
+                # Inserir ou atualizar na tabela de assinaturas
+                # Primeiro checa se já existe registro
+                cursor.execute("SELECT id FROM user_subscriptions WHERE user_id = ?", (internal_user_id,))
+                existing = cursor.fetchone()
+                
+                if existing:
+                    cursor.execute("""
+                        UPDATE user_subscriptions 
+                        SET plan_type = ?, status = 'active', stripe_customer_id = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE user_id = ?
+                    """, (plan_type, stripe_customer_id, expires_at.strftime("%Y-%m-%d %H:%M:%S"), internal_user_id))
+                else:
+                    cursor.execute("""
+                        INSERT INTO user_subscriptions (user_id, plan_type, status, stripe_customer_id, expires_at)
+                        VALUES (?, ?, 'active', ?, ?)
+                    """, (internal_user_id, plan_type, stripe_customer_id, expires_at.strftime("%Y-%m-%d %H:%M:%S")))
+                
+                bot_state.db.conn.commit()
+                logger.info(f"✅ Pagamento registrado com sucesso para o usuário {telegram_user_id} - Plano {plan_type}")
+
+                # Enviar mensagem de boas vindas no telegram informando que o plano ta ativo
+                asyncio.create_task(
+                    bot_state.telegram_app.bot.send_message(
+                        chat_id=int(telegram_user_id),
+                        text=f"🎉 Pagamento confirmado! Seu plano **{plan_type.replace('_', ' ').title()}** foi ativado com sucesso. Já pode continuar conversando comigo!"
+                    )
+                )
+
+            except Exception as e:
+                logger.error(f"Erro ao processar pagamento no banco: {e}", exc_info=True)
+                bot_state.db.conn.rollback()
+
+    return {"status": "success"}
 
 if __name__ == "__main__":
     # Rodar com uvicorn

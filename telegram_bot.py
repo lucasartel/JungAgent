@@ -390,15 +390,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     help_text = """🤖 **COMANDOS DISPONÍVEIS**
 
-/stats
-   Veja estatísticas das suas conversas
+/minha_jornada
+   Veja como nossa conexão tem evoluído
 
 /mbti
    Análise de personalidade MBTI
    (requer mínimo 5 conversas)
-
-/desenvolvimento
-   Veja como o agente evoluiu com você
 
 /meu_perfil
    Receba seu perfil psicológico consolidado
@@ -608,8 +605,8 @@ Score: {dims['J_P']['score']:+d}
             "Tente novamente mais tarde ou continue conversando para gerar mais dados."
         )
 
-async def desenvolvimento_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para /desenvolvimento - Mostra evolução do agente"""
+async def minha_jornada_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler para /minha_jornada - Mostra evolução do vínculo (Substitui /desenvolvimento e /stats para usuários comuns)"""
 
     user = update.effective_user
     user_id = ensure_user_in_database(user)
@@ -686,39 +683,25 @@ async def desenvolvimento_command(update: Update, context: ContextTypes.DEFAULT_
             stars = int(ratio * 5)
             return "⭐" * stars if stars > 0 else "☆"
 
-        # Montar resposta
-        result = f"""🌱 **DESENVOLVIMENTO DO AGENTE**
+        # Montar resposta amigável focada no usuário
+        result = f"""🌱 **NOSSA JORNADA**
 
 👤 **Para:** {user.first_name}
-📅 **Desde:** {first_conv_date}
+📅 **Conectados desde:** {first_conv_date}
+💬 **Interações:** {total_convs}
 
 ═══════════════════════
-📊 **COMPLEXIDADE ATUAL**
+🎭 **PROFUNDIDADE DA NOSSA CONEXÃO**
 
-Nível: {"█" * int(complexity_current * 10)}{"░" * (10 - int(complexity_current * 10))} {complexity_current:.1f}/10
-
-═══════════════════════
-🎭 **FASE ATUAL**
-
-**Fase {current_phase}/5: {phase_name}**
+**Nível {current_phase}/5: {phase_name}**
 {phase_desc}
 
-**Fases Concluídas:**
 """
-
-        for i in range(1, 6):
-            name, desc = PHASES[i]
-            if i < current_phase:
-                result += f"✅ Fase {i}: {name}\n"
-            elif i == current_phase:
-                result += f"🔄 Fase {i}: {name} (atual)\n"
-            else:
-                result += f"⏳ Fase {i}: {name}\n"
 
         if domains:
             result += f"""
 ═══════════════════════
-🧠 **DOMÍNIOS DESENVOLVIDOS**
+🧠 **TEMAS QUE EXPLORAMOS**
 
 """
             for domain in domains[:5]:
@@ -727,25 +710,14 @@ Nível: {"█" * int(complexity_current * 10)}{"░" * (10 - int(complexity_curr
 
         result += f"""
 ═══════════════════════
-💬 **MENSAGENS PROATIVAS**
-
-Total enviadas: {proactive_count}
-"""
-
-        if last_proactive:
-            preview = last_proactive['autonomous_insight'][:80]
-            result += f'Última: "{preview}..."\n'
-
-        result += f"""
-═══════════════════════
-🎯 **PRÓXIMO MARCO**
+🎯 **PRÓXIMO MARCO DA JORNADA**
 
 """
 
         if current_phase < 5:
             next_phase, next_desc = PHASES[current_phase + 1]
             convs_needed = {1: 10, 2: 25, 3: 50, 4: 100}[current_phase]
-            result += f"Fase {current_phase + 1}: {next_phase}\n({total_convs}/{convs_needed} conversas)"
+            result += f"Nível {current_phase + 1}: {next_phase}\n({total_convs}/{convs_needed} interações necessárias)"
         else:
             result += "🏆 Desenvolvimento completo!"
 
@@ -760,10 +732,15 @@ Total enviadas: {proactive_count}
         )
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para /stats - estatísticas completas"""
+    """Handler para /stats - estatísticas completas (Admin Only)"""
 
     user = update.effective_user
+    telegram_id = str(user.id)
     user_id = ensure_user_in_database(user)
+
+    if telegram_id not in ADMIN_IDS:
+        await update.message.reply_text("⚠️ Comando reservado para administradores. Use /minha_jornada para ver seu progresso.")
+        return
 
     # Stats do usuário
     user_data = bot_state.db.get_user(user_id)
@@ -822,9 +799,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 🌍 **ESTATÍSTICAS GLOBAIS DO BOT:**
 • Mensagens processadas: {bot_state.total_messages_processed}
-
-💡 Use /mbti para análise de personalidade
-💡 Use /desenvolvimento para ver evolução do agente
 """
 
     await update.message.reply_text(stats_text)
@@ -1010,6 +984,99 @@ O que você decide?
             return
 
     # ========== PROCESSAR MENSAGEM NORMAL ==========
+
+    # ----- VERIFICAÇÃO DE ASSINATURAS E LIMITES (STRIPE) -----
+    telegram_id_str = str(user.id)
+    is_admin = telegram_id_str in ADMIN_IDS
+
+    if not is_admin:
+        try:
+            cursor = bot_state.db.conn.cursor()
+            from datetime import datetime
+            import pytz
+            
+            # Buscar assinatura ativa
+            cursor.execute("""
+                SELECT plan_type, expires_at FROM user_subscriptions 
+                WHERE user_id = ? AND status = 'active'
+            """, (user_id,))
+            subscription = cursor.fetchone()
+            
+            now = datetime.now()
+            has_active_plan = False
+            plan_type = None
+
+            if subscription:
+                expires_at = datetime.strptime(subscription[1], "%Y-%m-%d %H:%M:%S")
+                if now < expires_at:
+                    has_active_plan = True
+                    plan_type = subscription[0]
+                else:
+                    # Marcar como expirada
+                    cursor.execute("UPDATE user_subscriptions SET status = 'expired' WHERE user_id = ?", (user_id,))
+                    bot_state.db.conn.commit()
+
+            if not has_active_plan:
+                # Gerar link via gatweay
+                from payment_gateway import create_checkout_session
+                checkout_url = create_checkout_session(telegram_id_str, "basic_7_days")
+                
+                await update.message.reply_text(
+                    "⚠️ **Seu período de acesso terminou ou você não possui um plano ativo.**\n\n"
+                    "Para continuar nossa jornada de autoconhecimento, por favor assine um dos nossos planos:\n"
+                    f"👉 [Assinar Plano Básico (7 dias)]({checkout_url})\n\n"
+                    "*(Leva menos de 1 minuto e libera seu acesso na mesma hora!)*",
+                    parse_mode='Markdown',
+                    disable_web_page_preview=True
+                )
+                return
+
+            # Verificar limite diário se for plano básico
+            if plan_type == 'basic_7_days':
+                today_str = now.strftime("%Y-%m-%d")
+                
+                cursor.execute("""
+                    SELECT message_count FROM user_daily_usage 
+                    WHERE user_id = ? AND date_str = ?
+                """, (user_id, today_str))
+                usage = cursor.fetchone()
+                
+                current_count = usage[0] if usage else 0
+                
+                if current_count >= 7:
+                    # Gerar link pro plano companion
+                    from payment_gateway import create_checkout_session
+                    companion_url = create_checkout_session(telegram_id_str, "premium_companion")
+                    
+                    await update.message.reply_text(
+                        "🛑 **Você atingiu o limite de 7 mensagens por dia do Plano Básico.**\n\n"
+                        "Nosso processamento profundo (memória, arquétipos e análises) exige bastante energia. "
+                        "Seus limites serão renovados amanhã.\n\n"
+                        "✨ **Quer conversar sem limites e receber análises proativas diárias?**\n"
+                        f"👉 [Fazer Upgrade para o Companion Mensal]({companion_url})",
+                        parse_mode='Markdown',
+                        disable_web_page_preview=True
+                    )
+                    return
+                else:
+                    # Incrementar uso diário
+                    if usage:
+                        cursor.execute("""
+                            UPDATE user_daily_usage SET message_count = message_count + 1 
+                            WHERE user_id = ? AND date_str = ?
+                        """, (user_id, today_str))
+                    else:
+                        cursor.execute("""
+                            INSERT INTO user_daily_usage (user_id, date_str, message_count) 
+                            VALUES (?, ?, 1)
+                        """, (user_id, today_str))
+                    bot_state.db.conn.commit()
+
+        except Exception as e:
+            logger.error(f"❌ Erro ao verificar assinaturas e limites: {e}", exc_info=True)
+            # Em caso de erro no banco, permitimos a mensagem para não travar o usuário, 
+            # mas logamos para consertar.
+    # ---------------------------------------------------------
 
     await update.message.chat.send_action(action="typing")
 
