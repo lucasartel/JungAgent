@@ -738,7 +738,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = str(user.id)
     user_id = ensure_user_in_database(user)
 
-    if telegram_id not in ADMIN_IDS:
+    if user.id not in ADMIN_IDS:
         await update.message.reply_text("⚠️ Comando reservado para administradores. Use /minha_jornada para ver seu progresso.")
         return
 
@@ -987,7 +987,7 @@ O que você decide?
 
     # ----- VERIFICAÇÃO DE ASSINATURAS E LIMITES (GRATUITO) -----
     telegram_id_str = str(user.id)
-    is_admin = telegram_id_str in ADMIN_IDS
+    is_admin = user.id in ADMIN_IDS
 
     if not is_admin:
         try:
