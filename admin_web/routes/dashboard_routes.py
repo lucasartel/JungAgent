@@ -355,3 +355,60 @@ async def org_users_list(
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(500, f"Erro ao carregar usuários: {str(e)}")
+
+# ============================================================================
+# EXCLUIR USUÁRIO (Hard Delete)
+# ============================================================================
+
+@router.post("/user/{user_id}/delete")
+async def delete_telegram_user(
+    request: Request,
+    user_id: str,
+    admin: Dict = Depends(require_org_admin)
+):
+    """
+    Exclui permanentemente um usuário do Telegram e todo o seu hitórico.
+    Master Admin pode deletar qualquer usuário.
+    Org Admin só pode deletar usuários vinculados à sua própria organização.
+    """
+    if not _db_manager:
+        raise HTTPException(503, "DatabaseManager não disponível")
+        
+    try:
+        cursor = _db_manager.conn.cursor()
+        
+        # Validação de permissão: Org Admin
+        if admin['role'] != 'master':
+            org_id = admin.get('org_id')
+            cursor.execute("""
+                SELECT 1 FROM user_organization_mapping
+                WHERE user_id = ? AND org_id = ? AND status = 'active'
+            """, (user_id, org_id))
+            if not cursor.fetchone():
+                raise HTTPException(403, "Acesso Negado: Usuário não pertence à sua organização.")
+                
+        # Obter nome para mensagem
+        user = _db_manager.get_user(user_id)
+        if not user:
+            raise HTTPException(404, "Usuário não encontrado.")
+            
+        user_name = user.get('user_name', 'Usuário')
+        
+        # Deletar de fato
+        success = _db_manager.delete_user_completely(user_id)
+        
+        if success:
+            logger.info(f"✅ Usuário {user_name} (ID: {user_id}) excluído por {admin['email']}")
+            return RedirectResponse(
+                url=f"/admin/org/users?success=Usuário '{user_name}' e todo o seu histórico foram excluídos do sistema.",
+                status_code=303
+            )
+        else:
+            raise HTTPException(500, "Falha ao excluir o usuário do banco de dados (erro interno).")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"❌ Erro ao deletar usuário: {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, f"Erro interno ao excluir usuário: {str(e)}")

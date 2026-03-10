@@ -908,6 +908,49 @@ class HybridDatabaseManager:
         cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
+        
+    def delete_user_completely(self, user_id: str) -> bool:
+        """Deleta fisicamente um usuário e todos os seus dados vinculados"""
+        try:
+            with self.transaction() as cursor:
+                # Ordem importa para evitar restrições de foreign key, se houver, 
+                # embora SQLite não ative FK default, é uma boa prática
+                tables = [
+                    "user_facts", "user_patterns", "user_milestones", 
+                    "archetype_conflicts", "agent_development", "full_analyses",
+                    "agent_dreams", "external_research", "user_psychometrics",
+                    "knowledge_gaps", "user_subscriptions", "user_daily_usage",
+                    "user_organization_mapping", "conversations", "users"
+                ]
+                for table in tables:
+                    # Verifica se a tabela existe
+                    cursor.execute(f"SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", (table,))
+                    if cursor.fetchone()[0] > 0:
+                        cursor.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
+            
+            # ChromaDB
+            if self.chroma_enabled and hasattr(self, 'vectorstore') and self.vectorstore:
+                try:
+                    collection = self.vectorstore._collection
+                    collection.delete(where={"user_id": user_id})
+                    logger.info(f"Dados deletados do ChromaDB para usuário {user_id}")
+                except Exception as e:
+                    logger.warning(f"Erro ao deletar do ChromaDB: {e}")
+            
+            # Mem0
+            if hasattr(self, 'mem0') and self.mem0:
+                try:
+                    self.mem0.delete_all(user_id=user_id)
+                    logger.info(f"Dados deletados do mem0 para usuário {user_id}")
+                except Exception as e:
+                    logger.warning(f"Erro ao deletar do mem0: {e}")
+            
+            logger.info(f"✅ Usuário {user_id} e seus dados foram apagados fisicamente com sucesso.")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Erro ao deletar usuário {user_id}: {e}", exc_info=True)
+            return False
     
     def get_user_stats(self, user_id: str) -> Optional[Dict]:
         """Retorna estatísticas do usuário"""
