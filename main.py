@@ -137,7 +137,13 @@ async def lifespan(app: FastAPI):
                         platform_id = user.get('platform_id')
                         
                         if user_id and platform_id:
-                            msg = bot_state.proactive.check_and_generate_advanced_message(user_id, user_name)
+                            # ⚠️ Executar em thread pool para evitar bloqueio do event loop do Telegram/FastAPI
+                            import asyncio
+                            msg = await asyncio.to_thread(
+                                bot_state.proactive.check_and_generate_advanced_message,
+                                user_id, 
+                                user_name
+                            )
                             if msg:
                                 telegram_id = int(platform_id)
                                 await telegram_app.bot.send_message(
