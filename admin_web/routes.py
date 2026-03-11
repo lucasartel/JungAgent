@@ -173,13 +173,9 @@ async def users_list(request: Request, admin: Dict = Depends(require_master)):
     users = db.get_all_users(platform="telegram")
     return templates.TemplateResponse("users.html", {"request": request, "users": users})
 
-@router.get("/unesco/export")
-async def export_unesco_data(admin: Dict = Depends(require_master)):
-    """Gera CSV anonimizado com os dados quantitativos e qualitativos do Piloto UNESCO."""
-    import csv
-    from io import StringIO
-    from fastapi.responses import StreamingResponse
-    
+@router.get("/unesco/export", response_class=HTMLResponse)
+async def view_unesco_data(request: Request, admin: Dict = Depends(require_master)):
+    """Página visual para ver os dados do Piloto UNESCO antes de exportar."""
     db = get_db()
     cursor = db.conn.cursor()
     
@@ -203,6 +199,54 @@ async def export_unesco_data(admin: Dict = Depends(require_master)):
     
     rows = cursor.fetchall()
     
+    # Processa para enviar ao template
+    participants = []
+    for idx, row in enumerate(rows, 1):
+        participants.append({
+            "id": f"Participant_{idx:03d}",
+            "stress_in": row[1],
+            "challenge": row[2],
+            "expectation": row[3],
+            "stress_out": row[4],
+            "dossier_acc": row[5],
+            "safety_triggers": row[6],
+            "msgs": row[7],
+            "days": row[8],
+            "start": row[9],
+            "end": row[10]
+        })
+        
+    return templates.TemplateResponse("unesco_export.html", {"request": request, "participants": participants})
+
+@router.get("/unesco/export/csv")
+async def export_unesco_csv(admin: Dict = Depends(require_master)):
+    """Gera CSV anonimizado com os dados quantitativos e qualitativos do Piloto UNESCO."""
+    import csv
+    from io import StringIO
+    from fastapi.responses import StreamingResponse
+    
+    db = get_db()
+    cursor = db.conn.cursor()
+    
+    cursor.execute('''
+        SELECT 
+            u.user_id,
+            u.baseline_stress_score,
+            u.baseline_trait_challenge,
+            u.baseline_expectation,
+            u.post_test_stress_score,
+            u.safety_triggers_count,
+            
+            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id) as total_messages,
+            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id) as retention_days,
+            
+            u.created_at,
+            u.completed_at
+        FROM unesco_pilot_data u
+    ''')
+    
+    rows = cursor.fetchall()
+    
     f = StringIO()
     writer = csv.writer(f)
     
@@ -212,7 +256,6 @@ async def export_unesco_data(admin: Dict = Depends(require_master)):
         'Baseline_Challenge', 
         'Baseline_Expectation',
         'PostTest_Stress',
-        'Dossier_Accuracy',
         'Safety_Triggers',
         'Total_Messages',
         'Retention_Days',
@@ -221,19 +264,17 @@ async def export_unesco_data(admin: Dict = Depends(require_master)):
     ])
     
     for idx, row in enumerate(rows, 1):
-        # Transforma o dict ou Row object em list de forma segura
         writer.writerow([
             f"Participant_{idx:03d}",
             row[1], # baseline_stress_score
             row[2], # baseline_trait_challenge
             row[3], # baseline_expectation
             row[4], # post_test_stress_score
-            row[5], # dossier_accuracy_rating
-            row[6], # safety_triggers_count
-            row[7], # total_messages
-            row[8], # retention_days
-            row[9], # created_at
-            row[10] # completed_at
+            row[5], # safety_triggers_count
+            row[6], # total_messages
+            row[7], # retention_days
+            row[8], # created_at
+            row[9] # completed_at
         ])
         
     f.seek(0)

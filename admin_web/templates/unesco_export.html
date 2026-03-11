@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel UNESCO - JungAgent</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+    <style>
+        body { background-color: #f8f9fa; }
+        .table-responsive { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .hero { background: #0c1a2c; color: white; padding: 30px; border-radius: 8px; margin-bottom: 30px;}
+        .table thead th { border-bottom: 2px solid #0c1a2c; color: #444; }
+    </style>
+</head>
+<body>
+    <div class="container-fluid py-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/admin/master/dashboard">Home</a></li>
+                <li class="breadcrumb-item active" aria-current="page">Resultados Pesquisa UNESCO</li>
+            </ol>
+        </nav>
+
+        <div class="hero d-flex justify-content-between align-items-center">
+            <div>
+                <h2 class="mb-1"><i class="bi bi-bar-chart-fill me-2"></i> Piloto Acadêmico UNESCO</h2>
+                <p class="mb-0 text-secondary">Visualização da métrica e banco de dados anonimizado do programa de Autoconhecimento.</p>
+            </div>
+            <a href="/admin/unesco/export/csv" class="btn btn-primary btn-lg">
+                <i class="bi bi-download me-2"></i> Exportar Base Completa (CSV)
+            </a>
+        </div>
+
+        <div class="table-responsive">
+            <h4 class="mb-4">Catálogo de Participantes ({len(participants)})</h4>
+            <table class="table table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th>Identificação</th>
+                        <th>Stress Inicial (D1)</th>
+                        <th>Traço/Desafio (D1)</th>
+                        <th>Expectativa (D1)</th>
+                        <th>Mensagens Trocadas</th>
+                        <th>Stress Final (D7)</th>
+                        <th>Gatilhos RedLine</th>
+                        <th>Data Registro</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in participants %}
+                    <tr>
+                        <td><strong>{{ p.id }}</strong></td>
+                        <td>
+                            <span class="badge {{ 'bg-success' if p.stress_in and p.stress_in | int <= 2 else 'bg-warning' if p.stress_in and p.stress_in | int <= 4 else 'bg-danger' }}">
+                                {{ p.stress_in or 'N/A' }}/5
+                            </span>
+                        </td>
+                        <td><small>{{ p.challenge[:40] + '...' if p.challenge and p.challenge|length > 40 else (p.challenge or 'N/A') }}</small></td>
+                        <td><small>{{ p.expectation[:40] + '...' if p.expectation and p.expectation|length > 40 else (p.expectation or 'N/A') }}</small></td>
+                        <td><strong>{{ p.msgs }}</strong> <span class="text-muted" style="font-size: 0.8rem">em {{ p.days }} dias</span></td>
+                        <td>
+                            <span class="badge {{ 'bg-success' if p.stress_out and p.stress_out | int <= 2 else 'bg-warning' if p.stress_out and p.stress_out | int <= 4 else 'bg-danger' if p.stress_out else 'bg-secondary' }}">
+                                {{ p.stress_out or 'Pendente' }}{{ '/5' if p.stress_out else '' }}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="badge {{ 'bg-danger' if p.safety_triggers > 0 else 'bg-light text-dark' }}">
+                                {{ p.safety_triggers }}
+                            </span>
+                        </td>
+                        <td class="text-muted"><small>{{ p.start.split(' ')[0] if p.start else 'N/A' }}</small></td>
+                    </tr>
+                    {% endfor %}
+                    {% if not participants %}
+                    <tr>
+                        <td colspan="8" class="text-center py-4 text-muted">Ainda não há participantes registrados neste piloto.</td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>

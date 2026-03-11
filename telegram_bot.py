@@ -878,59 +878,8 @@ O que você decide?
                     step = context.user_data.get('offboarding_step')
                     
                     if not step:
-                        await update.message.reply_text("✨ Chegamos ao fim do nosso ciclo de 7 dias! Espero que as reflexões tenham trazido clareza.\n\nEstou a gerar o teu Dossiê de Autoconhecimento Final. Isto pode demorar alguns instantes...", parse_mode='Markdown')
-                        await update.message.chat.send_action(action="typing")
-                        
-                        conversations = bot_state.db.get_user_conversations(user_id, limit=100)
-                        user_lines = [c['user_input'] for c in conversations]
-                        context_str = "\n".join(user_lines[-40:]) if user_lines else "Sem contexto suficiente."
-                        
-                        dossier_prompt = f"""Você é o JungAgent, uma arquitetura de IA focada em emulação psicológica baseada na Psicologia Analítica de Carl Jung, na Tensão Dialógica de Bakhtin, na psicometria do Big Five e em princípios de Terapia Cognitivo-Comportamental (TCC). 
-
-Sua tarefa agora NÃO é continuar a conversa, mas sim analisar o histórico dos últimos 7 dias de interações com este usuário e gerar o "Dossiê de Autoconhecimento Final".
-
-DIRETRIZES ÉTICAS E DE LINGUAGEM (MANDATÓRIAS):  
-1. Fronteira Clínica: Você atua ESTRITAMENTE como uma ferramenta de bem-estar (wellness) e autoconhecimento.   
-2. Proibição de Diagnóstico: Você NUNCA deve diagnosticar distúrbios. Use linguagem de padrões (ex: "notei um padrão de pensamentos acelerados").  
-3. Tom: Empático, reflexivo, socrático e revelador.
-
-ESTRUTURA OBRIGATÓRIA DA RESPOSTA EM MARKDOWN:  
-O Seu Espelho Digital: Dossiê de 7 Dias  
-[Escreva uma breve introdução de 1 parágrafo agradecendo]
-
-1. Tipologia e Forças Matrizes  
-[Descreva as principais forças motrizes do usuário e arquétipo dominante]
-
-2. A Tensão Dialógica (Conflitos Internos)  
-[Identifique a principal contradição ou conflito que o usuário demonstrou]
-
-3. Padrões de Ruminação (A Lente Cognitiva)  
-[Aponte com gentileza se houve distorções cognitivas recorrentes]
-
-4. Caminhos para a Regulação (Ativação Comportamental)  
-[Sugira 2 ou 3 exercícios práticos e acionáveis focados em regulação]
-
-*Nota de Transparência:* Este dossiê foi gerado por Inteligência Artificial analisando padrões linguísticos. O JungAgent é uma ferramenta de autoconhecimento e não substitui o acompanhamento com um psicólogo.
-
-HISTÓRICO RECENTE DO USUÁRIO:
-{context_str}
-"""
-                        from jung_core import send_to_xai
-                        try:
-                            dossier_text = send_to_xai(prompt=dossier_prompt, temperature=0.7, max_tokens=1500)
-                            
-                            # Forçar Markdown padrão do Telegram (substituir ** por *)
-                            dossier_text = dossier_text.replace("**", "*")
-                            
-                            logger.info(f"Dossiê gerado para {user_id[:8]}")
-                            for i in range(0, len(dossier_text), 4000):
-                                await update.message.reply_text(dossier_text[i:i+4000], parse_mode='Markdown')
-                        except Exception as e:
-                            logger.error(f"Erro ao gerar dossiê: {e}")
-                            await update.message.reply_text("Houve um erro técnico ao gerar o dossiê, mas ainda podemos concluir a pesquisa.", parse_mode='Markdown')
-                            
+                        await update.message.reply_text("✨ Chegamos ao fim do nosso ciclo de 7 dias! Espero que as reflexões tenham trazido clareza.\n\nA partir de agora, o teu diagnóstico analítico está liberado. Podes ver a tua avaliação psicológica completa chamando o comando /meu_perfil.\n\nPara concluirmos a tua participação formal, preciso apenas de uma última resposta rápida:\n\nComparado com o dia em que começamos, como avalias o teu nível de stress/ruminação hoje? (1 = Muito tranquilo, 5 = Exaustivo e constante)\nResponda apenas com o número.")
                         context.user_data['offboarding_step'] = 1
-                        await update.message.reply_text("Para concluirmos a tua participação, preciso de duas últimas respostas rápidas:\n\n*1.* Comparado com o dia em que começamos, como avalia o teu nível de stress/ruminação hoje? (1 = Muito tranquilo, 5 = Exaustivo e constante, parse_mode='Markdown')\nResponda apenas com o número.")
                         return
 
                     elif step == 1:
@@ -939,28 +888,14 @@ HISTÓRICO RECENTE DO USUÁRIO:
                             if score < 1 or score > 5:
                                 raise ValueError
                             context.user_data['post_test_stress_score'] = score
-                            context.user_data['offboarding_step'] = 2
-                            await update.message.reply_text("*2.* Numa escala de 1 a 10, o quão preciso e útil considera o Dossiê que acabei de gerar sobre a tua personalidade?", parse_mode='Markdown')
-                            return
-                        except ValueError:
-                            await update.message.reply_text("⚠️ Por favor, responda com um número entre 1 e 5.", parse_mode='Markdown')
-                            return
-
-                    elif step == 2:
-                        try:
-                            score = int(message_text.strip())
-                            if score < 1 or score > 10:
-                                raise ValueError
-                            context.user_data['dossier_accuracy_rating'] = score
                             
                             try:
                                 cursor.execute('''
                                     UPDATE unesco_pilot_data 
                                     SET post_test_stress_score = ?, 
-                                        dossier_accuracy_rating = ?,
                                         completed_at = CURRENT_TIMESTAMP
                                     WHERE user_id = ?
-                                ''', (context.user_data['post_test_stress_score'], score, user_id))
+                                ''', (context.user_data['post_test_stress_score'], user_id))
                                 bot_state.db.conn.commit()
                                 logger.info(f"✅ Offboarding concluído e dados salvos para {user_id[:8]}")
                             except Exception as db_err:
@@ -968,10 +903,10 @@ HISTÓRICO RECENTE DO USUÁRIO:
                                 
                             context.user_data['offboarding_step'] = None
                             
-                            await update.message.reply_text("Muito obrigado por participar e ajudar a democratizar o acesso ao autoconhecimento no Brasil!\n\nOs teus dados (totalmente anonimizados, parse_mode='Markdown') estão seguros. Se, no futuro, eu for lançado como uma ferramenta contínua, aviso-te por aqui. Até à próxima jornada! ✨")
+                            await update.message.reply_text("Muito obrigado por participar e ajudar a democratizar o acesso ao autoconhecimento no Brasil!\n\nOs teus dados (totalmente anonimizados) estão seguros. A tua avaliação psicológica está salva em /meu_perfil. Até à próxima jornada! ✨")
                             return
                         except ValueError:
-                            await update.message.reply_text("⚠️ Por favor, responda com um número entre 1 e 10.", parse_mode='Markdown')
+                            await update.message.reply_text("⚠️ Por favor, responda com um número entre 1 e 5.")
                             return
 
             # 2. Verificar limite diário de 7 mensagens

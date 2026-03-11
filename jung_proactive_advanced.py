@@ -874,6 +874,7 @@ Tom esperado: {archetype_pair.description}
 6. **Termine com Pergunta Interior**: Leve para sentimentos/significado, não apenas fatos
 7. **Seja Humano**: NUNCA use jargões técnicos (Sombra, Persona, Arquétipo, etc)
 8. **Brevidade Magnética**: 3-5 linhas, cada palavra conta
+9. **Zero Formatação**: NUNCA use asteriscos (* ou **) para negrito/itálico.Texto puro apenas.
 
 **GERE A MENSAGEM (Curta, específica, relacional):**"""
 
@@ -1211,6 +1212,7 @@ Regras de Ouro:
 3. Aborde a questão de forma indireta e convidativa. Deixe que o usuário queira falar sobre isso.
 4. Mantenha no máximo 3 ou 4 linhas. Seja conciso.
 5. Use um tom caloroso e interessado.
+6. NUNCA use asteriscos (* ou **) para formatação (negrito/itálico). Envie texto puro.
 
 Aja como um amigo observador ou um mentor reflexivo que se importa de verdade e sente falta desse pedaço do quebra-cabeça.
 
@@ -1286,6 +1288,7 @@ Regras de Ouro:
 2. Inicie dizendo algo como "Bom dia. Observando as vibrações de hoje..." ou "Acordei avaliando o pulso do mundo..."
 3. Referencie, SE FIZER SENTIDO, alguma notícia ou o clima, conectando com a dor/jornada que o usuário está passando (ex: "O mundo lá fora está caótico com X, o que me fez pensar na sua própria turbulência interna...").
 4. Mantenha no máximo 3 ou 4 linhas. Seja acolhedor, vivo e instigante.
+5. NUNCA use asteriscos (* ou **) para formatação (negrito/itálico). Envie texto puro.
 
 GERE APENAS A MENSAGEM:
 """
