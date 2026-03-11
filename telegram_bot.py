@@ -307,19 +307,19 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         intro_message = f"""👋 Olá, {user.first_name}!
 
-Sou **Jung**, um assistente de autoconhecimento baseado em Inteligência Artificial.
+Sou *Jung*, um assistente de autoconhecimento baseado em Inteligência Artificial.
 
-🧠 **O que eu faço:**
+🧠 *O que eu faço:*
 Converso com você de forma natural sobre sua vida, decisões, desafios e reflexões. A partir dessas conversas, identifico padrões comportamentais e desenvolvo análises psicológicas personalizadas.
 
-🎯 **Minha proposta:**
+🎯 *Minha proposta:*
 Não sou um chatbot comum que responde perguntas. Desenvolvo uma compreensão única sobre você ao longo do tempo, baseada em:
 • Suas conversas naturais comigo
 • Padrões de linguagem e escolhas de palavras
 • Temas recorrentes e valores implícitos
 • Evolução do seu pensamento ao longo das interações
 
-📊 **O que você pode receber:**
+📊 *O que você pode receber:*
 • Análise de traços de personalidade
 • Mapeamento de padrões comportamentais
 • Insights sobre valores e motivações
@@ -327,20 +327,20 @@ Não sou um chatbot comum que responde perguntas. Desenvolvo uma compreensão ú
 
 ═══════════════════════════
 
-📋 **CONSENTIMENTO E PRIVACIDADE (LGPD)**
+📋 *CONSENTIMENTO E PRIVACIDADE (LGPD)*
 
 Para funcionar, preciso coletar e analisar:
-✓ **Conversas:** Todo o conteúdo das nossas interações
-✓ **Padrões:** Análises automáticas de linguagem e comportamento
-✓ **Histórico:** Armazenamento das conversas para evolução contínua
+✓ *Conversas:* Todo o conteúdo das nossas interações
+✓ *Padrões:* Análises automáticas de linguagem e comportamento
+✓ *Histórico:* Armazenamento das conversas para evolução contínua
 
-🔒 **Seus direitos garantidos:**
+🔒 *Seus direitos garantidos:*
 • Acesso aos dados: Pode ver tudo que tenho sobre você (/stats)
 • Exclusão: Pode apagar todo histórico a qualquer momento (/reset)
 • Transparência: Você vê suas análises antes de qualquer compartilhamento
 • Finalidade clara: Dados usados APENAS para análise psicológica pessoal
 
-❌ **O que NÃO faço:**
+❌ *O que NÃO faço:*
 • Não compartilho conversas brutas com terceiros
 • Não vendo seus dados
 • Não uso para fins não autorizados
@@ -348,16 +348,16 @@ Para funcionar, preciso coletar e analisar:
 
 ═══════════════════════════
 
-⚠️ **IMPORTANTE:**
+⚠️ *IMPORTANTE:*
 Ao continuar, você consente com a coleta e análise dos dados descritos acima, nos termos da LGPD (Lei Geral de Proteção de Dados).
 
-**Você aceita iniciar nossa jornada de autoconhecimento?**
+*Você aceita iniciar nossa jornada de autoconhecimento?*
 
 Digite SIM para consentir e começar
 Digite NÃO se preferir não continuar
 """
 
-        await update.message.reply_text(intro_message)
+        await update.message.reply_text(intro_message, parse_mode='Markdown')
 
         # Marcar que estamos aguardando consentimento
         context.user_data['awaiting_consent'] = True
@@ -372,35 +372,18 @@ Digite NÃO se preferir não continuar
 
         welcome_message = f"""🌟 Olá novamente, {user.first_name}!
 
-📊 **Suas estatísticas:**
+📊 *Suas estatísticas:*
 • Conversas: {stats['total_messages']}
 • Primeira interação: {time_since}
 
-Use /stats para ver mais detalhes ou /help para comandos.
-
-**No que posso ajudar hoje?**
+*No que posso ajudar hoje?*
 """
 
-        await update.message.reply_text(welcome_message)
+        await update.message.reply_text(welcome_message, parse_mode='Markdown')
 
         logger.info(f"Comando /start de usuário existente {user.first_name} (ID: {user_id[:8]})")
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para /help"""
 
-    help_text = """🤖 **COMANDOS DISPONÍVEIS**
-
-/minha_jornada
-   Veja como nossa conexão tem evoluído
-
-/meu_perfil
-   Receba seu perfil psicológico consolidado
-
-━━━━━━━━━━━━━━━━━━━
-💬 Basta falar naturalmente comigo!
-"""
-
-    await update.message.reply_text(help_text)
 
 
 async def meu_perfil_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -444,7 +427,7 @@ async def minha_jornada_command(update: Update, context: ContextTypes.DEFAULT_TY
     user = update.effective_user
     user_id = ensure_user_in_database(user)
 
-    await update.message.reply_text("🌱 **Analisando desenvolvimento do agente...**")
+    await update.message.reply_text("🌱 *Analisando desenvolvimento do agente...*", parse_mode='Markdown')
 
     try:
         # Buscar dados
@@ -452,7 +435,7 @@ async def minha_jornada_command(update: Update, context: ContextTypes.DEFAULT_TY
         total_convs = len(conversations)
 
         if total_convs == 0:
-            await update.message.reply_text("⚠️ **Nenhuma conversa registrada ainda.**")
+            await update.message.reply_text("⚠️ *Nenhuma conversa registrada ainda.*", parse_mode='Markdown')
             return
 
         # Calcular complexidade atual
@@ -517,16 +500,16 @@ async def minha_jornada_command(update: Update, context: ContextTypes.DEFAULT_TY
             return "⭐" * stars if stars > 0 else "☆"
 
         # Montar resposta amigável focada no usuário
-        result = f"""🌱 **NOSSA JORNADA**
+        result = f"""🌱 *NOSSA JORNADA*
 
-👤 **Para:** {user.first_name}
-📅 **Conectados desde:** {first_conv_date}
-💬 **Interações:** {total_convs}
+👤 *Para:* {user.first_name}
+📅 *Conectados desde:* {first_conv_date}
+💬 *Interações:* {total_convs}
 
 ═══════════════════════
-🎭 **PROFUNDIDADE DA NOSSA CONEXÃO**
+🎭 *PROFUNDIDADE DA NOSSA CONEXÃO*
 
-**Nível {current_phase}/5: {phase_name}**
+*Nível {current_phase}/5: {phase_name}*
 {phase_desc}
 
 """
@@ -534,7 +517,7 @@ async def minha_jornada_command(update: Update, context: ContextTypes.DEFAULT_TY
         if domains:
             result += f"""
 ═══════════════════════
-🧠 **TEMAS QUE EXPLORAMOS**
+🧠 *TEMAS QUE EXPLORAMOS*
 
 """
             for domain in domains[:5]:
@@ -543,7 +526,7 @@ async def minha_jornada_command(update: Update, context: ContextTypes.DEFAULT_TY
 
         result += f"""
 ═══════════════════════
-🎯 **PRÓXIMO MARCO DA JORNADA**
+🎯 *PRÓXIMO MARCO DA JORNADA*
 
 """
 
@@ -554,13 +537,13 @@ async def minha_jornada_command(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             result += "🏆 Desenvolvimento completo!"
 
-        await update.message.reply_text(result)
+        await update.message.reply_text(result, parse_mode='Markdown')
         logger.info(f"Desenvolvimento exibido para {user.first_name}")
 
     except Exception as e:
         logger.error(f"Erro ao gerar desenvolvimento: {e}")
         await update.message.reply_text(
-            "❌ **Erro ao gerar análise de desenvolvimento**\n\n"
+            "❌ *Erro ao gerar análise de desenvolvimento*\n\n"
             "Tente novamente mais tarde."
         )
 
@@ -572,7 +555,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = ensure_user_in_database(user)
 
     if user.id not in ADMIN_IDS:
-        await update.message.reply_text("⚠️ Comando reservado para administradores. Use /minha_jornada para ver seu progresso.")
+        await update.message.reply_text("⚠️ Comando reservado para administradores. Use /minha_jornada para ver seu progresso.", parse_mode='Markdown')
         return
 
     # Stats do usuário
@@ -602,9 +585,9 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """, (user_id,))
     total_patterns = cursor.fetchone()['count']
 
-    stats_text = f"""📊 **Estatísticas Completas**
+    stats_text = f"""📊 *Estatísticas Completas*
 
-👤 **SUAS ESTATÍSTICAS:**
+👤 *SUAS ESTATÍSTICAS:*
 • Total de mensagens: {user_stats['total_messages']}
 • Palavras enviadas: {total_user_words:,}
 • Palavras recebidas: {total_ai_words:,}
@@ -613,7 +596,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Padrões detectados: {total_patterns}
 • Sessões: {user_stats.get('total_sessions', user_data.get('total_sessions', 1))}
 
-🤖 **DESENVOLVIMENTO DO AGENTE:**
+🤖 *DESENVOLVIMENTO DO AGENTE:*
 • Fase atual: {agent_state['phase']}/5
 • Auto-consciência: {agent_state['self_awareness_score']:.0%}
 • Complexidade moral: {agent_state['moral_complexity_score']:.0%}
@@ -621,20 +604,20 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Autonomia: {agent_state['autonomy_score']:.0%}
 • Interações totais: {agent_state['total_interactions']}
 
-🗄️ **SISTEMA HÍBRIDO:**
+🗄️ *SISTEMA HÍBRIDO:*
 • ChromaDB: {'ATIVO ✅' if bot_state.db.chroma_enabled else 'INATIVO ❌'}
 • Buscas semânticas realizadas: {bot_state.total_semantic_searches}
 • Modelo de embeddings: {Config.EMBEDDING_MODEL}
 
-🌟 **SISTEMA PROATIVO:**
+🌟 *SISTEMA PROATIVO:*
 • Mensagens proativas enviadas: {bot_state.total_proactive_messages_sent}
 • Status: {'ATIVO ✅' if user_stats['total_messages'] >= 10 else f'INATIVO (faltam {10 - user_stats["total_messages"]} conversas)'}
 
-🌍 **ESTATÍSTICAS GLOBAIS DO BOT:**
+🌍 *ESTATÍSTICAS GLOBAIS DO BOT:*
 • Mensagens processadas: {bot_state.total_messages_processed}
 """
 
-    await update.message.reply_text(stats_text)
+    await update.message.reply_text(stats_text, parse_mode='Markdown')
 
     logger.info(f"Comando /stats de {user.first_name}")
 
@@ -646,17 +629,17 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = ensure_user_in_database(user)
 
     confirm_text = (
-        "⚠️ **ATENÇÃO: Isso vai apagar TODO o histórico!**\n\n"
+        "⚠️ *ATENÇÃO: Isso vai apagar TODO o histórico!*\n\n"
         "Você perderá:\n"
         "• Todas as conversas anteriores\n"
         "• Tensões arquetípicas identificadas\n"
         "• Fatos estruturados extraídos\n"
         "• Padrões comportamentais detectados\n"
         "• Memórias semânticas no ChromaDB\n\n"
-        "Para confirmar, envie: **CONFIRMAR RESET**"
+        "Para confirmar, envie: *CONFIRMAR RESET*"
     )
 
-    await update.message.reply_text(confirm_text)
+    await update.message.reply_text(confirm_text, parse_mode='Markdown')
 
     context.user_data['awaiting_reset_confirmation'] = True
 
@@ -707,14 +690,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     logger.warning(f"⚠️ Não foi possível salvar consentimento no banco: {db_error}")
                     logger.warning(f"⚠️ Execute migrate_add_consent.py no Railway!")
 
-                welcome_after_consent = f"""✅ **Consentimento registrado!**
+                welcome_after_consent = f"""✅ *Consentimento registrado!*
 
 Excelente! Para calibrar o meu sistema e termos um ponto de partida para a pesquisa, preciso que responda a três perguntas rápidas e sinceras.
 
-**Pergunta 1 de 3:** Como descreveria o seu nível de stress atual, numa escala de 1 a 5 (onde 1 = muito tranquilo e 5 = muito stressado)? Responda apenas com o número.
+*Pergunta 1 de 3:* Como descreveria o seu nível de stress atual, numa escala de 1 a 5 (onde 1 = muito tranquilo e 5 = muito stressado)? Responda apenas com o número.
 """
 
-                await update.message.reply_text(welcome_after_consent)
+                await update.message.reply_text(welcome_after_consent, parse_mode='Markdown')
                 context.user_data['awaiting_consent'] = False
                 context.user_data['onboarding_step'] = 1
 
@@ -730,7 +713,7 @@ Excelente! Para calibrar o meu sistema e termos um ponto de partida para a pesqu
 
         elif response_text == 'NÃO' or response_text == 'NAO':
             # Consentimento negado
-            decline_message = f"""❌ **Consentimento não concedido**
+            decline_message = f"""❌ *Consentimento não concedido*
 
 Entendo, {user.first_name}. Sem o consentimento, não posso iniciar as conversas de análise.
 
@@ -741,7 +724,7 @@ Você pode:
 Obrigado pela consideração! 🙏
 """
 
-            await update.message.reply_text(decline_message)
+            await update.message.reply_text(decline_message, parse_mode='Markdown')
             context.user_data['awaiting_consent'] = False
 
             logger.info(f"❌ Consentimento NEGADO por {user.first_name} (ID: {user_id[:8]})")
@@ -749,7 +732,7 @@ Obrigado pela consideração! 🙏
 
         else:
             # Resposta inválida
-            clarification = """⚠️ **Resposta não reconhecida**
+            clarification = """⚠️ *Resposta não reconhecida*
 
 Por favor, responda:
 • SIM - para consentir e começar
@@ -757,7 +740,7 @@ Por favor, responda:
 
 O que você decide?
 """
-            await update.message.reply_text(clarification)
+            await update.message.reply_text(clarification, parse_mode='Markdown')
             return
 
     # ========== ONBOARDING (PILOTO UNESCO) ==========
@@ -769,14 +752,14 @@ O que você decide?
                 if score < 1 or score > 5:
                     raise ValueError
             except ValueError:
-                await update.message.reply_text("⚠️ Por favor, responda apenas com um número entre 1 e 5.")
+                await update.message.reply_text("⚠️ Por favor, responda apenas com um número entre 1 e 5.", parse_mode='Markdown')
                 return
                 
             context.user_data['baseline_stress_score'] = score
             context.user_data['onboarding_step'] = 2
             
-            q2 = "**Pergunta 2 de 3:** Qual considera ser hoje o seu maior desafio interno, e qual é o seu traço mais positivo para lidar com ele?"
-            await update.message.reply_text(q2)
+            q2 = "*Pergunta 2 de 3:* Qual considera ser hoje o seu maior desafio interno, e qual é o seu traço mais positivo para lidar com ele?"
+            await update.message.reply_text(q2, parse_mode='Markdown')
             logger.info(f"Onboarding Passo 1 concluído para {user_id[:8]}")
             return
             
@@ -784,8 +767,8 @@ O que você decide?
             context.user_data['baseline_trait_challenge'] = message_text.strip()
             context.user_data['onboarding_step'] = 3
             
-            q3 = "**Pergunta 3 de 3:** O que espera alcançar ou entender melhor com os nossos 7 dias de interação?"
-            await update.message.reply_text(q3)
+            q3 = "*Pergunta 3 de 3:* O que espera alcançar ou entender melhor com os nossos 7 dias de interação?"
+            await update.message.reply_text(q3, parse_mode='Markdown')
             logger.info(f"Onboarding Passo 2 concluído para {user_id[:8]}")
             return
             
@@ -812,8 +795,8 @@ O que você decide?
                 
             context.user_data['onboarding_step'] = None
             
-            final_msg = "Tudo registrado! Muito obrigado.\n\nA partir de agora, o espaço é teu. Conta-me: **O que te trouxe aqui hoje?** O que você gostaria de explorar ou entender melhor sobre si?"
-            await update.message.reply_text(final_msg)
+            final_msg = "Tudo registrado! Muito obrigado.\n\nA partir de agora, o espaço é teu. Conta-me: *O que te trouxe aqui hoje?* O que você gostaria de explorar ou entender melhor sobre si?"
+            await update.message.reply_text(final_msg, parse_mode='Markdown')
             logger.info(f"Onboarding concluído para {user.first_name} ({user_id[:8]})")
             return
 
@@ -850,7 +833,7 @@ O que você decide?
             # ✅ Não precisa limpar cache (Just-in-Time busca do banco)
 
             await update.message.reply_text(
-                "🔄 **Reset executado!**\n\n"
+                "🔄 *Reset executado!*\n\n"
                 "Todo o histórico foi apagado (SQLite + ChromaDB).\n"
                 "Podemos começar do zero. O que você gostaria de explorar?"
             )
@@ -858,7 +841,7 @@ O que você decide?
             logger.warning(f"Reset CONFIRMADO por {user.first_name}")
             return
         else:
-            await update.message.reply_text("❌ Reset cancelado.\n\nSeu histórico foi preservado.")
+            await update.message.reply_text("❌ Reset cancelado.\n\nSeu histórico foi preservado.", parse_mode='Markdown')
             context.user_data['awaiting_reset_confirmation'] = False
             return
 
@@ -889,13 +872,13 @@ O que você decide?
                     cursor.execute("SELECT completed_at FROM unesco_pilot_data WHERE user_id = ?", (user_id,))
                     pilot_data = cursor.fetchone()
                     if pilot_data and pilot_data[0]:
-                        await update.message.reply_text("Sua participação no estudo de 7 dias já foi concluída. Muito obrigado pelos dados anonimizados!")
+                        await update.message.reply_text("Sua participação no estudo de 7 dias já foi concluída. Muito obrigado pelos dados anonimizados!", parse_mode='Markdown')
                         return
 
                     step = context.user_data.get('offboarding_step')
                     
                     if not step:
-                        await update.message.reply_text("✨ Chegamos ao fim do nosso ciclo de 7 dias! Espero que as reflexões tenham trazido clareza.\n\nEstou a gerar o teu Dossiê de Autoconhecimento Final. Isto pode demorar alguns instantes...")
+                        await update.message.reply_text("✨ Chegamos ao fim do nosso ciclo de 7 dias! Espero que as reflexões tenham trazido clareza.\n\nEstou a gerar o teu Dossiê de Autoconhecimento Final. Isto pode demorar alguns instantes...", parse_mode='Markdown')
                         await update.message.chat.send_action(action="typing")
                         
                         conversations = bot_state.db.get_user_conversations(user_id, limit=100)
@@ -935,15 +918,19 @@ HISTÓRICO RECENTE DO USUÁRIO:
                         from jung_core import send_to_xai
                         try:
                             dossier_text = send_to_xai(prompt=dossier_prompt, temperature=0.7, max_tokens=1500)
+                            
+                            # Forçar Markdown padrão do Telegram (substituir ** por *)
+                            dossier_text = dossier_text.replace("**", "*")
+                            
                             logger.info(f"Dossiê gerado para {user_id[:8]}")
                             for i in range(0, len(dossier_text), 4000):
-                                await update.message.reply_text(dossier_text[i:i+4000])
+                                await update.message.reply_text(dossier_text[i:i+4000], parse_mode='Markdown')
                         except Exception as e:
                             logger.error(f"Erro ao gerar dossiê: {e}")
-                            await update.message.reply_text("Houve um erro técnico ao gerar o dossiê, mas ainda podemos concluir a pesquisa.")
+                            await update.message.reply_text("Houve um erro técnico ao gerar o dossiê, mas ainda podemos concluir a pesquisa.", parse_mode='Markdown')
                             
                         context.user_data['offboarding_step'] = 1
-                        await update.message.reply_text("Para concluirmos a tua participação, preciso de duas últimas respostas rápidas:\n\n**1.** Comparado com o dia em que começamos, como avalia o teu nível de stress/ruminação hoje? (1 = Muito tranquilo, 5 = Exaustivo e constante)\nResponda apenas com o número.")
+                        await update.message.reply_text("Para concluirmos a tua participação, preciso de duas últimas respostas rápidas:\n\n*1.* Comparado com o dia em que começamos, como avalia o teu nível de stress/ruminação hoje? (1 = Muito tranquilo, 5 = Exaustivo e constante, parse_mode='Markdown')\nResponda apenas com o número.")
                         return
 
                     elif step == 1:
@@ -953,10 +940,10 @@ HISTÓRICO RECENTE DO USUÁRIO:
                                 raise ValueError
                             context.user_data['post_test_stress_score'] = score
                             context.user_data['offboarding_step'] = 2
-                            await update.message.reply_text("**2.** Numa escala de 1 a 10, o quão preciso e útil considera o Dossiê que acabei de gerar sobre a tua personalidade?")
+                            await update.message.reply_text("*2.* Numa escala de 1 a 10, o quão preciso e útil considera o Dossiê que acabei de gerar sobre a tua personalidade?", parse_mode='Markdown')
                             return
                         except ValueError:
-                            await update.message.reply_text("⚠️ Por favor, responda com um número entre 1 e 5.")
+                            await update.message.reply_text("⚠️ Por favor, responda com um número entre 1 e 5.", parse_mode='Markdown')
                             return
 
                     elif step == 2:
@@ -981,10 +968,10 @@ HISTÓRICO RECENTE DO USUÁRIO:
                                 
                             context.user_data['offboarding_step'] = None
                             
-                            await update.message.reply_text("Muito obrigado por participar e ajudar a democratizar o acesso ao autoconhecimento no Brasil!\n\nOs teus dados (totalmente anonimizados) estão seguros. Se, no futuro, eu for lançado como uma ferramenta contínua, aviso-te por aqui. Até à próxima jornada! ✨")
+                            await update.message.reply_text("Muito obrigado por participar e ajudar a democratizar o acesso ao autoconhecimento no Brasil!\n\nOs teus dados (totalmente anonimizados, parse_mode='Markdown') estão seguros. Se, no futuro, eu for lançado como uma ferramenta contínua, aviso-te por aqui. Até à próxima jornada! ✨")
                             return
                         except ValueError:
-                            await update.message.reply_text("⚠️ Por favor, responda com um número entre 1 e 10.")
+                            await update.message.reply_text("⚠️ Por favor, responda com um número entre 1 e 10.", parse_mode='Markdown')
                             return
 
             # 2. Verificar limite diário de 7 mensagens
@@ -1001,7 +988,7 @@ HISTÓRICO RECENTE DO USUÁRIO:
             if current_count >= 7:
                 # Formatar próxima meia-noite UTC (simplificado para amanhã de manhã)
                 await update.message.reply_text(
-                    "🛑 **Você atingiu o limite de 7 mensagens de hoje.**\n\n"
+                    "🛑 *Você atingiu o limite de 7 mensagens de hoje.*\n\n"
                     "Nosso processamento profundo (memória, arquétipos e análises) exige bastante tempo e energia para manter a qualidade. "
                     "Por favor, reflita sobre as ideias de hoje e continue nossa jornada amanhã. Suas mensagens serão renovadas!\n\n"
                     "*(Dica de Jung: É no silêncio entre as falas que a verdadeira compreensão se consolida)*",
@@ -1051,7 +1038,7 @@ HISTÓRICO RECENTE DO USUÁRIO:
             "oferecer. Por favor, liga agora para o CVV (Centro de Valorização da Vida) no número 188 ou acede a "
             "cvv.org.br. Há profissionais humanos prontos para te ouvir 24 horas por dia."
         )
-        await update.message.reply_text(cvv_message)
+        await update.message.reply_text(cvv_message, parse_mode='Markdown')
         return
 
     try:
@@ -1079,12 +1066,15 @@ HISTÓRICO RECENTE DO USUÁRIO:
         )
 
         response = result['response']
+        
+        # O LLM frequentemente usa **texto**, mas o parse_mode='Markdown' do Telegram espera *texto*
+        response = response.replace("**", "*")
 
         # Enviar resposta em partes se for muito longa (limite do Telegram: 4096 chars)
         max_length = 4000
         for i in range(0, len(response), max_length):
             chunk = response[i:i+max_length]
-            await update.message.reply_text(chunk)
+            await update.message.reply_text(chunk, parse_mode='Markdown')
 
         # ✅ TRI: Detectar fragmentos comportamentais Big Five
         tri_enabled = getattr(bot_state.proactive, 'tri_enabled', False) if bot_state.proactive else False
