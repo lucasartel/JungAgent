@@ -1074,7 +1074,11 @@ HISTÓRICO RECENTE DO USUÁRIO:
         max_length = 4000
         for i in range(0, len(response), max_length):
             chunk = response[i:i+max_length]
-            await update.message.reply_text(chunk, parse_mode='Markdown')
+            try:
+                await update.message.reply_text(chunk, parse_mode='Markdown')
+            except Exception as e:
+                logger.warning(f"⚠️ Erro de Markdown no Telegram, tentando sem formatação: {e}")
+                await update.message.reply_text(chunk)
 
         # ✅ TRI: Detectar fragmentos comportamentais Big Five
         tri_enabled = getattr(bot_state.proactive, 'tri_enabled', False) if bot_state.proactive else False
