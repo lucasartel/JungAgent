@@ -60,9 +60,9 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 # Valores padrão para testes (podem ser alterados conforme necessário)
-INACTIVITY_THRESHOLD_HOURS = 24  # Horas de inatividade antes de enviar proativa
+INACTIVITY_THRESHOLD_HOURS = 12  # Horas de inatividade antes de enviar proativa
 COOLDOWN_HOURS = 12               # Horas entre mensagens proativas
-MIN_CONVERSATIONS_REQUIRED = 3   # Mínimo de conversas necessárias
+MIN_CONVERSATIONS_REQUIRED = 2   # Mínimo de conversas necessárias
 
 logger.info(f"⚙️ Sistema Proativo configurado:")
 logger.info(f"   • Inatividade: {INACTIVITY_THRESHOLD_HOURS}h")
@@ -880,7 +880,7 @@ Tom esperado: {archetype_pair.description}
                 max_tokens=500
             )
             
-            return response.strip()
+            return response.strip().replace(\'**\', \'*\')
             
         except Exception as e:
             logger.info(f"❌ Erro ao gerar conhecimento autônomo: {e}")

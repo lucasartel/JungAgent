@@ -123,11 +123,12 @@ async def lifespan(app: FastAPI):
     async def world_consciousness_scheduler():
         """Verifica a cada hora se deve gerar a mensagem matinal de curiosidade ontológica."""
         from telegram_bot import bot_state
+        from datetime import datetime
         while True:
             try:
                 # Verificação ativa entre 6h e 11h
                 current_hour = datetime.now().hour
-                if 6 <= current_hour <= 11:
+                if True:  # Removido limite de horario matinal para o Piloto 7 dias
                     logger.info("🌍 [SCHEDULER] Acionando verificação de Curiosidade Ontológica...")
                     users = bot_state.db.get_all_users()
                     for user in users:
