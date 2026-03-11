@@ -63,9 +63,12 @@ logger = logging.getLogger(__name__)
 INACTIVITY_THRESHOLD_HOURS = 12  # Horas de inatividade antes de enviar proativa
 COOLDOWN_HOURS = 12               # Horas entre mensagens proativas
 MIN_CONVERSATIONS_REQUIRED = 2   # Mínimo de conversas necessárias
+MAX_INACTIVITY_DAYS = 7          # Evita abordar usuários inativos há muito tempo
+
 
 logger.info(f"⚙️ Sistema Proativo configurado:")
 logger.info(f"   • Inatividade: {INACTIVITY_THRESHOLD_HOURS}h")
+logger.info(f"   • Inatividade Máxima: {MAX_INACTIVITY_DAYS} dias")
 logger.info(f"   • Cooldown: {COOLDOWN_HOURS}h")
 logger.info(f"   • Conversas mínimas: {MIN_CONVERSATIONS_REQUIRED}")
 
@@ -334,6 +337,7 @@ class ProactiveAdvancedSystem:
         self.inactivity_threshold_hours = INACTIVITY_THRESHOLD_HOURS
         self.cooldown_hours = COOLDOWN_HOURS
         self.min_conversations_required = MIN_CONVERSATIONS_REQUIRED
+        self.max_inactivity_days = MAX_INACTIVITY_DAYS
 
         # ✅ TRI System (Fragment Detection)
         self.tri_enabled = TRI_ENABLED
@@ -349,7 +353,8 @@ class ProactiveAdvancedSystem:
                 self.tri_enabled = False
 
         logger.info(f"⚙️ Sistema Proativo configurado:")
-        logger.info(f"   • Inatividade: {self.inactivity_threshold_hours}h")
+        logger.info(f"   • Inatividade mínima: {self.inactivity_threshold_hours}h")
+        logger.info(f"   • Inatividade MÁXIMA (descarte): {self.max_inactivity_days} dias")
         logger.info(f"   • Cooldown: {self.cooldown_hours}h")
         logger.info(f"   • Conversas mínimas: {self.min_conversations_required}")
         logger.info(f"   • TRI Habilitado: {self.tri_enabled}")
@@ -942,6 +947,10 @@ Tom esperado: {archetype_pair.description}
 
             if delta.total_seconds() < self.inactivity_threshold_hours * 3600:
                 logger.info(f"⏰ [PROATIVO] Usuário ainda ativo ({hours_inactive:.1f}h / {self.inactivity_threshold_hours}h)")
+                return None
+                
+            if delta.days > self.max_inactivity_days:
+                logger.info(f"🚫 [PROATIVO] Usuário inativo há muito tempo ({delta.days} dias > limite de {self.max_inactivity_days}). Abortando abordagens proativas.")
                 return None
 
         # Checar cooldown de última proativa
