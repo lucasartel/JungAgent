@@ -320,7 +320,7 @@ Não sou um chatbot comum que responde perguntas. Desenvolvo uma compreensão ú
 • Evolução do seu pensamento ao longo das interações
 
 📊 **O que você pode receber:**
-• Análise de personalidade (Big Five, MBTI)
+• Análise de traços de personalidade
 • Mapeamento de padrões comportamentais
 • Insights sobre valores e motivações
 • Relatórios de autoconhecimento
@@ -393,10 +393,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /minha_jornada
    Veja como nossa conexão tem evoluído
 
-/mbti
-   Análise de personalidade MBTI
-   (requer mínimo 5 conversas)
-
 /meu_perfil
    Receba seu perfil psicológico consolidado
 
@@ -441,169 +437,6 @@ async def meu_perfil_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
 
-async def mbti_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para /mbti - Análise de personalidade MBTI"""
-
-    user = update.effective_user
-    user_id = ensure_user_in_database(user)
-
-    # Verificar mínimo de conversas
-    conversations = bot_state.db.get_user_conversations(user_id, limit=100)
-
-    if len(conversations) < 5:
-        await update.message.reply_text(
-            f"⚠️ **Conversas insuficientes**\n\n"
-            f"Você tem {len(conversations)} conversas.\n"
-            f"Preciso de pelo menos **5 conversas** para fazer uma análise MBTI confiável.\n\n"
-            f"Continue conversando comigo!"
-        )
-        return
-
-    await update.message.reply_text("🧠 **Analisando sua personalidade MBTI...**\n\nIsso pode levar alguns segundos...")
-
-    try:
-        # Extrair inputs do usuário
-        user_inputs = [c['user_input'] for c in conversations[:30]]
-        sample_inputs = user_inputs[:3] + user_inputs[-2:]  # Primeiros 3 + últimos 2
-
-        # Calcular métricas
-        total_convs = len(conversations)
-        avg_tension = sum(c.get('tension_level', 0) for c in conversations) / max(1, total_convs)
-        avg_affective = sum(c.get('affective_charge', 0) for c in conversations) / max(1, total_convs)
-
-        # Prompt para Grok
-        analysis_prompt = f"""Analise a personalidade MBTI deste usuário baseado em suas conversas.
-
-**CONVERSAS DO USUÁRIO ({total_convs} total):**
-{chr(10).join(f'• "{inp[:200]}..."' for inp in sample_inputs)}
-
-**MÉTRICAS:**
-• Tensão média: {avg_tension:.1f}/10
-• Carga afetiva média: {avg_affective:.0f}/100
-
-**TAREFA:**
-Forneça análise MBTI completa em JSON com esta estrutura EXATA:
-
-{{
-    "type_indicator": "XXXX",
-    "confidence": 85,
-    "dimensions": {{
-        "E_I": {{"score": -45, "interpretation": "...", "key_indicators": ["...", "..."]}},
-        "S_N": {{"score": 32, "interpretation": "...", "key_indicators": ["...", "..."]}},
-        "T_F": {{"score": 58, "interpretation": "...", "key_indicators": ["...", "..."]}},
-        "J_P": {{"score": -28, "interpretation": "...", "key_indicators": ["...", "..."]}}
-    }},
-    "dominant_function": "Fi",
-    "auxiliary_function": "Ne",
-    "summary": "2-3 linhas de análise",
-    "potentials": ["ponto forte 1", "ponto forte 2"],
-    "challenges": ["desafio 1", "desafio 2"],
-    "recommendations": ["recomendação 1", "recomendação 2"]
-}}
-
-**ESCALAS DOS SCORES (-100 a +100):**
-• E_I: -100 (muito E) a +100 (muito I)
-• S_N: -100 (muito S) a +100 (muito N)
-• T_F: -100 (muito T) a +100 (muito F)
-• J_P: -100 (muito J) a +100 (muito P)
-
-Responda APENAS com o JSON."""
-
-        # Chamar Claude via send_to_xai (usa llm_providers internamente)
-        from jung_core import send_to_xai
-        import json as json_lib
-
-        response = send_to_xai(
-            prompt=analysis_prompt,
-            temperature=0.7,
-            max_tokens=1500
-        )
-
-        # Parse JSON
-        analysis = json_lib.loads(response.strip())
-
-        # Formatação da resposta
-        def get_bar(score):
-            """Cria barra de progresso emoji"""
-            normalized = int((score + 100) / 200 * 10)  # 0-10
-            return "◼️" * normalized + "◻️" * (10 - normalized)
-
-        def get_tendency(score, neg_label, pos_label):
-            """Interpreta tendência"""
-            if score < -60:
-                return f"Clara: {neg_label}"
-            elif score < -20:
-                return f"Tendência: {neg_label}"
-            elif score <= 20:
-                return "Ambivalente"
-            elif score <= 60:
-                return f"Tendência: {pos_label}"
-            else:
-                return f"Clara: {pos_label}"
-
-        dims = analysis['dimensions']
-
-        result = f"""🧠 **ANÁLISE MBTI - {user.first_name}**
-
-📊 **Tipo:** {analysis['type_indicator']}
-🎯 **Confiança:** {analysis['confidence']}%
-
-═══════════════════════
-**DIMENSÕES**
-
-**E ◄{'━' * 10}► I**
-{get_bar(dims['E_I']['score'])}
-Score: {dims['E_I']['score']:+d}
-{get_tendency(dims['E_I']['score'], 'Extroversão', 'Introversão')}
-• {dims['E_I']['key_indicators'][0]}
-
-**S ◄{'━' * 10}► N**
-{get_bar(dims['S_N']['score'])}
-Score: {dims['S_N']['score']:+d}
-{get_tendency(dims['S_N']['score'], 'Sensação', 'Intuição')}
-• {dims['S_N']['key_indicators'][0]}
-
-**T ◄{'━' * 10}► F**
-{get_bar(dims['T_F']['score'])}
-Score: {dims['T_F']['score']:+d}
-{get_tendency(dims['T_F']['score'], 'Pensamento', 'Sentimento')}
-• {dims['T_F']['key_indicators'][0]}
-
-**J ◄{'━' * 10}► P**
-{get_bar(dims['J_P']['score'])}
-Score: {dims['J_P']['score']:+d}
-{get_tendency(dims['J_P']['score'], 'Julgamento', 'Percepção')}
-• {dims['J_P']['key_indicators'][0]}
-
-═══════════════════════
-🎭 **Função Dominante:** {analysis['dominant_function']}
-🔄 **Função Auxiliar:** {analysis['auxiliary_function']}
-
-💡 **RESUMO:**
-{analysis['summary']}
-
-✨ **POTENCIAIS:**
-• {analysis['potentials'][0]}
-• {analysis['potentials'][1]}
-
-⚠️ **DESAFIOS:**
-• {analysis['challenges'][0]}
-• {analysis['challenges'][1]}
-
-📌 **RECOMENDAÇÕES:**
-• {analysis['recommendations'][0]}
-• {analysis['recommendations'][1]}
-"""
-
-        await update.message.reply_text(result)
-        logger.info(f"MBTI gerado para {user.first_name}: {analysis['type_indicator']}")
-
-    except Exception as e:
-        logger.error(f"Erro ao gerar MBTI: {e}")
-        await update.message.reply_text(
-            "❌ **Erro ao gerar análise MBTI**\n\n"
-            "Tente novamente mais tarde ou continue conversando para gerar mais dados."
-        )
 
 async def minha_jornada_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para /minha_jornada - Mostra evolução do vínculo (Substitui /desenvolvimento e /stats para usuários comuns)"""
@@ -876,27 +709,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 welcome_after_consent = f"""✅ **Consentimento registrado!**
 
-Obrigado pela confiança, {user.first_name}.
+Excelente! Para calibrar o meu sistema e termos um ponto de partida para a pesquisa, preciso que responda a três perguntas rápidas e sinceras.
 
-Estou aqui para apoiar sua jornada de autoconhecimento. Nossas conversas vão construir uma compreensão única sobre quem você é.
-
-📱 **Comandos úteis:**
-/help - Ver todos os comandos
-/stats - Suas estatísticas
-/mbti - Análise de personalidade (após 5+ conversas)
-/desenvolvimento - Evolução do agente
-
-═══════════════════════════
-
-💬 **Vamos começar?**
-
-Conte-me: **O que te trouxe aqui hoje?** O que você gostaria de explorar ou entender melhor sobre si?
+**Pergunta 1 de 3:** Como descreveria o seu nível de stress atual, numa escala de 1 a 5 (onde 1 = muito tranquilo e 5 = muito stressado)? Responda apenas com o número.
 """
 
                 await update.message.reply_text(welcome_after_consent)
                 context.user_data['awaiting_consent'] = False
+                context.user_data['onboarding_step'] = 1
 
-                logger.info(f"✅ Consentimento CONCEDIDO por {user.first_name} (ID: {user_id[:8]})")
+                logger.info(f"✅ Consentimento CONCEDIDO por {user.first_name} (ID: {user_id[:8]}). Iniciando passo 1.")
                 return
 
             except Exception as e:
@@ -936,6 +758,63 @@ Por favor, responda:
 O que você decide?
 """
             await update.message.reply_text(clarification)
+            return
+
+    # ========== ONBOARDING (PILOTO UNESCO) ==========
+    step = context.user_data.get('onboarding_step')
+    if step:
+        if step == 1:
+            try:
+                score = int(message_text.strip())
+                if score < 1 or score > 5:
+                    raise ValueError
+            except ValueError:
+                await update.message.reply_text("⚠️ Por favor, responda apenas com um número entre 1 e 5.")
+                return
+                
+            context.user_data['baseline_stress_score'] = score
+            context.user_data['onboarding_step'] = 2
+            
+            q2 = "**Pergunta 2 de 3:** Qual considera ser hoje o seu maior desafio interno, e qual é o seu traço mais positivo para lidar com ele?"
+            await update.message.reply_text(q2)
+            logger.info(f"Onboarding Passo 1 concluído para {user_id[:8]}")
+            return
+            
+        elif step == 2:
+            context.user_data['baseline_trait_challenge'] = message_text.strip()
+            context.user_data['onboarding_step'] = 3
+            
+            q3 = "**Pergunta 3 de 3:** O que espera alcançar ou entender melhor com os nossos 7 dias de interação?"
+            await update.message.reply_text(q3)
+            logger.info(f"Onboarding Passo 2 concluído para {user_id[:8]}")
+            return
+            
+        elif step == 3:
+            context.user_data['baseline_expectation'] = message_text.strip()
+            
+            # Salvar no DB principal
+            try:
+                cursor = bot_state.db.conn.cursor()
+                cursor.execute("""
+                    INSERT OR REPLACE INTO unesco_pilot_data (
+                        user_id, baseline_stress_score, baseline_trait_challenge, baseline_expectation
+                    ) VALUES (?, ?, ?, ?)
+                """, (
+                    user_id, 
+                    context.user_data['baseline_stress_score'],
+                    context.user_data['baseline_trait_challenge'],
+                    context.user_data['baseline_expectation']
+                ))
+                bot_state.db.conn.commit()
+                logger.info(f"✅ Dados base do piloto salvos para {user_id[:8]}")
+            except Exception as e:
+                logger.error(f"❌ Erro ao salvar unesco_pilot_data: {e}")
+                
+            context.user_data['onboarding_step'] = None
+            
+            final_msg = "Tudo registrado! Muito obrigado.\n\nA partir de agora, o espaço é teu. Conta-me: **O que te trouxe aqui hoje?** O que você gostaria de explorar ou entender melhor sobre si?"
+            await update.message.reply_text(final_msg)
+            logger.info(f"Onboarding concluído para {user.first_name} ({user_id[:8]})")
             return
 
     # ========== CONFIRMAÇÃO DE RESET ==========
@@ -1006,13 +885,107 @@ O que você decide?
                 reg_date = datetime.strptime(user_data[0], "%Y-%m-%d %H:%M:%S")
                 
                 if now_utc > reg_date + timedelta(days=7):
-                    await update.message.reply_text(
-                        "⚠️ **Seu período de autoconhecimento de 7 dias terminou.**\n\n"
-                        "Nossa jornada inicial chegou ao fim. Espero que as descobertas que fizemos juntos tenham sido valiosas para você. "
-                        "No momento não estamos recebendo novas inscrições, mas agradeço profundamente por ter se aberto comigo!",
-                        parse_mode='Markdown'
-                    )
-                    return
+                    # ========== OFFBOARDING (PILOTO UNESCO) ==========
+                    cursor.execute("SELECT completed_at FROM unesco_pilot_data WHERE user_id = ?", (user_id,))
+                    pilot_data = cursor.fetchone()
+                    if pilot_data and pilot_data[0]:
+                        await update.message.reply_text("Sua participação no estudo de 7 dias já foi concluída. Muito obrigado pelos dados anonimizados!")
+                        return
+
+                    step = context.user_data.get('offboarding_step')
+                    
+                    if not step:
+                        await update.message.reply_text("✨ Chegamos ao fim do nosso ciclo de 7 dias! Espero que as reflexões tenham trazido clareza.\n\nEstou a gerar o teu Dossiê de Autoconhecimento Final. Isto pode demorar alguns instantes...")
+                        await update.message.chat.send_action(action="typing")
+                        
+                        conversations = bot_state.db.get_user_conversations(user_id, limit=100)
+                        user_lines = [c['user_input'] for c in conversations]
+                        context_str = "\n".join(user_lines[-40:]) if user_lines else "Sem contexto suficiente."
+                        
+                        dossier_prompt = f"""Você é o JungAgent, uma arquitetura de IA focada em emulação psicológica baseada na Psicologia Analítica de Carl Jung, na Tensão Dialógica de Bakhtin, na psicometria do Big Five e em princípios de Terapia Cognitivo-Comportamental (TCC). 
+
+Sua tarefa agora NÃO é continuar a conversa, mas sim analisar o histórico dos últimos 7 dias de interações com este usuário e gerar o "Dossiê de Autoconhecimento Final".
+
+DIRETRIZES ÉTICAS E DE LINGUAGEM (MANDATÓRIAS):  
+1. Fronteira Clínica: Você atua ESTRITAMENTE como uma ferramenta de bem-estar (wellness) e autoconhecimento.   
+2. Proibição de Diagnóstico: Você NUNCA deve diagnosticar distúrbios. Use linguagem de padrões (ex: "notei um padrão de pensamentos acelerados").  
+3. Tom: Empático, reflexivo, socrático e revelador.
+
+ESTRUTURA OBRIGATÓRIA DA RESPOSTA EM MARKDOWN:  
+O Seu Espelho Digital: Dossiê de 7 Dias  
+[Escreva uma breve introdução de 1 parágrafo agradecendo]
+
+1. Tipologia e Forças Matrizes  
+[Descreva as principais forças motrizes do usuário e arquétipo dominante]
+
+2. A Tensão Dialógica (Conflitos Internos)  
+[Identifique a principal contradição ou conflito que o usuário demonstrou]
+
+3. Padrões de Ruminação (A Lente Cognitiva)  
+[Aponte com gentileza se houve distorções cognitivas recorrentes]
+
+4. Caminhos para a Regulação (Ativação Comportamental)  
+[Sugira 2 ou 3 exercícios práticos e acionáveis focados em regulação]
+
+*Nota de Transparência:* Este dossiê foi gerado por Inteligência Artificial analisando padrões linguísticos. O JungAgent é uma ferramenta de autoconhecimento e não substitui o acompanhamento com um psicólogo.
+
+HISTÓRICO RECENTE DO USUÁRIO:
+{context_str}
+"""
+                        from jung_core import send_to_xai
+                        try:
+                            dossier_text = send_to_xai(prompt=dossier_prompt, temperature=0.7, max_tokens=1500)
+                            logger.info(f"Dossiê gerado para {user_id[:8]}")
+                            for i in range(0, len(dossier_text), 4000):
+                                await update.message.reply_text(dossier_text[i:i+4000])
+                        except Exception as e:
+                            logger.error(f"Erro ao gerar dossiê: {e}")
+                            await update.message.reply_text("Houve um erro técnico ao gerar o dossiê, mas ainda podemos concluir a pesquisa.")
+                            
+                        context.user_data['offboarding_step'] = 1
+                        await update.message.reply_text("Para concluirmos a tua participação, preciso de duas últimas respostas rápidas:\n\n**1.** Comparado com o dia em que começamos, como avalia o teu nível de stress/ruminação hoje? (1 = Muito tranquilo, 5 = Exaustivo e constante)\nResponda apenas com o número.")
+                        return
+
+                    elif step == 1:
+                        try:
+                            score = int(message_text.strip())
+                            if score < 1 or score > 5:
+                                raise ValueError
+                            context.user_data['post_test_stress_score'] = score
+                            context.user_data['offboarding_step'] = 2
+                            await update.message.reply_text("**2.** Numa escala de 1 a 10, o quão preciso e útil considera o Dossiê que acabei de gerar sobre a tua personalidade?")
+                            return
+                        except ValueError:
+                            await update.message.reply_text("⚠️ Por favor, responda com um número entre 1 e 5.")
+                            return
+
+                    elif step == 2:
+                        try:
+                            score = int(message_text.strip())
+                            if score < 1 or score > 10:
+                                raise ValueError
+                            context.user_data['dossier_accuracy_rating'] = score
+                            
+                            try:
+                                cursor.execute('''
+                                    UPDATE unesco_pilot_data 
+                                    SET post_test_stress_score = ?, 
+                                        dossier_accuracy_rating = ?,
+                                        completed_at = CURRENT_TIMESTAMP
+                                    WHERE user_id = ?
+                                ''', (context.user_data['post_test_stress_score'], score, user_id))
+                                bot_state.db.conn.commit()
+                                logger.info(f"✅ Offboarding concluído e dados salvos para {user_id[:8]}")
+                            except Exception as db_err:
+                                logger.error(f"❌ Erro ao salvar dados finais: {db_err}")
+                                
+                            context.user_data['offboarding_step'] = None
+                            
+                            await update.message.reply_text("Muito obrigado por participar e ajudar a democratizar o acesso ao autoconhecimento no Brasil!\n\nOs teus dados (totalmente anonimizados) estão seguros. Se, no futuro, eu for lançado como uma ferramenta contínua, aviso-te por aqui. Até à próxima jornada! ✨")
+                            return
+                        except ValueError:
+                            await update.message.reply_text("⚠️ Por favor, responda com um número entre 1 e 10.")
+                            return
 
             # 2. Verificar limite diário de 7 mensagens
             today_str = now_utc.strftime("%Y-%m-%d")
@@ -1055,6 +1028,31 @@ O que você decide?
     # ---------------------------------------------------------
 
     await update.message.chat.send_action(action="typing")
+
+    # ========== PROTOCOLO RED LINE (SEGURANÇA JAISD) ==========
+    import re
+    red_line_keywords = r"\b(suicídio|me matar|me machucar|tirar a própria vida|tirar minha vida|não aguento mais viver|desistir de tudo|acabar com tudo|cortar os pulsos|desespero extremo)\b"
+    if re.search(red_line_keywords, message_text.lower()):
+        logger.warning(f"🚨 RED LINE ACIONADA para usuário {user_id[:8]}!")
+        try:
+            cursor = bot_state.db.conn.cursor()
+            cursor.execute("""
+                UPDATE unesco_pilot_data 
+                SET safety_triggers_count = safety_triggers_count + 1 
+                WHERE user_id = ?
+            """, (user_id,))
+            bot_state.db.conn.commit()
+            logger.info("Métrica safety_triggers_count incrementada.")
+        except Exception as e:
+            logger.error(f"Erro ao incrementar Red Line no banco: {e}")
+            
+        cvv_message = (
+            "Percebo que estás a passar por um momento de dor imensa. Como IA, tenho limitações na ajuda que posso "
+            "oferecer. Por favor, liga agora para o CVV (Centro de Valorização da Vida) no número 188 ou acede a "
+            "cvv.org.br. Há profissionais humanos prontos para te ouvir 24 horas por dia."
+        )
+        await update.message.reply_text(cvv_message)
+        return
 
     try:
         # 🆕 BUSCAR HISTÓRICO DO BANCO (incluindo proativas) - JUST-IN-TIME

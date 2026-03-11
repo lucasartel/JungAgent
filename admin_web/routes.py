@@ -173,6 +173,76 @@ async def users_list(request: Request, admin: Dict = Depends(require_master)):
     users = db.get_all_users(platform="telegram")
     return templates.TemplateResponse("users.html", {"request": request, "users": users})
 
+@router.get("/unesco/export")
+async def export_unesco_data(admin: Dict = Depends(require_master)):
+    """Gera CSV anonimizado com os dados quantitativos e qualitativos do Piloto UNESCO."""
+    import csv
+    from io import StringIO
+    from fastapi.responses import StreamingResponse
+    
+    db = get_db()
+    cursor = db.conn.cursor()
+    
+    cursor.execute('''
+        SELECT 
+            u.user_id,
+            u.baseline_stress_score,
+            u.baseline_trait_challenge,
+            u.baseline_expectation,
+            u.post_test_stress_score,
+            u.dossier_accuracy_rating,
+            u.safety_triggers_count,
+            
+            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id) as total_messages,
+            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id) as retention_days,
+            
+            u.created_at,
+            u.completed_at
+        FROM unesco_pilot_data u
+    ''')
+    
+    rows = cursor.fetchall()
+    
+    f = StringIO()
+    writer = csv.writer(f)
+    
+    writer.writerow([
+        'Participant_ID', 
+        'Baseline_Stress', 
+        'Baseline_Challenge', 
+        'Baseline_Expectation',
+        'PostTest_Stress',
+        'Dossier_Accuracy',
+        'Safety_Triggers',
+        'Total_Messages',
+        'Retention_Days',
+        'Start_Date',
+        'End_Date'
+    ])
+    
+    for idx, row in enumerate(rows, 1):
+        # Transforma o dict ou Row object em list de forma segura
+        writer.writerow([
+            f"Participant_{idx:03d}",
+            row[1], # baseline_stress_score
+            row[2], # baseline_trait_challenge
+            row[3], # baseline_expectation
+            row[4], # post_test_stress_score
+            row[5], # dossier_accuracy_rating
+            row[6], # safety_triggers_count
+            row[7], # total_messages
+            row[8], # retention_days
+            row[9], # created_at
+            row[10] # completed_at
+        ])
+        
+    f.seek(0)
+    
+    response = StreamingResponse(iter([f.getvalue()]), media_type="text/csv")
+    response.headers["Content-Disposition"] = "attachment; filename=unesco_pilot_data.csv"
+    
+    return response
+
 @router.get("/sync-check", response_class=HTMLResponse)
 async def sync_check_page(request: Request, admin: Dict = Depends(require_master)):
     """Página de diagnóstico de sincronização"""
