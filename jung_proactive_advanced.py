@@ -880,7 +880,7 @@ Tom esperado: {archetype_pair.description}
                 max_tokens=500
             )
             
-            return response.strip().replace(\'**\', \'*\')
+            return response.strip().replace("**", "*")
             
         except Exception as e:
             logger.info(f"❌ Erro ao gerar conhecimento autônomo: {e}")
