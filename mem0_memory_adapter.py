@@ -161,6 +161,19 @@ class Mem0MemoryAdapter:
         except Exception:
             return False
 
+    def delete_all(self, user_id: str) -> bool:
+        """
+        Apaga TODAS as memórias do usuário no Qdrant via mem0.
+        Chamado por HybridDatabaseManager.delete_user_completely().
+        """
+        try:
+            self.mem.delete_all(user_id=user_id)
+            logger.info(f"✅ [MEM0] Todas as memórias deletadas para user={user_id[:8]}")
+            return True
+        except Exception as e:
+            logger.warning(f"⚠️ [MEM0] Erro ao deletar memórias de {user_id[:8]}: {e}")
+            return False
+
 
 def create_mem0_adapter() -> Optional[Mem0MemoryAdapter]:
     """
