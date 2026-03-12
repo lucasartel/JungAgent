@@ -794,7 +794,7 @@ O que você decide?
                 
             context.user_data['onboarding_step'] = None
             
-            final_msg = "Tudo registrado! Muito obrigado.\n\nA partir de agora, o espaço é teu. Conta-me: *O que te trouxe aqui hoje?* O que você gostaria de explorar ou entender melhor sobre si?"
+            final_msg = "Tudo registrado! Muito obrigado.\n\nA partir de agora, o espaço é teu. Me conta: O que você gostaria de explorar ou entender melhor sobre si?"
             await update.message.reply_text(final_msg, parse_mode='Markdown')
             logger.info(f"Onboarding concluído para {user.first_name} ({user_id[:8]})")
             return
