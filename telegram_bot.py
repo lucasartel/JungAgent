@@ -335,8 +335,7 @@ Para funcionar, preciso coletar e analisar:
 ✓ *Histórico:* Armazenamento das conversas para evolução contínua
 
 🔒 *Seus direitos garantidos:*
-• Acesso aos dados: Pode ver tudo que tenho sobre você (/stats)
-• Exclusão: Pode apagar todo histórico a qualquer momento (/reset)
+• Exclusão: Pode apagar todo histórico a qualquer momento, via Telegram
 • Transparência: Você vê suas análises antes de qualquer compartilhamento
 • Finalidade clara: Dados usados APENAS para análise psicológica pessoal
 
@@ -878,7 +877,7 @@ O que você decide?
                     step = context.user_data.get('offboarding_step')
                     
                     if not step:
-                        await update.message.reply_text("✨ Chegamos ao fim do nosso ciclo de 7 dias! Espero que as reflexões tenham trazido clareza.\n\nA partir de agora, o teu diagnóstico analítico está liberado. Podes ver a tua avaliação psicológica completa chamando o comando /meu_perfil.\n\nPara concluirmos a tua participação formal, preciso apenas de uma última resposta rápida:\n\nComparado com o dia em que começamos, como avalias o teu nível de stress/ruminação hoje? (1 = Muito tranquilo, 5 = Exaustivo e constante)\nResponda apenas com o número.")
+                        await update.message.reply_text("✨ Chegamos ao fim do nosso ciclo de 7 dias! Espero que as reflexões tenham trazido clareza.\n\nA partir de agora, o teu diagnóstico analítico está liberado. Podes ver a tua avaliação psicológica completa chamando o comando /meu_perfil.\n\nPara concluirmos a tua participação formal, preciso apenas de uma última resposta rápida: Comparado com o dia em que começamos, como avalia o seu nível de stress hoje? (1 = Muito tranquilo, 5 = Exaustivo e constante). Responda apenas com o número.")
                         context.user_data['offboarding_step'] = 1
                         return
 
