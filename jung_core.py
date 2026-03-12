@@ -945,9 +945,9 @@ class HybridDatabaseManager:
     def delete_user_completely(self, user_id: str) -> bool:
         """Deleta fisicamente um usuário e todos os seus dados vinculados"""
         try:
-            with self.transaction() as cursor:
-                # Ordem importa para evitar restrições de foreign key, se houver, 
-                # embora SQLite não ative FK default, é uma boa prática
+            with self.transaction() as conn:
+                # `self.transaction()` yields the connection — we need to create a cursor from it
+                cursor = conn.cursor()
                 tables = [
                     "unesco_pilot_data", "user_facts", "user_patterns", "user_milestones", 
                     "archetype_conflicts", "agent_development", "full_analyses",
@@ -1641,6 +1641,33 @@ Resposta: {ai_response}
                 return cursor.rowcount > 0
             except Exception as e:
                 logger.error(f"❌ Erro marcar sonho como delivered: {e}")
+                return False
+
+    # ========================================
+    # SQLite: ABORDAGENS PROATIVAS (COOLDOWN)
+    # ========================================
+
+    def save_proactive_approach(self, user_id: str, approach_type: str, category: str, summary: str) -> bool:
+        """
+        Registra uma abordagem proativa enviada ao usuário para gerenciar cooldown.
+        Args:
+            approach_type: ex: 'strategic_question', 'knowledge_gap', 'ontological_curiosity'
+            category: ex: 'insight', 'world_event', 'rumination'
+            summary: Resumo curto da mensagem enviada
+        """
+        with self._lock:
+            try:
+                cursor = self.conn.cursor()
+                # A tabela `proactive_approaches` já foi desenhada no schema do v4.0.
+                cursor.execute("""
+                    INSERT INTO proactive_approaches (user_id, approach_type, category, summary, timestamp)
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, (user_id, approach_type, category, summary))
+                self.conn.commit()
+                logger.info(f"✅ Registro de Proatividade salvo para gerenciar Cooldown ({approach_type})")
+                return True
+            except Exception as e:
+                logger.error(f"❌ Erro ao salvar log de proatividade: {e}")
                 return False
 
     # ========================================
