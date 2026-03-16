@@ -124,6 +124,12 @@ async def lifespan(app: FastAPI):
         """Verifica a cada hora se deve gerar a mensagem matinal de curiosidade ontológica."""
         from telegram_bot import bot_state
         from datetime import datetime
+
+        # ⏳ Aguarda 5 minutos antes da primeira verificação
+        # Evita que deploys/reinicializações disparem proativas imediatamente
+        logger.info("⏳ [SCHEDULER] Aguardando 5 min antes da primeira verificação proativa...")
+        await asyncio.sleep(300)
+
         while True:
             try:
                 # Verificação ativa entre 6h e 11h
@@ -146,17 +152,23 @@ async def lifespan(app: FastAPI):
                             )
                             if msg:
                                 telegram_id = int(platform_id)
-                                await telegram_app.bot.send_message(
-                                    chat_id=telegram_id,
-                                    text=msg,
-                                    parse_mode='Markdown'
-                                )
+                                try:
+                                    await telegram_app.bot.send_message(
+                                        chat_id=telegram_id,
+                                        text=msg,
+                                        parse_mode='Markdown'
+                                    )
+                                except Exception:
+                                    await telegram_app.bot.send_message(
+                                        chat_id=telegram_id,
+                                        text=msg
+                                    )
                                 logger.info(f"✅ [PROATIVO] Mensagem enviada para {user_name} ({telegram_id})")
                                 await asyncio.sleep(2)
             except Exception as e:
                 logger.error(f"❌ Erro no scheduler de Consciência do Mundo: {e}")
             
-            # Dorme por 1 hora
+            # Dorme por 1 hora antes da próxima verificação
             await asyncio.sleep(3600)
 
     asyncio.create_task(world_consciousness_scheduler())

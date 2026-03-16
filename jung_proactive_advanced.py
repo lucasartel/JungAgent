@@ -1247,6 +1247,20 @@ GERE APENAS A MENSAGEM:
                     )
                 except Exception as e:
                     logger.warning(f"⚠️ Erro ao salvar gap proactive na memória: {e}")
+
+                # ✅ Registrar no proactive_approaches para o cooldown funcionar
+                try:
+                    cursor.execute("""
+                        INSERT INTO proactive_approaches (
+                            user_id, archetype_primary, archetype_secondary,
+                            knowledge_domain, topic_extracted, autonomous_insight,
+                            message_type
+                        ) VALUES (?, 'Sábio', 'Investigador', 'psicológico', ?, ?, 'knowledge_gap')
+                    """, (user_id, topic, msg))
+                    self.db.conn.commit()
+                    logger.info(f"✅ Registro de Proatividade salvo (knowledge_gap) → cooldown ativado")
+                except Exception as e:
+                    logger.warning(f"⚠️ Erro ao registrar knowledge_gap no proactive_approaches: {e}")
                     
                 return msg
                 
