@@ -17,24 +17,29 @@ class MigrationManager:
     """Gerencia aplicação automática de migrations"""
 
     def __init__(self, db_path: str = None):
-        # Tentar encontrar o banco automaticamente
+        # Tentar encontrar o banco automaticamente via Config centralizado
         if db_path is None:
-            # Tentar caminhos possíveis (Railway usa volume montado)
-            possible_paths = [
-                Path("/data/jung_hybrid.db"),  # Railway volume
-                Path("data/jung_hybrid.db"),    # Local
-                Path("jung_hybrid.db"),          # Root local
-            ]
+            try:
+                from jung_core import Config
+                self.db_path = Path(Config.SQLITE_PATH)
+                logger.info(f"✅ Usando banco centralizado (Config): {self.db_path}")
+            except Exception as e:
+                logger.warning(f"⚠️ Erro ao importar Config, usando fallback discovery: {e}")
+                # Fallback discovery se Config falhar (evita circular imports se houver)
+                possible_paths = [
+                    Path("/data/jung_hybrid.db"),  # Railway volume
+                    Path("data/jung_hybrid.db"),    # Local
+                    Path("jung_hybrid.db"),          # Root local
+                ]
 
-            for path in possible_paths:
-                if path.exists():
-                    self.db_path = path
-                    logger.info(f"✅ Banco de dados encontrado: {path}")
-                    break
-            else:
-                # Se nenhum existe, usar o primeiro (Railway)
-                self.db_path = possible_paths[0]
-                logger.warning(f"⚠️ Banco não encontrado, usando: {self.db_path}")
+                for path in possible_paths:
+                    if path.exists():
+                        self.db_path = path
+                        logger.info(f"✅ Banco de dados encontrado via discovery: {path}")
+                        break
+                else:
+                    self.db_path = possible_paths[0]
+                    logger.warning(f"⚠️ Banco não encontrado, usando: {self.db_path}")
         else:
             self.db_path = Path(db_path)
 

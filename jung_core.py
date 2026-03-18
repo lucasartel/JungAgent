@@ -116,12 +116,37 @@ class Config:
         if id.strip()
     ]
     
-    # Diretórios
-    DATA_DIR = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "./data")
+    # 1. Configuração de Diretórios (Prioridade para Volumes Persistentes)
+    DATA_DIR = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+    if not DATA_DIR:
+        # Tentar detectar volume Railway padrão ou fallback local
+        if os.path.exists("/data"):
+            DATA_DIR = "/data"
+        else:
+            DATA_DIR = "./data"
+    
     os.makedirs(DATA_DIR, exist_ok=True)
     
-    SQLITE_PATH = os.path.join(DATA_DIR, "jung_hybrid.db")
-    CHROMA_PATH = os.path.join(DATA_DIR, "chroma_db")
+    # 2. Resolver Caminho do SQLite
+    _env_sqlite = os.getenv("SQLITE_DB_PATH")
+    if _env_sqlite:
+        if os.path.isabs(_env_sqlite):
+            SQLITE_PATH = _env_sqlite
+        else:
+            # Resolve caminhos relativos (ex: ./jung_data.db) dentro de DATA_DIR
+            SQLITE_PATH = os.path.join(DATA_DIR, os.path.basename(_env_sqlite))
+    else:
+        SQLITE_PATH = os.path.join(DATA_DIR, "jung_hybrid.db")
+        
+    # 3. Resolver Caminho do ChromaDB
+    _env_chroma = os.getenv("CHROMA_DB_PATH")
+    if _env_chroma:
+        if os.path.isabs(_env_chroma):
+            CHROMA_PATH = _env_chroma
+        else:
+            CHROMA_PATH = os.path.join(DATA_DIR, os.path.basename(_env_chroma))
+    else:
+        CHROMA_PATH = os.path.join(DATA_DIR, "chroma_db")
     
     # Memória
     MIN_MEMORIES_FOR_ANALYSIS = 3
@@ -270,8 +295,8 @@ class HybridDatabaseManager:
         Config.ensure_directories()
 
         logger.info(f"🗄️  Inicializando banco HÍBRIDO...")
-        logger.info(f"   SQLite: {Config.SQLITE_PATH}")
-        logger.info(f"   ChromaDB: {Config.CHROMA_PATH}")
+        logger.info(f"   SQLite: {os.path.abspath(Config.SQLITE_PATH)}")
+        logger.info(f"   ChromaDB: {os.path.abspath(Config.CHROMA_PATH)}")
 
         # ===== Thread Safety =====
         self._lock = threading.RLock()  # Reentrant lock para operações SQLite
