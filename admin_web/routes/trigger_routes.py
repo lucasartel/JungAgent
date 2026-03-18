@@ -27,6 +27,30 @@ async def trigger_rumination(admin: Dict = Depends(require_master)):
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/research")
+async def trigger_research(admin: Dict = Depends(require_master)):
+    """Aciona apenas a Pesquisa Autônoma e a Síntese Teórica (Scholar Engine)"""
+    logger.info("⚙️ GATILHO: Acionando Scholar Engine (Pesquisa e Síntese Teórica)")
+    try:
+        from scholar_engine import ScholarEngine
+        from jung_core import HybridDatabaseManager
+        from rumination_config import ADMIN_USER_ID
+        
+        def run_scholar():
+            db = HybridDatabaseManager()
+            try:
+                scholar = ScholarEngine(db)
+                scholar.run_scholarly_routine(ADMIN_USER_ID)
+                return "Pesquisa Teórica concluída."
+            finally:
+                db.close()
+                
+        result_message = await asyncio.to_thread(run_scholar)
+        return {"status": "success", "message": result_message}
+    except Exception as e:
+        logger.error(f"❌ Trigger Research error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/identity-consolidation")
 async def trigger_identity_consolidation(admin: Dict = Depends(require_master)):
     """Aciona a consolidação de crenças manualmente"""

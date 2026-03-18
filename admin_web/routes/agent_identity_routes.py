@@ -302,6 +302,68 @@ async def get_narrative_chapters(
         }
 
 
+@router.get("/relational")
+async def get_relational_identities(
+    request: Request,
+    admin: Dict = Depends(require_master)
+):
+    """
+    Identidade relacional do agente com os usuários
+
+    Restrito ao master admin
+    """
+    try:
+        from jung_core import HybridDatabaseManager
+        from identity_config import AGENT_INSTANCE
+
+        db = HybridDatabaseManager()
+        cursor = db.conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                id,
+                relation_type,
+                target,
+                identity_content,
+                salience,
+                first_emerged_at,
+                last_manifested_at
+            FROM agent_relational_identity
+            WHERE agent_instance = ? AND is_current = 1
+            ORDER BY salience DESC
+            LIMIT 20
+        """, (AGENT_INSTANCE,))
+
+        rows = cursor.fetchall()
+        identities = []
+
+        for row in rows:
+            identities.append({
+                "id": row[0],
+                "type": row[1],
+                "target": row[2],
+                "content": row[3],
+                "salience": row[4],
+                "emerged_at": row[5],
+                "last_active": row[6]
+            })
+
+        logger.info(f"👥 {len(identities)} identidades relacionais acessadas por: {admin['email']}")
+
+        return {
+            "success": True,
+            "identities": identities,
+            "count": len(identities)
+        }
+
+    except Exception as e:
+        logger.error(f"Erro ao obter identidades relacionais: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
 @router.post("/consolidate")
 async def run_manual_consolidation(
     admin: Dict = Depends(require_master)
@@ -760,10 +822,17 @@ async def agent_identity_dashboard(
             </div>
         </div>
 
-        <!-- Capítulos Narrativos -->
-        <div class="card">
-            <h2>📖 Capítulos Narrativos</h2>
-            <div id="narrative-content" class="loading">Carregando...</div>
+        <!-- Capítulos Narrativos e Relacionais -->
+        <div class="dashboard-grid">
+            <div class="card">
+                <h2>📖 Capítulos Narrativos</h2>
+                <div id="narrative-content" class="loading">Carregando...</div>
+            </div>
+
+            <div class="card">
+                <h2>👥 Identidades Relacionais</h2>
+                <div id="relational-content" class="loading">Carregando...</div>
+            </div>
         </div>
     </div>
 
@@ -939,11 +1008,49 @@ async def agent_identity_dashboard(
             }
         }
 
+        async function loadRelational() {
+            try {
+                const response = await fetch('/admin/agent-identity/relational');
+                const data = await response.json();
+
+                if (!data.success) {
+                    document.getElementById('relational-content').innerHTML =
+                        `<div class="error">Erro: ${data.error}</div>`;
+                    return;
+                }
+
+                if (data.count === 0) {
+                    document.getElementById('relational-content').innerHTML =
+                        '<div class="empty-state">Nenhuma identidade relacional ainda</div>';
+                    return;
+                }
+
+                let html = '';
+                data.identities.forEach(rel => {
+                    html += `<div class="belief-item">
+                        <div class="belief-content"><strong>Alvo: ${rel.target}</strong></div>
+                        <div class="belief-content">${rel.content}</div>
+                        <div class="belief-meta">
+                            <span class="badge badge-type">${rel.type}</span>
+                            <span>Saliência: ${(rel.salience * 10).toFixed(1)}/10</span>
+                        </div>
+                    </div>`;
+                });
+
+                document.getElementById('relational-content').innerHTML = html;
+
+            } catch (error) {
+                document.getElementById('relational-content').innerHTML =
+                    `<div class="error">Erro ao carregar relações: ${error.message}</div>`;
+            }
+        }
+
         function loadAllData() {
             loadStats();
             loadBeliefs();
             loadContradictions();
             loadNarrative();
+            loadRelational();
         }
 
         // Função para mostrar mensagens de feedback
