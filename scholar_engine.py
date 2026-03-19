@@ -165,14 +165,72 @@ class ScholarEngine:
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
 
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError:
-            start = cleaned.find("{")
-            end = cleaned.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                return json.loads(cleaned[start:end + 1])
-            raise
+        json_candidates = [cleaned]
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            json_candidates.append(cleaned[start:end + 1])
+
+        last_error = None
+        for candidate in json_candidates:
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError as exc:
+                last_error = exc
+
+        recovered = self._recover_topic_payload(cleaned)
+        if recovered:
+            logger.warning(
+                "Scholar recovered malformed topic JSON with heuristic parser: %s",
+                cleaned[:300].replace("\n", "\\n"),
+            )
+            return recovered
+
+        if last_error:
+            raise last_error
+
+        raise json.JSONDecodeError("Unable to parse Scholar payload", cleaned, 0)
+
+    def _recover_string_field(self, text: str, field_name: str) -> Optional[str]:
+        match = re.search(rf'"{field_name}"\s*:\s*"', text, re.IGNORECASE)
+        if not match:
+            return None
+
+        remainder = text[match.end():]
+        collected = []
+        escaped = False
+
+        for char in remainder:
+            if char == '"' and not escaped:
+                break
+            if char in "\r\n}" and not collected:
+                break
+            collected.append(char)
+            escaped = (char == "\\") and not escaped
+            if char != "\\":
+                escaped = False
+
+        candidate = "".join(collected).strip().rstrip(",")
+        return candidate or None
+
+    def _recover_topic_payload(self, raw_text: str) -> Optional[Dict]:
+        should_research_match = re.search(
+            r'"should_research"\s*:\s*(true|false)',
+            raw_text,
+            re.IGNORECASE,
+        )
+        topic = self._recover_string_field(raw_text, "topic")
+        reason = self._recover_string_field(raw_text, "reason")
+
+        recovered = {}
+        if should_research_match:
+            recovered["should_research"] = should_research_match.group(1).lower() == "true"
+        if topic:
+            recovered["topic"] = topic
+        if reason:
+            recovered["reason"] = reason
+
+        return recovered or None
 
     def _start_run(self, user_id: str, trigger_source: str, history_excerpt: str) -> int:
         cursor = self.db.conn.cursor()
@@ -253,6 +311,7 @@ TEMAS JÁ PESQUISADOS RECENTEMENTE:
 {recent_topics}
 
 Responda APENAS com um objeto JSON válido, sem formato markdown:
+IMPORTANTE: não use quebras de formato, comentários ou aspas internas não escapadas dentro dos valores.
 {{
   "should_research": true/false,
   "topic": "Nome do Topico (ex: A Queda em Camus, Sombra em Jung, Fenomenologia do Cansaço)",
