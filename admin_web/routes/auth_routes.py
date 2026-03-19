@@ -14,6 +14,7 @@ from fastapi import APIRouter, Request, Form, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 import logging
+from security_config import should_use_secure_cookie
 
 # Managers (inicializados em main.py)
 auth_manager = None
@@ -135,10 +136,11 @@ async def login(
         response.set_cookie(
             key="session_id",
             value=session_id,
-            httponly=True,      # Não acessível via JavaScript (XSS protection)
-            secure=True,        # HTTPS obrigatório em produção
-            samesite='lax',     # CSRF protection
-            max_age=24*60*60    # 24 horas em segundos
+            httponly=True,
+            secure=should_use_secure_cookie(request),
+            samesite='lax',
+            max_age=24*60*60,
+            path='/'
         )
 
         return response
@@ -179,7 +181,7 @@ async def logout(request: Request):
     )
 
     # Deletar cookie
-    response.delete_cookie('session_id')
+    response.delete_cookie('session_id', path='/')
 
     return response
 

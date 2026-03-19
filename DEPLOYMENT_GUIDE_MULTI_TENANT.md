@@ -22,6 +22,20 @@
 
 ---
 
+## Security Env Vars (Railway)
+
+Configure estas variáveis no Railway antes ou junto do deploy:
+
+```bash
+ENABLE_UNSAFE_ADMIN_ENDPOINTS=false
+SESSION_COOKIE_SECURE=true
+```
+
+- `ENABLE_UNSAFE_ADMIN_ENDPOINTS=false` remove endpoints inseguros de debug, teste e migração da superfície pública.
+- `SESSION_COOKIE_SECURE=true` força o cookie de sessão do admin a usar o atributo `Secure` atrás do HTTPS do Railway.
+
+---
+
 ## 🎯 Passo a Passo de Execução
 
 ### **FASE 1: Aguardar Deploy no Railway**

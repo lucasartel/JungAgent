@@ -1,6 +1,6 @@
 import asyncio
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
@@ -8,7 +8,10 @@ import os
 import sys
 import sqlite3
 import logging
+from typing import Dict
 from dotenv import load_dotenv
+from admin_web.auth.middleware import require_master
+from security_config import unsafe_admin_endpoints_enabled
 
 # Desabilitar telemetria do ChromaDB
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
@@ -31,6 +34,20 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+UNSAFE_ADMIN_ENDPOINTS_ENABLED = unsafe_admin_endpoints_enabled()
+UNSAFE_ROUTE_PATHS = {
+    "/test/proactive",
+    "/test/consent",
+    "/admin/migrate/consent",
+    "/admin/migrate/facts-v2",
+    "/admin/facts-v2/status",
+    "/admin/facts-v2/list",
+    "/admin/test-consolidation",
+    "/admin/test-extraction",
+    "/admin/check-identity-tables",
+    "/admin/force-identity-migration",
+    "/admin/test",
+}
 
 # ============================================================================
 # LIFECYCLE MANAGER# ============================================================================
@@ -451,7 +468,7 @@ async def test_consent():
         }
 
 @app.post("/admin/migrate/consent")
-async def migrate_consent():
+async def migrate_consent(admin: Dict = Depends(require_master)):
     """
     ENDPOINT PARA EXECUTAR A MIGRAÇÃO DE CONSENTIMENTO
 
@@ -677,7 +694,7 @@ async def migrate_evidence():
         }
 
 @app.api_route("/admin/migrate/facts-v2", methods=["GET", "POST"])
-async def migrate_facts_v2_endpoint():
+async def migrate_facts_v2_endpoint(admin: Dict = Depends(require_master)):
     """
     ENDPOINT TEMPORÁRIO: Migrar para Sistema de Fatos V2
 
@@ -723,7 +740,7 @@ async def migrate_facts_v2_endpoint():
         }
 
 @app.get("/admin/facts-v2/status")
-async def facts_v2_status():
+async def facts_v2_status(admin: Dict = Depends(require_master)):
     """
     Verifica status da migração para user_facts_v2
 
@@ -782,7 +799,7 @@ async def facts_v2_status():
         }
 
 @app.get("/admin/facts-v2/list")
-async def facts_v2_list(user_id: str = None):
+async def facts_v2_list(user_id: str = None, admin: Dict = Depends(require_master)):
     """
     Lista todos os fatos da tabela user_facts_v2 com análise completa
 
@@ -889,7 +906,7 @@ async def facts_v2_list(user_id: str = None):
         }
 
 @app.api_route("/admin/test-consolidation", methods=["GET", "POST"])
-async def test_consolidation(user_id: str = None):
+async def test_consolidation(user_id: str = None, admin: Dict = Depends(require_master)):
     """
     ENDPOINT DE TESTE: Consolidação de Memórias
 
@@ -1116,7 +1133,11 @@ async def memory_metrics(user_id: str = None, format: str = "json"):
 
 
 @app.api_route("/admin/test-extraction", methods=["GET", "POST"])
-async def test_extraction(request: Request = None, message: str = None):
+async def test_extraction(
+    request: Request = None,
+    message: str = None,
+    admin: Dict = Depends(require_master)
+):
     """
     Endpoint de diagnóstico para testar extração de fatos diretamente
 
@@ -1352,7 +1373,7 @@ except Exception as e:
 # ENDPOINTS TEMPORÁRIOS DE DIAGNÓSTICO
 # ============================================================================
 @app.get("/admin/check-identity-tables")
-async def check_identity_tables(request: Request):
+async def check_identity_tables(request: Request, admin: Dict = Depends(require_master)):
     """
     DIAGNÓSTICO: Verifica quais tabelas agent_* existem no banco
 
@@ -1397,7 +1418,7 @@ async def check_identity_tables(request: Request):
 
 
 @app.get("/admin/force-identity-migration")
-async def force_identity_migration(request: Request):
+async def force_identity_migration(request: Request, admin: Dict = Depends(require_master)):
     """
     TEMPORÁRIO: Força aplicação da migration de identidade do agente
 
@@ -1425,6 +1446,25 @@ async def force_identity_migration(request: Request):
             "success": False,
             "error": str(e)
         }
+
+
+def _prune_unsafe_routes() -> None:
+    if UNSAFE_ADMIN_ENDPOINTS_ENABLED:
+        logger.warning("Unsafe admin endpoints enabled via environment flag.")
+        return
+
+    original_count = len(app.router.routes)
+    app.router.routes[:] = [
+        route for route in app.router.routes
+        if getattr(route, "path", None) not in UNSAFE_ROUTE_PATHS
+    ]
+    removed_count = original_count - len(app.router.routes)
+
+    if removed_count:
+        logger.info("Pruned %s unsafe routes from the production surface.", removed_count)
+
+
+_prune_unsafe_routes()
 
 
 # ============================================================================

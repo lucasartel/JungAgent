@@ -33,6 +33,8 @@ from collections import Counter
 from dotenv import load_dotenv
 from openai import OpenAI
 
+logger = logging.getLogger(__name__)
+
 # ChromaDB + LangChain
 try:
     from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -61,7 +63,6 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger(__name__)
 
 # ============================================================
 # DATACLASSES

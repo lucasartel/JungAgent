@@ -412,12 +412,20 @@
                 <p>Monitoramento de Qualidade do Sistema de Memória</p>
             </div>
             <div class="header-actions">
+                {% if unsafe_admin_endpoints_enabled %}
                 <button class="btn-consolidate" onclick="runConsolidation()" id="btnConsolidate">
                     ⚡ Consolidar Memórias
                 </button>
+                {% endif %}
                 <a href="/admin" class="back-button">← Dashboard</a>
             </div>
         </div>
+
+        {% if not unsafe_admin_endpoints_enabled %}
+        <div class="alert alert-info">
+            A consolidação manual foi desativada nesta instância por segurança.
+        </div>
+        {% endif %}
 
         <div id="alertContainer"></div>
 
@@ -631,6 +639,11 @@
 
         async function runConsolidation() {
             const btn = document.getElementById('btnConsolidate');
+            if (!btn) {
+                showAlert('A consolidação manual está desativada nesta instância.', 'info');
+                return;
+            }
+
             btn.disabled = true;
             btn.textContent = '⏳ Consolidando...';
 

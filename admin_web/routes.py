@@ -10,6 +10,7 @@ import json
 # MIGRADO: Agora usa sistema session-based multi-tenant
 # Master Admin e Org Admin podem acessar (com verificação de organização)
 from admin_web.auth.middleware import require_master, require_org_admin
+from security_config import unsafe_admin_endpoints_enabled
 
 # Importar core do Jung (opcional - pode falhar se dependências não estiverem disponíveis)
 JUNG_CORE_ERROR = None
@@ -29,6 +30,7 @@ except Exception as e:
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory="admin_web/templates")
 logger = logging.getLogger(__name__)
+UNSAFE_ADMIN_ENDPOINTS_ENABLED = unsafe_admin_endpoints_enabled()
 
 # Inicializar componentes (Singleton pattern simples)
 _db_manager = None
@@ -104,8 +106,11 @@ def verify_user_access(admin: Dict, user_id: str, db_manager) -> bool:
 # ============================================================================
 
 @router.get("/test")
-async def test_route():
-    """Rota de teste simples - não requer autenticação"""
+async def test_route(admin: Dict = Depends(require_master)):
+    """Rota de teste simples para administradores."""
+    if not UNSAFE_ADMIN_ENDPOINTS_ENABLED:
+        raise HTTPException(404, "Not found")
+
     return {
         "status": "ok",
         "message": "Admin routes carregadas com sucesso!",
@@ -1767,7 +1772,10 @@ async def memory_metrics_dashboard(
     admin: Dict = Depends(require_master)
 ):
     """Dashboard de Métricas de Qualidade de Memória (Admin only)"""
-    return templates.TemplateResponse("memory_metrics.html", {"request": request})
+    return templates.TemplateResponse("memory_metrics.html", {
+        "request": request,
+        "unsafe_admin_endpoints_enabled": UNSAFE_ADMIN_ENDPOINTS_ENABLED
+    })
 
 
 # ============================================================
