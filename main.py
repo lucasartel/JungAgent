@@ -1484,18 +1484,19 @@ async def stripe_webhook(request: Request):
     event = None
 
     try:
-        if endpoint_secret:
-            event = stripe.Webhook.construct_event(
-                payload, sig_header, endpoint_secret
-            )
-        else:
-            # Fallback for testing without signature
-            import json
-            event = json.loads(payload)
-            logger.warning("Stripe Webhook signature not verified (no secret set)")
+        if not endpoint_secret:
+            logger.error("Stripe webhook rejected: STRIPE_WEBHOOK_SECRET is not configured.")
+            from fastapi import HTTPException
+            raise HTTPException(status_code=503, detail="Webhook secret not configured")
+
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, endpoint_secret
+        )
     except Exception as e:
-        logger.error(f"Stripe Webhook Error: {e}")
         from fastapi import HTTPException
+        if isinstance(e, HTTPException):
+            raise
+        logger.error(f"Stripe Webhook Error: {e}")
         raise HTTPException(status_code=400, detail="Invalid payload")
 
     if event['type'] == 'checkout.session.completed':

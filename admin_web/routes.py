@@ -146,7 +146,7 @@ async def dashboard(request: Request, admin: Dict = Depends(require_master)):
             "python_version": platform.python_version(),
             "dependencies": deps_status,
             "error_message": "jung_core não pôde ser carregado.",
-            "error_traceback": JUNG_CORE_ERROR
+            "error_traceback": None
         })
     
     # Modo normal com jung_core disponível
@@ -1820,20 +1820,70 @@ async def research_dashboard(
     """Dashboard da Pesquisa Autônoma (Extroverted Path)"""
     db = get_db()
     cursor = db.conn.cursor()
-    
+
+    cursor.execute("PRAGMA table_info(external_research)")
+    research_columns = {row[1] for row in cursor.fetchall()}
+    status_expr = "status" if "status" in research_columns else "'active' AS status"
+    source_url_expr = "source_url" if "source_url" in research_columns else "NULL AS source_url"
+    raw_excerpt_expr = "raw_excerpt" if "raw_excerpt" in research_columns else "NULL AS raw_excerpt"
+    trigger_reason_expr = "trigger_reason" if "trigger_reason" in research_columns else "NULL AS trigger_reason"
+    research_lens_expr = "research_lens" if "research_lens" in research_columns else "NULL AS research_lens"
+
     # Buscar todas as pesquisas do banco
-    cursor.execute("""
-        SELECT id, user_id, topic, source_url, raw_excerpt, synthesized_insight, status,
+    cursor.execute(f"""
+        SELECT id, user_id, topic, {source_url_expr}, {raw_excerpt_expr}, synthesized_insight,
+               {trigger_reason_expr}, {research_lens_expr}, {status_expr},
                datetime(created_at, 'localtime') as created_at
         FROM external_research
         ORDER BY created_at DESC
         LIMIT 100
     """)
     researches = [dict(row) for row in cursor.fetchall()]
-    
+
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scholar_runs'")
+    has_scholar_runs = cursor.fetchone() is not None
+
+    recent_runs = []
+    run_stats = {
+        "total_runs": 0,
+        "completed_runs": 0,
+        "failed_runs": 0,
+        "no_topic_runs": 0,
+        "duplicate_runs": 0,
+    }
+
+    if has_scholar_runs:
+        cursor.execute("""
+            SELECT id, user_id, trigger_source, status, topic, result_summary, error_message,
+                   article_chars, research_id,
+                   datetime(started_at, 'localtime') as started_at,
+                   datetime(finished_at, 'localtime') as finished_at
+            FROM scholar_runs
+            ORDER BY started_at DESC
+            LIMIT 20
+        """)
+        recent_runs = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute("SELECT COUNT(*) FROM scholar_runs")
+        run_stats["total_runs"] = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM scholar_runs WHERE status = 'completed'")
+        run_stats["completed_runs"] = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM scholar_runs WHERE status IN ('topic_error', 'research_error', 'no_llm', 'empty_article')")
+        run_stats["failed_runs"] = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM scholar_runs WHERE status IN ('no_topic', 'no_history')")
+        run_stats["no_topic_runs"] = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM scholar_runs WHERE status = 'duplicate_topic'")
+        run_stats["duplicate_runs"] = cursor.fetchone()[0]
+
     return templates.TemplateResponse("dashboards/research.html", {
         "request": request,
-        "researches": researches
+        "researches": researches,
+        "recent_runs": recent_runs,
+        "run_stats": run_stats,
     })
 
 # ============================================================
@@ -2822,8 +2872,7 @@ async def jung_mind_data(admin: Dict = Depends(require_master)):
             from rumination_config import ADMIN_USER_ID
         except ImportError:
             logger.error("❌ Não foi possível importar ADMIN_USER_ID de rumination_config")
-            ADMIN_USER_ID = "367f9e509e396d51"  # Fallback hardcoded
-            logger.info(f"   Usando fallback ADMIN_USER_ID: {ADMIN_USER_ID}")
+            raise HTTPException(500, "ADMIN_USER_ID não configurado para esta rota")
 
         db = get_db()
         conn = db.conn

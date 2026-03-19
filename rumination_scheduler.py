@@ -93,8 +93,12 @@ def run_rumination_job():
             from scholar_engine import ScholarEngine
             scholar = ScholarEngine(db)
             logger.info("\n📚 FASE 2: PESQUISA (Caminho Extrovertido)")
-            scholar.run_scholarly_routine(user_id)
-            status_msg += " Pesquisa processada."
+            scholar_result = scholar.run_scholarly_routine(
+                user_id,
+                trigger_source="scheduled_rumination_job"
+            )
+            status_msg += f" Pesquisa: {scholar_result.get('status', 'unknown')}."
+            logger.info(f"   Scholar result: {scholar_result}")
         except Exception as e:
             logger.error(f"⚠️ Erro no Motor Scholar: {e}")
             status_msg += " Erro no Motor Scholar."

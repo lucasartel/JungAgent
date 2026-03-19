@@ -6,6 +6,7 @@ import logging
 import os
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from admin_web.auth.middleware import require_master
 from typing import Dict
 
@@ -40,13 +41,21 @@ async def trigger_research(admin: Dict = Depends(require_master)):
             db = HybridDatabaseManager()
             try:
                 scholar = ScholarEngine(db)
-                scholar.run_scholarly_routine(ADMIN_USER_ID)
-                return "Pesquisa Teórica concluída."
+                return scholar.run_scholarly_routine(
+                    ADMIN_USER_ID,
+                    trigger_source="manual_admin_trigger"
+                )
             finally:
                 db.close()
                 
-        result_message = await asyncio.to_thread(run_scholar)
-        return {"status": "success", "message": result_message}
+        result = await asyncio.to_thread(run_scholar)
+        payload = {
+            "status": "success" if result.get("success") else "error",
+            "message": result.get("reason", "Scholar executado."),
+            "result": result
+        }
+        status_code = 200 if result.get("success") or result.get("status") in {"no_topic", "no_history"} else 500
+        return JSONResponse(payload, status_code=status_code)
     except Exception as e:
         logger.error(f"❌ Trigger Research error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

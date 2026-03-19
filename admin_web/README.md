@@ -34,10 +34,10 @@ O painel administrativo do Jung Claude é uma interface web completa para:
 **URL:** `https://seu-app.railway.app/admin`
 
 **Credenciais padrão:**
-- Usuário: `admin`
-- Senha: `admin`
+- Não há credenciais padrão ativas no fluxo atual.
+- O login oficial usa sessão e usuários admin persistidos no banco.
 
-> ⚠️ **Produção:** Configure variáveis de ambiente `ADMIN_USER` e `ADMIN_PASSWORD`
+> ⚠️ **Produção:** não reative `admin/admin`. Use apenas o fluxo atual de login em `/admin/login`.
 
 ---
 
@@ -86,9 +86,9 @@ engine = JungianEngine(db)
 
 ## 🔐 Autenticação
 
-### HTTP Basic Authentication
+### Sessão Autenticada
 
-Todas as rotas (exceto `/admin/test`) exigem autenticação:
+O fluxo atual de autenticação usa sessão web e usuários admin persistidos no banco. O módulo HTTP Basic presente no repositório é legado e não deve ser usado como mecanismo principal de produção.
 
 ```python
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -102,11 +102,11 @@ def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
 
 ### Configuração de Produção
 
-No Railway, configure as variáveis de ambiente:
+No Railway, mantenha o fluxo de login por sessão e configure os segredos da aplicação. Para hardening adicional:
 
 ```bash
-ADMIN_USER=seu_usuario_seguro
-ADMIN_PASSWORD=sua_senha_forte_123
+ENABLE_UNSAFE_ADMIN_ENDPOINTS=false
+SESSION_COOKIE_SECURE=true
 ```
 
 ---
@@ -701,7 +701,7 @@ curl -X POST \
 #### 1. Acessar o Painel
 
 1. Navegue para `https://seu-app.railway.app/admin`
-2. Insira credenciais (admin/admin ou customizadas)
+2. Insira as credenciais do admin cadastrado no sistema
 3. Visualize dashboard com estatísticas gerais
 
 #### 2. Analisar um Usuário
@@ -942,8 +942,8 @@ const ctx = document.getElementById('bigFiveRadarChart'); // ✅ Mesmo ID
 1. Verifique variáveis de ambiente:
 ```bash
 # Railway
-ADMIN_USER=admin
-ADMIN_PASSWORD=admin
+ENABLE_UNSAFE_ADMIN_ENDPOINTS=false
+SESSION_COOKIE_SECURE=true
 ```
 
 2. Limpe cache do navegador (credenciais HTTP Basic ficam em cache)
@@ -1007,10 +1007,10 @@ CHROMA_PERSIST_DIR = "./chroma_db"  # Certifique-se que existe
 
 ### Recomendações de Produção
 
-1. **Mude credenciais padrão**
+1. **Mantenha o fluxo de sessão e evite credenciais padrão**
 ```bash
-ADMIN_USER=seu_usuario_forte
-ADMIN_PASSWORD=SenhaForte123!@#
+ENABLE_UNSAFE_ADMIN_ENDPOINTS=false
+SESSION_COOKIE_SECURE=true
 ```
 
 2. **Use HTTPS** (Railway fornece automaticamente)

@@ -76,11 +76,8 @@ class AuthManager:
                 except ValueError:
                     logger.error(f"❌ Formato inválido em ADMIN_USERS: {user_entry}")
 
-        # Fallback para desenvolvimento (admin/admin)
         if not users:
-            logger.warning("⚠️ Nenhum usuário configurado! Usando admin/admin (SOMENTE DESENVOLVIMENTO)")
-            default_password = "admin"
-            users["admin"] = bcrypt.hashpw(default_password.encode('utf-8'), bcrypt.gensalt())
+            logger.error("❌ Nenhum usuário HTTP Basic configurado. O fallback admin/admin foi desativado.")
 
         return users
 
@@ -127,6 +124,13 @@ class AuthManager:
 
         # Log de tentativa (sem senha)
         logger.info(f"🔑 Tentativa de login: {username}")
+
+        if not self.users:
+            logger.error("❌ HTTP Basic desabilitado: nenhum usuário configurado.")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="HTTP Basic auth is not configured",
+            )
 
         if not self.verify_password(username, password):
             logger.warning(f"❌ Falha de autenticação para: {username}")

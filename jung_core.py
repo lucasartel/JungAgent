@@ -744,12 +744,58 @@ class HybridDatabaseManager:
                 source_url TEXT,
                 raw_excerpt TEXT,
                 synthesized_insight TEXT,
+                trigger_reason TEXT,
+                research_lens TEXT,
                 
                 status TEXT DEFAULT 'active', -- 'active', 'archived'
                 
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+
+        try:
+            cursor.execute("ALTER TABLE external_research ADD COLUMN status TEXT DEFAULT 'active';")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE external_research ADD COLUMN raw_excerpt TEXT;")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE external_research ADD COLUMN source_url TEXT;")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE external_research ADD COLUMN trigger_reason TEXT;")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE external_research ADD COLUMN research_lens TEXT;")
+        except sqlite3.OperationalError:
+            pass
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS scholar_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                trigger_source TEXT DEFAULT 'unknown',
+                status TEXT NOT NULL,
+                topic TEXT,
+                history_excerpt TEXT,
+                result_summary TEXT,
+                error_message TEXT,
+                article_chars INTEGER DEFAULT 0,
+                research_id INTEGER,
+                started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                finished_at DATETIME,
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (research_id) REFERENCES external_research(id)
             )
         """)
 
@@ -1226,10 +1272,12 @@ class HybridDatabaseManager:
             int: ID da conversa no SQLite
         """
 
-        # 🔍 DEBUG CRÍTICO: Log de salvamento para detectar vazamento
-        logger.info(f"💾 [DEBUG] Salvando conversa para user_id='{user_id}' (type={type(user_id).__name__})")
-        logger.info(f"   User name: '{user_name}'")
-        logger.info(f"   Input preview: '{user_input[:50]}...'")
+        # Log minimal metadata only. Avoid writing user content to application logs.
+        logger.info(
+            "Saving conversation for user_id=%s message_length=%s",
+            user_id,
+            len(user_input) if user_input else 0,
+        )
 
         # Garantir que user_id é string para consistência
         user_id_str = str(user_id) if user_id else None
@@ -2583,9 +2631,13 @@ Resposta: {ai_response}
                             value: str, conversation_id: int):
         """Salva ou atualiza fato (com versionamento)"""
 
-        # 🔍 DEBUG CRÍTICO: Log de salvamento de fato
-        logger.info(f"📝 [DEBUG] Salvando fato para user_id='{user_id}' (type={type(user_id).__name__})")
-        logger.info(f"   Categoria: {category}, Chave: {key}, Valor: {value}")
+        # Log fact metadata only. Avoid persisting extracted content in logs.
+        logger.info(
+            "Saving fact for user_id=%s category=%s key=%s",
+            user_id,
+            category,
+            key,
+        )
 
         with self._lock:
             cursor = self.conn.cursor()
@@ -4090,7 +4142,7 @@ class JungianEngine:
 
                 # B. Injetar Conhecimento Extrovertido (Pesquisa Autônoma)
                 _ri_cursor.execute("""
-                    SELECT topic, synthesized_insight
+                    SELECT topic, synthesized_insight, trigger_reason, research_lens
                     FROM external_research
                     WHERE user_id = ? AND status = 'active'
                     ORDER BY created_at DESC
@@ -4103,6 +4155,10 @@ class JungianEngine:
                         _er_text = (_er_row[1] or "").strip()
                         if _er_text:
                             _er_lines.append(f"Tópico Estudado: {_er_row[0]}")
+                            if _er_row[2]:
+                                _er_lines.append(f"Motivo interno da pesquisa: {_er_row[2]}")
+                            if _er_row[3]:
+                                _er_lines.append(f"Lente teórica usada: {_er_row[3]}")
                             _er_lines.append(f"- {_er_text}")
                     semantic_context = semantic_context + "\n".join(_er_lines)
                     logger.info(f"📚 [SCHOLAR] {_ri_cursor.rowcount} temas de pesquisa (Caminho Extrovertido) injetados.")
@@ -4264,11 +4320,12 @@ class JungianEngine:
             user_input=user_input
         )
 
-        # Log de debug
-        logger.info(f"🤖 [DEBUG] ========== PROMPT PARA LLM (v7.0) ==========")
-        logger.info(f"   Semantic context (primeiros 500 chars):\n{semantic_context[:500]}")
-        logger.info(f"   User input: {user_input}")
-        logger.info(f"====================================================")
+        logger.info(
+            "Preparing LLM prompt for user_id=%s semantic_context_length=%s input_length=%s",
+            user_id,
+            len(semantic_context) if semantic_context else 0,
+            len(user_input) if user_input else 0,
+        )
 
         try:
             # Usar Mistral via OpenRouter para conversação (se disponível)
