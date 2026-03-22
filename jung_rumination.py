@@ -144,6 +144,16 @@ class RuminationEngine:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tensions_user_status ON rumination_tensions(user_id, status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_user_status ON rumination_insights(user_id, status)")
 
+        try:
+            cursor.execute("ALTER TABLE rumination_fragments ADD COLUMN detection_attempts INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE rumination_fragments ADD COLUMN last_detection_attempt_at DATETIME")
+        except sqlite3.OperationalError:
+            pass
+
         self.db.conn.commit()
         logger.info("✅ Tabelas de ruminação criadas/verificadas")
 
@@ -162,7 +172,8 @@ class RuminationEngine:
                 'ai_response': str,
                 'conversation_id': int,
                 'tension_level': float,
-                'affective_charge': float
+                'affective_charge': float,
+                'existential_depth': float
             }
 
         Returns:
@@ -175,9 +186,10 @@ class RuminationEngine:
             return []
 
         # Verificar se conversa tem tensão mínima
-        tension = conversation_data.get('tension_level', 0)
+        tension = float(conversation_data.get('tension_level', 0) or 0)
+        activation_score = self._calculate_activation_score(conversation_data)
 
-        if tension < MIN_TENSION_LEVEL:
+        if activation_score < MIN_RUMINATION_ACTIVATION_SCORE:
             return []
 
         user_input = conversation_data['user_input']
@@ -185,8 +197,8 @@ class RuminationEngine:
         # Montar prompt de extração
         prompt = EXTRACTION_PROMPT.format(
             user_input=user_input,
-            tension_level=conversation_data.get('tension_level', 0),
-            affective_charge=conversation_data.get('affective_charge', 0),
+            tension_level=round(max(tension, activation_score) * 10, 1),
+            affective_charge=self._format_affective_charge(conversation_data.get('affective_charge', 0)),
             response_length=len(conversation_data.get('ai_response', ''))
         )
 
@@ -229,12 +241,13 @@ class RuminationEngine:
                     conversation_data['conversation_id'],
                     frag['quote'],
                     frag['emotional_weight'],
-                    conversation_data.get('tension_level', 0)
+                    max(tension, activation_score)
                 ))
 
                 fragment_ids.append(cursor.lastrowid)
 
             self.db.conn.commit()
+            logger.info(f"   Activation score da ruminacao: {activation_score:.2f}")
 
             logger.info(f"   🧩 {len(fragment_ids)} fragmentos extraídos")
 
@@ -280,12 +293,15 @@ class RuminationEngine:
 
         # Buscar fragmentos não processados
         cursor.execute("""
-            SELECT id, fragment_type, content, source_quote, emotional_weight
+            SELECT id, fragment_type, content, source_quote, emotional_weight,
+                   COALESCE(detection_attempts, 0) AS detection_attempts
             FROM rumination_fragments
-            WHERE user_id = ? AND processed = 0
+            WHERE user_id = ?
+              AND processed = 0
+              AND COALESCE(detection_attempts, 0) < ?
             ORDER BY created_at DESC
-            LIMIT 10
-        """, (user_id,))
+            LIMIT 12
+        """, (user_id, MAX_DETECTION_ATTEMPTS_WITHOUT_TENSION))
 
         recent_fragments = cursor.fetchall()
 
@@ -330,16 +346,13 @@ class RuminationEngine:
                 logger.info("   ℹ️  Nenhuma tensão detectada")
                 # Marcar fragmentos como processados mesmo assim
                 frag_ids = [f[0] for f in recent_fragments]
-                cursor.execute(f"""
-                    UPDATE rumination_fragments
-                    SET processed = 1
-                    WHERE id IN ({','.join(['?']*len(frag_ids))})
-                """, frag_ids)
+                self._register_detection_attempts(cursor, frag_ids)
                 self.db.conn.commit()
                 return []
 
             # Salvar tensões
             tension_ids = []
+            saved_tensions = []
 
             for tens in tensions:
                 # Verificar intensidade mínima
@@ -368,18 +381,27 @@ class RuminationEngine:
                 ))
 
                 tension_ids.append(cursor.lastrowid)
+                saved_tensions.append(tens)
 
-            # Marcar fragmentos como processados
-            all_fragment_ids = set()
-            for f in recent_fragments:
-                all_fragment_ids.add(f[0])
+            if not tension_ids:
+                frag_ids = [f[0] for f in recent_fragments]
+                self._register_detection_attempts(cursor, frag_ids)
+                self.db.conn.commit()
+                return []
 
-            if all_fragment_ids:
-                cursor.execute(f"""
-                    UPDATE rumination_fragments
-                    SET processed = 1
-                    WHERE id IN ({','.join(['?']*len(all_fragment_ids))})
-                """, list(all_fragment_ids))
+            used_fragment_ids = self._extract_used_fragment_ids(saved_tensions)
+            recent_fragment_ids = {f[0] for f in recent_fragments}
+            leftover_fragment_ids = sorted(recent_fragment_ids - used_fragment_ids)
+
+            if used_fragment_ids:
+                self._register_detection_attempts(
+                    cursor,
+                    sorted(used_fragment_ids),
+                    mark_processed=True
+                )
+
+            if leftover_fragment_ids:
+                self._register_detection_attempts(cursor, leftover_fragment_ids)
 
             self.db.conn.commit()
 
@@ -403,6 +425,69 @@ class RuminationEngine:
     # ========================================
     # HELPERS INTERNOS
     # ========================================
+
+    def _format_affective_charge(self, affective_charge: float) -> float:
+        """Normaliza carga afetiva para o formato esperado pelo prompt (0-100)."""
+        if affective_charge is None:
+            return 0.0
+        if affective_charge <= 1.0:
+            return round(affective_charge * 100, 1)
+        return round(min(float(affective_charge), 100.0), 1)
+
+    def _calculate_activation_score(self, conversation_data: Dict) -> float:
+        """Combina sinais existenciais e afetivos para decidir se vale ruminar."""
+        tension = float(conversation_data.get('tension_level', 0) or 0)
+        existential_depth = float(conversation_data.get('existential_depth', 0) or 0)
+        affective_charge = float(conversation_data.get('affective_charge', 0) or 0)
+        affective_score = affective_charge if affective_charge <= 1.0 else affective_charge / 100.0
+
+        return min(1.0, max(tension, existential_depth, affective_score))
+
+    def _register_detection_attempts(
+        self,
+        cursor,
+        fragment_ids: List[int],
+        mark_processed: bool = False,
+    ) -> None:
+        """Incrementa tentativas sem descartar cedo demais o material ainda fermentando."""
+        if not fragment_ids:
+            return
+
+        placeholders = ",".join(["?"] * len(fragment_ids))
+        cursor.execute(
+            f"""
+            UPDATE rumination_fragments
+            SET detection_attempts = COALESCE(detection_attempts, 0) + 1,
+                last_detection_attempt_at = ?,
+                processed = CASE
+                    WHEN ? = 1 THEN 1
+                    WHEN COALESCE(detection_attempts, 0) + 1 >= ? THEN 1
+                    ELSE processed
+                END
+            WHERE id IN ({placeholders})
+            """,
+            (
+                datetime.now().isoformat(),
+                1 if mark_processed else 0,
+                MAX_DETECTION_ATTEMPTS_WITHOUT_TENSION,
+                *fragment_ids,
+            ),
+        )
+
+    def _extract_used_fragment_ids(self, tensions: List[Dict]) -> set:
+        """Extrai IDs de fragmentos efetivamente usados na criacao das tensoes."""
+        used_ids = set()
+
+        for tension in tensions:
+            for pole_key in ("pole_a", "pole_b"):
+                pole = tension.get(pole_key, {}) or {}
+                for fragment_id in pole.get("fragment_ids", []):
+                    try:
+                        used_ids.add(int(fragment_id))
+                    except (TypeError, ValueError):
+                        continue
+
+        return used_ids
 
     def _parse_json_response(self, response: str) -> Dict:
         """Parse robusto de resposta JSON do LLM"""
@@ -428,7 +513,7 @@ class RuminationEngine:
 
         lines = []
         for frag in fragments:
-            frag_id, frag_type, content, quote, weight = frag
+            frag_id, frag_type, content, quote, weight = frag[:5]
             lines.append(f"[ID {frag_id}] {frag_type.upper()}: {content}")
             lines.append(f"  Evidência: \"{quote}\"")
             lines.append(f"  Peso emocional: {weight:.2f}")
@@ -1141,4 +1226,3 @@ class RuminationEngine:
         """Atualiza timestamp de atividade do usuário"""
         # Implementado no jung_core, apenas placeholder
         pass
-

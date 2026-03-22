@@ -84,7 +84,7 @@ class IdentityRuminationBridge:
                        first_detected_at
                 FROM rumination_tensions
                 WHERE maturity_score > 0.6
-                  AND status = 'open'
+                  AND status IN ('open', 'maturing', 'ready_for_synthesis')
             """)
 
             tensions = cursor.fetchall()
@@ -348,8 +348,8 @@ class IdentityRuminationBridge:
                 SELECT id, pole_a, pole_b, contradiction_type, tension_level
                 FROM agent_identity_contradictions
                 WHERE status IN ('unresolved', 'integrating')
-                  AND tension_level > 0.7
-                  AND last_activated_at > datetime('now', '-7 days')
+                  AND tension_level > 0.55
+                  AND last_activated_at > datetime('now', '-14 days')
                   AND (fed_to_rumination = 0 OR fed_to_rumination IS NULL)
             """)
 
@@ -367,7 +367,8 @@ class IdentityRuminationBridge:
                 # Verificar idempotência: tensão equivalente já existe?
                 cursor.execute("""
                     SELECT id FROM rumination_tensions
-                    WHERE pole_a_content = ? AND pole_b_content = ? AND status = 'open'
+                    WHERE pole_a_content = ? AND pole_b_content = ?
+                      AND status IN ('open', 'maturing', 'ready_for_synthesis')
                 """, (pole_a, pole_b))
                 if cursor.fetchone():
                     continue

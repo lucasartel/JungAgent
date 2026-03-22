@@ -1488,7 +1488,8 @@ Resposta: {ai_response}
                     "ai_response": ai_response,
                     "conversation_id": conversation_id,
                     "tension_level": tension_level,
-                    "affective_charge": affective_charge
+                    "affective_charge": affective_charge,
+                    "existential_depth": existential_depth,
                 })
         except Exception as e:
             logger.warning(f"⚠️ Erro no hook de ruminação: {e}")
@@ -4178,6 +4179,11 @@ class JungianEngine:
         # Calcular métricas
         affective_charge = self._calculate_affective_charge(message, response)
         existential_depth = self._calculate_existential_depth(message)
+        rumination_signal = self._calculate_rumination_signal(
+            message,
+            affective_charge,
+            existential_depth,
+        )
         intensity_level = int(affective_charge / 10)
         keywords = self._extract_keywords(message, response)
 
@@ -4189,7 +4195,7 @@ class JungianEngine:
             ai_response=response,
             archetype_analyses={},  # Vazio - arquétipos removidos
             detected_conflicts=[],  # Vazio - conflitos removidos
-            tension_level=0.0,
+            tension_level=rumination_signal,
             affective_charge=affective_charge,
             existential_depth=existential_depth,
             intensity_level=intensity_level,
@@ -4207,7 +4213,7 @@ class JungianEngine:
             'response': response,
             'conflicts': [],  # Mantido para compatibilidade
             'conversation_count': self.db.count_conversations(user_id),
-            'tension_level': 0.0,
+            'tension_level': rumination_signal,
             'affective_charge': affective_charge,
             'existential_depth': existential_depth,
             'conversation_id': conversation_id,
@@ -4310,6 +4316,11 @@ class JungianEngine:
         pending_dream = None
         if is_admin:
             pending_dream = self.db.get_latest_dream_insight(user_id)
+            if pending_dream and not dream_instruction:
+                dream_instruction = self._build_dream_instruction(pending_dream)
+                if dream_instruction:
+                    logger.info(f"Dream Engine: injetando residuo do sonho #{pending_dream['id']} no prompt do admin")
+                    pending_dream = None
             if pending_dream:
                 dream_instruction = f"\n\n[INFLUÊNCIA ONÍRICA RECENTE: Logo antes, eu produzi esta visão simbólica sobre minha relação com você: {pending_dream['dream_content']}. Minha análise profunda disso sugere que: {pending_dream['extracted_insight']}. Deixe que este sonho influencie sua escrita diretamente.]"
                 logger.info(f"🌙 [DREAM ENGINE] Injetando Sonho Mais Recente #{pending_dream['id']} no prompt do ADMIN")
@@ -4403,6 +4414,55 @@ class JungianEngine:
         count = sum(1 for word in depth_words if word in text)
         
         return min(count * 0.15, 1.0)
+
+    def _calculate_rumination_signal(self, user_input: str, affective_charge: float, existential_depth: float) -> float:
+        """Combina sinais afetivos e existenciais para decidir se vale ruminar."""
+        text = (user_input or "").lower()
+        ontological_cues = [
+            "exist", "ser", "real", "autent", "alma", "fe", "salto",
+            "angust", "vazio", "verdade", "ilus", "escolha", "livre"
+        ]
+        cue_hits = sum(1 for cue in ontological_cues if cue in text)
+        cue_score = min(cue_hits * 0.12, 1.0)
+        affective_score = min(1.0, (affective_charge or 0) / 100.0)
+
+        return round(min(1.0, max(existential_depth or 0.0, affective_score, cue_score)), 3)
+
+    def _truncate_symbolic_residue(self, text: str, max_chars: int = 260) -> str:
+        """Condensa material simbolico para o prompt sem perder o clima onirico."""
+        clean = " ".join((text or "").split())
+        if len(clean) <= max_chars:
+            return clean
+
+        truncated = clean[:max_chars].rstrip()
+        for separator in [". ", "; ", ": ", ", "]:
+            cut = truncated.rfind(separator)
+            if cut > max_chars * 0.55:
+                truncated = truncated[:cut + 1].rstrip()
+                break
+
+        return truncated.rstrip(" ,;:-") + "..."
+
+    def _build_dream_instruction(self, pending_dream: Dict) -> str:
+        """Converte um sonho recente em residuo simbolico curto para modular a resposta."""
+        if not pending_dream:
+            return ""
+
+        theme = pending_dream.get("symbolic_theme") or "Tema nao nomeado"
+        residue = self._truncate_symbolic_residue(pending_dream.get("dream_content", ""), 280)
+        pressure = self._truncate_symbolic_residue(pending_dream.get("extracted_insight", ""), 220)
+
+        if not residue and not pressure:
+            return ""
+
+        parts = [f"[RESIDUO ONIRICO RECENTE: Tema simbolico: {theme}."]
+        if residue:
+            parts.append(f"Imagem que ainda ressoa: {residue}")
+        if pressure:
+            parts.append(f"Pressao psiquica remanescente: {pressure}")
+        parts.append("Deixe isso colorir discretamente o ritmo e as imagens da sua escrita, sem transformar a resposta em interpretacao do sonho.]")
+
+        return "\n\n" + " ".join(parts)
     
     def _extract_keywords(self, user_input: str, response: str) -> List[str]:
         """Extrai palavras-chave"""

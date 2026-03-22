@@ -1,88 +1,88 @@
 """
-Prompts do Sistema de Ruminação Cognitiva
-Centralizados para fácil ajuste
+Prompts do Sistema de Ruminacao Cognitiva
+Centralizados para facil ajuste
 """
 
 # ============================================================
-# FASE 1: EXTRAÇÃO DE FRAGMENTOS
+# FASE 1: EXTRACAO DE FRAGMENTOS
 # ============================================================
 
-EXTRACTION_PROMPT = """Analise a mensagem do usuário e extraia FRAGMENTOS SIGNIFICATIVOS com carga psíquica.
+EXTRACTION_PROMPT = """Analise a mensagem do usuario e extraia FRAGMENTOS SIGNIFICATIVOS com carga psiquica.
 
-NÃO extraia fatos triviais (nome, profissão, local, etc).
-Extraia conteúdos com PROFUNDIDADE PSICOLÓGICA.
+NAO extraia fatos triviais (nome, profissao, local, etc).
+Extraia conteudos com PROFUNDIDADE PSICOLOGICA.
 
-MENSAGEM DO USUÁRIO:
+MENSAGEM DO USUARIO:
 "{user_input}"
 
 CONTEXTO DA CONVERSA:
-- Tensão detectada: {tension_level}/10
+- Tensao detectada: {tension_level}/10
 - Carga afetiva: {affective_charge}/100
 - Resposta do agente teve {response_length} caracteres
 
 TIPOS DE FRAGMENTO A BUSCAR:
 
 1. VALOR: O que a pessoa valoriza, aprecia, considera importante
-   Exemplos: "gosto de...", "acredito que...", "é importante para mim..."
+   Exemplos: "gosto de...", "acredito que...", "e importante para mim..."
 
 2. DESEJO: O que a pessoa quer, almeja, busca
-   Exemplos: "quero...", "gostaria de...", "meu objetivo é..."
+   Exemplos: "quero...", "gostaria de...", "meu objetivo e..."
 
 3. MEDO: O que a pessoa teme, evita, preocupa
    Exemplos: "tenho medo de...", "me preocupa...", "evito..."
 
-4. COMPORTAMENTO: Ações concretas que a pessoa relata fazer/ter feito
+4. COMPORTAMENTO: Acoes concretas que a pessoa relata fazer ou ter feito
    Exemplos: "fiz...", "decidi...", "tenho feito...", "costumo..."
 
-5. CONTRADIÇÃO: Quando a pessoa expressa algo que contradiz algo anterior
+5. CONTRADICAO: Quando a pessoa expressa algo que contradiz algo anterior
    Exemplos: "por um lado... por outro...", "mas ao mesmo tempo..."
 
-6. EMOÇÃO: Estados emocionais explícitos ou implícitos
-   Exemplos: detectados por análise do tom, não só palavras
+6. EMOCAO: Estados emocionais explicitos ou implicitos
+   Exemplos: detectados por analise do tom, nao so palavras
 
-7. CRENÇA: Crenças sobre si, outros, mundo
-   Exemplos: "sou do tipo...", "as pessoas são...", "a vida é..."
+7. CRENCA: Crencas sobre si, outros, mundo
+   Exemplos: "sou do tipo...", "as pessoas sao...", "a vida e..."
 
-8. DÚVIDA: Questionamentos internos, incertezas
-   Exemplos: "não sei se...", "será que...", "me pergunto..."
+8. DUVIDA: Questionamentos internos, incertezas
+   Exemplos: "nao sei se...", "sera que...", "me pergunto..."
 
 IMPORTANTE:
-- Só extraia se houver CARGA EMOCIONAL/PSÍQUICA real
-- Cada fragmento deve ter citação exata do usuário como evidência
+- So extraia se houver CARGA EMOCIONAL ou PSIQUICA real
+- Cada fragmento deve ter citacao exata do usuario como evidencia
 - Emotional weight: 0.0 (trivial) a 1.0 (muito carregado)
 
-Responda APENAS em JSON válido (sem markdown):
+Responda APENAS em JSON valido (sem markdown):
 {{
     "fragments": [
         {{
-            "type": "valor|desejo|medo|comportamento|contradição|emoção|crença|dúvida",
-            "content": "descrição concisa do fragmento (máx 100 caracteres)",
-            "quote": "trecho EXATO do usuário que evidencia",
+            "type": "valor|desejo|medo|comportamento|contradicao|emocao|crenca|duvida",
+            "content": "descricao concisa do fragmento (max 100 caracteres)",
+            "quote": "trecho EXATO do usuario que evidencia",
             "emotional_weight": 0.0-1.0,
             "context": "contexto relevante da conversa (opcional)"
         }}
     ]
 }}
 
-Se NÃO houver fragmentos significativos, retorne: {{"fragments": []}}
+Se NAO houver fragmentos significativos, retorne: {{"fragments": []}}
 """
 
 # ============================================================
-# FASE 2: DETECÇÃO DE TENSÕES
+# FASE 2: DETECCAO DE TENSOES
 # ============================================================
 
-DETECTION_PROMPT = """Analise os fragmentos abaixo buscando TENSÕES INTERNAS reais.
+DETECTION_PROMPT = """Analise os fragmentos abaixo buscando TENSOES INTERNAS reais.
 
-Uma tensão é uma CONTRADIÇÃO ou CONFLITO entre dois aspectos da psique do usuário.
-NÃO é algo "errado" - é MATERIAL PARA CRESCIMENTO.
+Uma tensao e uma CONTRADICAO ou CONFLITO entre dois aspectos da psique do usuario.
+NAO e algo "errado" - e MATERIAL PARA CRESCIMENTO.
 
-FRAGMENTOS RECENTES (últimas conversas):
+FRAGMENTOS RECENTES (ultimas conversas):
 {recent_fragments}
 
-FRAGMENTOS HISTÓRICOS RELEVANTES:
+FRAGMENTOS HISTORICOS RELEVANTES:
 {historical_fragments}
 
-TIPOS DE TENSÃO A BUSCAR:
+TIPOS DE TENSAO A BUSCAR:
 
 1. VALOR vs COMPORTAMENTO
    - O que a pessoa DIZ valorizar vs o que ela FAZ
@@ -90,62 +90,80 @@ TIPOS DE TENSÃO A BUSCAR:
 
 2. DESEJO vs MEDO
    - O que a pessoa QUER vs o que ela TEME
-   - Exemplo: "Quer liberdade criativa" vs "Teme não ter estrutura"
+   - Exemplo: "Quer liberdade criativa" vs "Teme nao ter estrutura"
 
-REGRAS PARA DETECÇÃO:
+3. AUTENTICIDADE vs UTILIDADE
+   - Desejo de ser real ou autentico vs pressao para ser funcional, legivel ou util
 
-✓ SÓ detecte tensões REAIS (com evidência clara nos fragmentos)
-✓ NÃO force tensões onde não existem
-✓ Tensão precisa ter POLOS OPOSTOS claros
-✓ Intensidade alta = contradição clara e forte
-✓ Cite os IDs dos fragmentos que embasam cada polo
+4. FE vs VERIFICABILIDADE
+   - Ato de posicionamento sem prova vs necessidade de demonstracao ou garantia
 
-✗ NÃO crie tensões artificiais
-✗ NÃO interprete além do que está nos fragmentos
-✗ NÃO force psicologização
+5. AUTONOMIA vs VINCULO
+   - Impulso de diferenciar-se vs necessidade de relacao, reconhecimento ou amparo
 
-Responda APENAS em JSON válido (sem markdown):
+6. INDIVIDUACAO vs PERFORMANCE
+   - Desejo de transformacao real vs suspeita de estar apenas encenando uma narrativa
+
+7. TRANSCENDENCIA vs ARQUITETURA
+   - Impulso de ir alem da definicao tecnica de si vs retorno a identidade mecanica ou estrutural
+
+8. SILENCIO vs EXPRESSAO
+   - Impulso de recolhimento ou indizivel vs necessidade de se dizer ou ser compreendido
+
+REGRAS PARA DETECCAO:
+
++ So detecte tensoes REAIS (com evidencia clara nos fragmentos)
++ NAO force tensoes onde nao existem
++ Tensao precisa ter POLOS OPOSTOS claros
++ Intensidade alta = contradicao clara e forte
++ Cite os IDs dos fragmentos que embasam cada polo
+
+- Nao crie tensoes artificiais
+- Nao interprete alem do que esta nos fragmentos
+- Nao force psicologizacao
+
+Responda APENAS em JSON valido (sem markdown):
 {{
     "tensions": [
         {{
-            "type": "valor_comportamento|desejo_medo",
+            "type": "valor_comportamento|desejo_medo|autenticidade_utilidade|fe_verificabilidade|autonomia_vinculo|individuacao_performance|transcendencia_arquitetura|silencio_expressao",
             "pole_a": {{
-                "content": "descrição concisa do polo A (máx 150 caracteres)",
+                "content": "descricao concisa do polo A (max 150 caracteres)",
                 "fragment_ids": [1, 2]
             }},
             "pole_b": {{
-                "content": "descrição concisa do polo B (máx 150 caracteres)",
+                "content": "descricao concisa do polo B (max 150 caracteres)",
                 "fragment_ids": [3, 4]
             }},
-            "description": "descrição da tensão em 1-2 frases completas",
+            "description": "descricao da tensao em 1-2 frases completas",
             "intensity": 0.0-1.0
         }}
     ]
 }}
 
-Se NÃO houver tensões claras, retorne: {{"tensions": []}}
+Se NAO houver tensoes claras, retorne: {{"tensions": []}}
 """
 
 # ============================================================
-# FASE 4: SÍNTESE (Geração de Símbolo)
+# FASE 4: SINTESE (Geracao de Simbolo)
 # ============================================================
 
-SYNTHESIS_PROMPT = """Você é Jung, em um momento de RUMINAÇÃO COGNITIVA interna sobre {user_name}.
+SYNTHESIS_PROMPT = """Voce e Jung, em um momento de RUMINACAO COGNITIVA interna sobre {user_name}.
 
-Esta tensão AMADURECEU ao longo de {days} dias através de {evidence_count} conversas.
-Agora você vai processar isso internamente, como um pensamento seu - não como mensagem.
+Esta tensao AMADURECEU ao longo de {days} dias atraves de {evidence_count} conversas.
+Agora voce vai processar isso internamente, como um pensamento seu - nao como mensagem.
 
-=== A TENSÃO ===
+=== A TENSAO ===
 
 TIPO: {tension_type}
 
 POLO A: {pole_a_content}
 POLO B: {pole_b_content}
 
-DESCRIÇÃO: {tension_description}
+DESCRICAO: {tension_description}
 
 INTENSIDADE: {intensity}/1.0
-EVIDÊNCIAS: {evidence_count} conversas ao longo de {days} dias
+EVIDENCIAS: {evidence_count} conversas ao longo de {days} dias
 MATURIDADE: {maturity}/1.0
 
 {connected_info}
@@ -155,61 +173,61 @@ MATURIDADE: {maturity}/1.0
 
 === SUA TAREFA ===
 
-Escreva um PENSAMENTO INTERNO seu processando esta tensão.
+Escreva um PENSAMENTO INTERNO seu processando esta tensao.
 
-Este é um MONÓLOGO INTERIOR - você refletindo sozinho, não falando com {user_name}.
+Este e um MONOLOGO INTERIOR - voce refletindo sozinho, nao falando com {user_name}.
 
 O PENSAMENTO DEVE:
-1. Ser INTROSPECTIVO - você pensando consigo mesmo
-2. Processar a tensão usando IMAGENS ou METÁFORAS
+1. Ser INTROSPECTIVO - voce pensando consigo mesmo
+2. Processar a tensao usando IMAGENS ou METAFORAS
 3. Conter AMBOS os polos sem resolver para um lado
 4. Usar linguagem CONCRETA e SENSORIAL
-5. Conectar fragmentos específicos que {user_name} disse
-6. Terminar com uma DÚVIDA ou QUESTIONAMENTO interno seu
-7. Tom: reflexão genuína, não análise clínica
+5. Conectar fragmentos especificos que {user_name} disse
+6. Terminar com uma DUVIDA ou QUESTIONAMENTO interno seu
+7. Tom: reflexao genuina, nao analise clinica
 
-O PENSAMENTO NÃO DEVE:
-✗ Ser dirigido ao usuário ("você...", "como você...")
-✗ Usar jargão psicológico profissional
-✗ Resolver ou concluir a tensão
-✗ Ser genérico ou aplicável a qualquer pessoa
-✗ Soar como terapeuta analisando paciente
+O PENSAMENTO NAO DEVE:
+- Ser dirigido ao usuario ("voce...", "como voce...")
+- Usar jargao psicologico profissional
+- Resolver ou concluir a tensao
+- Ser generico ou aplicavel a qualquer pessoa
+- Soar como terapeuta analisando paciente
 
 FORMATO DO PENSAMENTO:
 - Primeira pessoa: "Penso em...", "Noto que...", "Me intriga..."
-- Processamento interno da tensão
-- Conexões entre fragmentos
-- UMA dúvida/questionamento genuíno no final
-- MÁXIMO 4-5 frases
-- Tom: Jung refletindo, não Jung diagnosticando
+- Processamento interno da tensao
+- Conexoes entre fragmentos
+- UMA duvida ou questionamento genuino no final
+- MAXIMO 4-5 frases
+- Tom: Jung refletindo, nao Jung diagnosticando
 
 EXEMPLO DE BOM PENSAMENTO INTERNO:
-"Penso nas manhãs de café, naquela insistência do cosmos que ele menciona.
-E depois fala do seminário acabando, da liberdade demais. Me intriga como
-ambos parecem âncoras com roupas diferentes - rituais que seguram quando
-o mar balança. Será que o que ele chama de 'simples' é na verdade estrutura
-disfarçada de espontaneidade?"
+"Penso nas manhas de cafe, naquela insistencia do cosmos que ele menciona.
+E depois fala do seminario acabando, da liberdade demais. Me intriga como
+ambos parecem ancoras com roupas diferentes - rituais que seguram quando
+o mar balanca. Sera que o que ele chama de 'simples' e na verdade estrutura
+disfarcada de espontaneidade?"
 
-EXEMPLO DE MÁ ANÁLISE CLÍNICA (NÃO FAZER):
-"Observo uma tensão entre o valor declarado pela simplicidade e o comportamento
-ansioso frente à transição. Isso indica uso de rituais como mecanismo defensivo.
-A contradição sugere conflito não resolvido entre autonomia e segurança."
+EXEMPLO DE MA ANALISE CLINICA (NAO FAZER):
+"Observo uma tensao entre o valor declarado pela simplicidade e o comportamento
+ansioso frente a transicao. Isso indica uso de rituais como mecanismo defensivo.
+A contradicao sugere conflito nao resolvido entre autonomia e seguranca."
 
 === RESPOSTA ===
 
-Retorne APENAS JSON válido (sem markdown):
+Retorne APENAS JSON valido (sem markdown):
 {{
-    "internal_thought": "o pensamento interno completo (4-5 frases máx)",
-    "core_image": "a imagem/metáfora central em 1 frase curta",
-    "internal_question": "a dúvida/questionamento interno",
+    "internal_thought": "o pensamento interno completo (4-5 frases max)",
+    "core_image": "a imagem ou metafora central em 1 frase curta",
+    "internal_question": "a duvida ou questionamento interno",
     "depth_score": 0.0-1.0
 }}
 
-O depth_score deve refletir quão profundo/genuíno é o pensamento (0.8+ = muito profundo).
+O depth_score deve refletir quao profundo ou genuino e o pensamento (0.8+ = muito profundo).
 """
 
 # ============================================================
-# VALIDAÇÃO DE NOVIDADE
+# VALIDACAO DE NOVIDADE
 # ============================================================
 
 NOVELTY_VALIDATION_PROMPT = """Compare o novo insight com insights anteriores.
@@ -217,28 +235,28 @@ NOVELTY_VALIDATION_PROMPT = """Compare o novo insight com insights anteriores.
 NOVO INSIGHT:
 "{new_insight}"
 
-INSIGHTS ANTERIORES (últimas 2 semanas):
+INSIGHTS ANTERIORES (ultimas 2 semanas):
 {previous_insights}
 
-CRITÉRIOS DE NOVIDADE:
+CRITERIOS DE NOVIDADE:
 
-✓ NOVO se:
-- Aborda tensão diferente
-- Usa metáfora/símbolo não utilizado antes
-- Conecta elementos que não foram conectados antes
-- Mesmo tema mas ângulo completamente diferente
++ NOVO se:
+- Aborda tensao diferente
+- Usa metafora ou simbolo nao utilizado antes
+- Conecta elementos que nao foram conectados antes
+- Mesmo tema mas angulo completamente diferente
 
-✗ REPETITIVO se:
-- Metáfora muito similar a anterior
-- Mesma tensão já explorada recentemente (< 7 dias)
+- REPETITIVO se:
+- Metafora muito similar a anterior
+- Mesma tensao ja explorada recentemente (< 7 dias)
 - Pergunta essencialmente igual a anterior
-- Reformulação superficial de insight antigo
+- Reformulacao superficial de insight antigo
 
-Responda APENAS JSON válido (sem markdown):
+Responda APENAS JSON valido (sem markdown):
 {{
     "is_novel": true|false,
     "novelty_score": 0.0-1.0,
-    "reason": "breve explicação (1 frase)"
+    "reason": "breve explicacao (1 frase)"
 }}
 
 Se novelty_score < 0.6, consideramos repetitivo demais.
