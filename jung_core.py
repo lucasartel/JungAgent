@@ -4275,7 +4275,9 @@ class JungianEngine:
             if self.identity_context_builder:
                 try:
                     identity_ctx = self.identity_context_builder.build_context_summary_for_llm(
-                        user_id=user_id, style="concise"
+                        user_id=user_id,
+                        style="concise",
+                        current_user_message=user_input,
                     )
                     if identity_ctx and len(identity_ctx) > 100:
                         agent_identity_text = Config.ADMIN_IDENTITY_PROMPT + "\n\n" + identity_ctx

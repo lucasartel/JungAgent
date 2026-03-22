@@ -18,6 +18,9 @@ class ScholarEngine:
 
     ACTIVE_RESEARCH_LIMIT = 2
     TOPIC_COOLDOWN_DAYS = 10
+    ARTICLE_MAX_TOKENS = 1800
+    CONTINUATION_MAX_TOKENS = 900
+    MAX_CONTINUATION_ROUNDS = 2
 
     def __init__(self, db_manager: HybridDatabaseManager):
         self.db = db_manager
@@ -232,6 +235,78 @@ class ScholarEngine:
 
         return recovered or None
 
+    def _create_llm_text(self, messages, max_tokens: int, temperature: float) -> str:
+        if self.is_openrouter:
+            response = self.llm.chat.completions.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                messages=messages,
+            )
+            return (response.choices[0].message.content or "").strip()
+
+        response = self.llm.messages.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=messages,
+        )
+        return (response.content[0].text or "").strip()
+
+    def _looks_truncated(self, text: str) -> bool:
+        stripped = (text or "").strip()
+        if len(stripped) < 800:
+            return False
+
+        if stripped.endswith(("...", "…", ":", ";", ",", "-", "(", "[")):
+            return True
+
+        if stripped[-1] not in '.!?"\'”’)]':
+            return True
+
+        tail = stripped[-120:]
+        if re.search(r"\b(e|de|do|da|que|para|com|por|em)\s*$", tail, re.IGNORECASE):
+            return True
+
+        return False
+
+    def _generate_complete_article(self, prompt: str) -> str:
+        messages = [{"role": "user", "content": prompt}]
+        article_parts = []
+
+        article = self._create_llm_text(
+            messages=messages,
+            max_tokens=self.ARTICLE_MAX_TOKENS,
+            temperature=0.8,
+        )
+        if not article:
+            return ""
+
+        article_parts.append(article)
+        rounds = 0
+
+        while self._looks_truncated("\n\n".join(article_parts)) and rounds < self.MAX_CONTINUATION_ROUNDS:
+            messages.append({"role": "assistant", "content": article_parts[-1]})
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Continue exatamente do ponto em que o artigo parou. "
+                    "Não reinicie, não resuma, não comente a continuação e finalize o ensaio de forma completa."
+                ),
+            })
+            continuation = self._create_llm_text(
+                messages=messages,
+                max_tokens=self.CONTINUATION_MAX_TOKENS,
+                temperature=0.7,
+            )
+            if not continuation:
+                break
+
+            article_parts.append(continuation)
+            rounds += 1
+
+        return "\n\n".join(part for part in article_parts if part)
+
     def _start_run(self, user_id: str, trigger_source: str, history_excerpt: str) -> int:
         cursor = self.db.conn.cursor()
         cursor.execute(
@@ -435,25 +510,10 @@ INSTRUÇÕES CRÍTICAS PARA O ARTIGO:
 3. Traga dados, autores e teorias reais do mundo exterior (não invente livros).
 4. Conecte o achado final com a humanidade implícita da sua comunicação com o Admin.
 
-Responda SOMENTE o corpo textozado do artigo acadêmico-psicológico, sem invólucros de chat.
+        Responda SOMENTE o corpo textozado do artigo acadêmico-psicológico, sem invólucros de chat.
 """
         try:
-            if self.is_openrouter:
-                response = self.llm.chat.completions.create(
-                    model=self.model,
-                    max_tokens=1000,
-                    temperature=0.8,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                article = response.choices[0].message.content.strip()
-            else:
-                response = self.llm.messages.create(
-                    model=self.model,
-                    max_tokens=1000,
-                    temperature=0.8,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                article = response.content[0].text.strip()
+            article = self._generate_complete_article(prompt)
 
             if not article:
                 return {
