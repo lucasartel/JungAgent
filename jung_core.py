@@ -4172,12 +4172,14 @@ class JungianEngine:
 
         # Gerar resposta direta (1 chamada LLM)
         logger.info("🤖 Gerando resposta...")
-        response = self._generate_response(
+        generation = self._generate_response(
             user_id, message, semantic_context, chat_history
         )
+        clean_response = generation["clean_response"]
+        display_response = generation["display_response"]
 
         # Calcular métricas
-        affective_charge = self._calculate_affective_charge(message, response)
+        affective_charge = self._calculate_affective_charge(message, clean_response)
         existential_depth = self._calculate_existential_depth(message)
         rumination_signal = self._calculate_rumination_signal(
             message,
@@ -4185,14 +4187,14 @@ class JungianEngine:
             existential_depth,
         )
         intensity_level = int(affective_charge / 10)
-        keywords = self._extract_keywords(message, response)
+        keywords = self._extract_keywords(message, clean_response)
 
         # Salvar conversa (SQLite + ChromaDB)
         conversation_id = self.db.save_conversation(
             user_id=user_id,
             user_name=user_name,
             user_input=message,
-            ai_response=response,
+            ai_response=clean_response,
             archetype_analyses={},  # Vazio - arquétipos removidos
             detected_conflicts=[],  # Vazio - conflitos removidos
             tension_level=rumination_signal,
@@ -4210,7 +4212,7 @@ class JungianEngine:
 
         # Resultado
         result = {
-            'response': response,
+            'response': display_response,
             'conflicts': [],  # Mantido para compatibilidade
             'conversation_count': self.db.count_conversations(user_id),
             'tension_level': rumination_signal,
@@ -4226,8 +4228,25 @@ class JungianEngine:
     # MÉTODOS AUXILIARES
     # ========================================
 
+    def _build_admin_thought_block(self, prompt: str) -> str:
+        """Constrói o bloco de amostragem exibido apenas para o admin."""
+        separator = "\n\n" + "-" * 40 + "\n"
+        thought_block = f"🧠 **[SISTEMA: AMOSTRAGEM DE PENSAMENTO LLM]**\n\n```text\n{prompt}\n```"
+        return separator + thought_block
+
+    def _strip_admin_thought_block(self, text: str) -> str:
+        """Remove o bloco de amostragem caso ele esteja anexado à resposta."""
+        if not text:
+            return text
+
+        marker = "\n\n----------------------------------------\n🧠 **[SISTEMA: AMOSTRAGEM DE PENSAMENTO LLM]**"
+        if marker in text:
+            return text.split(marker, 1)[0].rstrip()
+
+        return text
+
     def _generate_response(self, user_id: str, user_input: str,
-                          semantic_context: str, chat_history: List[Dict]) -> str:
+                          semantic_context: str, chat_history: List[Dict]) -> Dict[str, str]:
         """
         Gera resposta usando prompt unificado (v7.0)
 
@@ -4362,13 +4381,17 @@ class JungianEngine:
                 )
                 final_response = message.content[0].text
 
-            # Para o ADMIN: Anexar o prompt completo (Matéria-Prima) no final da mensagem
-            if is_admin:
-                separator = "\n\n" + "-"*40 + "\n"
-                thought_block = f"🧠 **[SISTEMA: AMOSTRAGEM DE PENSAMENTO LLM]**\n\n```text\n{prompt}\n```"
-                final_response = final_response + separator + thought_block
+            clean_response = self._strip_admin_thought_block(final_response)
+            display_response = clean_response
 
-            return final_response
+            # Para o ADMIN: Anexar o prompt completo apenas na exibição, nunca na persistência
+            if is_admin:
+                display_response = clean_response + self._build_admin_thought_block(prompt)
+
+            return {
+                "clean_response": clean_response,
+                "display_response": display_response,
+            }
 
         except (TimeoutError, ConnectionError) as e:
             logger.error(f"❌ Erro de conexão/timeout ao gerar resposta: {e}")
