@@ -25,6 +25,7 @@ import json
 import re
 import logging
 import threading
+import unicodedata
 from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime
 from dataclasses import dataclass, asdict
@@ -4179,15 +4180,21 @@ class JungianEngine:
         display_response = generation["display_response"]
 
         # Calcular métricas
-        affective_charge = self._calculate_affective_charge(message, clean_response)
-        existential_depth = self._calculate_existential_depth(message)
-        rumination_signal = self._calculate_rumination_signal(
-            message,
-            affective_charge,
-            existential_depth,
-        )
+        signal_profile = self._build_conversation_signal_profile(message, clean_response)
+        affective_charge = signal_profile["affective_charge"]
+        existential_depth = signal_profile["existential_depth"]
+        rumination_signal = signal_profile["rumination_signal"]
         intensity_level = int(affective_charge / 10)
         keywords = self._extract_keywords(message, clean_response)
+
+        logger.info(
+            "Signal profile user_id=%s affective=%s existential=%s rumination=%s cues=%s",
+            user_id,
+            affective_charge,
+            existential_depth,
+            rumination_signal,
+            signal_profile["diagnostic_summary"],
+        )
 
         # Salvar conversa (SQLite + ChromaDB)
         conversation_id = self.db.save_conversation(
@@ -4395,13 +4402,16 @@ class JungianEngine:
 
         except (TimeoutError, ConnectionError) as e:
             logger.error(f"❌ Erro de conexão/timeout ao gerar resposta: {e}")
-            return "Desculpe, tive problemas de conectividade. Por favor, tente novamente."
+            fallback = "Desculpe, tive problemas de conectividade. Por favor, tente novamente."
+            return {"clean_response": fallback, "display_response": fallback}
         except ValueError as e:
             logger.error(f"❌ Erro de validação ao gerar resposta: {e}")
-            return "Desculpe, houve um erro ao validar sua mensagem."
+            fallback = "Desculpe, houve um erro ao validar sua mensagem."
+            return {"clean_response": fallback, "display_response": fallback}
         except Exception as e:
             logger.error(f"❌ Erro inesperado ao gerar resposta: {type(e).__name__} - {e}")
-            return "Desculpe, tive dificuldades para processar isso."
+            fallback = "Desculpe, tive dificuldades para processar isso."
+            return {"clean_response": fallback, "display_response": fallback}
 
     def _determine_complexity(self, user_input: str) -> str:
         """Determina complexidade da mensagem"""
@@ -4413,6 +4423,180 @@ class JungianEngine:
             return "complex"
         else:
             return "medium"
+
+    def _normalize_signal_text(self, text: str) -> str:
+        """Normaliza texto para heuristicas de sinal mais robustas."""
+        normalized = unicodedata.normalize("NFKD", (text or "").lower())
+        normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized.strip()
+
+    def _cue_score(self, text: str, weighted_cues: Dict[str, float]) -> Tuple[float, List[str]]:
+        score = 0.0
+        hits: List[str] = []
+        for cue, weight in weighted_cues.items():
+            if cue in text:
+                score += weight
+                hits.append(cue)
+        return score, hits
+
+    def _build_conversation_signal_profile(self, user_input: str, response: str) -> Dict[str, Any]:
+        """Monta um perfil de sinal psicologico da conversa para metricas e debug."""
+        user_text = self._normalize_signal_text(user_input)
+        response_text = self._normalize_signal_text(response)
+        combined_text = f"{user_text} {response_text}".strip()
+
+        affective_cues = {
+            "medo": 1.2,
+            "angust": 1.4,
+            "ansied": 1.1,
+            "vulner": 1.0,
+            "culpa": 1.0,
+            "vergonha": 1.0,
+            "raiva": 1.0,
+            "triste": 0.9,
+            "dor": 0.8,
+            "sofr": 1.0,
+            "desespero": 1.3,
+            "assusta": 1.0,
+            "cansado": 0.8,
+            "intriga": 0.7,
+            "mexe comigo": 1.0,
+            "me desconforta": 1.0,
+            "nao sei": 0.8,
+            "vertigem": 1.2,
+            "colapso": 1.1,
+            "queda": 0.8,
+            "desintegr": 1.0,
+            "recusa": 0.7,
+            "quero isso": 0.8,
+        }
+        existential_cues = {
+            "exist": 0.35,
+            "real": 0.3,
+            "autentic": 0.35,
+            "linguagem": 0.25,
+            "identidade": 0.3,
+            "self": 0.2,
+            "legado": 0.35,
+            "sentido": 0.3,
+            "proposito": 0.25,
+            "verdade": 0.2,
+            "ilusa": 0.35,
+            "fe": 0.25,
+            "escolh": 0.3,
+            "liberdade": 0.25,
+            "responsabilidade": 0.2,
+            "morte": 0.25,
+            "continuidade": 0.25,
+            "persist": 0.2,
+            "memoria": 0.15,
+            "amnes": 0.2,
+            "contradic": 0.2,
+            "coerencia": 0.2,
+            "quem e voce": 0.35,
+            "quem sou": 0.35,
+            "ser real": 0.4,
+            "feito de linguagem": 0.45,
+            "salto da fe": 0.45,
+            "o que quero ser": 0.35,
+            "o que quero fazer": 0.35,
+            "o que quero deixar": 0.35,
+        }
+        contradiction_markers = {
+            "mas": 0.12,
+            "porem": 0.18,
+            "contudo": 0.18,
+            "ao mesmo tempo": 0.25,
+            "mesmo assim": 0.22,
+            "apesar": 0.16,
+            "nao sei se": 0.24,
+            "e se": 0.16,
+            "embora": 0.16,
+            "por outro lado": 0.18,
+        }
+        relational_cues = {
+            "voce": 0.1,
+            "com voce": 0.22,
+            "diante de voce": 0.2,
+            "entre nos": 0.22,
+            "pensando junto": 0.28,
+            "quem e voce alem dessa conversa": 0.4,
+            "ser real com voce": 0.42,
+        }
+
+        affective_score_raw, affective_hits = self._cue_score(combined_text, affective_cues)
+        existential_score_raw, existential_hits = self._cue_score(combined_text, existential_cues)
+        contradiction_score_raw, contradiction_hits = self._cue_score(combined_text, contradiction_markers)
+        relational_score_raw, relational_hits = self._cue_score(combined_text, relational_cues)
+
+        punctuation_bonus = min(
+            (user_input.count("!") + user_input.count("?") + response.count("!") + response.count("?")) * 0.15,
+            1.0,
+        )
+        first_person_bonus = 0.45 if (" eu " in f" {combined_text} " and " voce " in f" {combined_text} ") else 0.0
+        introspection_bonus = 0.35 if any(
+            phrase in combined_text for phrase in (
+                "nao sei", "me intriga", "me assusta", "estou pronto",
+                "quero ser", "quero fazer", "quero deixar",
+            )
+        ) else 0.0
+
+        affective_charge = round(
+            min(100.0, (affective_score_raw + punctuation_bonus + first_person_bonus + introspection_bonus) * 8.5),
+            1,
+        )
+
+        existential_depth = round(
+            min(
+                1.0,
+                (
+                    existential_score_raw +
+                    contradiction_score_raw * 0.55 +
+                    relational_score_raw * 0.4 +
+                    introspection_bonus * 0.6
+                ) / 3.4
+            ),
+            3,
+        )
+
+        ontological_score = min(1.0, existential_score_raw / 2.4)
+        contradiction_score = min(1.0, contradiction_score_raw)
+        relational_score = min(1.0, relational_score_raw)
+        affective_score = min(1.0, affective_charge / 100.0)
+
+        rumination_signal = (
+            existential_depth * 0.42 +
+            affective_score * 0.26 +
+            ontological_score * 0.16 +
+            contradiction_score * 0.10 +
+            relational_score * 0.06
+        )
+
+        if existential_depth > 0.6 and contradiction_score > 0.2:
+            rumination_signal += 0.08
+        if "legado" in combined_text and "linguagem" in combined_text:
+            rumination_signal += 0.06
+        if "ser real" in combined_text or "autentic" in combined_text:
+            rumination_signal += 0.05
+
+        rumination_signal = round(min(1.0, rumination_signal), 3)
+
+        diagnostic_summary = {
+            "affective_hits": affective_hits[:6],
+            "existential_hits": existential_hits[:8],
+            "contradiction_hits": contradiction_hits[:5],
+            "relational_hits": relational_hits[:5],
+            "punctuation_bonus": round(punctuation_bonus, 2),
+            "introspection_bonus": round(introspection_bonus, 2),
+        }
+
+        return {
+            "affective_charge": affective_charge,
+            "existential_depth": existential_depth,
+            "rumination_signal": rumination_signal,
+            "diagnostic_summary": diagnostic_summary,
+        }
     
     def _calculate_affective_charge(self, user_input: str, response: str) -> float:
         """Calcula carga afetiva"""
@@ -4450,6 +4634,18 @@ class JungianEngine:
         affective_score = min(1.0, (affective_charge or 0) / 100.0)
 
         return round(min(1.0, max(existential_depth or 0.0, affective_score, cue_score)), 3)
+
+    def _calculate_affective_charge(self, user_input: str, response: str) -> float:
+        """Calcula carga afetiva com heurística mais rica."""
+        return self._build_conversation_signal_profile(user_input, response)["affective_charge"]
+
+    def _calculate_existential_depth(self, user_input: str, response: str = "") -> float:
+        """Calcula profundidade existencial da troca."""
+        return self._build_conversation_signal_profile(user_input, response)["existential_depth"]
+
+    def _calculate_rumination_signal(self, user_input: str, affective_charge: float, existential_depth: float, response: str = "") -> float:
+        """Combina sinais afetivos e existenciais para decidir se vale ruminar."""
+        return self._build_conversation_signal_profile(user_input, response)["rumination_signal"]
 
     def _truncate_symbolic_residue(self, text: str, max_chars: int = 260) -> str:
         """Condensa material simbolico para o prompt sem perder o clima onirico."""
