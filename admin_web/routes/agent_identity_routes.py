@@ -511,7 +511,7 @@ async def download_endojung_snapshot(
     """
     try:
         from jung_core import HybridDatabaseManager
-        from scripts.export_endojung_snapshot import create_endojung_snapshot_zip
+        from endojung_snapshot_export import create_endojung_snapshot_zip
 
         db = HybridDatabaseManager()
         try:
