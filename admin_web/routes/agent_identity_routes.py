@@ -8,11 +8,12 @@ Data: 2026-01-12
 """
 
 from fastapi import APIRouter, Request, Depends
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from typing import Dict
 import logging
 import json
 import time
+from io import BytesIO
 
 from admin_web.auth.middleware import require_master
 
@@ -430,10 +431,21 @@ async def run_manual_consolidation(
                     agent_response=ai_response
                 )
 
+                elements_count = 0
+                if extracted:
+                    elements_count = sum(len(v) for v in extracted.values() if isinstance(v, list))
+
                 # Armazenar elementos
                 if extractor.store_extracted_identity(extracted):
                     conversations_processed += 1
-                    total_elements += sum(len(v) for v in extracted.values() if isinstance(v, list))
+                    total_elements += elements_count
+
+                cursor.execute("""
+                    INSERT OR IGNORE INTO agent_identity_extractions (
+                        conversation_id, extracted_at, elements_count, processing_time_ms
+                    ) VALUES (?, CURRENT_TIMESTAMP, ?, ?)
+                """, (conv_id, elements_count, 0))
+                db.conn.commit()
 
                 # Delay para rate limiting
                 time.sleep(0.5)
@@ -482,6 +494,42 @@ async def run_manual_consolidation(
 
     except Exception as e:
         logger.error(f"❌ Erro na consolidação manual: {e}", exc_info=True)
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500
+        )
+
+
+@router.get("/export/download")
+async def download_endojung_snapshot(
+    admin: Dict = Depends(require_master)
+):
+    """
+    Baixa um snapshot ZIP com as tabelas SQLite centrais do EndoJung.
+
+    Restrito ao master admin.
+    """
+    try:
+        from jung_core import HybridDatabaseManager
+        from scripts.export_endojung_snapshot import create_endojung_snapshot_zip
+
+        db = HybridDatabaseManager()
+        try:
+            content, filename = create_endojung_snapshot_zip(db)
+        finally:
+            db.close()
+
+        logger.info(f"Snapshot do EndoJung exportado por master admin: {admin['email']}")
+
+        return StreamingResponse(
+            BytesIO(content),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            },
+        )
+    except Exception as e:
+        logger.error(f"Erro ao exportar snapshot do EndoJung: {e}", exc_info=True)
         return JSONResponse(
             {"success": False, "error": str(e)},
             status_code=500
@@ -1124,6 +1172,19 @@ async def agent_identity_dashboard(
                 button.classList.remove('loading');
                 button.textContent = originalText;
             }
+        }
+
+        function downloadSnapshot() {
+            window.location.href = '/admin/agent-identity/export/download';
+        }
+
+        const controlsContainer = document.querySelector('.controls-buttons');
+        if (controlsContainer) {
+            const downloadButton = document.createElement('button');
+            downloadButton.className = 'btn-refresh';
+            downloadButton.textContent = 'Download Snapshot';
+            downloadButton.onclick = downloadSnapshot;
+            controlsContainer.appendChild(downloadButton);
         }
 
         // Carregar dados ao iniciar
