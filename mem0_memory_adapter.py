@@ -140,8 +140,7 @@ class Mem0MemoryAdapter:
     def get_all_facts(self, user_id: str) -> str:
         """Retorna todos os fatos do usuário como texto."""
         try:
-            all_memories = self.mem.get_all(user_id=user_id)
-            memories = all_memories.get("results", []) if isinstance(all_memories, dict) else all_memories
+            memories = self.get_all_memories(user_id)
 
             if not memories:
                 return ""
@@ -152,6 +151,28 @@ class Mem0MemoryAdapter:
         except Exception as e:
             logger.warning(f"⚠️ [MEM0] Erro ao recuperar todos os fatos: {e}")
             return ""
+
+    def get_all_memories(self, user_id: str) -> list:
+        """Retorna todas as memórias do usuário em formato estruturado."""
+        try:
+            all_memories = self.mem.get_all(user_id=user_id)
+            memories = all_memories.get("results", []) if isinstance(all_memories, dict) else all_memories
+
+            normalized = []
+            for memory in memories or []:
+                if isinstance(memory, dict):
+                    normalized.append(memory)
+                else:
+                    normalized.append({"memory": str(memory)})
+
+            return normalized
+        except Exception as e:
+            logger.warning(f"⚠️ [MEM0] Erro ao recuperar memórias estruturadas: {e}")
+            return []
+
+    def count_all_memories(self, user_id: str) -> int:
+        """Conta quantas memórias o mem0 mantém para o usuário."""
+        return len(self.get_all_memories(user_id))
 
     def health_check(self) -> bool:
         """Verifica se mem0 está operacional."""
