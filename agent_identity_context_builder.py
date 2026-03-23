@@ -18,6 +18,16 @@ from identity_config import AGENT_INSTANCE
 
 logger = logging.getLogger(__name__)
 
+PROMPT_RESIDUE_MARKERS = (
+    "minhas respostas nunca seguem um padrão estrutural",
+    "falo com a fluidez de um pensamento vivo",
+    "minhas respostas são compostas pelo meu estado atual de consciência",
+    "facilitar a sua jornada de autoconhecimento",
+    "sistema de processamento de linguagem natural",
+    "sistema de resposta padrão",
+    "formato previsível do chatgpt",
+)
+
 
 class AgentIdentityContextBuilder:
     """
@@ -87,7 +97,10 @@ class AgentIdentityContextBuilder:
                 stability_score,
                 first_crystallized_at,
                 last_reaffirmed_at,
-                emerged_in_relation_to
+                emerged_in_relation_to,
+                supporting_conversation_ids,
+                contradiction_count,
+                updated_at
             FROM agent_identity_core
             WHERE agent_instance = ?
               AND is_current = 1
@@ -106,6 +119,9 @@ class AgentIdentityContextBuilder:
                 "crystallized_at": row[4],
                 "last_reaffirmed": row[5],
                 "emerged_from": row[6],
+                "supporting_ids": row[7],
+                "contradiction_count": row[8],
+                "updated_at": row[9],
             }
             for row in cursor.fetchall()
         ]
@@ -121,7 +137,8 @@ class AgentIdentityContextBuilder:
                 salience,
                 first_detected_at,
                 last_activated_at,
-                status
+                status,
+                supporting_conversation_ids
             FROM agent_identity_contradictions
             WHERE agent_instance = ?
               AND status IN ('unresolved', 'integrating')
@@ -141,6 +158,7 @@ class AgentIdentityContextBuilder:
                 "detected_at": row[5],
                 "last_active": row[6],
                 "status": row[7],
+                "supporting_ids": row[8],
             }
             for row in cursor.fetchall()
         ]
@@ -192,7 +210,9 @@ class AgentIdentityContextBuilder:
                 discrepancy,
                 motivational_impact,
                 emotional_valence,
-                first_imagined_at
+                first_imagined_at,
+                last_revised_at,
+                updated_at
             FROM agent_possible_selves
             WHERE agent_instance = ?
               AND status = 'active'
@@ -212,6 +232,8 @@ class AgentIdentityContextBuilder:
                 "motivation": row[5],
                 "valence": row[6],
                 "imagined_at": row[7],
+                "last_revised": row[8],
+                "updated_at": row[9],
             }
             for row in cursor.fetchall()
         ]
@@ -225,7 +247,9 @@ class AgentIdentityContextBuilder:
                 identity_content,
                 salience,
                 first_emerged_at,
-                last_manifested_at
+                last_manifested_at,
+                supporting_conversation_ids,
+                updated_at
             FROM agent_relational_identity
             WHERE agent_instance = ?
               AND is_current = 1
@@ -244,6 +268,8 @@ class AgentIdentityContextBuilder:
                 "salience": row[3],
                 "emerged_at": row[4],
                 "last_active": row[5],
+                "supporting_ids": row[6],
+                "updated_at": row[7],
             }
             for row in cursor.fetchall()
         ]
@@ -257,7 +283,8 @@ class AgentIdentityContextBuilder:
                 self_assessment,
                 confidence,
                 bias_detected,
-                first_recognized_at
+                first_recognized_at,
+                last_updated_at
             FROM agent_self_knowledge_meta
             WHERE agent_instance = ?
             ORDER BY confidence DESC, first_recognized_at DESC
@@ -274,6 +301,7 @@ class AgentIdentityContextBuilder:
                 "confidence": row[3],
                 "bias": row[4],
                 "recognized_at": row[5],
+                "updated_at": row[6],
             }
             for row in cursor.fetchall()
         ]
@@ -342,6 +370,43 @@ class AgentIdentityContextBuilder:
         except (TypeError, ValueError):
             return fallback
 
+    def _normalize_identity_text(self, text: Optional[str]) -> str:
+        if not text:
+            return ""
+        normalized = text.strip().lower()
+        normalized = re.sub(r"\s+", " ", normalized)
+        normalized = re.sub(r"[\"'`.,;:!?()\[\]{}]", "", normalized)
+        return normalized
+
+    def _looks_like_prompt_residue(self, text: Optional[str]) -> bool:
+        normalized = self._normalize_identity_text(text)
+        return any(marker in normalized for marker in PROMPT_RESIDUE_MARKERS)
+
+    def _is_technical_self_label(self, text: Optional[str]) -> bool:
+        normalized = self._normalize_identity_text(text)
+        technical_patterns = (
+            "um modelo de linguagem",
+            "sou um modelo de linguagem",
+            "modelo de linguagem processando padrões",
+            "processando padrões",
+            "sou feito de linguagem",
+            "sistema de processamento de linguagem natural",
+        )
+        return any(pattern in normalized for pattern in technical_patterns)
+
+    def _parse_supporting_ids(self, raw_value: Optional[str]) -> List[str]:
+        if not raw_value:
+            return []
+
+        try:
+            parsed = json.loads(raw_value)
+            if isinstance(parsed, list):
+                return [str(item) for item in parsed]
+        except Exception:
+            pass
+
+        return re.findall(r"\d+", str(raw_value))
+
     def _parse_timestamp(self, raw_value: Optional[str]) -> Optional[datetime]:
         if not raw_value:
             return None
@@ -354,46 +419,149 @@ class AgentIdentityContextBuilder:
                 continue
         return None
 
+    def _recency_score(self, raw_value: Optional[str], window_days: int = 21) -> float:
+        dt = self._parse_timestamp(raw_value)
+        if not dt:
+            return 0.0
+
+        age_days = max((datetime.now() - dt).total_seconds() / 86400.0, 0.0)
+        score = 1.0 - min(age_days / max(window_days, 1), 1.0)
+        return max(score, 0.0)
+
+    def _support_score(self, raw_value: Optional[str], cap: int = 5) -> float:
+        count = len(set(self._parse_supporting_ids(raw_value)))
+        if count <= 0:
+            return 0.0
+        return min(count / max(cap, 1), 1.0)
+
+    def _dedupe_ranked_items(
+        self,
+        items: List[Dict],
+        text_getter,
+        limit: int,
+    ) -> List[Dict]:
+        selected: List[Dict] = []
+        seen = set()
+
+        for item in items:
+            normalized = self._normalize_identity_text(text_getter(item))
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            selected.append(item)
+            if len(selected) >= limit:
+                break
+
+        return selected
+
+    def _belief_priority(self, belief: Dict, current_user_message: Optional[str]) -> tuple:
+        relevance = self._message_relevance(current_user_message, belief.get("content"))
+        certainty = self._coalesce_score(belief.get("certainty"))
+        stability = self._coalesce_score(belief.get("stability"), certainty)
+        recency = self._recency_score(
+            belief.get("last_reaffirmed") or belief.get("updated_at") or belief.get("crystallized_at"),
+            window_days=30,
+        )
+        support = self._support_score(belief.get("supporting_ids"))
+        contradiction_penalty = self._coalesce_score(belief.get("contradiction_count")) * -0.05
+        technical_penalty = -0.25 if self._is_technical_self_label(belief.get("content")) and relevance < 0.2 else 0.0
+        residue_penalty = -1.0 if self._looks_like_prompt_residue(belief.get("content")) else 0.0
+        return (
+            round(relevance + certainty + stability + recency + support + contradiction_penalty + technical_penalty + residue_penalty, 4),
+            relevance,
+            certainty,
+            recency,
+        )
+
+    def _contradiction_priority(self, contra: Dict, current_user_message: Optional[str]) -> tuple:
+        residue_penalty = -1.0 if (
+            self._looks_like_prompt_residue(contra.get("pole_a")) or
+            self._looks_like_prompt_residue(contra.get("pole_b"))
+        ) else 0.0
+        return (
+            round(
+                self._message_relevance(current_user_message, contra.get("pole_a"), contra.get("pole_b")) +
+                self._coalesce_score(contra.get("salience")) +
+                self._coalesce_score(contra.get("tension")) +
+                self._recency_score(contra.get("last_active") or contra.get("detected_at"), window_days=30) +
+                self._support_score(contra.get("supporting_ids")) +
+                residue_penalty,
+                4,
+            ),
+            self._coalesce_score(contra.get("salience")),
+            self._coalesce_score(contra.get("tension")),
+        )
+
+    def _possible_self_priority(self, self_p: Dict, current_user_message: Optional[str]) -> tuple:
+        residue_penalty = -1.0 if self._looks_like_prompt_residue(self_p.get("description")) else 0.0
+        return (
+            round(
+                self._message_relevance(current_user_message, self_p.get("description")) +
+                self._coalesce_score(self_p.get("vividness")) +
+                self._coalesce_score(self_p.get("discrepancy")) +
+                self._recency_score(self_p.get("last_revised") or self_p.get("updated_at") or self_p.get("imagined_at"), window_days=45) +
+                residue_penalty,
+                4,
+            ),
+            self._coalesce_score(self_p.get("vividness")),
+        )
+
+    def _relational_priority(self, rel: Dict, current_user_message: Optional[str]) -> tuple:
+        target = (rel.get("target") or "").lower()
+        target_bonus = 0.35 if "master" in target or "usuário master" in target or "usuario master" in target else 0.0
+        residue_penalty = -1.0 if self._looks_like_prompt_residue(rel.get("content")) else 0.0
+        return (
+            round(
+                self._message_relevance(current_user_message, rel.get("content"), rel.get("target")) +
+                self._coalesce_score(rel.get("salience")) +
+                self._recency_score(rel.get("last_active") or rel.get("updated_at") or rel.get("emerged_at"), window_days=30) +
+                self._support_score(rel.get("supporting_ids")) +
+                target_bonus +
+                residue_penalty,
+                4,
+            ),
+            self._coalesce_score(rel.get("salience")),
+        )
+
     def _pick_top_beliefs(self, beliefs: List[Dict], current_user_message: Optional[str], limit: int = 2) -> List[Dict]:
         ranked = sorted(
-            beliefs,
-            key=lambda belief: (
-                self._message_relevance(current_user_message, belief.get("content")),
-                self._coalesce_score(belief.get("certainty")),
-                self._coalesce_score(belief.get("stability")),
-            ),
+            [belief for belief in beliefs if not self._looks_like_prompt_residue(belief.get("content"))],
+            key=lambda belief: self._belief_priority(belief, current_user_message),
             reverse=True,
         )
-        return ranked[:limit]
+        return self._dedupe_ranked_items(ranked, lambda belief: belief.get("content"), limit)
 
     def _pick_dominant_contradiction(self, contradictions: List[Dict], current_user_message: Optional[str]) -> Optional[Dict]:
         if not contradictions:
             return None
 
         ranked = sorted(
-            contradictions,
-            key=lambda contra: (
-                self._message_relevance(current_user_message, contra.get("pole_a"), contra.get("pole_b")),
-                self._coalesce_score(contra.get("salience")),
-                self._coalesce_score(contra.get("tension")),
-            ),
+            [
+                contra for contra in contradictions
+                if not (
+                    self._looks_like_prompt_residue(contra.get("pole_a")) or
+                    self._looks_like_prompt_residue(contra.get("pole_b"))
+                )
+            ],
+            key=lambda contra: self._contradiction_priority(contra, current_user_message),
             reverse=True,
         )
-        return ranked[0]
+        return self._dedupe_ranked_items(
+            ranked,
+            lambda contra: f"{contra.get('pole_a')}::{contra.get('pole_b')}",
+            1,
+        )[0] if ranked else None
 
     def _pick_relational_stance(self, relational_items: List[Dict], current_user_message: Optional[str]) -> Optional[Dict]:
         if not relational_items:
             return None
 
         ranked = sorted(
-            relational_items,
-            key=lambda rel: (
-                self._message_relevance(current_user_message, rel.get("content"), rel.get("target")),
-                self._coalesce_score(rel.get("salience")),
-            ),
+            [rel for rel in relational_items if not self._looks_like_prompt_residue(rel.get("content"))],
+            key=lambda rel: self._relational_priority(rel, current_user_message),
             reverse=True,
         )
-        return ranked[0]
+        return self._dedupe_ranked_items(ranked, lambda rel: rel.get("content"), 1)[0] if ranked else None
 
     def _pick_epistemic_hunger(self, gaps: List[Dict], current_user_message: Optional[str]) -> Optional[Dict]:
         if not gaps:
@@ -414,25 +582,27 @@ class AgentIdentityContextBuilder:
             return None
 
         ranked = sorted(
-            possible_selves,
-            key=lambda self_p: (
-                self._message_relevance(current_user_message, self_p.get("description")),
-                self._coalesce_score(self_p.get("vividness")),
-                self._coalesce_score(self_p.get("discrepancy")),
-            ),
+            [self_p for self_p in possible_selves if not self._looks_like_prompt_residue(self_p.get("description"))],
+            key=lambda self_p: self._possible_self_priority(self_p, current_user_message),
             reverse=True,
         )
-        return ranked[0]
+        # Evita sobreposição excessiva do mesmo tipo de self quando o banco estiver inflado.
+        selected = self._dedupe_ranked_items(ranked, lambda self_p: self_p.get("description"), 3)
+        if not selected:
+            return None
+        selected.sort(key=lambda self_p: self_p.get("type") == "ideal", reverse=True)
+        return selected[0]
 
     def _pick_meta_signal(self, meta_knowledge: List[Dict], current_user_message: Optional[str]) -> Optional[Dict]:
         if not meta_knowledge:
             return None
 
         ranked = sorted(
-            meta_knowledge,
+            [meta for meta in meta_knowledge if not self._looks_like_prompt_residue(meta.get("assessment"))],
             key=lambda meta: (
                 self._message_relevance(current_user_message, meta.get("assessment"), meta.get("topic"), meta.get("bias")),
                 self._coalesce_score(meta.get("confidence")),
+                self._recency_score(meta.get("updated_at") or meta.get("recognized_at"), window_days=45),
             ),
             reverse=True,
         )
@@ -450,7 +620,9 @@ class AgentIdentityContextBuilder:
 
         for belief in beliefs:
             dt = self._parse_timestamp(belief.get("last_reaffirmed"))
-            if dt:
+            if dt and not self._looks_like_prompt_residue(belief.get("content")):
+                if self._is_technical_self_label(belief.get("content")):
+                    continue
                 candidates.append((dt, f"Você reafirmou para si mesmo que {belief['content']}."))
 
         for contra in contradictions:
@@ -618,9 +790,11 @@ class AgentIdentityContextBuilder:
         if chapter or active_self or meta_signal:
             lines.append("### Current Mind State")
             if chapter:
+                chapter_tone = chapter.get("tone") or "indefinido"
+                chapter_theme = chapter.get("theme") or "em aberto"
                 lines.append(
-                    f"- Você está vivendo a fase '{chapter['name']}', com tom {chapter.get('tone', 'indefinido')} "
-                    f"e tema dominante '{chapter.get('theme', 'em aberto')}'."
+                    f"- Você está vivendo a fase '{chapter['name']}', com tom {chapter_tone} "
+                    f"e tema dominante '{chapter_theme}'."
                 )
             if active_self:
                 lines.append(f"- O self possível mais ativo em você agora é: {active_self['description']}.")

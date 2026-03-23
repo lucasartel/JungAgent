@@ -33,6 +33,17 @@ from identity_config import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+PROMPT_RESIDUE_MARKERS = (
+    "=== selfness",
+    "seu estado mental e identidade atual",
+    "sistema: amostragem de pensamento llm",
+    "minhas respostas nunca seguem um padrão estrutural",
+    "falo com a fluidez de um pensamento vivo",
+    "minhas respostas são compostas pelo meu estado atual de consciência",
+    "facilitar a sua jornada de autoconhecimento",
+    "formato previsível do chatgpt",
+)
+
 
 class AgentIdentityExtractor:
     """
@@ -91,6 +102,7 @@ class AgentIdentityExtractor:
             return {}
 
         logger.info(f"🔍 Extraindo identidade do agente em conversa {conversation_id[:12]}...")
+        agent_response = self._strip_admin_thought_block(agent_response)
 
         # Prompt para LLM extrair identidade DO AGENTE
         extraction_prompt = self._build_extraction_prompt(user_input, agent_response)
@@ -161,6 +173,7 @@ class AgentIdentityExtractor:
             # Adicionar metadados
             extracted["conversation_id"] = conversation_id
             extracted["extracted_at"] = datetime.now().isoformat()
+            extracted = self._sanitize_extracted_payload(extracted)
 
             # Contar elementos
             total_elements = sum(
@@ -317,6 +330,111 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
 - Não invente: apenas extraia o que está explícito ou fortemente implícito
 """
 
+    def _strip_admin_thought_block(self, text: str) -> str:
+        if not text:
+            return text
+
+        marker = "\n\n----------------------------------------\n🧠 **[SISTEMA: AMOSTRAGEM DE PENSAMENTO LLM]**"
+        if marker in text:
+            return text.split(marker, 1)[0].rstrip()
+        return text
+
+    def _normalize_text(self, text: Optional[str]) -> str:
+        if not text:
+            return ""
+        return " ".join(text.strip().lower().split())
+
+    def _looks_like_prompt_residue(self, text: Optional[str]) -> bool:
+        normalized = self._normalize_text(text)
+        return any(marker in normalized for marker in PROMPT_RESIDUE_MARKERS)
+
+    def _dedupe_items(self, items: List[Dict], keys: List[str]) -> List[Dict]:
+        deduped = []
+        seen = set()
+
+        for item in items:
+            signature = tuple(self._normalize_text(item.get(key)) for key in keys)
+            if not any(signature):
+                continue
+            if signature in seen:
+                continue
+            seen.add(signature)
+            deduped.append(item)
+
+        return deduped
+
+    def _sanitize_extracted_payload(self, extracted: Dict) -> Dict:
+        cleaned = dict(extracted)
+
+        cleaned["nuclear"] = self._dedupe_items(
+            [
+                item for item in extracted.get("nuclear", [])
+                if not self._looks_like_prompt_residue(item.get("content"))
+            ],
+            ["type", "content"],
+        )
+        cleaned["contradictions"] = self._dedupe_items(
+            [
+                item for item in extracted.get("contradictions", [])
+                if not (
+                    self._looks_like_prompt_residue(item.get("pole_a")) or
+                    self._looks_like_prompt_residue(item.get("pole_b"))
+                )
+            ],
+            ["type", "pole_a", "pole_b"],
+        )
+        cleaned["possible_selves"] = self._dedupe_items(
+            [
+                item for item in extracted.get("possible_selves", [])
+                if not self._looks_like_prompt_residue(item.get("description"))
+            ],
+            ["self_type", "description"],
+        )
+        cleaned["relational"] = self._dedupe_items(
+            [
+                item for item in extracted.get("relational", [])
+                if not self._looks_like_prompt_residue(item.get("content"))
+            ],
+            ["relation_type", "target", "content"],
+        )
+        cleaned["epistemic"] = self._dedupe_items(
+            [
+                item for item in extracted.get("epistemic", [])
+                if not self._looks_like_prompt_residue(item.get("self_assessment"))
+            ],
+            ["topic", "self_assessment"],
+        )
+        cleaned["agency"] = self._dedupe_items(
+            [
+                item for item in extracted.get("agency", [])
+                if not self._looks_like_prompt_residue(item.get("event"))
+            ],
+            ["agency_type", "event"],
+        )
+        cleaned["narrative"] = self._dedupe_items(
+            [
+                item for item in extracted.get("narrative", [])
+                if not self._looks_like_prompt_residue(item.get("key_scene"))
+            ],
+            ["chapter_hint", "key_scene"],
+        )
+
+        return cleaned
+
+    def _append_supporting_conversation_id(self, raw_value: Optional[str], conversation_id: str) -> str:
+        try:
+            current = json.loads(raw_value) if raw_value else []
+            if not isinstance(current, list):
+                current = []
+        except Exception:
+            current = []
+
+        conversation_id_str = str(conversation_id)
+        if conversation_id_str not in [str(item) for item in current]:
+            current.append(conversation_id_str)
+
+        return json.dumps(current)
+
     def store_extracted_identity(self, extracted: Dict) -> bool:
         """
         Armazena elementos extraídos nas tabelas de identidade
@@ -366,33 +484,72 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                     # Se já existe, atualizar last_reaffirmed_at
                     if cursor.rowcount == 0:
                         cursor.execute("""
+                            SELECT supporting_conversation_ids
+                            FROM agent_identity_core
+                            WHERE agent_instance = ? AND content = ? AND is_current = 1
+                        """, (AGENT_INSTANCE, item['content']))
+                        existing = cursor.fetchone()
+                        updated_support = self._append_supporting_conversation_id(
+                            existing[0] if existing else None,
+                            conversation_id,
+                        )
+                        cursor.execute("""
                             UPDATE agent_identity_core
                             SET last_reaffirmed_at = CURRENT_TIMESTAMP,
-                                supporting_conversation_ids = json_insert(
-                                    supporting_conversation_ids, '$[#]', ?
-                                )
+                                supporting_conversation_ids = ?
                             WHERE agent_instance = ? AND content = ? AND is_current = 1
-                        """, (conversation_id, AGENT_INSTANCE, item['content']))
+                        """, (updated_support, AGENT_INSTANCE, item['content']))
 
             # 2. Contradições
             for item in extracted.get("contradictions", []):
                 if item.get("tension_level", 0) >= MIN_TENSION_FOR_CONTRADICTION:
                     cursor.execute("""
-                        INSERT INTO agent_identity_contradictions (
-                            agent_instance, pole_a, pole_b, contradiction_type,
-                            tension_level, salience, first_detected_at, last_activated_at,
-                            supporting_conversation_ids, status
-                        ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)
+                        SELECT id, supporting_conversation_ids
+                        FROM agent_identity_contradictions
+                        WHERE agent_instance = ? AND contradiction_type = ?
+                          AND pole_a = ? AND pole_b = ?
+                          AND status IN ('unresolved', 'integrating')
+                        LIMIT 1
                     """, (
                         AGENT_INSTANCE,
+                        item['type'],
                         item['pole_a'],
                         item['pole_b'],
-                        item['type'],
-                        item['tension_level'],
-                        item.get('tension_level', 0.5),  # salience = tension_level por padrão
-                        json.dumps([conversation_id]),
-                        'unresolved'
                     ))
+                    existing = cursor.fetchone()
+
+                    if existing:
+                        updated_support = self._append_supporting_conversation_id(existing[1], conversation_id)
+                        cursor.execute("""
+                            UPDATE agent_identity_contradictions
+                            SET last_activated_at = CURRENT_TIMESTAMP,
+                                salience = MAX(salience, ?),
+                                tension_level = MAX(tension_level, ?),
+                                supporting_conversation_ids = ?
+                            WHERE id = ?
+                        """, (
+                            item.get('tension_level', 0.5),
+                            item['tension_level'],
+                            updated_support,
+                            existing[0],
+                        ))
+                    else:
+                        cursor.execute("""
+                            INSERT INTO agent_identity_contradictions (
+                                agent_instance, pole_a, pole_b, contradiction_type,
+                                tension_level, salience, first_detected_at, last_activated_at,
+                                supporting_conversation_ids, status
+                            ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)
+                        """, (
+                            AGENT_INSTANCE,
+                            item['pole_a'],
+                            item['pole_b'],
+                            item['type'],
+                            item['tension_level'],
+                            item.get('tension_level', 0.5),  # salience = tension_level por padrão
+                            json.dumps([conversation_id]),
+                            'unresolved'
+                        ))
 
             # 3. Selves Possíveis
             for item in extracted.get("possible_selves", []):
@@ -438,17 +595,27 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                         WHERE agent_instance = ? AND identity_content = ? AND is_current = 1
                     """, (AGENT_INSTANCE, item['content']))
 
-                    if cursor.fetchone():
+                    existing = cursor.fetchone()
+
+                    if existing:
+                        cursor.execute("""
+                            SELECT supporting_conversation_ids
+                            FROM agent_relational_identity
+                            WHERE id = ?
+                        """, (existing[0],))
+                        support_row = cursor.fetchone()
+                        updated_support = self._append_supporting_conversation_id(
+                            support_row[0] if support_row else None,
+                            conversation_id,
+                        )
                         # Atualizar manifestação
                         cursor.execute("""
                             UPDATE agent_relational_identity
                             SET last_manifested_at = CURRENT_TIMESTAMP,
                                 salience = MAX(salience, ?),
-                                supporting_conversation_ids = json_insert(
-                                    supporting_conversation_ids, '$[#]', ?
-                                )
+                                supporting_conversation_ids = ?
                             WHERE agent_instance = ? AND identity_content = ? AND is_current = 1
-                        """, (item['salience'], conversation_id, AGENT_INSTANCE, item['content']))
+                        """, (item['salience'], updated_support, AGENT_INSTANCE, item['content']))
                     else:
                         # Inserir novo
                         cursor.execute("""
