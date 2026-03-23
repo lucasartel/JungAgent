@@ -510,14 +510,9 @@ async def download_endojung_snapshot(
     Restrito ao master admin.
     """
     try:
-        from jung_core import HybridDatabaseManager
-        from endojung_snapshot_export import create_endojung_snapshot_zip
+        from endojung_snapshot_export import create_endojung_snapshot_zip_from_sqlite
 
-        db = HybridDatabaseManager()
-        try:
-            content, filename = create_endojung_snapshot_zip(db)
-        finally:
-            db.close()
+        content, filename = create_endojung_snapshot_zip_from_sqlite()
 
         logger.info(f"Snapshot do EndoJung exportado por master admin: {admin['email']}")
 

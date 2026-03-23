@@ -1,15 +1,16 @@
 """
 Exporta um snapshot focado no EndoJung para diagnostico offline.
 
-Pode ser usado:
-- via import, pelo painel admin
-- via linha de comando, para gerar um arquivo .zip manualmente
+Este modulo evita inicializar o HybridDatabaseManager inteiro e abre apenas
+o SQLite bruto, para que o download do snapshot nao puxe Chroma, mem0 ou Qdrant.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import sqlite3
 import zipfile
 from datetime import datetime, timezone
 from io import BytesIO
@@ -42,6 +43,26 @@ AGENT_SCOPED_TABLES: Tuple[str, ...] = (
 )
 
 
+def resolve_sqlite_path() -> Path:
+    data_dir = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+    if not data_dir:
+        data_dir = "/data" if os.path.exists("/data") else "./data"
+
+    env_sqlite = os.getenv("SQLITE_DB_PATH")
+    if env_sqlite:
+        if os.path.isabs(env_sqlite):
+            return Path(env_sqlite)
+        return Path(data_dir) / os.path.basename(env_sqlite)
+
+    return Path(data_dir) / "jung_hybrid.db"
+
+
+def _open_sqlite_connection(sqlite_path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(str(sqlite_path), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
@@ -54,7 +75,7 @@ def _rows_to_dicts(rows: Iterable[Any]) -> List[Dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def _get_existing_tables(conn, names: Sequence[str]) -> List[str]:
+def _get_existing_tables(conn: sqlite3.Connection, names: Sequence[str]) -> List[str]:
     cursor = conn.cursor()
     existing: List[str] = []
     for name in names:
@@ -71,7 +92,7 @@ def _get_existing_tables(conn, names: Sequence[str]) -> List[str]:
     return existing
 
 
-def _get_table_schema(conn, table_name: str) -> List[Dict[str, Any]]:
+def _get_table_schema(conn: sqlite3.Connection, table_name: str) -> List[Dict[str, Any]]:
     cursor = conn.cursor()
     cursor.execute(f"PRAGMA table_info({table_name})")
     return [
@@ -87,18 +108,17 @@ def _get_table_schema(conn, table_name: str) -> List[Dict[str, Any]]:
     ]
 
 
-def _fetch_rows(conn, query: str, params: Sequence[Any]) -> List[Dict[str, Any]]:
+def _fetch_rows(conn: sqlite3.Connection, query: str, params: Sequence[Any]) -> List[Dict[str, Any]]:
     cursor = conn.cursor()
     cursor.execute(query, tuple(params))
     return _rows_to_dicts(cursor.fetchall())
 
 
-def build_endojung_snapshot(
-    db_manager,
+def build_endojung_snapshot_from_connection(
+    conn: sqlite3.Connection,
     admin_user_id: str = ADMIN_USER_ID,
     agent_instance: str = AGENT_INSTANCE,
 ) -> Dict[str, Any]:
-    conn = db_manager.conn
     generated_at = datetime.now(timezone.utc).isoformat()
 
     existing_user_tables = _get_existing_tables(conn, USER_SCOPED_TABLES)
@@ -166,16 +186,21 @@ def build_endojung_snapshot(
     return snapshot
 
 
-def create_endojung_snapshot_zip(
-    db_manager,
+def create_endojung_snapshot_zip_from_sqlite(
+    sqlite_path: Path | None = None,
     admin_user_id: str = ADMIN_USER_ID,
     agent_instance: str = AGENT_INSTANCE,
 ) -> Tuple[bytes, str]:
-    snapshot = build_endojung_snapshot(
-        db_manager=db_manager,
-        admin_user_id=admin_user_id,
-        agent_instance=agent_instance,
-    )
+    resolved_path = sqlite_path or resolve_sqlite_path()
+    conn = _open_sqlite_connection(resolved_path)
+    try:
+        snapshot = build_endojung_snapshot_from_connection(
+            conn=conn,
+            admin_user_id=admin_user_id,
+            agent_instance=agent_instance,
+        )
+    finally:
+        conn.close()
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     base_name = f"endojung_snapshot_{timestamp}"
@@ -201,13 +226,13 @@ def create_endojung_snapshot_zip(
 
 
 def export_endojung_snapshot_to_file(
-    db_manager,
     output_path: Path,
+    sqlite_path: Path | None = None,
     admin_user_id: str = ADMIN_USER_ID,
     agent_instance: str = AGENT_INSTANCE,
 ) -> Path:
-    content, _ = create_endojung_snapshot_zip(
-        db_manager=db_manager,
+    content, _ = create_endojung_snapshot_zip_from_sqlite(
+        sqlite_path=sqlite_path,
         admin_user_id=admin_user_id,
         agent_instance=agent_instance,
     )
@@ -222,6 +247,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Caminho do arquivo .zip de saida. Se omitido, grava no diretorio atual.",
     )
+    parser.add_argument(
+        "--sqlite-path",
+        default=None,
+        help="Caminho opcional do SQLite. Se omitido, usa a resolucao padrao do ambiente.",
+    )
     return parser
 
 
@@ -229,17 +259,12 @@ def main() -> int:
     parser = _build_arg_parser()
     args = parser.parse_args()
 
-    from jung_core import HybridDatabaseManager
-
-    db = HybridDatabaseManager()
-    try:
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        output = Path(args.output) if args.output else Path(f"endojung_snapshot_{timestamp}.zip")
-        export_endojung_snapshot_to_file(db, output)
-        print(str(output.resolve()))
-        return 0
-    finally:
-        db.close()
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    output = Path(args.output) if args.output else Path(f"endojung_snapshot_{timestamp}.zip")
+    sqlite_path = Path(args.sqlite_path) if args.sqlite_path else None
+    export_endojung_snapshot_to_file(output, sqlite_path=sqlite_path)
+    print(str(output.resolve()))
+    return 0
 
 
 if __name__ == "__main__":
