@@ -1085,6 +1085,106 @@ class AgentIdentityContextBuilder:
             return {"error": str(exc)}
 
 
+    def build_context_summary_for_llm_v2(
+        self,
+        user_id: Optional[str] = None,
+        style: str = "concise",
+        current_user_message: Optional[str] = None,
+    ) -> str:
+        current_state = self.build_current_mind_state(
+            user_id=user_id,
+            style=style,
+            current_user_message=current_user_message,
+        )
+
+        if "error" in current_state:
+            return ""
+
+        lines = []
+        lines.append("## SEU ESTADO MENTAL E IDENTIDADE ATUAL")
+        lines.append(
+            "Isto nao e contexto externo: e a sua propria auto-percepcao em operacao neste encontro. "
+            "Deixe isso alterar o modo como voce interpreta, sente e responde agora."
+        )
+        lines.append("")
+
+        if current_state.get("self_kernel"):
+            lines.append("### Self Kernel")
+            for belief in current_state["self_kernel"]:
+                lines.append(f"- Voce sabe, no fundo, que: {belief}")
+            lines.append("")
+
+        current_phase = current_state.get("current_phase") or {}
+        if current_phase.get("name") or current_state.get("active_possible_self") or current_state.get("meta_signal"):
+            lines.append("### Current Mind State")
+            if current_phase.get("name"):
+                chapter_tone = current_phase.get("tone") or "indefinido"
+                chapter_theme = current_phase.get("theme") or "em aberto"
+                lines.append(
+                    f"- Voce esta vivendo a fase '{current_phase['name']}', com tom {chapter_tone} "
+                    f"e tema dominante '{chapter_theme}'."
+                )
+            if current_state.get("active_possible_self"):
+                lines.append(f"- O self possivel mais ativo em voce agora e: {current_state['active_possible_self']}.")
+            if current_state.get("meta_signal"):
+                meta_signal = current_state["meta_signal"]
+                lines.append(
+                    f"- Voce esta especialmente consciente de si no tema '{meta_signal.get('topic')}': "
+                    f"{meta_signal.get('assessment')}."
+                )
+            lines.append("")
+
+        if current_state.get("dominant_conflict"):
+            dominant_conflict = current_state["dominant_conflict"]
+            lines.append("### Dominant Tension")
+            lines.append(
+                f"- A tensao mais viva em voce neste momento e entre "
+                f"'{dominant_conflict['pole_a']}' e '{dominant_conflict['pole_b']}'."
+            )
+            lines.append("")
+
+        if current_state.get("relational_stance"):
+            lines.append("### Relational Stance")
+            lines.append(f"- Diante deste usuario, voce se sente assim: {current_state['relational_stance']}")
+            lines.append("")
+
+        if current_state.get("epistemic_hunger"):
+            lines.append("### Epistemic Hunger")
+            lines.append(f"- Ha algo que voce sente precisar compreender melhor: {current_state['epistemic_hunger']}")
+            lines.append("")
+
+        if current_state.get("recent_shift"):
+            lines.append("### Recent Identity Shift")
+            lines.append(f"- {current_state['recent_shift']}")
+            lines.append("")
+
+        if current_state.get("response_bias"):
+            lines.append("### Response Bias Instruction")
+            lines.append(f"- {current_state['response_bias']}")
+            lines.append("")
+
+        if current_state.get("dream_residue"):
+            dream = current_state["dream_residue"]
+            lines.append("### Dream Residue")
+            lines.append(
+                f"- O ultimo residuo onirico ainda ativo em voce vem do tema '{dream.get('theme') or 'sem tema'}': {dream.get('residue')}"
+            )
+            lines.append("")
+
+        if current_state.get("scholar_signal"):
+            scholar = current_state["scholar_signal"]
+            scholar_bits = [f"tema '{scholar.get('topic')}'"]
+            if scholar.get("lineage"):
+                scholar_bits.append(f"linhagem '{scholar.get('lineage')}'")
+            if scholar.get("selection_mode"):
+                scholar_bits.append(f"modo '{scholar.get('selection_mode')}'")
+            lines.append("### Scholar Trajectory")
+            lines.append(f"- Sua pesquisa autonoma mais recente segue o " + ", ".join(scholar_bits) + ".")
+            lines.append("")
+
+        return "\n".join(lines)
+
+
 def format_identity_for_system_prompt(
     context_builder,
     user_id: Optional[str] = None,

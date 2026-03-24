@@ -4568,7 +4568,7 @@ class JungianEngine:
             # Sub-sistemas complexos de identidade APENAS para o Admin
             if self.identity_context_builder:
                 try:
-                    identity_ctx = self.identity_context_builder.build_context_summary_for_llm(
+                    identity_ctx = self.identity_context_builder.build_context_summary_for_llm_v2(
                         user_id=user_id,
                         style="concise",
                         current_user_message=user_input,

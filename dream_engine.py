@@ -69,7 +69,7 @@ class DreamEngine:
     def _get_agent_identity(self, user_id: str) -> str:
         """Puxa a identidade atual do agente para colorir o sonho."""
         builder = AgentIdentityContextBuilder(self.db)
-        return builder.build_context_summary_for_llm(user_id)
+        return builder.build_context_summary_for_llm_v2(user_id)
 
     def generate_dream(self, user_id: str) -> bool:
         """Processo principal: analisa fatos, gera sonho e extrai insight onirico."""
