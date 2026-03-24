@@ -138,9 +138,10 @@ async def lifespan(app: FastAPI):
 
     # Iniciar scheduler de Curiosidade Ontológica (Consciência do Mundo)
     async def world_consciousness_scheduler():
-        """Verifica a cada hora se deve gerar a mensagem matinal de curiosidade ontológica."""
+        """Atualiza o estado de mundo e depois executa a verificação proativa."""
         from telegram_bot import bot_state
         from datetime import datetime
+        from world_consciousness import world_consciousness
 
         # ⏳ Aguarda 5 minutos antes da primeira verificação
         # Evita que deploys/reinicializações disparem proativas imediatamente
@@ -149,6 +150,9 @@ async def lifespan(app: FastAPI):
 
         while True:
             try:
+                await asyncio.to_thread(world_consciousness.get_world_state, True)
+                logger.info("🌍 [SCHEDULER] Estado de mundo atualizado.")
+
                 # Verificação ativa entre 6h e 11h
                 current_hour = datetime.now().hour
                 if True:  # Removido limite de horario matinal para o Piloto 7 dias
