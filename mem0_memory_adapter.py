@@ -15,11 +15,13 @@ O que permanece inalterado:
 - SQLite (fonte de verdade para jobs internos)
 
 Configuração via variáveis de ambiente:
-    QDRANT_URL         → URL do cluster Qdrant Cloud (ex: https://xyz.qdrant.io)
-    QDRANT_API_KEY     → Chave do Qdrant Cloud
-    OPENAI_API_KEY     → Para embeddings (já existe no projeto, usado pelo ChromaDB)
-    OPENROUTER_API_KEY → Para extração de fatos via LLM (já existe)
-    MEM0_LLM_MODEL     → Modelo para extração (default: openai/gpt-4o-mini)
+    QDRANT_URL               → URL do cluster Qdrant Cloud (ex: https://xyz.qdrant.io)
+    QDRANT_API_KEY           → Chave do Qdrant Cloud
+    OPENAI_API_KEY           → Para embeddings 1536d (alinhado ao ChromaDB)
+    OPENROUTER_API_KEY       → Para extração de fatos via LLM (já existe)
+    MEM0_LLM_MODEL           → Modelo para extração (default: openai/gpt-4o-mini)
+    OPENAI_EMBEDDING_MODEL   → Modelo de embedding (default: text-embedding-3-small)
+    OPENAI_EMBEDDING_BASE_URL → Base URL opcional para embeddings
 """
 
 import os
@@ -34,13 +36,17 @@ def _build_mem0_config() -> dict:
     Constrói configuração do mem0 usando Qdrant Cloud como vector store.
 
     - Vector store: Qdrant Cloud (persistente, gratuito)
-    - Embeddings: HuggingFace (Open Source, local - all-MiniLM-L6-v2)
+    - Embeddings: OpenAI text-embedding-3-small (1536 dimensões)
     - LLM extração: openai/gpt-4o-mini via OpenRouter
     """
     qdrant_url = os.getenv("QDRANT_URL")
     qdrant_api_key = os.getenv("QDRANT_API_KEY")
     if not qdrant_url or not qdrant_api_key:
         raise ValueError("QDRANT_URL e QDRANT_API_KEY são obrigatórios para mem0")
+
+    embedding_api_key = os.getenv("OPENAI_API_KEY")
+    if not embedding_api_key:
+        raise ValueError("OPENAI_API_KEY necessário para embeddings do mem0")
 
     # LLM para extração de fatos via OpenRouter
     llm_api_key = os.getenv("OPENROUTER_API_KEY")
@@ -49,6 +55,14 @@ def _build_mem0_config() -> dict:
         
     llm_model = os.getenv("MEM0_LLM_MODEL", "openai/gpt-4o-mini")
     llm_base_url = os.getenv("MEM0_LLM_BASE_URL", "https://openrouter.ai/api/v1")
+
+    embedder_config = {
+        "model": os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+        "api_key": embedding_api_key,
+    }
+    embedding_base_url = os.getenv("OPENAI_EMBEDDING_BASE_URL")
+    if embedding_base_url:
+        embedder_config["openai_base_url"] = embedding_base_url
 
     return {
         "vector_store": {
@@ -68,10 +82,8 @@ def _build_mem0_config() -> dict:
             },
         },
         "embedder": {
-            "provider": "huggingface",
-            "config": {
-                "model": "all-MiniLM-L6-v2"
-            },
+            "provider": "openai",
+            "config": embedder_config,
         },
     }
 

@@ -38,7 +38,6 @@ logger = logging.getLogger(__name__)
 
 # ChromaDB + LangChain
 try:
-    from langchain_community.embeddings import HuggingFaceEmbeddings
     from langchain_chroma import Chroma
     from langchain.schema import Document
     CHROMADB_AVAILABLE = True
@@ -160,6 +159,7 @@ class Config:
     # Embeddings
     EMBEDDING_MODEL = "text-embedding-3-small"
     EMBEDDING_DIMENSIONS = 1536
+    EMBEDDING_BASE_URL = os.getenv("OPENAI_EMBEDDING_BASE_URL")
     
     # Arquétipos
     ARCHETYPES = {
@@ -284,6 +284,47 @@ Jung:"""
 # HYBRID DATABASE MANAGER (SQLite + ChromaDB)
 # ============================================================
 
+class OpenAICompatibleEmbeddings:
+    """
+    Wrapper mínimo compatível com LangChain/Chroma para embeddings OpenAI.
+
+    Mantém a dimensionalidade consistente com as coleções persistidas.
+    """
+
+    def __init__(self, api_key: str, model: str, dimensions: Optional[int] = None,
+                 base_url: Optional[str] = None):
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY é obrigatório para embeddings vetoriais")
+
+        client_kwargs = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+
+        self.client = OpenAI(**client_kwargs)
+        self.model = model
+        self.dimensions = dimensions
+
+    def _embed(self, texts: List[str]) -> List[List[float]]:
+        normalized = [(text or "").replace("\n", " ") for text in texts]
+
+        request_args = {
+            "model": self.model,
+            "input": normalized,
+        }
+
+        if self.dimensions:
+            request_args["dimensions"] = self.dimensions
+
+        response = self.client.embeddings.create(**request_args)
+        return [item.embedding for item in response.data]
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return self._embed(texts)
+
+    def embed_query(self, text: str) -> List[float]:
+        return self._embed([text])[0]
+
+
 class HybridDatabaseManager:
     """
     Gerenciador HÍBRIDO de memória:
@@ -308,13 +349,16 @@ class HybridDatabaseManager:
         self.conn.row_factory = sqlite3.Row
         self._init_sqlite_schema()
         
-        # ===== ChromaDB + Local Embeddings =====
+        # ===== ChromaDB + OpenAI Embeddings =====
         self.chroma_enabled = CHROMADB_AVAILABLE
         
         if self.chroma_enabled:
             try:
-                self.embeddings = HuggingFaceEmbeddings(
-                    model_name="all-MiniLM-L6-v2"
+                self.embeddings = OpenAICompatibleEmbeddings(
+                    api_key=Config.OPENAI_API_KEY,
+                    model=Config.EMBEDDING_MODEL,
+                    dimensions=Config.EMBEDDING_DIMENSIONS,
+                    base_url=Config.EMBEDDING_BASE_URL,
                 )
                 
                 self.vectorstore = Chroma(
@@ -323,7 +367,9 @@ class HybridDatabaseManager:
                     persist_directory=Config.CHROMA_PATH
                 )
                 
-                logger.info("✅ ChromaDB + HuggingFace Embeddings (all-MiniLM-L6-v2) inicializados")
+                logger.info(
+                    f"✅ ChromaDB + OpenAI Embeddings ({Config.EMBEDDING_MODEL}, dim={Config.EMBEDDING_DIMENSIONS}) inicializados"
+                )
             except Exception as e:
                 logger.error(f"❌ Erro ao inicializar ChromaDB local: {e}")
                 self.chroma_enabled = False

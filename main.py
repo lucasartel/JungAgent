@@ -161,7 +161,6 @@ async def lifespan(app: FastAPI):
                         
                         if user_id and platform_id:
                             # ⚠️ Executar em thread pool para evitar bloqueio do event loop do Telegram/FastAPI
-                            import asyncio
                             msg = await asyncio.to_thread(
                                 bot_state.proactive.check_and_generate_advanced_message,
                                 user_id, 
