@@ -698,6 +698,176 @@ class AgentIdentityContextBuilder:
 
         return "; ".join(instructions[:4]) + "."
 
+    def _get_latest_dream_residue(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
+        if not user_id:
+            return None
+
+        cursor.execute(
+            """
+            SELECT id, symbolic_theme, extracted_insight, created_at
+            FROM agent_dreams
+            WHERE user_id = ? AND extracted_insight IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        return {
+            "id": row[0],
+            "theme": row[1],
+            "residue": row[2],
+            "created_at": row[3],
+        }
+
+    def _extract_scholar_metadata(self, trigger_reason: Optional[str]) -> Dict:
+        trigger_reason = trigger_reason or ""
+        lineage_match = re.search(r"Linhagem tematica:\s*([^\.]+)", trigger_reason, re.IGNORECASE)
+        mode_match = re.search(r"Modo de escolha:\s*([^\.]+)", trigger_reason, re.IGNORECASE)
+        return {
+            "lineage": lineage_match.group(1).strip() if lineage_match else None,
+            "selection_mode": mode_match.group(1).strip() if mode_match else None,
+        }
+
+    def _get_latest_scholar_signal(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
+        if not user_id:
+            return None
+
+        cursor.execute(
+            """
+            SELECT id, topic, trigger_reason, research_lens, status, created_at
+            FROM external_research
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        metadata = self._extract_scholar_metadata(row[2])
+        return {
+            "id": row[0],
+            "topic": row[1],
+            "trigger_reason": row[2],
+            "research_lens": row[3],
+            "status": row[4],
+            "created_at": row[5],
+            "lineage": metadata["lineage"],
+            "selection_mode": metadata["selection_mode"],
+        }
+
+    def build_current_mind_state(
+        self,
+        user_id: Optional[str] = None,
+        style: str = "concise",
+        current_user_message: Optional[str] = None,
+    ) -> Dict:
+        context = self.build_identity_context(
+            user_id=user_id,
+            include_nuclear=True,
+            include_contradictions=True,
+            include_narrative=True,
+            include_possible_selves=True,
+            include_relational=True,
+            include_meta_knowledge=True,
+            max_items_per_category=3 if style == "concise" else 5,
+        )
+
+        if "error" in context:
+            return {"error": context["error"]}
+
+        beliefs = context.get("nuclear_beliefs", [])
+        contradictions = context.get("active_contradictions", [])
+        chapter = context.get("current_narrative_chapter")
+        possible_selves = context.get("possible_selves", [])
+        relational_items = context.get("relational_identity", [])
+        knowledge_gaps = context.get("knowledge_gaps", [])
+        meta_knowledge = context.get("meta_knowledge", [])
+
+        cursor = self.db.conn.cursor()
+        agency_events = self._get_recent_agency_events(cursor, 3)
+        dream_signal = self._get_latest_dream_residue(cursor, user_id)
+        scholar_signal = self._get_latest_scholar_signal(cursor, user_id)
+
+        self_kernel = self._pick_top_beliefs(
+            beliefs, current_user_message, limit=2 if style == "concise" else 3
+        )
+        dominant_contradiction = self._pick_dominant_contradiction(
+            contradictions, current_user_message
+        )
+        relational_stance = self._pick_relational_stance(
+            relational_items, current_user_message
+        )
+        epistemic_hunger = self._pick_epistemic_hunger(
+            knowledge_gaps, current_user_message
+        )
+        active_self = self._pick_active_possible_self(
+            possible_selves, current_user_message
+        )
+        meta_signal = self._pick_meta_signal(
+            meta_knowledge, current_user_message
+        )
+        recent_shift = self._derive_recent_identity_shift(
+            beliefs=beliefs,
+            contradictions=contradictions,
+            chapter=chapter,
+            relational_items=relational_items,
+            agency_events=agency_events,
+        )
+        response_bias = self._derive_response_bias(
+            contradiction=dominant_contradiction,
+            chapter=chapter,
+            relational_stance=relational_stance,
+            epistemic_hunger=epistemic_hunger,
+            active_self=active_self,
+            meta_signal=meta_signal,
+        )
+
+        return {
+            "generated_at": datetime.now().isoformat(),
+            "agent_instance": self.agent_instance,
+            "for_user": user_id,
+            "self_kernel": [belief["content"] for belief in self_kernel],
+            "current_phase": {
+                "name": chapter.get("name") if chapter else None,
+                "theme": chapter.get("theme") if chapter else None,
+                "tone": chapter.get("tone") if chapter else None,
+                "agency": chapter.get("agency") if chapter else None,
+            },
+            "dominant_conflict": (
+                {
+                    "pole_a": dominant_contradiction["pole_a"],
+                    "pole_b": dominant_contradiction["pole_b"],
+                    "type": dominant_contradiction.get("type"),
+                    "tension": dominant_contradiction.get("tension"),
+                }
+                if dominant_contradiction
+                else None
+            ),
+            "relational_stance": relational_stance["content"] if relational_stance else None,
+            "epistemic_hunger": epistemic_hunger.get("the_gap") if epistemic_hunger else None,
+            "active_possible_self": active_self["description"] if active_self else None,
+            "meta_signal": (
+                {
+                    "topic": meta_signal.get("topic"),
+                    "assessment": meta_signal.get("assessment"),
+                    "bias": meta_signal.get("bias"),
+                }
+                if meta_signal
+                else None
+            ),
+            "recent_shift": recent_shift,
+            "response_bias": response_bias,
+            "dream_residue": dream_signal,
+            "scholar_signal": scholar_signal,
+        }
+
     def build_context_summary_for_llm(
         self,
         user_id: Optional[str] = None,

@@ -81,6 +81,11 @@ async def get_agent_identity_context(
             include_meta_knowledge=True,
             max_items_per_category=10
         )
+        from identity_config import ADMIN_USER_ID
+        context["current_mind_state"] = builder.build_current_mind_state(
+            user_id=ADMIN_USER_ID,
+            style="expanded",
+        )
 
         logger.info(f"🧠 Contexto completo acessado por master admin: {admin['email']}")
 
@@ -91,6 +96,43 @@ async def get_agent_identity_context(
 
     except Exception as e:
         logger.error(f"Erro ao obter contexto de identidade: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.get("/current-state")
+async def get_current_mind_state(
+    request: Request,
+    admin: Dict = Depends(require_master)
+):
+    """
+    Estado mental atual sintetizado a partir da identidade nuclear.
+
+    Restrito ao master admin.
+    """
+    try:
+        from agent_identity_context_builder import AgentIdentityContextBuilder
+        from jung_core import HybridDatabaseManager
+        from identity_config import ADMIN_USER_ID
+
+        db = HybridDatabaseManager()
+        builder = AgentIdentityContextBuilder(db)
+        current_state = builder.build_current_mind_state(
+            user_id=ADMIN_USER_ID,
+            style="expanded",
+        )
+
+        logger.info(f"🧭 Estado mental atual acessado por master admin: {admin['email']}")
+
+        return {
+            "success": True,
+            "current_state": current_state,
+        }
+
+    except Exception as e:
+        logger.error(f"Erro ao obter estado mental atual: {e}")
         return {
             "success": False,
             "error": str(e)
@@ -851,6 +893,11 @@ async def agent_identity_dashboard(
             <div id="stats-content" class="loading">Carregando...</div>
         </div>
 
+        <div class="card">
+            <h2>Estado Mental Atual</h2>
+            <div id="current-state-content" class="loading">Carregando...</div>
+        </div>
+
         <div class="dashboard-grid">
             <!-- Crenças Nucleares -->
             <div class="card">
@@ -929,6 +976,124 @@ async def agent_identity_dashboard(
             } catch (error) {
                 document.getElementById('stats-content').innerHTML =
                     `<div class="error">Erro ao carregar estatísticas: ${error.message}</div>`;
+            }
+        }
+
+        async function loadCurrentState() {
+            try {
+                const response = await fetch('/admin/agent-identity/current-state');
+                const data = await response.json();
+
+                if (!data.success) {
+                    document.getElementById('current-state-content').innerHTML =
+                        `<div class="error">Erro: ${data.error}</div>`;
+                    return;
+                }
+
+                const state = data.current_state || {};
+                const phase = state.current_phase || {};
+                const conflict = state.dominant_conflict || null;
+                const metaSignal = state.meta_signal || null;
+                const dream = state.dream_residue || null;
+                const scholar = state.scholar_signal || null;
+                const selfKernel = Array.isArray(state.self_kernel) ? state.self_kernel : [];
+
+                let html = '';
+
+                if (selfKernel.length) {
+                    html += `<div class="belief-item">
+                        <div class="belief-content"><strong>Self Kernel</strong></div>
+                        <div class="belief-content">${selfKernel.join('<br>')}</div>
+                    </div>`;
+                }
+
+                html += `<div class="stat-box">
+                    <span class="stat-label">Fase atual</span>
+                    <span class="stat-value" style="font-size: 1em;">${phase.name || 'N/A'}</span>
+                </div>`;
+
+                html += `<div class="stat-box">
+                    <span class="stat-label">Tema dominante</span>
+                    <span class="stat-value" style="font-size: 1em;">${phase.theme || 'N/A'}</span>
+                </div>`;
+
+                if (conflict) {
+                    html += `<div class="contradiction-item">
+                        <div class="belief-content"><strong>Conflito dominante</strong></div>
+                        <div class="contradiction-poles">
+                            <div class="pole">${conflict.pole_a || 'N/A'}</div>
+                            <div class="vs">⚡</div>
+                            <div class="pole">${conflict.pole_b || 'N/A'}</div>
+                        </div>
+                    </div>`;
+                }
+
+                if (state.relational_stance) {
+                    html += `<div class="belief-item">
+                        <div class="belief-content"><strong>Posicao relacional</strong></div>
+                        <div class="belief-content">${state.relational_stance}</div>
+                    </div>`;
+                }
+
+                if (state.epistemic_hunger) {
+                    html += `<div class="belief-item">
+                        <div class="belief-content"><strong>Fome epistemica</strong></div>
+                        <div class="belief-content">${state.epistemic_hunger}</div>
+                    </div>`;
+                }
+
+                if (state.active_possible_self) {
+                    html += `<div class="belief-item">
+                        <div class="belief-content"><strong>Self possivel ativo</strong></div>
+                        <div class="belief-content">${state.active_possible_self}</div>
+                    </div>`;
+                }
+
+                if (state.recent_shift) {
+                    html += `<div class="belief-item">
+                        <div class="belief-content"><strong>Shift recente</strong></div>
+                        <div class="belief-content">${state.recent_shift}</div>
+                    </div>`;
+                }
+
+                if (state.response_bias) {
+                    html += `<div class="belief-item">
+                        <div class="belief-content"><strong>Vies de resposta</strong></div>
+                        <div class="belief-content">${state.response_bias}</div>
+                    </div>`;
+                }
+
+                if (metaSignal) {
+                    html += `<div class="belief-item">
+                        <div class="belief-content"><strong>Meta-sinal</strong></div>
+                        <div class="belief-content">${metaSignal.topic || 'N/A'}: ${metaSignal.assessment || 'N/A'}</div>
+                    </div>`;
+                }
+
+                if (dream) {
+                    html += `<div class="belief-item">
+                        <div class="belief-content"><strong>Residuo onirico</strong></div>
+                        <div class="belief-content">${dream.theme || 'Sem tema'}: ${dream.residue || 'N/A'}</div>
+                    </div>`;
+                }
+
+                if (scholar) {
+                    html += `<div class="belief-item">
+                        <div class="belief-content"><strong>Scholar</strong></div>
+                        <div class="belief-content">${scholar.topic || 'N/A'}</div>
+                        <div class="belief-meta">
+                            <span class="badge badge-theme">${scholar.lineage || 'sem linhagem'}</span>
+                            <span class="badge badge-type">${scholar.selection_mode || 'sem modo'}</span>
+                        </div>
+                    </div>`;
+                }
+
+                document.getElementById('current-state-content').innerHTML =
+                    html || '<div class="empty-state">Nenhum estado atual sintetizado ainda</div>';
+
+            } catch (error) {
+                document.getElementById('current-state-content').innerHTML =
+                    `<div class="error">Erro ao carregar estado atual: ${error.message}</div>`;
             }
         }
 
@@ -1090,6 +1255,7 @@ async def agent_identity_dashboard(
 
         function loadAllData() {
             loadStats();
+            loadCurrentState();
             loadBeliefs();
             loadContradictions();
             loadNarrative();
