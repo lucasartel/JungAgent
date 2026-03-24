@@ -89,6 +89,9 @@ MIN_MATURITY_FOR_SYNTHESIS = 0.55  # Threshold de maturidade
 MIN_EVIDENCE_FOR_SYNTHESIS = 2  # Minimo de evidencias
 MIN_DAYS_FOR_SYNTHESIS = 1  # Minimo de dias de maturacao
 MAX_DAYS_FOR_SYNTHESIS = 14  # Depois disso força sintese ou arquiva
+MAX_SYNTHESIS_PER_DIGEST = 5  # Evitar gargalo de apenas 1-3 tensões por rodada
+MAX_READY_TENSIONS = 24  # Limite saudável para fila de prontas
+READY_STALE_ARCHIVE_DAYS = 21  # Arquivar prontas antigas e pouco prioritárias
 
 # Pesos para calculo de maturidade
 MATURITY_WEIGHTS = {

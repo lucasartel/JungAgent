@@ -675,6 +675,10 @@ class RuminationEngine:
 
         logger.info(f"   ✅ Digestão completa: {stats}")
 
+        pruned_ready = self._prune_ready_queue(user_id)
+        if pruned_ready:
+            stats["pruned_ready"] = pruned_ready
+
         # Log
         self._log_operation(
             "digestão",
@@ -686,6 +690,94 @@ class RuminationEngine:
         self.check_and_synthesize(user_id)
 
         return stats
+
+    def _score_ready_tension(self, tension: Dict) -> float:
+        """
+        Score de prioridade da fila pronta para síntese.
+
+        Queremos favorecer tensões:
+        - intensas,
+        - maduras,
+        - com mais evidência,
+        - revisitadas,
+        - e não excessivamente antigas sem novidade.
+        """
+        try:
+            days_old = max(
+                0,
+                (datetime.now() - datetime.fromisoformat(tension['first_detected_at'])).days
+            )
+        except Exception:
+            days_old = 0
+
+        freshness_bonus = max(0.0, 1.0 - min(days_old, 30) / 30.0)
+
+        return (
+            float(tension.get('maturity_score', 0.0)) * 4.0 +
+            float(tension.get('intensity', 0.0)) * 3.0 +
+            min(float(tension.get('evidence_count', 0.0)), 8.0) * 0.35 +
+            min(float(tension.get('revisit_count', 0.0)), 8.0) * 0.25 +
+            freshness_bonus
+        )
+
+    def _prune_ready_queue(self, user_id: str) -> int:
+        """
+        Reduz backlog de tensões prontas demais.
+
+        Estratégia:
+        - manter as mais prioritárias na fila;
+        - arquivar tensões antigas, pouco intensas e com baixa prioridade relativa.
+        """
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            SELECT *
+            FROM rumination_tensions
+            WHERE user_id = ? AND status = 'ready_for_synthesis'
+            ORDER BY first_detected_at ASC
+        """, (user_id,))
+
+        ready_rows = [dict(row) for row in cursor.fetchall()]
+        if len(ready_rows) <= MAX_READY_TENSIONS:
+            return 0
+
+        ranked = sorted(
+            ready_rows,
+            key=lambda tension: self._score_ready_tension(tension),
+            reverse=True
+        )
+
+        keep_ids = {tension['id'] for tension in ranked[:MAX_READY_TENSIONS]}
+        prunable = [tension for tension in ready_rows if tension['id'] not in keep_ids]
+
+        archived_count = 0
+        now = datetime.now()
+
+        for tension in prunable:
+            try:
+                days_old = (now - datetime.fromisoformat(tension['first_detected_at'])).days
+            except Exception:
+                days_old = 0
+
+            # Só arquivar excesso realmente estagnado
+            if days_old < READY_STALE_ARCHIVE_DAYS and float(tension.get('intensity', 0.0)) >= 0.8:
+                continue
+
+            cursor.execute("""
+                UPDATE rumination_tensions
+                SET status = 'archived',
+                    last_revisited_at = ?
+                WHERE id = ?
+            """, (now.isoformat(), tension['id']))
+            archived_count += 1
+
+        if archived_count:
+            self.db.conn.commit()
+            logger.info(
+                f"🗃️ [RUMINATION] Fila pronta podada: {archived_count} tensões arquivadas "
+                f"(prontas={len(ready_rows)}, limite={MAX_READY_TENSIONS})"
+            )
+
+        return archived_count
 
     def _calculate_maturity(self, tension: Dict) -> float:
         """
@@ -819,13 +911,16 @@ class RuminationEngine:
 
         cursor = self.db.conn.cursor()
 
+        # Podar fila antes de sintetizar para priorizar tensões mais vivas
+        self._prune_ready_queue(user_id)
+
         # Buscar tensões prontas para síntese
         cursor.execute("""
             SELECT * FROM rumination_tensions
             WHERE user_id = ? AND status = 'ready_for_synthesis'
-            ORDER BY maturity_score DESC, intensity DESC
-            LIMIT 3
-        """, (user_id,))
+            ORDER BY maturity_score DESC, intensity DESC, evidence_count DESC, first_detected_at ASC
+            LIMIT ?
+        """, (user_id, MAX_SYNTHESIS_PER_DIGEST))
 
         ready_tensions = cursor.fetchall()
 
@@ -916,6 +1011,14 @@ class RuminationEngine:
             # Validar novidade
             if not self._validate_novelty(result['internal_thought'], user_id):
                 logger.info("   ⏭️  Insight rejeitado por falta de novidade")
+                cursor = self.db.conn.cursor()
+                cursor.execute("""
+                    UPDATE rumination_tensions
+                    SET status = 'archived',
+                        synthesis_generated_at = ?
+                    WHERE id = ?
+                """, (datetime.now().isoformat(), tension['id']))
+                self.db.conn.commit()
                 return None
 
             # Salvar insight
