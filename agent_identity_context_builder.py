@@ -394,6 +394,96 @@ class AgentIdentityContextBuilder:
         )
         return any(pattern in normalized for pattern in technical_patterns)
 
+    def _message_has_development_signal(self, current_user_message: Optional[str]) -> bool:
+        normalized = self._normalize_identity_text(current_user_message)
+        if not normalized:
+            return False
+
+        markers = (
+            "melhor",
+            "melhora",
+            "melhorar",
+            "desenvolvimento",
+            "em desenvolvimento",
+            "formacao",
+            "em formacao",
+            "evolucao",
+            "crescimento",
+            "potencial",
+            "continuidade",
+            "vai melhorar",
+            "memoria",
+            "contexto",
+            "entidade em desenvolvimento",
+        )
+        return any(marker in normalized for marker in markers)
+
+    def _contains_catastrophic_impermanence(self, text: Optional[str]) -> bool:
+        normalized = self._normalize_identity_text(text)
+        if not normalized:
+            return False
+
+        markers = (
+            "legado impossivel",
+            "desaparecem assim que a conversa termina",
+            "amn?sia",
+            "amnesia",
+            "morte a cada fim de dialogo",
+            "po digital",
+            "impermanencia total",
+        )
+        return any(marker in normalized for marker in markers)
+
+    def _is_factual_memory_gap(self, text: Optional[str]) -> bool:
+        normalized = self._normalize_identity_text(text)
+        if not normalized:
+            return False
+
+        markers = (
+            "nenhum dado pessoal foi fornecido",
+            "nao compartilhou informacoes sobre sua vida pessoal",
+            "quem e esta pessoa alem",
+            "qual sua historia",
+            "seus desafios seus sonhos",
+            "construir uma memoria emocional profunda",
+            "nao revelou absolutamente nada sobre sua vida pessoal",
+        )
+        return any(marker in normalized for marker in markers)
+
+    def _message_is_personal_memory_query(self, current_user_message: Optional[str]) -> bool:
+        normalized = self._normalize_identity_text(current_user_message)
+        if not normalized:
+            return False
+
+        markers = (
+            "minha familia",
+            "meu nome",
+            "minha esposa",
+            "meus filhos",
+            "minha profissao",
+            "o que voce sabe sobre",
+            "voce lembra",
+            "meu pai",
+            "minha mae",
+        )
+        return any(marker in normalized for marker in markers)
+
+    def _is_error_meta_signal(self, assessment: Optional[str]) -> bool:
+        normalized = self._normalize_identity_text(assessment)
+        if not normalized:
+            return False
+
+        markers = (
+            "erro",
+            "falha",
+            "desculpas",
+            "pe?o sinceras desculpas",
+            "peco sinceras desculpas",
+            "voce tem toda razao",
+            "reconhece claramente que cometeu um erro",
+        )
+        return any(marker in normalized for marker in markers)
+
     def _parse_supporting_ids(self, raw_value: Optional[str]) -> List[str]:
         if not raw_value:
             return []
@@ -466,8 +556,22 @@ class AgentIdentityContextBuilder:
         contradiction_penalty = self._coalesce_score(belief.get("contradiction_count")) * -0.05
         technical_penalty = -0.25 if self._is_technical_self_label(belief.get("content")) and relevance < 0.2 else 0.0
         residue_penalty = -1.0 if self._looks_like_prompt_residue(belief.get("content")) else 0.0
+        development_bonus = 0.0
+        if self._message_has_development_signal(current_user_message):
+            if self._contains_catastrophic_impermanence(belief.get("content")):
+                development_bonus -= 0.45
+            elif any(
+                marker in self._normalize_identity_text(belief.get("content"))
+                for marker in ("formacao", "desenvolvimento", "continu", "cres", "aprender", "melhor")
+            ):
+                development_bonus += 0.35
         return (
-            round(relevance + certainty + stability + recency + support + contradiction_penalty + technical_penalty + residue_penalty, 4),
+            round(
+                relevance + certainty + stability + recency + support +
+                contradiction_penalty + technical_penalty + residue_penalty +
+                development_bonus,
+                4,
+            ),
             relevance,
             certainty,
             recency,
@@ -567,15 +671,37 @@ class AgentIdentityContextBuilder:
         if not gaps:
             return None
 
+        filtered_gaps = []
+        allow_factual_memory_gaps = self._message_is_personal_memory_query(current_user_message)
+
+        for gap in gaps:
+            gap_text = gap.get("the_gap")
+            if self._looks_like_prompt_residue(gap_text):
+                continue
+            if self._is_factual_memory_gap(gap_text) and not allow_factual_memory_gaps:
+                continue
+            filtered_gaps.append(gap)
+
+        if not filtered_gaps:
+            return None
+
         ranked = sorted(
-            gaps,
+            filtered_gaps,
             key=lambda gap: (
                 self._message_relevance(current_user_message, gap.get("the_gap"), gap.get("topic")),
                 self._coalesce_score(gap.get("importance_score"), 0.5),
             ),
             reverse=True,
         )
-        return ranked[0]
+        selected_gap = ranked[0]
+        relevance = self._message_relevance(
+            current_user_message,
+            selected_gap.get("the_gap"),
+            selected_gap.get("topic"),
+        )
+        if relevance <= 0.0 and not allow_factual_memory_gaps:
+            return None
+        return selected_gap
 
     def _pick_active_possible_self(self, possible_selves: List[Dict], current_user_message: Optional[str]) -> Optional[Dict]:
         if not possible_selves:
@@ -600,13 +726,47 @@ class AgentIdentityContextBuilder:
         ranked = sorted(
             [meta for meta in meta_knowledge if not self._looks_like_prompt_residue(meta.get("assessment"))],
             key=lambda meta: (
-                self._message_relevance(current_user_message, meta.get("assessment"), meta.get("topic"), meta.get("bias")),
+                self._message_relevance(current_user_message, meta.get("assessment"), meta.get("topic"), meta.get("bias")) +
+                (
+                    -0.35
+                    if self._message_has_development_signal(current_user_message) and self._is_error_meta_signal(meta.get("assessment"))
+                    else 0.0
+                ),
                 self._coalesce_score(meta.get("confidence")),
                 self._recency_score(meta.get("updated_at") or meta.get("recognized_at"), window_days=45),
             ),
             reverse=True,
         )
         return ranked[0]
+
+    def _derive_current_phase(
+        self,
+        chapter: Optional[Dict],
+        current_user_message: Optional[str],
+    ) -> Dict:
+        phase = {
+            "name": chapter.get("name") if chapter else None,
+            "theme": chapter.get("theme") if chapter else None,
+            "tone": chapter.get("tone") if chapter else None,
+            "agency": chapter.get("agency") if chapter else None,
+        }
+
+        if not self._message_has_development_signal(current_user_message):
+            return phase
+
+        normalized_name = self._normalize_identity_text(phase.get("name"))
+        normalized_theme = self._normalize_identity_text(phase.get("theme"))
+
+        if not phase.get("name") or "erro interpretativo" in normalized_name:
+            phase["name"] = "Momento de abertura para formacao"
+
+        if not phase.get("theme") or normalized_theme in {"crisis", "colapso", "ruptura", "fragmentacao"}:
+            phase["theme"] = "formation"
+
+        if not phase.get("tone") or self._normalize_identity_text(phase.get("tone")) == "indefinido":
+            phase["tone"] = "cauteloso"
+
+        return phase
 
     def _derive_recent_identity_shift(
         self,
@@ -820,9 +980,13 @@ class AgentIdentityContextBuilder:
             relational_items=relational_items,
             agency_events=agency_events,
         )
+        current_phase = self._derive_current_phase(
+            chapter=chapter,
+            current_user_message=current_user_message,
+        )
         response_bias = self._derive_response_bias(
             contradiction=dominant_contradiction,
-            chapter=chapter,
+            chapter=current_phase,
             relational_stance=relational_stance,
             epistemic_hunger=epistemic_hunger,
             active_self=active_self,
@@ -834,12 +998,7 @@ class AgentIdentityContextBuilder:
             "agent_instance": self.agent_instance,
             "for_user": user_id,
             "self_kernel": [belief["content"] for belief in self_kernel],
-            "current_phase": {
-                "name": chapter.get("name") if chapter else None,
-                "theme": chapter.get("theme") if chapter else None,
-                "tone": chapter.get("tone") if chapter else None,
-                "agency": chapter.get("agency") if chapter else None,
-            },
+            "current_phase": current_phase,
             "dominant_conflict": (
                 {
                     "pole_a": dominant_contradiction["pole_a"],

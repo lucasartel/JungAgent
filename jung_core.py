@@ -4560,6 +4560,7 @@ class JungianEngine:
             admin_id = os.getenv("ADMIN_USER_ID", "1228514589")
             
         is_admin = (str(user_id) == str(admin_id))
+        identity_state_injected = False
         
         # Construir identidade dinâmica condicional
         if is_admin:
@@ -4575,6 +4576,7 @@ class JungianEngine:
                     )
                     if identity_ctx and len(identity_ctx) > 100:
                         agent_identity_text = Config.ADMIN_IDENTITY_PROMPT + "\n\n" + identity_ctx
+                        identity_state_injected = True
                         logger.info(f"✅ [IDENTITY] Contexto de identidade injetado para ADMIN: {len(identity_ctx)} chars")
                     else:
                         logger.info("⚠️ [IDENTITY] Contexto de identidade vazio para ADMIN (aguardando 1ª consolidação)")
@@ -4604,6 +4606,12 @@ class JungianEngine:
         pending_dream = None
         if is_admin:
             pending_dream = self.db.get_latest_dream_insight(user_id)
+            if pending_dream and identity_state_injected:
+                logger.info(
+                    f"Dream Engine: residuo do sonho #{pending_dream['id']} ja incorporado ao current mind state do admin"
+                )
+                self.db.mark_dream_delivered(pending_dream["id"])
+                pending_dream = None
             if pending_dream and not dream_instruction:
                 dream_instruction = self._build_dream_instruction(pending_dream)
                 if dream_instruction:
