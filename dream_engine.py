@@ -185,13 +185,30 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
                 temperature=0.25,
                 messages=[{"role": "user", "content": prompt}],
             )
-            insight_text = response.content[0].text.strip()
+            insight_text = self._normalize_dream_residue(response.content[0].text.strip())
 
             if insight_text:
                 self.db.update_dream_with_insight(dream_id, insight_text)
                 logger.info("   Insight onirico extraido e associado!")
         except Exception as e:
             logger.error(f"Erro ao extrair insight onirico: {e}")
+
+    def _normalize_dream_residue(self, text: str) -> str:
+        """Compacta residuos oniricos para evitar mini-ensaios no prompt."""
+        if not text:
+            return ""
+
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`").strip()
+
+        cleaned = " ".join(cleaned.split())
+
+        if len(cleaned) <= 320:
+            return cleaned
+
+        truncated = cleaned[:317].rstrip(" ,.;:")
+        return truncated + "..."
 
     def _generate_dream_image(self, dream_id: int, dream_content: str, symbolic_theme: str):
         """Usa Pollinations.ai para pintar a manifestacao visual do sonho."""

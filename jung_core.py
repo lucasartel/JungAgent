@@ -1721,9 +1721,19 @@ Resposta: {ai_response}
         with self._lock:
             cursor = self.conn.cursor()
             cursor.execute("""
+                UPDATE agent_dreams
+                SET status = 'faded'
+                WHERE user_id = ?
+                  AND COALESCE(status, 'pending') = 'pending'
+                  AND extracted_insight IS NOT NULL
+                  AND created_at < datetime('now', '-72 hours')
+            """, (user_id,))
+            cursor.execute("""
                 SELECT id, dream_content, extracted_insight, symbolic_theme 
                 FROM agent_dreams
-                WHERE user_id = ? AND extracted_insight IS NOT NULL
+                WHERE user_id = ?
+                  AND extracted_insight IS NOT NULL
+                  AND COALESCE(status, 'pending') != 'delivered'
                 ORDER BY created_at DESC
                 LIMIT 1
             """, (user_id,))
@@ -4598,8 +4608,9 @@ class JungianEngine:
                 dream_instruction = self._build_dream_instruction(pending_dream)
                 if dream_instruction:
                     logger.info(f"Dream Engine: injetando residuo do sonho #{pending_dream['id']} no prompt do admin")
+                    self.db.mark_dream_delivered(pending_dream["id"])
                     pending_dream = None
-            if pending_dream:
+            if pending_dream and False:
                 dream_instruction = f"\n\n[INFLUÊNCIA ONÍRICA RECENTE: Logo antes, eu produzi esta visão simbólica sobre minha relação com você: {pending_dream['dream_content']}. Minha análise profunda disso sugere que: {pending_dream['extracted_insight']}. Deixe que este sonho influencie sua escrita diretamente.]"
                 logger.info(f"🌙 [DREAM ENGINE] Injetando Sonho Mais Recente #{pending_dream['id']} no prompt do ADMIN")
 
