@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 import logging
 from datetime import datetime
 import json
+import re
 
 # MIGRADO: Agora usa sistema session-based multi-tenant
 # Master Admin e Org Admin podem acessar (com verificação de organização)
@@ -2163,6 +2164,13 @@ async def research_dashboard(
         LIMIT 100
     """)
     researches = [dict(row) for row in cursor.fetchall()]
+
+    for research in researches:
+        trigger_reason = research.get("trigger_reason") or ""
+        lineage_match = re.search(r"Linhagem tematica:\s*([^\.]+)", trigger_reason, re.IGNORECASE)
+        mode_match = re.search(r"Modo de escolha:\s*([^\.]+)", trigger_reason, re.IGNORECASE)
+        research["research_lineage"] = lineage_match.group(1).strip() if lineage_match else None
+        research["selection_mode"] = mode_match.group(1).strip() if mode_match else None
 
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scholar_runs'")
     has_scholar_runs = cursor.fetchone() is not None
