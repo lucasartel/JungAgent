@@ -15,6 +15,7 @@ Data: 2025-12-04
 
 import logging
 import json
+import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import sqlite3
@@ -489,10 +490,80 @@ class RuminationEngine:
 
         return used_ids
 
+    def _recover_string_field(self, raw_text: str, field_name: str, next_fields: List[str]) -> str:
+        field_pattern = rf'"{re.escape(field_name)}"\s*:\s*"'
+        start_match = re.search(field_pattern, raw_text, re.DOTALL)
+        if not start_match:
+            return ""
+
+        start = start_match.end()
+        next_markers = [
+            rf'"\s*,\s*"{re.escape(next_field)}"\s*:'
+            for next_field in next_fields
+        ] + [r'"\s*\}']
+        next_pattern = "|".join(next_markers)
+
+        end_match = re.search(next_pattern, raw_text[start:], re.DOTALL)
+        if end_match:
+            value = raw_text[start:start + end_match.start()]
+        else:
+            value = raw_text[start:]
+
+        return value.replace('\\"', '"').replace("\\n", "\n").replace("\\t", "\t").strip(" \n\r\t,")
+
+    def _recover_float_field(self, raw_text: str, field_name: str) -> Optional[float]:
+        match = re.search(
+            rf'"{re.escape(field_name)}"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
+            raw_text,
+            re.DOTALL,
+        )
+        if not match:
+            return None
+
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return None
+
+    def _recover_synthesis_payload(self, raw_text: str) -> Dict:
+        if not raw_text:
+            return {}
+
+        cleaned = str(raw_text).strip()
+        recovered = {
+            "internal_thought": self._recover_string_field(
+                cleaned,
+                "internal_thought",
+                ["core_image", "internal_question", "depth_score", "novelty_score"],
+            ),
+            "core_image": self._recover_string_field(
+                cleaned,
+                "core_image",
+                ["internal_question", "depth_score", "novelty_score"],
+            ),
+            "internal_question": self._recover_string_field(
+                cleaned,
+                "internal_question",
+                ["depth_score", "novelty_score"],
+            ),
+        }
+
+        depth_score = self._recover_float_field(cleaned, "depth_score")
+        if depth_score is not None:
+            recovered["depth_score"] = depth_score
+
+        novelty_score = self._recover_float_field(cleaned, "novelty_score")
+        if novelty_score is not None:
+            recovered["novelty_score"] = novelty_score
+
+        if recovered.get("internal_thought"):
+            logger.warning("Ruminacao recuperou sintese malformada heurísticamente")
+            return recovered
+
+        return {}
+
     def _parse_json_response(self, response: Optional[str]) -> Dict:
         """Parse robusto de resposta JSON do LLM."""
-        import re
-
         if response is None:
             logger.warning("Resposta do LLM veio nula ao tentar parsear JSON")
             return {}
@@ -516,10 +587,16 @@ class RuminationEngine:
                 try:
                     return json.loads(candidate)
                 except json.JSONDecodeError as e:
+                    recovered = self._recover_synthesis_payload(cleaned)
+                    if recovered:
+                        return recovered
                     logger.error(f"Erro ao parsear JSON: {e}")
                     logger.error(f"Resposta bruta: {cleaned[:500]}")
                     return {}
 
+            recovered = self._recover_synthesis_payload(cleaned)
+            if recovered:
+                return recovered
             logger.error("Erro ao parsear JSON: objeto JSON nao encontrado na resposta")
             logger.error(f"Resposta bruta: {cleaned[:500]}")
             return {}
@@ -631,7 +708,7 @@ class RuminationEngine:
             # 2. Calcular maturidade
             old_maturity = tension.get('maturity_score', 0.0)
             maturity = self._calculate_maturity(tension)
-            logger.info(
+            logger.debug(
                 f"📈 [RUMINATION] Maturidade tensão {tension_id}: "
                 f"{old_maturity:.3f} → {maturity:.3f} "
                 f"(evidências={tension['evidence_count']}, revisitas={tension.get('revisit_count', 0)})"
@@ -663,7 +740,7 @@ class RuminationEngine:
             else:
                 new_status = "maturing"
                 stats["matured"] += 1
-                logger.info(
+                logger.debug(
                     f"⏳ [RUMINATION] Tensão {tension_id} amadurecendo: "
                     f"maturity={maturity:.3f} (precisa {MIN_MATURITY_FOR_SYNTHESIS})"
                 )
@@ -898,7 +975,7 @@ class RuminationEngine:
         result = cursor.fetchone()
         count = result[0] if result else 0
 
-        logger.info(
+        logger.debug(
             f"🧠 [RUMINATION] Fragment count tensão {tension.get('id', '?')}: "
             f"{count} relevantes de {len(recent_ids)} recentes "
             f"(tipos: {relevant_types})"
@@ -1021,6 +1098,8 @@ class RuminationEngine:
 
             # Parse JSON
             result = self._parse_json_response(response)
+            if not result:
+                result = self._recover_synthesis_payload(response or "")
 
             internal_thought = result.get('internal_thought') if result else None
             if not isinstance(internal_thought, str) or not internal_thought.strip():
@@ -1125,8 +1204,20 @@ class RuminationEngine:
             response = claude.get_response(prompt, temperature=0.3, max_tokens=300)
 
             result = self._parse_json_response(response)
+            if not result:
+                logger.warning("Validacao de novidade sem payload confiavel; liberando insight por fallback")
+                return True
 
-            novelty_score = result.get('novelty_score', 0.5)
+            novelty_score = result.get('novelty_score')
+            if novelty_score is None:
+                logger.warning("Validacao de novidade sem novelty_score; liberando insight por fallback")
+                return True
+
+            try:
+                novelty_score = float(novelty_score)
+            except (TypeError, ValueError):
+                logger.warning("Validacao de novidade com novelty_score invalido; liberando insight por fallback")
+                return True
 
             return novelty_score >= 0.6
 

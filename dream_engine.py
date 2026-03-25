@@ -6,6 +6,7 @@ identidade do agente e retroalimenta o modulo de ruminacao.
 import json
 import logging
 import random
+import re
 import urllib.parse
 from typing import Any
 
@@ -45,6 +46,87 @@ class DreamEngine:
             return ""
 
         return str(text).strip()
+
+    def _strip_code_fences(self, text: str) -> str:
+        if not text:
+            return ""
+
+        cleaned = text.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        elif cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+
+        return cleaned.strip()
+
+    def _decode_loose_string(self, value: str) -> str:
+        if value is None:
+            return ""
+
+        cleaned = value.strip()
+        cleaned = cleaned.replace('\\"', '"').replace("\\n", "\n").replace("\\t", "\t")
+        return cleaned.strip(" \n\r\t,")
+
+    def _recover_json_string_field(self, raw_text: str, field_name: str, next_fields: list[str]) -> str:
+        field_pattern = rf'"{re.escape(field_name)}"\s*:\s*"'
+        start_match = re.search(field_pattern, raw_text, re.DOTALL)
+        if not start_match:
+            return ""
+
+        start = start_match.end()
+        next_markers = [
+            rf'"\s*,\s*"{re.escape(next_field)}"\s*:'
+            for next_field in next_fields
+        ] + [r'"\s*\}']
+        next_pattern = "|".join(next_markers)
+
+        end_match = re.search(next_pattern, raw_text[start:], re.DOTALL)
+        if end_match:
+            value = raw_text[start:start + end_match.start()]
+        else:
+            value = raw_text[start:]
+
+        return self._decode_loose_string(value)
+
+    def _parse_dream_payload(self, raw_text: str) -> dict:
+        cleaned = self._strip_code_fences(raw_text)
+        if not cleaned:
+            return {}
+
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        brace_match = re.search(r"\{[\s\S]*\}", cleaned)
+        if brace_match:
+            candidate = brace_match.group(0).strip()
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+
+        recovered = {
+            "dream_narrative": self._recover_json_string_field(
+                cleaned,
+                "dream_narrative",
+                ["symbolic_theme"],
+            ),
+            "symbolic_theme": self._recover_json_string_field(
+                cleaned,
+                "symbolic_theme",
+                [],
+            ),
+        }
+
+        if recovered["dream_narrative"] or recovered["symbolic_theme"]:
+            logger.warning("Dream Engine recuperou payload malformado heurísticamente")
+            return recovered
+
+        return {}
 
     def _get_recent_fragments(self, user_id: str, hours: int = 24) -> str:
         """Puxa os fragmentos recentes do usuario para material onirico."""
@@ -153,19 +235,13 @@ INSTRUCOES CRITICAS PARA O SONHO:
                 logger.warning("Dream Engine recebeu payload vazio ao gerar sonho")
                 return False
 
-            if result_text.startswith("```json"):
-                result_text = result_text[7:-3]
-            elif result_text.startswith("```"):
-                result_text = result_text[3:-3]
-
-            result_text = result_text.strip()
-
-            dream_data = json.loads(result_text)
+            dream_data = self._parse_dream_payload(result_text)
 
             dream_content = dream_data.get("dream_narrative", "")
             symbolic_theme = dream_data.get("symbolic_theme", "Desconhecido")
 
             if not dream_content:
+                logger.warning("Dream Engine nao conseguiu recuperar um dream_narrative valido")
                 return False
 
             dream_id = self.db.save_dream(user_id, dream_content, symbolic_theme)
@@ -250,8 +326,6 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
             "Double exposure photography, surreal, liminal space",
         ]
         chosen_style = random.choice(styles)
-
-        import re
 
         clean_theme = re.sub(r"[^a-zA-Z0-9 ]", "", symbolic_theme)
         image_prompt = (
