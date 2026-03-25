@@ -933,6 +933,97 @@ class HybridDatabaseManager:
             )
         """)
 
+        # ========== LOOP DE CONSCIENCIA ==========
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS consciousness_loop_state (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_instance TEXT NOT NULL UNIQUE,
+                status TEXT DEFAULT 'idle',
+                cycle_id TEXT,
+                loop_mode TEXT DEFAULT '24h',
+                current_phase TEXT,
+                next_phase TEXT,
+                phase_started_at DATETIME,
+                phase_deadline_at DATETIME,
+                last_completed_phase TEXT,
+                last_cycle_completed_at DATETIME,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                notes TEXT
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS consciousness_loop_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_id TEXT,
+                agent_instance TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at DATETIME,
+                completed_at DATETIME,
+                duration_seconds REAL,
+                trigger_name TEXT,
+                trigger_source TEXT,
+                execution_mode TEXT,
+                input_summary TEXT,
+                output_summary TEXT,
+                warnings_json TEXT,
+                errors_json TEXT,
+                metrics_json TEXT,
+                phase_result_id INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS consciousness_loop_phase_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_id TEXT,
+                agent_instance TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                trigger_name TEXT,
+                trigger_source TEXT,
+                started_at DATETIME,
+                completed_at DATETIME,
+                duration_ms INTEGER,
+                status TEXT NOT NULL,
+                input_summary TEXT,
+                output_summary TEXT,
+                artifacts_created_json TEXT,
+                warnings_json TEXT,
+                errors_json TEXT,
+                metrics_json TEXT,
+                raw_result_json TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS consciousness_loop_artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_id TEXT,
+                agent_instance TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                artifact_type TEXT,
+                artifact_id TEXT,
+                artifact_table TEXT,
+                summary TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS consciousness_phase_config (
+                phase TEXT PRIMARY KEY,
+                enabled BOOLEAN DEFAULT 1,
+                order_index INTEGER NOT NULL,
+                default_duration_minutes INTEGER NOT NULL,
+                retry_limit INTEGER DEFAULT 2,
+                cooldown_minutes INTEGER DEFAULT 10,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # ========== DADOS DO PILOTO UNESCO (JAISD) ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS unesco_pilot_data (
@@ -997,6 +1088,11 @@ class HybridDatabaseManager:
 
         # Lacunas
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_gaps_user ON knowledge_gaps(user_id, status)")
+
+        # Loop de consciencia
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_events_cycle ON consciousness_loop_events(agent_instance, cycle_id, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_results_cycle ON consciousness_loop_phase_results(agent_instance, cycle_id, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_artifacts_cycle ON consciousness_loop_artifacts(agent_instance, cycle_id, created_at DESC)")
 
         self.conn.commit()
         logger.info("✅ Schema SQLite criado/verificado com índices de performance")

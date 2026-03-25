@@ -193,6 +193,33 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(world_consciousness_scheduler())
     logger.info("✅ Job de Curiosidade Ontológica (World Consciousness) agendado!")
 
+    async def consciousness_loop_scheduler():
+        """Mantem o Loop de Consciencia sincronizado com o relogio proprio."""
+        from telegram_bot import bot_state
+        from consciousness_loop import ConsciousnessLoopManager
+
+        logger.info("⏳ [LOOP] Aguardando 1 min antes da primeira sincronizacao do Loop de Consciencia...")
+        await asyncio.sleep(60)
+
+        while True:
+            try:
+                if getattr(bot_state, "db", None) is not None:
+                    manager = ConsciousnessLoopManager(bot_state.db)
+                    result = await asyncio.to_thread(manager.sync_loop, "scheduled_trigger")
+                    logger.info(
+                        "🧭 [LOOP] Sync concluido: action=%s cycle_id=%s phase=%s",
+                        result.get("action"),
+                        result.get("cycle_id"),
+                        result.get("current_phase"),
+                    )
+            except Exception as e:
+                logger.error(f"❌ Erro no scheduler do Loop de Consciencia: {e}")
+
+            await asyncio.sleep(300)
+
+    asyncio.create_task(consciousness_loop_scheduler())
+    logger.info("✅ Scheduler do Loop de Consciencia agendado!")
+
     # AVISO: Schedulers de background migrados para a rota /cron/
     app.state.telegram_app = telegram_app
 
@@ -1354,6 +1381,13 @@ try:
     logger.info("✅ Rotas de identidade do agente carregadas (protegidas - Master Admin only)")
 except Exception as e:
     logger.warning(f"⚠️  Rotas de identidade do agente não disponíveis: {e}")
+
+try:
+    from admin_web.routes.consciousness_loop_routes import router as consciousness_loop_router
+    app.include_router(consciousness_loop_router)
+    logger.info("✅ Rotas do Loop de Consciencia carregadas (protegidas - Master Admin only)")
+except Exception as e:
+    logger.warning(f"⚠️  Rotas do Loop de Consciencia não disponíveis: {e}")
 
 # ============================================================================
 # ROTAS TRI/IRT (Item Response Theory) - Sistema Psicométrico Avançado
