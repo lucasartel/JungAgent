@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from typing import Dict, List, Optional
@@ -296,6 +297,185 @@ class ConsciousnessLoopManager:
             },
         }
 
+    def _record_virtual_artifact(self, result: Dict, artifact_type: str, artifact_id: Optional[str], artifact_table: str, summary: str):
+        result["artifacts_created"].append(
+            {
+                "artifact_type": artifact_type,
+                "artifact_id": str(artifact_id) if artifact_id is not None else None,
+                "artifact_table": artifact_table,
+                "summary": summary,
+            }
+        )
+        result["metrics"]["artifacts_created_count"] = len(result["artifacts_created"])
+
+    def _promote_from_placeholder(self, result: Dict):
+        result["warnings"] = [warning for warning in result["warnings"] if warning != "placeholder_execution"]
+        result["metrics"]["phase_placeholder"] = 0
+
+    def _run_dream_phase(self, result: Dict) -> Dict:
+        from dream_engine import DreamEngine
+
+        self._promote_from_placeholder(result)
+        dream_engine = DreamEngine(self.db)
+        success = dream_engine.generate_dream(self.admin_user_id)
+        result["raw_result"]["dream_generated"] = success
+
+        if success:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, symbolic_theme, extracted_insight, status, created_at
+                FROM agent_dreams
+                WHERE user_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (self.admin_user_id,),
+            )
+            row = cursor.fetchone()
+            if row:
+                self._record_virtual_artifact(
+                    result,
+                    artifact_type="dream",
+                    artifact_id=row["id"],
+                    artifact_table="agent_dreams",
+                    summary=row["symbolic_theme"] or "Tema onirico nao nomeado",
+                )
+                result["raw_result"]["latest_dream"] = {
+                    "dream_id": row["id"],
+                    "symbolic_theme": row["symbolic_theme"],
+                    "extracted_insight": row["extracted_insight"],
+                    "status": row["status"],
+                    "created_at": row["created_at"],
+                }
+            result["output_summary"] = "Dream Engine executado com sucesso e ultimo sonho registrado no ciclo."
+        else:
+            result["status"] = "partial_success"
+            result["warnings"].append("dream_not_generated")
+            result["output_summary"] = "Dream Engine executado sem gerar novo sonho utilizavel nesta janela."
+
+        result["metrics"]["dream_generated"] = 1 if success else 0
+        return result
+
+    def _run_identity_phase(self, result: Dict) -> Dict:
+        from agent_identity_consolidation_job import run_agent_identity_consolidation
+        from agent_identity_context_builder import AgentIdentityContextBuilder
+
+        self._promote_from_placeholder(result)
+        consolidation_result = asyncio.run(run_agent_identity_consolidation())
+        builder = AgentIdentityContextBuilder(self.db)
+        current_state = builder.build_current_mind_state(
+            user_id=self.admin_user_id,
+            style="concise",
+        )
+
+        result["raw_result"]["identity_consolidation"] = consolidation_result
+        result["raw_result"]["current_mind_state"] = current_state
+        result["metrics"]["conversations_processed"] = consolidation_result.get("processed_count", 0)
+        result["metrics"]["elements_extracted"] = consolidation_result.get("elements_total", 0)
+
+        self._record_virtual_artifact(
+            result,
+            artifact_type="current_mind_state",
+            artifact_id=None,
+            artifact_table="agent_identity_context_builder",
+            summary=current_state.get("current_phase", "estado mental atual sintetizado"),
+        )
+
+        status = consolidation_result.get("status")
+        if consolidation_result.get("success") or status in {"no_conversations", "partial_success"}:
+            if status == "partial_success":
+                result["status"] = "partial_success"
+                result["warnings"].append("identity_partial_success")
+            elif status == "no_conversations":
+                result["warnings"].append("identity_no_new_conversations")
+
+            result["output_summary"] = (
+                f"Identidade sincronizada; processadas {consolidation_result.get('processed_count', 0)} "
+                f"de {consolidation_result.get('total_conversations', 0)} conversas."
+            )
+        else:
+            result["status"] = "failed"
+            result["errors"].extend(consolidation_result.get("errors", []) or ["identity_phase_failed"])
+            result["output_summary"] = "Fase de identidade falhou ao consolidar conversas do admin."
+
+        return result
+
+    def _run_world_phase(self, result: Dict) -> Dict:
+        from world_consciousness import world_consciousness
+
+        self._promote_from_placeholder(result)
+        world_state = world_consciousness.get_world_state(force_refresh=True)
+        result["raw_result"]["world_state"] = {
+            "dominant_tension": world_state.get("dominant_tension"),
+            "atmosphere": world_state.get("atmosphere"),
+            "continuity_note": world_state.get("continuity_note"),
+            "stale_areas": world_state.get("stale_areas", []),
+        }
+        result["metrics"]["world_areas_loaded"] = len([k for k, v in (world_state.get("area_digest", {}) or {}).items() if v])
+        result["metrics"]["stale_area_count"] = len(world_state.get("stale_areas", []) or [])
+        self._record_virtual_artifact(
+            result,
+            artifact_type="world_state_snapshot",
+            artifact_id=world_state.get("cache_timestamp"),
+            artifact_table="world_state_cache",
+            summary=world_state.get("dominant_tension", "estado de mundo atualizado"),
+        )
+
+        if world_state.get("stale_areas"):
+            result["warnings"].append("world_used_cached_areas")
+
+        result["output_summary"] = (
+            f"World Consciousness atualizado; tensao dominante: {world_state.get('dominant_tension', 'indefinida')}."
+        )
+        return result
+
+    def _run_scholar_phase(self, result: Dict) -> Dict:
+        from scholar_engine import ScholarEngine
+
+        self._promote_from_placeholder(result)
+        scholar = ScholarEngine(self.db)
+        scholar_result = scholar.run_scholarly_routine(
+            self.admin_user_id,
+            trigger_source="consciousness_loop",
+        )
+        result["raw_result"]["scholar_result"] = scholar_result
+        result["metrics"]["article_chars"] = scholar_result.get("article_chars", 0)
+        result["metrics"]["research_created"] = 1 if scholar_result.get("research_id") else 0
+
+        if scholar_result.get("run_id"):
+            self._record_virtual_artifact(
+                result,
+                artifact_type="scholar_run",
+                artifact_id=scholar_result.get("run_id"),
+                artifact_table="scholar_runs",
+                summary=scholar_result.get("status", "scholar run"),
+            )
+        if scholar_result.get("research_id"):
+            self._record_virtual_artifact(
+                result,
+                artifact_type="external_research",
+                artifact_id=scholar_result.get("research_id"),
+                artifact_table="external_research",
+                summary=scholar_result.get("topic") or scholar_result.get("reason", "pesquisa autonoma"),
+            )
+
+        if scholar_result.get("success"):
+            if scholar_result.get("status") == "completed":
+                result["output_summary"] = (
+                    f"Scholar concluiu pesquisa sobre {scholar_result.get('topic', 'tema nao nomeado')}."
+                )
+            else:
+                result["status"] = "partial_success"
+                result["warnings"].append(f"scholar_{scholar_result.get('status', 'unknown')}")
+                result["output_summary"] = scholar_result.get("reason", "Scholar executado sem pesquisa nova.")
+        else:
+            result["status"] = "failed"
+            result["errors"].append(scholar_result.get("reason", "scholar_failed"))
+            result["output_summary"] = "Scholar falhou ao concluir a fase."
+
+        return result
+
     def execute_phase(
         self,
         phase_key: str,
@@ -313,11 +493,20 @@ class ConsciousnessLoopManager:
         )
 
         result = self._build_placeholder_result(cycle_id, phase, trigger_source, execution_mode)
+        if phase.key == "dream":
+            result = self._run_dream_phase(result)
+        elif phase.key == "identity":
+            result = self._run_identity_phase(result)
+        elif phase.key == "world":
+            result = self._run_world_phase(result)
+        elif phase.key == "scholar":
+            result = self._run_scholar_phase(result)
+
         phase_result_id = self._save_phase_result(result)
         self._insert_event(
             cycle_id=cycle_id,
             phase=phase.key,
-            status="completed",
+            status="failed" if result["status"] == "failed" else "completed",
             trigger_name=phase.trigger_name,
             trigger_source=trigger_source,
             execution_mode=execution_mode,
