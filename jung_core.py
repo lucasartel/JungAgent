@@ -25,6 +25,7 @@ import json
 import re
 import logging
 import threading
+import time
 import unicodedata
 from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime
@@ -345,8 +346,9 @@ class HybridDatabaseManager:
         self._lock = threading.RLock()  # Reentrant lock para operações SQLite
 
         # ===== SQLite =====
-        self.conn = sqlite3.connect(Config.SQLITE_PATH, check_same_thread=False)
+        self.conn = sqlite3.connect(Config.SQLITE_PATH, check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA busy_timeout = 30000")
         self._init_sqlite_schema()
         
         # ===== ChromaDB + OpenAI Embeddings =====
@@ -1703,18 +1705,31 @@ Resposta: {ai_response}
     def update_dream_image(self, dream_id: int, image_url: str, image_prompt: str) -> bool:
         """Salva a URL e o Prompt da imagem gerada (DALL-E/Pollinations)"""
         with self._lock:
-            try:
-                cursor = self.conn.cursor()
-                cursor.execute("""
-                    UPDATE agent_dreams 
-                    SET image_url = ?, image_prompt = ?
-                    WHERE id = ?
-                """, (image_url, image_prompt, dream_id))
-                self.conn.commit()
-                return cursor.rowcount > 0
-            except Exception as e:
-                logger.error(f"❌ Erro ao atualizar imagem do sonho: {e}")
-                return False
+            for attempt in range(3):
+                try:
+                    cursor = self.conn.cursor()
+                    cursor.execute("""
+                        UPDATE agent_dreams 
+                        SET image_url = ?, image_prompt = ?
+                        WHERE id = ?
+                    """, (image_url, image_prompt, dream_id))
+                    self.conn.commit()
+                    return cursor.rowcount > 0
+                except sqlite3.OperationalError as e:
+                    if "locked" in str(e).lower() and attempt < 2:
+                        wait_seconds = 0.4 * (attempt + 1)
+                        logger.warning(
+                            "⚠️ Banco ocupado ao atualizar imagem do sonho %s; retry em %.1fs",
+                            dream_id,
+                            wait_seconds,
+                        )
+                        time.sleep(wait_seconds)
+                        continue
+                    logger.error(f"❌ Erro ao atualizar imagem do sonho: {e}")
+                    return False
+                except Exception as e:
+                    logger.error(f"❌ Erro ao atualizar imagem do sonho: {e}")
+                    return False
 
     def get_latest_dream_insight(self, user_id: str) -> Optional[Dict]:
         """Busca o insight onírico mais recente, independente de status"""

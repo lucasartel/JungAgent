@@ -7,6 +7,7 @@ import json
 import logging
 import random
 import urllib.parse
+from typing import Any
 
 from jung_core import Config, HybridDatabaseManager
 from agent_identity_context_builder import AgentIdentityContextBuilder
@@ -25,6 +26,25 @@ class DreamEngine:
         else:
             logger.error("DreamEngine requer um cliente LLM inicializado no db_manager")
             self.llm = None
+
+    def _extract_response_text(self, response: Any) -> str:
+        """Extrai texto de respostas de LLM sem presumir estrutura perfeita."""
+        if response is None:
+            return ""
+
+        content = getattr(response, "content", None)
+        if not content:
+            return ""
+
+        first_block = content[0] if isinstance(content, list) and content else None
+        if first_block is None:
+            return ""
+
+        text = getattr(first_block, "text", None)
+        if text is None:
+            return ""
+
+        return str(text).strip()
 
     def _get_recent_fragments(self, user_id: str, hours: int = 24) -> str:
         """Puxa os fragmentos recentes do usuario para material onirico."""
@@ -128,12 +148,17 @@ INSTRUCOES CRITICAS PARA O SONHO:
                 messages=[{"role": "user", "content": prompt}],
             )
 
-            result_text = response.content[0].text.strip()
+            result_text = self._extract_response_text(response)
+            if not result_text:
+                logger.warning("Dream Engine recebeu payload vazio ao gerar sonho")
+                return False
 
             if result_text.startswith("```json"):
                 result_text = result_text[7:-3]
             elif result_text.startswith("```"):
                 result_text = result_text[3:-3]
+
+            result_text = result_text.strip()
 
             dream_data = json.loads(result_text)
 
@@ -185,11 +210,14 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
                 temperature=0.25,
                 messages=[{"role": "user", "content": prompt}],
             )
-            insight_text = self._normalize_dream_residue(response.content[0].text.strip())
+            response_text = self._extract_response_text(response)
+            insight_text = self._normalize_dream_residue(response_text)
 
             if insight_text:
                 self.db.update_dream_with_insight(dream_id, insight_text)
                 logger.info("   Insight onirico extraido e associado!")
+            else:
+                logger.info("   Insight onirico vazio ou inutilizavel; seguindo sem residuo novo")
         except Exception as e:
             logger.error(f"Erro ao extrair insight onirico: {e}")
 

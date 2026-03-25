@@ -88,7 +88,6 @@ def run_rumination_job():
                                 "chat_id": chat_id,
                                 "photo": image_url,
                                 "caption": caption[:1024],
-                                "parse_mode": "Markdown",
                             }
                             resp = httpx.post(url, data=payload, timeout=20.0)
                             if resp.status_code == 200:

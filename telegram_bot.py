@@ -999,20 +999,18 @@ O que você decide?
             chat_history=chat_history
         )
 
-        response = result['response']
-        
-        # O LLM frequentemente usa **texto**, mas o parse_mode='Markdown' do Telegram espera *texto*
-        response = response.replace("**", "*")
+        response = str(result['response'] or "")
 
         # Enviar resposta em partes se for muito longa (limite do Telegram: 4096 chars)
         max_length = 4000
         for i in range(0, len(response), max_length):
             chunk = response[i:i+max_length]
             try:
-                await update.message.reply_text(chunk, parse_mode='Markdown')
+                await update.message.reply_text(chunk, parse_mode=None)
             except Exception as e:
-                logger.warning(f"⚠️ Erro de Markdown no Telegram, tentando sem formatação: {e}")
-                await update.message.reply_text(chunk)
+                logger.warning(f"⚠️ Erro ao enviar resposta no Telegram, tentando texto sanitizado: {e}")
+                safe_chunk = chunk.replace("`", "'").replace("\x00", "")
+                await update.message.reply_text(safe_chunk[:max_length], parse_mode=None)
 
         # ✅ TRI: Detectar fragmentos comportamentais Big Five
         tri_enabled = getattr(bot_state.proactive, 'tri_enabled', False) if bot_state.proactive else False

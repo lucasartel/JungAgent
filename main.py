@@ -175,8 +175,7 @@ async def lifespan(app: FastAPI):
                                 try:
                                     await telegram_app.bot.send_message(
                                         chat_id=telegram_id,
-                                        text=msg,
-                                        parse_mode='Markdown'
+                                        text=msg
                                     )
                                 except Exception:
                                     await telegram_app.bot.send_message(
