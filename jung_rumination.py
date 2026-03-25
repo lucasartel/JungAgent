@@ -489,21 +489,39 @@ class RuminationEngine:
 
         return used_ids
 
-    def _parse_json_response(self, response: str) -> Dict:
-        """Parse robusto de resposta JSON do LLM"""
+    def _parse_json_response(self, response: Optional[str]) -> Dict:
+        """Parse robusto de resposta JSON do LLM."""
         import re
 
-        # Remover markdown se houver
-        response = response.strip()
-        if response.startswith('```'):
-            response = re.sub(r'```json\s*', '', response)
-            response = re.sub(r'```\s*$', '', response)
+        if response is None:
+            logger.warning("Resposta do LLM veio nula ao tentar parsear JSON")
+            return {}
+
+        cleaned = str(response).strip()
+        if not cleaned:
+            logger.warning("Resposta do LLM veio vazia ao tentar parsear JSON")
+            return {}
+
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"```json\s*", "", cleaned)
+            cleaned = re.sub(r"```\s*$", "", cleaned)
+            cleaned = cleaned.strip()
 
         try:
-            return json.loads(response)
-        except json.JSONDecodeError as e:
-            logger.error(f"Erro ao parsear JSON: {e}")
-            logger.error(f"Resposta bruta: {response[:500]}")
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            match = re.search(r"\{[\s\S]*\}", cleaned)
+            if match:
+                candidate = match.group(0).strip()
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Erro ao parsear JSON: {e}")
+                    logger.error(f"Resposta bruta: {cleaned[:500]}")
+                    return {}
+
+            logger.error("Erro ao parsear JSON: objeto JSON nao encontrado na resposta")
+            logger.error(f"Resposta bruta: {cleaned[:500]}")
             return {}
 
     def _format_fragments_for_prompt(self, fragments: List[Tuple]) -> str:
@@ -1004,12 +1022,15 @@ class RuminationEngine:
             # Parse JSON
             result = self._parse_json_response(response)
 
-            if not result or 'internal_thought' not in result:
+            internal_thought = result.get('internal_thought') if result else None
+            if not isinstance(internal_thought, str) or not internal_thought.strip():
                 logger.error("Síntese não retornou pensamento interno válido")
                 return None
 
             # Validar novidade
-            if not self._validate_novelty(result['internal_thought'], user_id):
+            internal_thought = internal_thought.strip()
+
+            if not self._validate_novelty(internal_thought, user_id):
                 logger.info("   ⏭️  Insight rejeitado por falta de novidade")
                 cursor = self.db.conn.cursor()
                 cursor.execute("""
@@ -1035,7 +1056,7 @@ class RuminationEngine:
                 tension['id'],
                 result.get('core_image', ''),
                 result.get('internal_question', ''),
-                result['internal_thought'],
+                internal_thought,
                 result.get('depth_score', 0.5),
                 result.get('novelty_score', 0.8),
                 days

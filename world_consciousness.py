@@ -126,7 +126,7 @@ class WorldConsciousnessFetcher:
 
             return headlines
         except Exception as exc:
-            logger.error("World Consciousness: erro ao buscar noticias RSS: %s", exc)
+            logger.warning("World Consciousness: falha ao buscar noticias RSS: %s", exc)
             return []
 
     def _fetch_area_news(self) -> Dict[str, List[str]]:

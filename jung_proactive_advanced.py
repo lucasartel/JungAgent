@@ -358,6 +358,12 @@ class ProactiveAdvancedSystem:
         logger.info(f"   • Cooldown: {self.cooldown_hours}h")
         logger.info(f"   • Conversas mínimas: {self.min_conversations_required}")
         logger.info(f"   • TRI Habilitado: {self.tri_enabled}")
+
+    def _clean_llm_text(self, value: Optional[str], fallback: str = "") -> str:
+        """Normaliza saídas de LLM para evitar crashes por None."""
+        if value is None:
+            return fallback
+        return str(value).strip()
     
     def reset_timer(self, user_id: str):
         """✅ RESET CRONÔMETRO - Chamado quando usuário envia mensagem"""
@@ -663,7 +669,9 @@ Responda APENAS com o tópico:"""
                 max_tokens=50
             )
             
-            final_topic = refined_topic.strip()
+            final_topic = self._clean_llm_text(refined_topic)
+            if not final_topic:
+                return self._extract_topic_from_conversations(user_id)
             
             # Registrar
             self.proactive_db.record_topic(user_id, final_topic, method='semantic')
@@ -708,7 +716,7 @@ Tópico:"""
                 max_tokens=50
             )
             
-            topic = response.strip()
+            topic = self._clean_llm_text(response, "desenvolvimento pessoal")
             
             # Registrar
             self.proactive_db.record_topic(user_id, topic, method='llm')
@@ -886,7 +894,10 @@ Tom esperado: {archetype_pair.description}
                 max_tokens=500
             )
             
-            return response.strip().replace("**", "*")
+            cleaned_response = self._clean_llm_text(response)
+            if not cleaned_response:
+                return None
+            return cleaned_response.replace("**", "*")
             
         except Exception as e:
             logger.info(f"❌ Erro ao gerar conhecimento autônomo: {e}")
@@ -1220,7 +1231,7 @@ GERE APENAS A MENSAGEM:
 """
 
             response = send_to_xai(prompt=prompt, max_tokens=300, temperature=0.7)
-            msg = response.strip()
+            msg = self._clean_llm_text(response)
             
             if msg:
                 # Transitar o gap para "investigating"
@@ -1308,7 +1319,7 @@ GERE APENAS A MENSAGEM:
 """
 
             response = send_to_xai(prompt=prompt, max_tokens=300, temperature=0.7)
-            msg = response.strip()
+            msg = self._clean_llm_text(response)
             
             if msg:
                 # Salvar na memória

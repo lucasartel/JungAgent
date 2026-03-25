@@ -20,6 +20,27 @@ from admin_web.auth.middleware import require_master
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/agent-identity", tags=["Agent Identity"])
+_hybrid_db = None
+
+
+def get_hybrid_db():
+    global _hybrid_db
+    if _hybrid_db is not None:
+        return _hybrid_db
+
+    try:
+        from telegram_bot import bot_state
+
+        if getattr(bot_state, "db", None) is not None:
+            _hybrid_db = bot_state.db
+            return _hybrid_db
+    except Exception:
+        pass
+
+    from jung_core import HybridDatabaseManager
+
+    _hybrid_db = HybridDatabaseManager()
+    return _hybrid_db
 
 
 @router.get("/stats")
@@ -34,9 +55,8 @@ async def get_agent_identity_stats(
     """
     try:
         from agent_identity_context_builder import AgentIdentityContextBuilder
-        from jung_core import HybridDatabaseManager
 
-        db = HybridDatabaseManager()
+        db = get_hybrid_db()
         builder = AgentIdentityContextBuilder(db)
         stats = builder.get_identity_stats()
 
@@ -67,9 +87,8 @@ async def get_agent_identity_context(
     """
     try:
         from agent_identity_context_builder import AgentIdentityContextBuilder
-        from jung_core import HybridDatabaseManager
 
-        db = HybridDatabaseManager()
+        db = get_hybrid_db()
         builder = AgentIdentityContextBuilder(db)
         context = builder.build_identity_context(
             user_id=None,
@@ -114,10 +133,9 @@ async def get_current_mind_state(
     """
     try:
         from agent_identity_context_builder import AgentIdentityContextBuilder
-        from jung_core import HybridDatabaseManager
         from identity_config import ADMIN_USER_ID
 
-        db = HybridDatabaseManager()
+        db = get_hybrid_db()
         builder = AgentIdentityContextBuilder(db)
         current_state = builder.build_current_mind_state(
             user_id=ADMIN_USER_ID,
@@ -150,10 +168,9 @@ async def get_nuclear_beliefs(
     Restrito ao master admin
     """
     try:
-        from jung_core import HybridDatabaseManager
         from identity_config import AGENT_INSTANCE
 
-        db = HybridDatabaseManager()
+        db = get_hybrid_db()
         cursor = db.conn.cursor()
 
         cursor.execute("""
@@ -218,10 +235,9 @@ async def get_active_contradictions(
     Restrito ao master admin
     """
     try:
-        from jung_core import HybridDatabaseManager
         from identity_config import AGENT_INSTANCE
 
-        db = HybridDatabaseManager()
+        db = get_hybrid_db()
         cursor = db.conn.cursor()
 
         cursor.execute("""
@@ -286,10 +302,9 @@ async def get_narrative_chapters(
     Restrito ao master admin
     """
     try:
-        from jung_core import HybridDatabaseManager
         from identity_config import AGENT_INSTANCE
 
-        db = HybridDatabaseManager()
+        db = get_hybrid_db()
         cursor = db.conn.cursor()
 
         cursor.execute("""
@@ -356,10 +371,9 @@ async def get_relational_identities(
     Restrito ao master admin
     """
     try:
-        from jung_core import HybridDatabaseManager
         from identity_config import AGENT_INSTANCE
 
-        db = HybridDatabaseManager()
+        db = get_hybrid_db()
         cursor = db.conn.cursor()
 
         cursor.execute("""
@@ -421,13 +435,12 @@ async def run_manual_consolidation(
     """
     from identity_config import ADMIN_USER_ID, MAX_CONVERSATIONS_PER_CONSOLIDATION
     from agent_identity_extractor import AgentIdentityExtractor
-    from jung_core import HybridDatabaseManager
 
     try:
         start_time = time.time()
 
         # Conectar ao banco
-        db = HybridDatabaseManager()
+        db = get_hybrid_db()
         cursor = db.conn.cursor()
 
         # Buscar conversas do master admin não processadas
