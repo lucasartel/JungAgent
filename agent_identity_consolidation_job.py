@@ -51,7 +51,14 @@ async def run_agent_identity_consolidation():
     """
     if not IDENTITY_EXTRACTION_ENABLED:
         logger.info("🚫 Sistema de identidade do agente desabilitado")
-        return
+        return {
+            "success": False,
+            "status": "disabled",
+            "processed_count": 0,
+            "total_conversations": 0,
+            "elements_total": 0,
+            "errors": ["Sistema de identidade do agente desabilitado"],
+        }
 
     logger.info("=" * 70)
     logger.info("🧠 CONSOLIDAÇÃO DE IDENTIDADE DO AGENTE - Iniciando")
@@ -65,7 +72,14 @@ async def run_agent_identity_consolidation():
         db_path = find_database()
         if not db_path.exists():
             logger.error(f"❌ Banco de dados não encontrado: {db_path}")
-            return
+            return {
+                "success": False,
+                "status": "db_not_found",
+                "processed_count": 0,
+                "total_conversations": 0,
+                "elements_total": 0,
+                "errors": [f"Banco de dados não encontrado: {db_path}"],
+            }
 
         # HybridDatabaseManager usa variáveis de ambiente, não aceita path como argumento
         db = HybridDatabaseManager()
@@ -92,7 +106,14 @@ async def run_agent_identity_consolidation():
         if not conversations:
             logger.info("📭 Nenhuma conversa nova para processar")
             logger.info("=" * 70)
-            return
+            return {
+                "success": True,
+                "status": "no_conversations",
+                "processed_count": 0,
+                "total_conversations": 0,
+                "elements_total": 0,
+                "errors": [],
+            }
 
         logger.info(f"📨 Encontradas {len(conversations)} conversas para processar")
 
@@ -116,13 +137,21 @@ async def run_agent_identity_consolidation():
             logger.info("✅ [IDENTITY JOB] LLM via Anthropic (fallback)")
         if llm_client is None:
             logger.error("❌ [IDENTITY JOB] Nenhuma chave de LLM disponível (OPENROUTER_API_KEY nem ANTHROPIC_API_KEY)")
-            return
+            return {
+                "success": False,
+                "status": "no_llm",
+                "processed_count": 0,
+                "total_conversations": len(conversations),
+                "elements_total": 0,
+                "errors": ["Nenhuma chave de LLM disponivel"],
+            }
 
         extractor = AgentIdentityExtractor(db, llm_client)
 
         # Processar conversas
         processed_count = 0
         elements_total = 0
+        errors = []
         start_time = datetime.now()
 
         for i, conv in enumerate(conversations, 1):
@@ -173,6 +202,7 @@ async def run_agent_identity_consolidation():
 
             except Exception as e:
                 logger.error(f"   ❌ Erro ao processar conversa {str(conv_id)[:12]}: {e}")
+                errors.append(f"conversa {conv_id}: {e}")
                 # Marcar como processado com erro (elementos_count = 0)
                 try:
                     cursor.execute("""
@@ -208,10 +238,27 @@ async def run_agent_identity_consolidation():
         except Exception as profile_err:
             logger.warning(f"⚠️ [IDENTITY JOB] Falha ao gerar self_profile.md: {profile_err}")
 
+        return {
+            "success": processed_count > 0 and processed_count == len(conversations),
+            "status": "completed" if processed_count == len(conversations) else ("partial_success" if processed_count > 0 else "failed"),
+            "processed_count": processed_count,
+            "total_conversations": len(conversations),
+            "elements_total": elements_total,
+            "errors": errors,
+        }
+
     except Exception as e:
         logger.error(f"❌ Erro geral na consolidação: {e}")
         import traceback
         logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "status": "error",
+            "processed_count": 0,
+            "total_conversations": 0,
+            "elements_total": 0,
+            "errors": [str(e)],
+        }
 
 
 def log_identity_stats(cursor):

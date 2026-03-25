@@ -280,6 +280,12 @@ class ScholarEngine:
 
     def _extract_json_object(self, raw_text: str) -> Dict:
         cleaned = (raw_text or "").strip()
+        if not cleaned:
+            logger.warning("Scholar recebeu payload vazio na identificacao de topico")
+            return {
+                "should_research": False,
+                "reason": "O modelo nao retornou conteudo utilizavel para identificar um topico.",
+            }
         if cleaned.startswith("```json"):
             cleaned = cleaned[7:]
         elif cleaned.startswith("```"):
@@ -287,6 +293,12 @@ class ScholarEngine:
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
+        if not cleaned:
+            logger.warning("Scholar recebeu payload vazio apos limpeza de markdown")
+            return {
+                "should_research": False,
+                "reason": "O modelo retornou apenas marcadores vazios de bloco de codigo.",
+            }
 
         json_candidates = [cleaned]
         start = cleaned.find("{")

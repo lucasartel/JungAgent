@@ -66,8 +66,20 @@ async def trigger_identity_consolidation(admin: Dict = Depends(require_master)):
     logger.info("⚙️ GATILHO: Acionando Consolidação de Identidade")
     try:
         from agent_identity_consolidation_job import run_agent_identity_consolidation
-        await run_agent_identity_consolidation()
-        return {"status": "success", "message": "Identity consolidation completed"}
+        result = await run_agent_identity_consolidation()
+        processed = result.get("processed_count", 0)
+        total = result.get("total_conversations", 0)
+        payload = {
+            "status": result.get("status", "error"),
+            "message": (
+                f"Identity consolidation processed {processed}/{total} conversations"
+                if total
+                else "Identity consolidation completed"
+            ),
+            "result": result,
+        }
+        status_code = 200 if result.get("success") or result.get("status") in {"no_conversations"} else 500
+        return JSONResponse(payload, status_code=status_code)
     except Exception as e:
         logger.error(f"❌ Trigger Identity Consolidation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

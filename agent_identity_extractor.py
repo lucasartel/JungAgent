@@ -101,6 +101,7 @@ class AgentIdentityExtractor:
                 logger.debug(f"🚫 Extração desabilitada para user {user_id[:12]}... (não é master admin)")
             return {}
 
+        conversation_id = str(conversation_id)
         logger.info(f"🔍 Extraindo identidade do agente em conversa {conversation_id[:12]}...")
         agent_response = self._strip_admin_thought_block(agent_response)
 
