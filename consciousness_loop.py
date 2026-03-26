@@ -430,6 +430,106 @@ class ConsciousnessLoopManager:
         )
         return result
 
+    def _record_latest_rumination_insights(self, result: Dict, limit: int):
+        if limit <= 0:
+            return
+
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, full_message, status
+            FROM rumination_insights
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.admin_user_id, limit),
+        )
+        for row in cursor.fetchall():
+            summary = (row["full_message"] or "").strip()
+            if len(summary) > 140:
+                summary = summary[:137].rstrip(" ,.;:") + "..."
+            self._record_virtual_artifact(
+                result,
+                artifact_type="rumination_insight",
+                artifact_id=row["id"],
+                artifact_table="rumination_insights",
+                summary=summary or f"Insight {row['id']} ({row['status']})",
+            )
+
+    def _run_rumination_phase(self, result: Dict, phase_mode: str) -> Dict:
+        from jung_rumination import RuminationEngine
+        from identity_rumination_bridge import IdentityRuminationBridge
+
+        self._promote_from_placeholder(result)
+        ruminator = RuminationEngine(self.db)
+        before_stats = ruminator.get_stats(self.admin_user_id)
+        digest_stats = ruminator.digest(self.admin_user_id)
+        after_stats = ruminator.get_stats(self.admin_user_id)
+
+        bridge_metrics = {
+            "tensions_to_contradictions": 0,
+            "fragments_to_possible_selves": 0,
+            "contradictions_to_rumination": 0,
+        }
+
+        if phase_mode == "extro":
+            bridge = IdentityRuminationBridge(self.db)
+            bridge_metrics["tensions_to_contradictions"] = bridge.sync_mature_tensions_to_contradictions()
+            bridge_metrics["fragments_to_possible_selves"] = bridge.sync_fragments_to_possible_selves()
+            bridge_metrics["contradictions_to_rumination"] = bridge.feed_contradictions_to_rumination()
+
+        insights_delta = max(0, after_stats.get("insights_total", 0) - before_stats.get("insights_total", 0))
+        tensions_ready_delta = after_stats.get("tensions_ready", 0) - before_stats.get("tensions_ready", 0)
+        fragments_delta = after_stats.get("fragments_total", 0) - before_stats.get("fragments_total", 0)
+
+        self._record_latest_rumination_insights(result, min(insights_delta, 3))
+
+        result["raw_result"]["rumination"] = {
+            "phase_mode": phase_mode,
+            "before_stats": before_stats,
+            "digest_stats": digest_stats,
+            "after_stats": after_stats,
+            "bridge_metrics": bridge_metrics,
+            "delivery_suppressed": True,
+        }
+        result["metrics"].update(
+            {
+                "fragments_total": after_stats.get("fragments_total", 0),
+                "fragments_delta": fragments_delta,
+                "tensions_total": after_stats.get("tensions_total", 0),
+                "tensions_ready": after_stats.get("tensions_ready", 0),
+                "tensions_ready_delta": tensions_ready_delta,
+                "insights_total": after_stats.get("insights_total", 0),
+                "insights_delta": insights_delta,
+                "insights_ready": after_stats.get("insights_ready", 0),
+                "insights_delivered": after_stats.get("insights_delivered", 0),
+                "tensions_processed": digest_stats.get("tensions_processed", 0),
+                "bridge_tensions_synced": bridge_metrics["tensions_to_contradictions"],
+                "bridge_fragments_synced": bridge_metrics["fragments_to_possible_selves"],
+                "bridge_contradictions_fed": bridge_metrics["contradictions_to_rumination"],
+                "delivery_suppressed": 1,
+            }
+        )
+
+        if insights_delta > 0:
+            result["output_summary"] = (
+                f"Ruminação {phase_mode} processou {digest_stats.get('tensions_processed', 0)} tensões "
+                f"e cristalizou {insights_delta} novos insights."
+            )
+        else:
+            result["status"] = "partial_success"
+            result["warnings"].append("rumination_no_new_insights")
+            result["output_summary"] = (
+                f"Ruminação {phase_mode} processou {digest_stats.get('tensions_processed', 0)} tensões "
+                f"sem cristalizar novos insights nesta passagem."
+            )
+
+        if phase_mode == "extro" and sum(bridge_metrics.values()) == 0:
+            result["warnings"].append("rumination_bridge_no_changes")
+
+        return result
+
     def _run_scholar_phase(self, result: Dict) -> Dict:
         from scholar_engine import ScholarEngine
 
@@ -497,8 +597,12 @@ class ConsciousnessLoopManager:
             result = self._run_dream_phase(result)
         elif phase.key == "identity":
             result = self._run_identity_phase(result)
+        elif phase.key == "rumination_intro":
+            result = self._run_rumination_phase(result, "intro")
         elif phase.key == "world":
             result = self._run_world_phase(result)
+        elif phase.key == "rumination_extro":
+            result = self._run_rumination_phase(result, "extro")
         elif phase.key == "scholar":
             result = self._run_scholar_phase(result)
 

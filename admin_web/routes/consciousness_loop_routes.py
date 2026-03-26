@@ -216,6 +216,9 @@ async def consciousness_loop_dashboard(request: Request, admin: Dict = Depends(r
                     <div><strong>${result.phase}</strong> · ${result.status}</div>
                     <div style="color:#94a7c7; font-size:13px; margin-top:4px;">${result.trigger_name || '-'} · ${result.duration_ms || 0} ms</div>
                     <pre>${result.output_summary || ''}</pre>
+                    <pre>Warnings: ${result.warnings_json || '[]'}</pre>
+                    <pre>Errors: ${result.errors_json || '[]'}</pre>
+                    <pre>Metrics: ${result.metrics_json || '{}'}</pre>
                 </div>
             `).join('') || '<div class="item">Nenhum resultado ainda.</div>';
         }
