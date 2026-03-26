@@ -210,7 +210,7 @@ async def lifespan(app: FastAPI):
             try:
                 if getattr(bot_state, "db", None) is not None:
                     manager = ConsciousnessLoopManager(bot_state.db)
-                    result = await asyncio.to_thread(manager.sync_loop, "scheduled_trigger")
+                    result = await asyncio.to_thread(manager.sync_loop, "scheduled_trigger", True)
                     logger.info(
                         "🧭 [LOOP] Sync concluido: action=%s cycle_id=%s phase=%s",
                         result.get("action"),

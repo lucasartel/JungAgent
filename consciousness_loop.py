@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import asyncio
+import os
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from typing import Dict, List, Optional
@@ -312,6 +313,89 @@ class ConsciousnessLoopManager:
         result["warnings"] = [warning for warning in result["warnings"] if warning != "placeholder_execution"]
         result["metrics"]["phase_placeholder"] = 0
 
+    def _build_notification_text(self, result: Dict) -> str:
+        phase = PHASE_BY_KEY.get(result["phase"])
+        phase_label = phase.label if phase else result["phase"]
+        lines = [
+            "Loop de Consciencia",
+            f"Fase: {phase_label}",
+            f"Ciclo: {result['cycle_id']}",
+            f"Status: {result['status']}",
+            f"Origem: {result['trigger_source']}",
+            "",
+            result.get("output_summary", "").strip() or "Sem resumo disponivel.",
+        ]
+
+        warnings = result.get("warnings") or []
+        errors = result.get("errors") or []
+        artifacts = result.get("artifacts_created") or []
+
+        if artifacts:
+            lines.extend(
+                [
+                    "",
+                    "Artefatos:",
+                ]
+            )
+            for artifact in artifacts[:3]:
+                lines.append(f"- {artifact.get('artifact_type')}: {artifact.get('summary')}")
+
+        if warnings:
+            lines.extend(["", f"Warnings: {len(warnings)}"])
+        if errors:
+            lines.extend(["", f"Errors: {len(errors)}"])
+
+        text = "\n".join(lines).strip()
+        return text[:3900]
+
+    def _get_admin_chat_id(self) -> Optional[str]:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT platform_id
+            FROM users
+            WHERE user_id = ?
+            LIMIT 1
+            """,
+            (self.admin_user_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        try:
+            return str(row["platform_id"]).strip()
+        except (TypeError, KeyError):
+            return str(row[0]).strip() if row and row[0] else None
+
+    def _notify_admin(self, result: Dict):
+        token = os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = self._get_admin_chat_id()
+
+        if not token or not chat_id:
+            logger.warning("LOOP NOTIFY skipped: token ou chat_id do admin indisponivel")
+            return
+
+        try:
+            import httpx
+
+            text = self._build_notification_text(result)
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            response = httpx.post(
+                url,
+                data={
+                    "chat_id": chat_id,
+                    "text": text,
+                },
+                timeout=20.0,
+            )
+            if response.status_code == 200:
+                logger.info("LOOP NOTIFY enviado ao admin para fase=%s", result["phase"])
+            else:
+                logger.warning("LOOP NOTIFY falhou (%s): %s", response.status_code, response.text[:300])
+        except Exception as exc:
+            logger.warning("LOOP NOTIFY erro ao enviar mensagem ao admin: %s", exc)
+
     def _run_dream_phase(self, result: Dict) -> Dict:
         from dream_engine import DreamEngine
 
@@ -582,6 +666,7 @@ class ConsciousnessLoopManager:
         cycle_id: str,
         trigger_source: str = "consciousness_loop",
         execution_mode: str = "automatic",
+        notify_admin: bool = False,
     ) -> Dict:
         phase = PHASE_BY_KEY[phase_key]
         logger.info(
@@ -639,9 +724,13 @@ class ConsciousnessLoopManager:
             phase.key,
             True,
         )
+
+        if notify_admin:
+            self._notify_admin(result)
+
         return result
 
-    def sync_loop(self, trigger_source: str = "scheduled_trigger") -> Dict:
+    def sync_loop(self, trigger_source: str = "scheduled_trigger", notify_admin: bool = False) -> Dict:
         self._ensure_phase_config()
         window = self._phase_window_for()
         target_phase = window["phase"]
@@ -685,7 +774,13 @@ class ConsciousnessLoopManager:
                 input_summary="estado inicial do loop",
                 output_summary=f"fase inicial definida em {target_phase.key}",
             )
-            phase_result = self.execute_phase(target_phase.key, cycle_id, trigger_source=trigger_source, execution_mode="automatic")
+            phase_result = self.execute_phase(
+                target_phase.key,
+                cycle_id,
+                trigger_source=trigger_source,
+                execution_mode="automatic",
+                notify_admin=notify_admin,
+            )
             return {
                 "success": True,
                 "action": "initialized",
@@ -746,7 +841,13 @@ class ConsciousnessLoopManager:
                 input_summary=f"transicao {previous_phase} -> {target_phase.key}",
                 output_summary=f"fase atual sincronizada para {target_phase.key}",
             )
-            phase_result = self.execute_phase(target_phase.key, cycle_id, trigger_source=trigger_source, execution_mode="automatic")
+            phase_result = self.execute_phase(
+                target_phase.key,
+                cycle_id,
+                trigger_source=trigger_source,
+                execution_mode="automatic",
+                notify_admin=notify_admin,
+            )
             action = "phase_transition"
         else:
             cursor.execute(
@@ -773,10 +874,10 @@ class ConsciousnessLoopManager:
             "phase_result": phase_result,
         }
 
-    def execute_current_phase(self, trigger_source: str = "manual_admin_trigger") -> Dict:
+    def execute_current_phase(self, trigger_source: str = "manual_admin_trigger", notify_admin: bool = False) -> Dict:
         state_row = self._get_state_row()
         if not state_row:
-            return self.sync_loop(trigger_source=trigger_source)
+            return self.sync_loop(trigger_source=trigger_source, notify_admin=notify_admin)
 
         state = dict(state_row)
         return self.execute_phase(
@@ -784,6 +885,7 @@ class ConsciousnessLoopManager:
             state["cycle_id"],
             trigger_source=trigger_source,
             execution_mode="manual",
+            notify_admin=notify_admin,
         )
 
     def get_state(self) -> Dict:

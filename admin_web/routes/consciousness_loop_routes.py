@@ -86,7 +86,7 @@ async def get_loop_results(request: Request, limit: int = 20, admin: Dict = Depe
 async def sync_loop(request: Request, admin: Dict = Depends(require_master)):
     try:
         manager = get_loop_manager()
-        result = await asyncio.to_thread(manager.sync_loop, "manual_admin_trigger")
+        result = await asyncio.to_thread(manager.sync_loop, "manual_admin_trigger", True)
         return {"success": True, "result": result}
     except Exception as e:
         logger.error(f"Erro ao sincronizar loop: {e}")
@@ -97,7 +97,7 @@ async def sync_loop(request: Request, admin: Dict = Depends(require_master)):
 async def execute_current_phase(request: Request, admin: Dict = Depends(require_master)):
     try:
         manager = get_loop_manager()
-        result = await asyncio.to_thread(manager.execute_current_phase, "manual_admin_trigger")
+        result = await asyncio.to_thread(manager.execute_current_phase, "manual_admin_trigger", True)
         return {"success": True, "result": result}
     except Exception as e:
         logger.error(f"Erro ao executar fase atual do loop: {e}")
