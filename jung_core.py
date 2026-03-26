@@ -4698,7 +4698,9 @@ class JungianEngine:
             try:
                 from world_consciousness import world_consciousness
                 world_state = world_consciousness.get_world_state()
-                agent_identity_text += f"\n\n{world_state['formatted_synthesis']}"
+                world_prompt_summary = world_state.get("formatted_prompt_summary") or world_state.get("formatted_synthesis", "")
+                if world_prompt_summary:
+                    agent_identity_text += f"\n\n{world_prompt_summary}"
                 logger.info("✅ [WORLD] Consciência da atualidade injetada no prompt.")
             except ImportError:
                 pass

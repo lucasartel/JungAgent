@@ -1395,6 +1395,13 @@ try:
 except Exception as e:
     logger.warning(f"⚠️  Rotas do Loop de Consciencia não disponíveis: {e}")
 
+try:
+    from admin_web.routes.world_consciousness_routes import router as world_consciousness_router
+    app.include_router(world_consciousness_router)
+    logger.info("✅ Rotas de Lucidez do Mundo carregadas (protegidas - Master Admin only)")
+except Exception as e:
+    logger.warning(f"⚠️  Rotas de Lucidez do Mundo não disponíveis: {e}")
+
 # ============================================================================
 # ROTAS TRI/IRT (Item Response Theory) - Sistema Psicométrico Avançado
 # ============================================================================

@@ -45,8 +45,8 @@ PHASES: List[LoopPhase] = [
     LoopPhase("identity", "Identity", 2, 3, "identity_phase", "Placeholder identitario executado; aguardando integracao da consolidacao nuclear."),
     LoopPhase("rumination_intro", "Rumination (I)", 3, 6, "rumination_intro_phase", "Placeholder de ruminacao introvertida executado para manter continuidade do ciclo."),
     LoopPhase("world", "World Consciousness", 6, 9, "world_phase", "Placeholder de abertura ao mundo executado; aguardando integracao total do estado externo."),
-    LoopPhase("work", "Work/Action", 9, 15, "work_phase", "Placeholder de acao extrovertida executado; modulo de trabalho ainda nao implementado."),
-    LoopPhase("hobby", "Hobby/Art", 15, 19, "hobby_phase", "Placeholder de hobby/arte executado; modulo de singularizacao ainda nao implementado."),
+    LoopPhase("work", "Work/Action", 9, 15, "work_phase", "Fase de acao extrovertida orientada por seeds do mundo; modulo de trabalho ainda nao implementado."),
+    LoopPhase("hobby", "Hobby/Art", 15, 19, "hobby_phase", "Fase de hobby/arte orientada por seeds do mundo; modulo de singularizacao ainda nao implementado."),
     LoopPhase("rumination_extro", "Rumination (II)", 19, 22, "rumination_extro_phase", "Placeholder de ruminacao extrovertida executado para recolher o dia simbolico."),
     LoopPhase("scholar", "Scholar", 22, 24, "scholar_phase", "Placeholder de fechamento scholar executado; aguardando acoplamento ao Scholar Engine."),
 ]
@@ -491,27 +491,124 @@ class ConsciousnessLoopManager:
         self._promote_from_placeholder(result)
         world_state = world_consciousness.get_world_state(force_refresh=True)
         result["raw_result"]["world_state"] = {
-            "dominant_tension": world_state.get("dominant_tension"),
+            "dominant_tensions": world_state.get("dominant_tensions", []),
             "atmosphere": world_state.get("atmosphere"),
             "continuity_note": world_state.get("continuity_note"),
             "stale_areas": world_state.get("stale_areas", []),
+            "consensus_map": world_state.get("consensus_map", {}),
+            "divergence_map": world_state.get("divergence_map", {}),
+            "work_seeds": world_state.get("work_seeds", []),
+            "hobby_seeds": world_state.get("hobby_seeds", []),
         }
-        result["metrics"]["world_areas_loaded"] = len([k for k, v in (world_state.get("area_digest", {}) or {}).items() if v])
+        result["metrics"]["world_areas_loaded"] = len([k for k, v in (world_state.get("area_panels", {}) or {}).items() if v.get("signal_count", 0) > 0])
         result["metrics"]["stale_area_count"] = len(world_state.get("stale_areas", []) or [])
+        result["metrics"]["consensus_area_count"] = len(world_state.get("consensus_map", {}) or {})
+        result["metrics"]["divergence_area_count"] = len(world_state.get("divergence_map", {}) or {})
+        result["metrics"]["work_seed_count"] = len(world_state.get("work_seeds", []) or [])
+        result["metrics"]["hobby_seed_count"] = len(world_state.get("hobby_seeds", []) or [])
+        result["metrics"]["confidence_overall"] = world_state.get("confidence_overall", 0.0)
         self._record_virtual_artifact(
             result,
             artifact_type="world_state_snapshot",
             artifact_id=world_state.get("cache_timestamp"),
             artifact_table="world_state_cache",
-            summary=world_state.get("dominant_tension", "estado de mundo atualizado"),
+            summary=world_state.get("world_lucidity_summary", {}).get("zeitgeist") or world_state.get("dominant_tension", "estado de mundo atualizado"),
         )
+        for seed in (world_state.get("work_seeds", []) or [])[:2]:
+            self._record_virtual_artifact(
+                result,
+                artifact_type="world_work_seed",
+                artifact_id=None,
+                artifact_table="world_state_cache",
+                summary=seed,
+            )
+        for seed in (world_state.get("hobby_seeds", []) or [])[:2]:
+            self._record_virtual_artifact(
+                result,
+                artifact_type="world_hobby_seed",
+                artifact_id=None,
+                artifact_table="world_state_cache",
+                summary=seed,
+            )
 
         if world_state.get("stale_areas"):
             result["warnings"].append("world_used_cached_areas")
 
         result["output_summary"] = (
-            f"World Consciousness atualizado; tensao dominante: {world_state.get('dominant_tension', 'indefinida')}."
+            "World Consciousness atualizado; "
+            f"lucidez {world_state.get('lucidity_level', 'media')} "
+            f"com tensoes centrais em {', '.join(world_state.get('dominant_tensions', [])[:2]) or 'abertura e incerteza'}."
         )
+        return result
+
+    def _run_work_phase(self, result: Dict) -> Dict:
+        from world_consciousness import world_consciousness
+
+        self._promote_from_placeholder(result)
+        world_state = world_consciousness.get_world_state(force_refresh=False)
+        work_seeds = world_state.get("work_seeds", []) or []
+        result["raw_result"]["work_inputs"] = {
+            "seed_count": len(work_seeds),
+            "work_seeds": work_seeds,
+            "confidence_overall": world_state.get("confidence_overall", 0.0),
+            "dominant_tensions": world_state.get("dominant_tensions", []),
+        }
+        result["metrics"]["work_seed_count"] = len(work_seeds)
+        result["metrics"]["work_seed_consumed"] = 1 if work_seeds else 0
+
+        for seed in work_seeds[:3]:
+            self._record_virtual_artifact(
+                result,
+                artifact_type="world_work_seed",
+                artifact_id=None,
+                artifact_table="world_state_cache",
+                summary=seed,
+            )
+
+        if work_seeds:
+            result["output_summary"] = (
+                "Work/Action preparado a partir da lucidez do mundo; "
+                f"{len(work_seeds)} seeds ativos disponiveis para a futura fase de acao."
+            )
+        else:
+            result["status"] = "partial_success"
+            result["warnings"].append("work_no_world_seeds")
+            result["output_summary"] = "Work/Action sem seeds ativos nesta janela de mundo."
+        return result
+
+    def _run_hobby_phase(self, result: Dict) -> Dict:
+        from world_consciousness import world_consciousness
+
+        self._promote_from_placeholder(result)
+        world_state = world_consciousness.get_world_state(force_refresh=False)
+        hobby_seeds = world_state.get("hobby_seeds", []) or []
+        result["raw_result"]["hobby_inputs"] = {
+            "seed_count": len(hobby_seeds),
+            "hobby_seeds": hobby_seeds,
+            "atmosphere": world_state.get("atmosphere"),
+            "continuity_note": world_state.get("continuity_note"),
+        }
+        result["metrics"]["hobby_seed_count"] = len(hobby_seeds)
+        result["metrics"]["hobby_seed_consumed"] = 1 if hobby_seeds else 0
+
+        for seed in hobby_seeds[:3]:
+            self._record_virtual_artifact(
+                result,
+                artifact_type="world_hobby_seed",
+                artifact_id=None,
+                artifact_table="world_state_cache",
+                summary=seed,
+            )
+
+        if hobby_seeds:
+            result["output_summary"] = (
+                "Hobby/Art preparado a partir da lucidez do mundo; "
+                f"{len(hobby_seeds)} seeds simbolicos disponiveis para singularizacao futura."
+            )
+        else:
+            result["status"] = "partial_success"
+            result["warnings"].append("hobby_no_world_seeds")
+            result["output_summary"] = "Hobby/Art sem seeds simbolicos ativos nesta janela."
         return result
 
     def _record_latest_rumination_insights(self, result: Dict, limit: int):
@@ -686,6 +783,10 @@ class ConsciousnessLoopManager:
             result = self._run_rumination_phase(result, "intro")
         elif phase.key == "world":
             result = self._run_world_phase(result)
+        elif phase.key == "work":
+            result = self._run_work_phase(result)
+        elif phase.key == "hobby":
+            result = self._run_hobby_phase(result)
         elif phase.key == "rumination_extro":
             result = self._run_rumination_phase(result, "extro")
         elif phase.key == "scholar":
