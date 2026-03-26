@@ -118,6 +118,9 @@ async def consciousness_loop_dashboard(request: Request, admin: Dict = Depends(r
         .wrap { max-width: 1320px; margin: 0 auto; }
         .topbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
         .actions { display: flex; gap: 12px; flex-wrap: wrap; }
+        .menu { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+        .menu a { background: #121722; color: #d9e3f5; text-decoration: none; border: 1px solid #263144; border-radius: 999px; padding: 9px 14px; font-size: 14px; }
+        .menu a.active { background: #d6b25e; color: #151515; border-color: #d6b25e; font-weight: 700; }
         button { background: #d6b25e; color: #151515; border: none; border-radius: 10px; padding: 10px 16px; font-weight: 700; cursor: pointer; }
         button.secondary { background: #293040; color: #e7ebf3; }
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 24px; }
@@ -144,6 +147,17 @@ async def consciousness_loop_dashboard(request: Request, admin: Dict = Depends(r
                 <button onclick="syncLoop()">Sincronizar Loop</button>
                 <button class="secondary" onclick="executeCurrent()">Executar Fase Atual</button>
             </div>
+        </div>
+
+        <div class="menu">
+            <a href="/admin/consciousness-loop/dashboard" class="active">Dashboard EndoJung</a>
+            <a href="/admin/world-consciousness/dashboard">Lucidez do Mundo</a>
+            <a href="/admin/agent-identity/dashboard">Identidade Nuclear</a>
+            <a href="/admin/jung-lab">Jung Lab</a>
+            <a href="/admin/dreams">Motor Onirico</a>
+            <a href="/admin/research">Scholar Engine</a>
+            <a href="/admin/memory-metrics">Memory Metrics</a>
+            <a href="/admin/master/dashboard">Master Dashboard</a>
         </div>
 
         <div class="grid" id="stateGrid"></div>
