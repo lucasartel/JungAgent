@@ -473,10 +473,19 @@
                     style="background: #fa709a; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; transition: 0.3s; display: flex; align-items: center; gap: 8px;">
                     <span>🧩</span> Consolidação de Memória Longa
                 </button>
+                {% if proactive_enabled %}
                 <button onclick="triggerJob('/admin/triggers/proactive-messages', this)" class="btn"
                     style="background: #38ef7d; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; transition: 0.3s; display: flex; align-items: center; gap: 8px;">
                     <span>💬</span> Loop de Mensagens Proativas
                 </button>
+                {% else %}
+                <button class="btn"
+                    style="background: #b6c2b6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: not-allowed; opacity: 0.85; display: flex; align-items: center; gap: 8px;"
+                    disabled
+                    title="Defina PROACTIVE_ENABLED=true para reativar">
+                    <span>OFF</span> Loop de Mensagens Proativas Desativado
+                </button>
+                {% endif %}
             </div>
             <div id="trigger-status"
                 style="margin-top: 15px; font-size: 0.9em; color: #666; display: none; padding: 10px; border-radius: 6px; background: #f8f9fa;">

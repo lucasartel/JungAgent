@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse
 from typing import Dict
 import logging
+from security_config import proactive_messages_enabled
 
 # Importar middleware de autenticação
 from admin_web.auth.middleware import require_master, require_org_admin
@@ -126,7 +127,8 @@ async def master_dashboard(
             "admin_users": admin_users,
             "total_admin_users": len(admin_users),
             "total_interactions": total_interactions,
-            "total_conflicts": total_conflicts
+            "total_conflicts": total_conflicts,
+            "proactive_enabled": proactive_messages_enabled()
         })
 
     except Exception as e:

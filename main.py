@@ -11,7 +11,7 @@ import logging
 from typing import Dict
 from dotenv import load_dotenv
 from admin_web.auth.middleware import require_master
-from security_config import unsafe_admin_endpoints_enabled
+from security_config import proactive_messages_enabled, unsafe_admin_endpoints_enabled
 
 # Desabilitar telemetria do ChromaDB
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
@@ -154,6 +154,11 @@ async def lifespan(app: FastAPI):
                 logger.info("🌍 [SCHEDULER] Estado de mundo atualizado.")
 
                 # Verificação ativa entre 6h e 11h
+                if not proactive_messages_enabled():
+                    logger.info("⏸️ [SCHEDULER] Mensagens proativas desativadas por PROACTIVE_ENABLED=false.")
+                    await asyncio.sleep(3600)
+                    continue
+
                 current_hour = datetime.now().hour
                 if True:  # Removido limite de horario matinal para o Piloto 7 dias
                     logger.info("🌍 [SCHEDULER] Acionando verificação de Curiosidade Ontológica...")
@@ -258,7 +263,8 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "Jung Claude Bot + Admin",
-        "bot_running": True
+        "bot_running": True,
+        "proactive_enabled": proactive_messages_enabled()
     }
 
 @app.get("/test/proactive")

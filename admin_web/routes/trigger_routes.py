@@ -3,12 +3,12 @@ Rotas para gatilhos manuais no Painel Administrativo.
 Substitui a antiga abordagem de Cron Jobs externos/assíncronos.
 """
 import logging
-import os
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from admin_web.auth.middleware import require_master
 from typing import Dict
+from security_config import proactive_messages_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -112,8 +112,7 @@ async def trigger_memory_metrics(admin: Dict = Depends(require_master)):
 @router.post("/proactive-messages")
 async def trigger_proactive_messages(request: Request, admin: Dict = Depends(require_master)):
     """Aciona a verificação e envio de mensagens proativas manualmente"""
-    _proactive_enabled = os.getenv("PROACTIVE_ENABLED", "false").lower() == "true"
-    if not _proactive_enabled:
+    if not proactive_messages_enabled():
         return {"status": "skipped", "message": "Proactive mode disabled in ENV variables"}
 
     logger.info("⚙️ GATILHO: Acionando Verificação de Mensagens Proativas")

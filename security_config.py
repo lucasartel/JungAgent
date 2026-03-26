@@ -18,6 +18,10 @@ def unsafe_admin_endpoints_enabled() -> bool:
     return env_flag("ENABLE_UNSAFE_ADMIN_ENDPOINTS", default=False)
 
 
+def proactive_messages_enabled() -> bool:
+    return env_flag("PROACTIVE_ENABLED", default=True)
+
+
 def should_use_secure_cookie(request) -> bool:
     raw_value = _normalized_env("SESSION_COOKIE_SECURE", "auto")
 

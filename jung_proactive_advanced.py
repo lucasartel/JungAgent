@@ -32,6 +32,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass
 from enum import Enum
+from security_config import proactive_messages_enabled
 
 # ✅ IMPORTS HÍBRIDOS v4.0
 from jung_core import (
@@ -927,6 +928,10 @@ Tom esperado: {archetype_pair.description}
         user_name: str
     ) -> Optional[str]:
         """✅ MÉTODO PRINCIPAL - Gera mensagem proativa avançada HÍBRIDA"""
+
+        if not proactive_messages_enabled():
+            logger.info(f"⏸️ [PROATIVO] Kill switch ativo. Geração bloqueada para {user_name} ({user_id[:8]}...).")
+            return None
 
         logger.info(f"\n{'='*60}")
         logger.info(f"🧠 [PROATIVO] GERAÇÃO AVANÇADA para {user_name} ({user_id[:8]}...)")
