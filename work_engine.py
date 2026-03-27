@@ -8,6 +8,7 @@ import re
 import unicodedata
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -135,23 +136,157 @@ class WordPressSkill(BaseSkillProvider):
         path = path.lstrip("/")
         return f"{base_url}/wp-json/{path}"
 
-    def test_connection(self, destination: Dict[str, Any], secret: str) -> Dict[str, Any]:
-        url = self._api_url(destination, "wp/v2/users/me?context=edit")
-        headers = self._headers(destination, secret)
-        with httpx.Client(timeout=20.0, follow_redirects=True) as client:
-            response = client.get(url, headers=headers)
+    def _candidate_base_urls(self, destination: Dict[str, Any]) -> List[str]:
+        raw_base = (destination.get("base_url") or "").strip()
+        if not raw_base:
+            return []
 
-        if response.status_code >= 400:
+        raw_base = raw_base.rstrip("/")
+        if "/wp-json" in raw_base:
+            raw_base = raw_base.split("/wp-json", 1)[0].rstrip("/")
+
+        candidates = [raw_base]
+        parts = urlsplit(raw_base)
+        if parts.scheme and parts.netloc and parts.path not in ("", "/"):
+            origin = urlunsplit((parts.scheme, parts.netloc, "", "", "")).rstrip("/")
+            candidates.append(origin)
+
+        deduped: List[str] = []
+        seen = set()
+        for candidate in candidates:
+            normalized = candidate.rstrip("/")
+            if normalized and normalized not in seen:
+                deduped.append(normalized)
+                seen.add(normalized)
+        return deduped
+
+    def _probe_rest_root(self, base_url: str) -> Dict[str, Any]:
+        root_url = f"{base_url.rstrip('/')}/wp-json/"
+        try:
+            with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+                response = client.get(root_url)
+        except Exception as exc:
             return {
                 "success": False,
-                "message": f"HTTP {response.status_code}: {response.text[:180]}",
+                "root_url": root_url,
+                "status_code": None,
+                "message": str(exc),
             }
 
-        payload = response.json()
+        payload: Dict[str, Any] = {}
+        try:
+            payload = response.json()
+        except Exception:
+            payload = {}
+
         return {
-            "success": True,
-            "message": f"Conexao OK com {destination.get('label')}",
-            "site_user": payload.get("name") or payload.get("slug"),
+            "success": response.status_code < 400,
+            "root_url": root_url,
+            "status_code": response.status_code,
+            "payload": payload,
+            "message": (response.text or "")[:180],
+        }
+
+    def test_connection(self, destination: Dict[str, Any], secret: str) -> Dict[str, Any]:
+        headers = self._headers(destination, secret)
+        attempts: List[Dict[str, Any]] = []
+
+        for candidate_base in self._candidate_base_urls(destination):
+            root_probe = self._probe_rest_root(candidate_base)
+            auth_url = f"{candidate_base.rstrip('/')}/wp-json/wp/v2/users/me?context=edit"
+            attempt = {
+                "base_url": candidate_base,
+                "root_probe": {
+                    "success": root_probe.get("success"),
+                    "status_code": root_probe.get("status_code"),
+                    "root_url": root_probe.get("root_url"),
+                },
+            }
+
+            try:
+                with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+                    response = client.get(auth_url, headers=headers)
+            except Exception as exc:
+                attempt["auth_result"] = {
+                    "success": False,
+                    "error": str(exc),
+                    "url": auth_url,
+                }
+                attempts.append(attempt)
+                continue
+
+            body_preview = (response.text or "")[:220]
+            payload: Dict[str, Any] = {}
+            try:
+                payload = response.json()
+            except Exception:
+                payload = {}
+
+            attempt["auth_result"] = {
+                "success": response.status_code < 400,
+                "status_code": response.status_code,
+                "url": auth_url,
+                "code": payload.get("code"),
+                "message": payload.get("message") or body_preview,
+            }
+            attempts.append(attempt)
+
+            if response.status_code < 400:
+                message = f"Conexao OK com {destination.get('label')}"
+                if candidate_base != (destination.get("base_url") or "").rstrip("/"):
+                    message += f" usando {candidate_base}"
+                return {
+                    "success": True,
+                    "message": message,
+                    "site_user": payload.get("name") or payload.get("slug"),
+                    "resolved_base_url": candidate_base,
+                    "attempts": attempts,
+                }
+
+        original_base = (destination.get("base_url") or "").rstrip("/")
+        used_root_fallback = any(a.get("base_url") != original_base for a in attempts)
+        auth_codes = {
+            a.get("auth_result", {}).get("code")
+            for a in attempts
+            if a.get("auth_result")
+        }
+
+        if "rest_not_logged_in" in auth_codes:
+            message = (
+                "WordPress respondeu, mas nao aceitou a autenticacao via Application Password. "
+                "Isso costuma indicar URL base incorreta ou bloqueio do header Authorization no servidor."
+            )
+            if used_root_fallback:
+                message += " A raiz do dominio tambem foi testada automaticamente."
+            return {
+                "success": False,
+                "message": message,
+                "diagnosis": "wordpress_auth_not_accepted",
+                "hints": [
+                    "Se voce informou um subcaminho como /br, teste tambem a raiz do dominio.",
+                    "Verifique se o servidor/proxy repassa o header Authorization ao WordPress.",
+                    "Confirme se o usuario e a Application Password pertencem a esse WordPress.",
+                ],
+                "attempts": attempts,
+            }
+
+        best_attempt = attempts[0] if attempts else None
+        if best_attempt:
+            auth_result = best_attempt.get("auth_result") or {}
+            status_code = auth_result.get("status_code")
+            detail = auth_result.get("message") or "sem detalhes"
+            return {
+                "success": False,
+                "message": f"HTTP {status_code or 'erro'}: {detail}",
+                "diagnosis": "wordpress_connection_failed",
+                "attempts": attempts,
+            }
+
+        return {
+            "success": False,
+            "message": "Nao foi possivel testar a conexao WordPress.",
+            "diagnosis": "wordpress_connection_failed",
+            "attempts": attempts,
         }
 
     def _artifact_payload(self, artifact: Dict[str, Any], status: str) -> Dict[str, Any]:
@@ -363,9 +498,16 @@ class WorkEngine:
         if not test_result.get("success"):
             raise ValueError(test_result.get("message") or "Falha ao testar conexao WordPress")
 
+        resolved_base_url = (test_result.get("resolved_base_url") or base_url).strip().rstrip("/")
         destination_key = _slugify(label)
         secret_ciphertext = self._secret_manager().encrypt(application_password)
-        config_json = json.dumps({"site_user": test_result.get("site_user")}, ensure_ascii=False)
+        config_json = json.dumps(
+            {
+                "site_user": test_result.get("site_user"),
+                "resolved_base_url": resolved_base_url,
+            },
+            ensure_ascii=False,
+        )
 
         cursor = self.db.conn.cursor()
         cursor.execute(
@@ -379,7 +521,7 @@ class WorkEngine:
             (
                 destination_key,
                 label,
-                base_url,
+                resolved_base_url,
                 username,
                 secret_ciphertext,
                 default_voice_mode,
