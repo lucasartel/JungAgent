@@ -20,7 +20,7 @@ os.environ["ANONYMIZED_TELEMETRY"] = "False"
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Importar o bot
-from telegram_bot import bot_state, start_command, stats_command, minha_jornada_command, reset_command, meu_perfil_command
+from telegram_bot import bot_state, start_command, stats_command, minha_jornada_command, reset_command, meu_perfil_command, job_command
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 # Importar rotas do admin (serão criadas)
@@ -63,7 +63,8 @@ async def setup_bot_commands(telegram_app):
 
     commands = [
         BotCommand("start", "Iniciar conversa com Jung"),
-        BotCommand("meu_perfil", "Receba seu perfil psicológico consolidado")
+        BotCommand("meu_perfil", "Receba seu perfil psicológico consolidado"),
+        BotCommand("job", "Criar um job para o modulo Work")
     ]
 
     await telegram_app.bot.set_my_commands(commands)
@@ -111,6 +112,7 @@ async def lifespan(app: FastAPI):
     telegram_app.add_handler(CommandHandler("minha_jornada", minha_jornada_command))
     telegram_app.add_handler(CommandHandler("reset", reset_command))
     telegram_app.add_handler(CommandHandler("meu_perfil", meu_perfil_command))
+    telegram_app.add_handler(CommandHandler("job", job_command))
 
     # Handler de mensagens (precisamos importar a função handle_message se ela existir,
     # ou definir aqui se estiver dentro do main no original.
@@ -1403,6 +1405,13 @@ except Exception as e:
     logger.warning(f"⚠️  Rotas de Lucidez do Mundo não disponíveis: {e}")
 
 # ============================================================================
+try:
+    from admin_web.routes.work_routes import router as work_router
+    app.include_router(work_router)
+    logger.info("✅ Rotas do modulo Work carregadas (protegidas - Master Admin only)")
+except Exception as e:
+    logger.warning(f"⚠️  Rotas do modulo Work não disponíveis: {e}")
+
 # ROTAS TRI/IRT (Item Response Theory) - Sistema Psicométrico Avançado
 # ============================================================================
 try:

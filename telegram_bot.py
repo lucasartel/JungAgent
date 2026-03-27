@@ -645,6 +645,65 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.warning(f"Reset solicitado por {user.first_name}")
 
 
+def _clear_work_job_state(context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop('awaiting_work_brief_confirmation', None)
+    context.user_data.pop('awaiting_work_brief_refinement', None)
+    context.user_data.pop('pending_work_brief_draft', None)
+    context.user_data.pop('pending_work_original_text', None)
+
+
+async def job_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler para /job - cria um brief de trabalho para o modulo Work."""
+    user = update.effective_user
+
+    if user.id not in ADMIN_IDS:
+        await update.message.reply_text(
+            "⚠️ O comando /job é reservado ao admin do EndoJung."
+        )
+        return
+
+    prompt_text = " ".join(context.args or []).strip()
+    if not prompt_text:
+        await update.message.reply_text(
+            "Use assim:\n"
+            "/job Criar um artigo para o site X sobre o avanço da IA no Brasil em tom analítico e deixar em rascunho"
+        )
+        return
+
+    from work_engine import WorkEngine
+
+    engine = WorkEngine(bot_state.db)
+    draft = engine.parse_job_text(prompt_text)
+
+    if draft.get("status") == "needs_clarification":
+        context.user_data['awaiting_work_brief_refinement'] = True
+        context.user_data['pending_work_original_text'] = prompt_text
+        context.user_data['pending_work_brief_draft'] = draft
+        await update.message.reply_text(
+            f"Preciso de um detalhe antes de enfileirar esse job:\n\n{draft.get('clarification_question')}"
+        )
+        return
+
+    context.user_data['awaiting_work_brief_confirmation'] = True
+    context.user_data['pending_work_original_text'] = prompt_text
+    context.user_data['pending_work_brief_draft'] = draft
+
+    summary = (
+        "🧰 *Rascunho de Job detectado*\n\n"
+        f"Destino: {draft.get('destination_label')}\n"
+        f"Objetivo: {draft.get('objective')}\n"
+        f"Voz: {draft.get('voice_mode')}\n"
+        f"Entrega: {draft.get('delivery_mode')}\n"
+        f"Prioridade: {draft.get('priority')}\n"
+        f"Título sugerido: {draft.get('title_hint') or '-'}\n\n"
+        "Responda com:\n"
+        "- `CONFIRMAR JOB` para enfileirar\n"
+        "- `CANCELAR JOB` para descartar\n"
+        "- ou envie uma correção em texto livre para eu ajustar o brief"
+    )
+    await update.message.reply_text(summary, parse_mode='Markdown')
+
+
 # ============================================================
 # HANDLER DE MENSAGENS
 # ============================================================
@@ -843,6 +902,108 @@ O que você decide?
             await update.message.reply_text("❌ Reset cancelado.\n\nSeu histórico foi preservado.", parse_mode='Markdown')
             context.user_data['awaiting_reset_confirmation'] = False
             return
+
+    # ========== CONFIRMACAO / REFINO DE JOBS DO WORK ==========
+    if user.id in ADMIN_IDS and context.user_data.get('awaiting_work_brief_refinement'):
+        from work_engine import WorkEngine
+
+        original_text = context.user_data.get('pending_work_original_text', '')
+        combined_text = original_text.strip()
+        if message_text.strip():
+            combined_text = f"{combined_text}\n\nInformacoes adicionais do admin: {message_text.strip()}".strip()
+
+        engine = WorkEngine(bot_state.db)
+        draft = engine.parse_job_text(combined_text)
+        context.user_data['pending_work_original_text'] = combined_text
+
+        if draft.get("status") == "needs_clarification":
+            context.user_data['pending_work_brief_draft'] = draft
+            await update.message.reply_text(
+                f"Ainda preciso de um detalhe:\n\n{draft.get('clarification_question')}"
+            )
+            return
+
+        context.user_data['awaiting_work_brief_refinement'] = False
+        context.user_data['awaiting_work_brief_confirmation'] = True
+        context.user_data['pending_work_brief_draft'] = draft
+        await update.message.reply_text(
+            "🧰 *Brief ajustado*\n\n"
+            f"Destino: {draft.get('destination_label')}\n"
+            f"Objetivo: {draft.get('objective')}\n"
+            f"Voz: {draft.get('voice_mode')}\n"
+            f"Entrega: {draft.get('delivery_mode')}\n"
+            f"Prioridade: {draft.get('priority')}\n\n"
+            "Responda com `CONFIRMAR JOB`, `CANCELAR JOB` ou uma nova correção.",
+            parse_mode='Markdown'
+        )
+        return
+
+    if user.id in ADMIN_IDS and context.user_data.get('awaiting_work_brief_confirmation'):
+        text_upper = message_text.strip().upper()
+
+        if text_upper == 'CANCELAR JOB':
+            _clear_work_job_state(context)
+            await update.message.reply_text("❌ Job cancelado.")
+            return
+
+        if text_upper == 'CONFIRMAR JOB':
+            from work_engine import WorkEngine
+
+            draft = context.user_data.get('pending_work_brief_draft') or {}
+            engine = WorkEngine(bot_state.db)
+            brief = engine.create_brief(
+                origin="admin",
+                trigger_source="telegram_admin_job",
+                destination_id=int(draft["destination_id"]),
+                objective=draft["objective"],
+                voice_mode=draft["voice_mode"],
+                delivery_mode=draft["delivery_mode"],
+                content_type=draft.get("content_type", "post"),
+                priority=int(draft.get("priority", 50)),
+                title_hint=draft.get("title_hint", ""),
+                notes=draft.get("notes", ""),
+                raw_input=context.user_data.get('pending_work_original_text', draft.get("objective", "")),
+                source_seed=None,
+                admin_telegram_id=str(user.id),
+                extracted=draft,
+            )
+            _clear_work_job_state(context)
+            await update.message.reply_text(
+                "✅ Job enfileirado no Work.\n\n"
+                f"Brief #{brief['id']} criado para {brief.get('destination_label') or 'destino selecionado'}.\n"
+                "O loop ou o dashboard agora podem compor o pacote editorial e abrir a aprovação."
+            )
+            return
+
+        # Qualquer outro texto vira correção do draft atual
+        from work_engine import WorkEngine
+
+        original_text = context.user_data.get('pending_work_original_text', '')
+        combined_text = f"{original_text}\n\nCorrecoes do admin: {message_text.strip()}".strip()
+        engine = WorkEngine(bot_state.db)
+        draft = engine.parse_job_text(combined_text)
+        context.user_data['pending_work_original_text'] = combined_text
+        context.user_data['pending_work_brief_draft'] = draft
+
+        if draft.get("status") == "needs_clarification":
+            context.user_data['awaiting_work_brief_refinement'] = True
+            context.user_data['awaiting_work_brief_confirmation'] = False
+            await update.message.reply_text(
+                f"Preciso refinar mais um ponto:\n\n{draft.get('clarification_question')}"
+            )
+            return
+
+        await update.message.reply_text(
+            "🧰 *Brief revisado*\n\n"
+            f"Destino: {draft.get('destination_label')}\n"
+            f"Objetivo: {draft.get('objective')}\n"
+            f"Voz: {draft.get('voice_mode')}\n"
+            f"Entrega: {draft.get('delivery_mode')}\n"
+            f"Prioridade: {draft.get('priority')}\n\n"
+            "Responda com `CONFIRMAR JOB`, `CANCELAR JOB` ou outra correção.",
+            parse_mode='Markdown'
+        )
+        return
 
     # ========== PROCESSAR MENSAGEM NORMAL ==========
 

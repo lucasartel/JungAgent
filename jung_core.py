@@ -1024,6 +1024,152 @@ class HybridDatabaseManager:
             )
         """)
 
+        # ========== WORK / INTEGRATIONS ==========
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS work_skill_providers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_key TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL,
+                credential_schema_json TEXT,
+                capabilities_json TEXT,
+                enabled BOOLEAN DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS work_destinations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                destination_key TEXT NOT NULL UNIQUE,
+                provider_key TEXT NOT NULL,
+                label TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                username TEXT NOT NULL,
+                secret_ciphertext TEXT NOT NULL,
+                default_voice_mode TEXT DEFAULT 'endojung',
+                default_delivery_mode TEXT DEFAULT 'draft',
+                last_test_status TEXT,
+                last_test_message TEXT,
+                last_tested_at DATETIME,
+                config_json TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS work_briefs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                origin TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                trigger_source TEXT,
+                priority INTEGER DEFAULT 50,
+                destination_id INTEGER,
+                voice_mode TEXT DEFAULT 'endojung',
+                delivery_mode TEXT DEFAULT 'draft',
+                content_type TEXT DEFAULT 'post',
+                objective TEXT NOT NULL,
+                source_seed TEXT,
+                admin_telegram_id TEXT,
+                title_hint TEXT,
+                notes TEXT,
+                raw_input TEXT,
+                extracted_json TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (destination_id) REFERENCES work_destinations(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS work_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_id TEXT,
+                phase TEXT DEFAULT 'work',
+                trigger_source TEXT,
+                selected_brief_id INTEGER,
+                destination_id INTEGER,
+                status TEXT DEFAULT 'running',
+                input_summary TEXT,
+                output_summary TEXT,
+                metrics_json TEXT,
+                errors_json TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (selected_brief_id) REFERENCES work_briefs(id),
+                FOREIGN KEY (destination_id) REFERENCES work_destinations(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS work_artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                brief_id INTEGER NOT NULL,
+                run_id INTEGER,
+                destination_id INTEGER,
+                status TEXT DEFAULT 'composed',
+                title TEXT,
+                excerpt TEXT,
+                body TEXT,
+                slug TEXT,
+                tags_json TEXT,
+                categories_json TEXT,
+                cta TEXT,
+                editorial_note TEXT,
+                voice_mode TEXT DEFAULT 'endojung',
+                content_type TEXT DEFAULT 'post',
+                external_id TEXT,
+                external_url TEXT,
+                published_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (brief_id) REFERENCES work_briefs(id),
+                FOREIGN KEY (run_id) REFERENCES work_runs(id),
+                FOREIGN KEY (destination_id) REFERENCES work_destinations(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS work_approval_tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                brief_id INTEGER NOT NULL,
+                artifact_id INTEGER NOT NULL,
+                destination_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                requested_by TEXT,
+                reviewed_by TEXT,
+                review_note TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at DATETIME,
+                executed_at DATETIME,
+                FOREIGN KEY (brief_id) REFERENCES work_briefs(id),
+                FOREIGN KEY (artifact_id) REFERENCES work_artifacts(id),
+                FOREIGN KEY (destination_id) REFERENCES work_destinations(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS work_delivery_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER,
+                artifact_id INTEGER,
+                destination_id INTEGER,
+                provider_key TEXT,
+                action TEXT,
+                status TEXT,
+                external_id TEXT,
+                external_url TEXT,
+                response_json TEXT,
+                error_message TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (ticket_id) REFERENCES work_approval_tickets(id),
+                FOREIGN KEY (artifact_id) REFERENCES work_artifacts(id),
+                FOREIGN KEY (destination_id) REFERENCES work_destinations(id)
+            )
+        """)
+
         # ========== DADOS DO PILOTO UNESCO (JAISD) ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS unesco_pilot_data (
@@ -1093,6 +1239,14 @@ class HybridDatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_events_cycle ON consciousness_loop_events(agent_instance, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_results_cycle ON consciousness_loop_phase_results(agent_instance, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_artifacts_cycle ON consciousness_loop_artifacts(agent_instance, cycle_id, created_at DESC)")
+
+        # Work / integrations
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_destinations_provider ON work_destinations(provider_key, is_active)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_briefs_status ON work_briefs(status, origin, priority DESC, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_runs_cycle ON work_runs(cycle_id, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_artifacts_brief ON work_artifacts(brief_id, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_tickets_status ON work_approval_tickets(status, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_delivery_status ON work_delivery_events(status, created_at DESC)")
 
         self.conn.commit()
         logger.info("✅ Schema SQLite criado/verificado com índices de performance")

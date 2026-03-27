@@ -151,6 +151,7 @@ async def consciousness_loop_dashboard(request: Request, admin: Dict = Depends(r
 
         <div class="menu">
             <a href="/admin/consciousness-loop/dashboard" class="active">Dashboard EndoJung</a>
+            <a href="/admin/work/dashboard">Work / Action</a>
             <a href="/admin/world-consciousness/dashboard">Lucidez do Mundo</a>
             <a href="/admin/agent-identity/dashboard">Identidade Nuclear</a>
             <a href="/admin/jung-lab">Jung Lab</a>

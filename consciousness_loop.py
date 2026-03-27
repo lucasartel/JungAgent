@@ -542,38 +542,37 @@ class ConsciousnessLoopManager:
         return result
 
     def _run_work_phase(self, result: Dict) -> Dict:
-        from world_consciousness import world_consciousness
+        from work_engine import WorkEngine
 
         self._promote_from_placeholder(result)
-        world_state = world_consciousness.get_world_state(force_refresh=False)
-        work_seeds = world_state.get("work_seeds", []) or []
-        result["raw_result"]["work_inputs"] = {
-            "seed_count": len(work_seeds),
-            "work_seeds": work_seeds,
-            "confidence_overall": world_state.get("confidence_overall", 0.0),
-            "dominant_tensions": world_state.get("dominant_tensions", []),
-        }
-        result["metrics"]["work_seed_count"] = len(work_seeds)
-        result["metrics"]["work_seed_consumed"] = 1 if work_seeds else 0
+        engine = WorkEngine(self.db)
+        work_result = engine.run_work_phase(
+            trigger_source="consciousness_loop",
+            cycle_id=result["cycle_id"],
+        )
+        result["raw_result"]["work_result"] = work_result
+        result["metrics"].update(work_result.get("metrics", {}))
+        result["warnings"].extend(work_result.get("warnings", []))
+        result["errors"].extend(work_result.get("errors", []))
 
-        for seed in work_seeds[:3]:
+        for artifact in work_result.get("artifacts", []):
             self._record_virtual_artifact(
                 result,
-                artifact_type="world_work_seed",
-                artifact_id=None,
-                artifact_table="world_state_cache",
-                summary=seed,
+                artifact_type=artifact.get("artifact_type"),
+                artifact_id=artifact.get("artifact_id"),
+                artifact_table=artifact.get("artifact_table"),
+                summary=artifact.get("summary"),
             )
 
-        if work_seeds:
-            result["output_summary"] = (
-                "Work/Action preparado a partir da lucidez do mundo; "
-                f"{len(work_seeds)} seeds ativos disponiveis para a futura fase de acao."
-            )
-        else:
+        status = work_result.get("status")
+        if status == "no_work":
             result["status"] = "partial_success"
-            result["warnings"].append("work_no_world_seeds")
-            result["output_summary"] = "Work/Action sem seeds ativos nesta janela de mundo."
+        elif status == "awaiting_approval":
+            result["status"] = "success"
+        elif not work_result.get("success", True):
+            result["status"] = "failed"
+
+        result["output_summary"] = work_result.get("output_summary") or "Work/Action executado."
         return result
 
     def _run_hobby_phase(self, result: Dict) -> Dict:
