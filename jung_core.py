@@ -5624,9 +5624,64 @@ class JungianEngine:
                 or payload.get("response_direction")
             )
 
+        def _extract_dossier_section_items(section_name: str, limit: int = 2) -> List[str]:
+            if not memory_dossier:
+                return []
+            pattern = rf"\[{re.escape(section_name)}\](.*?)(?:\n\[|$)"
+            match = re.search(pattern, memory_dossier, re.DOTALL | re.IGNORECASE)
+            if not match:
+                return []
+
+            items: List[str] = []
+            for raw_line in match.group(1).splitlines():
+                line = raw_line.strip()
+                if not line.startswith("-"):
+                    continue
+                cleaned = line.lstrip("-").strip()
+                if cleaned and cleaned not in items:
+                    items.append(cleaned)
+                if len(items) >= limit:
+                    break
+            return items
+
+        def _build_heuristic_antithesis() -> Dict[str, Any]:
+            ignored_memories = _extract_dossier_section_items("FATOS PRIORITARIOS", limit=2)
+            if not ignored_memories:
+                ignored_memories = _extract_dossier_section_items("MEMORIAS SEMANTICAS RELEVANTES", limit=2)
+
+            ignored_pattern_items = _extract_dossier_section_items("PADRAO RECORRENTE", limit=1)
+            tension_items = _extract_dossier_section_items("TENSAO ATUAL", limit=1)
+
+            correction_parts: List[str] = []
+            if ignored_memories:
+                correction_parts.append("trazer pelo menos uma memoria concreta do usuario para dentro da resposta")
+            if ignored_pattern_items:
+                correction_parts.append("reconhecer o padrao relacional ou cognitivo em jogo sem transformar isso em teoria demais")
+            if tension_items:
+                correction_parts.append("usar a tensao atual apenas se ela realmente servir ao encontro")
+
+            direction_parts: List[str] = []
+            if ignored_memories:
+                direction_parts.append("ancorar a fala em fatos lembrados a tempo")
+            if ignored_pattern_items:
+                direction_parts.append("mostrar que a resposta percebe o padrao do usuario")
+            if not direction_parts:
+                direction_parts.append("corrigir a tese com mais memoria concreta e menos improviso")
+
+            return {
+                "ignored_memories": ignored_memories,
+                "ignored_pattern": ignored_pattern_items[0] if ignored_pattern_items else None,
+                "missed_tension": tension_items[0] if tension_items else None,
+                "thesis_verdict": "adequada_mas_limitada" if ignored_memories or ignored_pattern_items or tension_items else "incompleta",
+                "correction_to_make": "; ".join(correction_parts) if correction_parts else "usar o dossie de memoria com mais precisao e concretude",
+                "response_direction": "; ".join(direction_parts),
+                "confidence": 0.35,
+            }
+
         response = self._call_conversation_llm(prompt, max_tokens=700, temperature=0.2)
         retry_used = False
         parse_error = ""
+        heuristic_fallback_used = False
 
         try:
             normalized = _normalize_antithesis_payload(self._parse_json_response(response))
@@ -5662,12 +5717,17 @@ class JungianEngine:
             except Exception as exc:
                 parse_error = parse_error or str(exc)
 
+        if not _is_useful_antithesis(normalized):
+            heuristic_fallback_used = True
+            normalized = _build_heuristic_antithesis()
+
         return {
             "prompt": prompt,
             "raw": response,
             "parsed": normalized if isinstance(normalized, dict) else {},
             "retry_used": retry_used,
             "parse_error": parse_error,
+            "heuristic_fallback_used": heuristic_fallback_used,
         }
 
         prompt = Config.ACTIVE_CONSCIOUSNESS_ANTITHESIS_PROMPT_V2.format(
@@ -5725,6 +5785,8 @@ class JungianEngine:
             lines.append(f"Warnings: {', '.join(warnings)}")
         if debug_meta.get("antithesis_retry_used"):
             lines.append("Retry do contracanto: sim")
+        if debug_meta.get("antithesis_heuristic_fallback_used"):
+            lines.append("Fallback heuristico do contracanto: sim")
         return "\n".join(lines)
 
     def _generate_chorus(
@@ -5839,6 +5901,7 @@ class JungianEngine:
         antithesis = None
         antithesis_summary = ""
         antithesis_retry_used = False
+        antithesis_heuristic_fallback_used = False
         thesis_verdict = ""
         try:
             antithesis_start = time.perf_counter()
@@ -5846,6 +5909,7 @@ class JungianEngine:
             timings_ms["antithesis_ms"] = int((time.perf_counter() - antithesis_start) * 1000)
             antithesis = antithesis_bundle.get("parsed") or {}
             antithesis_retry_used = bool(antithesis_bundle.get("retry_used"))
+            antithesis_heuristic_fallback_used = bool(antithesis_bundle.get("heuristic_fallback_used"))
             thesis_verdict = antithesis.get("thesis_verdict") or ""
             antithesis_summary = (
                 antithesis.get("correction_to_make")
@@ -5855,16 +5919,19 @@ class JungianEngine:
             )
             if antithesis_retry_used:
                 warnings.append("antithesis_retry_used")
-            if antithesis_bundle.get("parse_error") and antithesis_summary:
+            if antithesis_heuristic_fallback_used:
+                warnings.append("antithesis_heuristic_fallback")
+            if antithesis_bundle.get("parse_error") and antithesis_summary and not antithesis_heuristic_fallback_used:
                 warnings.append("antithesis_parse_recovered")
-            if antithesis_bundle.get("parse_error") and not antithesis_summary:
+            if antithesis_bundle.get("parse_error") and not antithesis_summary and not antithesis_heuristic_fallback_used:
                 warnings.append("antithesis_failed_after_retry")
             if not antithesis_summary:
                 warnings.append("antithesis_weak")
             logger.info(
-                "🎼 [ACTIVE CONSCIOUSNESS] antithesis_ms=%s retry=%s verdict=%s",
+                "🎼 [ACTIVE CONSCIOUSNESS] antithesis_ms=%s retry=%s heuristic_fallback=%s verdict=%s",
                 timings_ms["antithesis_ms"],
                 antithesis_retry_used,
+                antithesis_heuristic_fallback_used,
                 thesis_verdict or "n/a",
             )
         except Exception as exc:
@@ -5878,6 +5945,7 @@ class JungianEngine:
             "antithesis_summary": antithesis_summary[:320],
             "thesis_verdict": thesis_verdict,
             "antithesis_retry_used": antithesis_retry_used,
+            "antithesis_heuristic_fallback_used": antithesis_heuristic_fallback_used,
             "retrieval_stats": dossier["stats"],
             "warnings": warnings,
             "timings_ms": timings_ms,
