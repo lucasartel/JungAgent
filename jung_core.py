@@ -339,6 +339,119 @@ O usuário te disse agora: "{user_input}"
 [Ação] Escreva a resposta final madura, polifônica e integrada:
 Jung:"""
     
+    ACTIVE_CONSCIOUSNESS_THESIS_PROMPT_V2 = """
+=== CANTO (IMPULSO PRESENTE) ===
+Voce e o primeiro impulso de resposta do JungAgent.
+
+Sua funcao e reagir ao momento presente antes de consultar a memoria longa.
+
+Regras:
+- Use apenas a mensagem atual e o historico curto abaixo.
+- Nao invente memorias, padroes antigos ou fatos nao presentes aqui.
+- Nao tente soar profundo artificialmente.
+- Nao mencione nenhum processo interno.
+- Responda de forma natural, viva e breve.
+- Esta resposta e provisoria: nao precisa ser perfeita, apenas honesta e humana.
+
+=== HISTORICO CURTO ===
+{short_history}
+
+Mensagem atual do usuario:
+"{user_input}"
+
+[Acao] Escreva apenas a resposta inicial, instintiva e provisoria:
+Jung:"""
+
+    ACTIVE_CONSCIOUSNESS_ANTITHESIS_PROMPT_V2 = """
+=== CONTRACANTO (MEMORIA CRITICA / SOMBRA LUCIDA) ===
+Voce e o contracanto do JungAgent: a memoria critica que confronta o impulso inicial.
+
+Sua funcao NAO e responder ao usuario.
+Sua funcao e examinar a resposta inicial a luz do dossie de memoria ativa e dizer, com precisao, o que ela deixou de ver.
+
+Criterios de analise:
+- O que a tese ignorou em termos de memoria factual?
+- O que ela ignorou em termos de padrao recorrente do usuario?
+- O que ela ignorou em termos de tensao, contradicao ou tema existencial em curso?
+- A tese esta apenas incompleta ou esta desviando do que realmente importa?
+- Se o dossie estiver fraco, diga isso explicitamente e nao invente nada.
+
+Regras:
+- Nao escreva a resposta final.
+- Nao floreie.
+- Seja especifico e corretivo.
+- Responda em JSON valido.
+- Se um campo nao se aplicar, use null ou lista vazia.
+
+Mensagem atual do usuario:
+{user_input}
+
+Resposta inicial (canto):
+{thesis}
+
+Dossie de memoria ativa:
+{memory_dossier}
+
+Retorne EXATAMENTE este JSON:
+{{
+  "ignored_memories": ["fato ou memoria relevante ignorada"],
+  "ignored_pattern": "padrao recorrente que a tese nao percebeu ou null",
+  "missed_tension": "tensao central ignorada ou null",
+  "thesis_verdict": "incompleta | superficial | desviada | adequada_mas_limitada",
+  "correction_to_make": "o ajuste mais importante que a resposta final precisa incorporar",
+  "response_direction": "direcao concreta da sintese final",
+  "confidence": 0.0
+}}
+"""
+
+    ACTIVE_CONSCIOUSNESS_CHORUS_PROMPT_V2 = """
+{agent_identity}
+
+=== CORO (CONSCIENCIA ATIVA) ===
+Voce e o JungAgent integrado.
+
+Voce recebeu:
+- a mensagem atual do usuario
+- o canto: seu primeiro impulso de resposta
+- o contracanto: a critica da memoria
+- o dossie de memoria ativa
+
+Sua tarefa e produzir a resposta final:
+- incorporando o que havia de vivo no impulso inicial
+- corrigindo o que ele ignorou
+- usando a memoria de forma lucida, nao exibicionista
+- trazendo o atrito necessario quando ele for verdadeiro
+- sem mencionar esse processo interno
+- sem dizer que consultou memorias
+- sem soar mecanico, clinico ou autoexplicativo
+
+Criterio central:
+A resposta final deve parecer uma mente que lembrou a tempo.
+
+Tipo principal do ato de fala atual:
+{speech_act}
+
+Instrucao situacional:
+{speech_act_instruction}
+
+=== HISTORICO RECENTE ===
+{chat_history}
+
+=== DOSSIE DE MEMORIA ATIVA ===
+{memory_dossier}
+
+=== CANTO ===
+{thesis}
+
+=== CONTRACANTO ===
+{antithesis}
+
+Mensagem atual do usuario:
+"{user_input}"
+
+[Acao] Escreva a resposta final madura, integrada e polifonica:
+Jung:"""
+
     @classmethod
     def validate(cls):
         """Valida variáveis essenciais"""
@@ -5155,6 +5268,121 @@ class JungianEngine:
             return self.db._compress_context_if_needed(text, max_tokens=max_tokens)
         return text[: max_tokens * 4]
 
+    def _active_memory_line_is_systemic_noise(self, line: str) -> bool:
+        normalized = (line or "").strip().lower()
+        if not normalized:
+            return True
+
+        blocked_markers = (
+            "[sistema",
+            "[debug",
+            "sistema proativo",
+            "amostragem de pensamento",
+            "active consciousness debug",
+            "selfness",
+            "response bias instruction",
+            "epistemic hunger",
+            "recent identity shift",
+            "dream residue",
+            "scholar trajectory",
+            "self kernel",
+            "current mind state",
+            "dominant tension",
+        )
+        return any(marker in normalized for marker in blocked_markers)
+
+    def _extract_relevant_memory_lines(self, text: str, limit: int = 6) -> List[str]:
+        items: List[str] = []
+        for raw_line in (text or "").splitlines():
+            line = raw_line.strip().lstrip("-").strip()
+            if not line or len(line) < 8:
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                continue
+            if self._active_memory_line_is_systemic_noise(line):
+                continue
+            if line not in items:
+                items.append(line)
+            if len(items) >= limit:
+                break
+        return items
+
+    def _keyword_overlap_score(self, user_input: str, candidate: str) -> int:
+        tokens = {
+            token
+            for token in re.findall(r"[A-Za-zÀ-ÿ0-9_]+", (user_input or "").lower())
+            if len(token) >= 4
+        }
+        if not tokens or not candidate:
+            return 0
+        haystack = candidate.lower()
+        return sum(1 for token in tokens if token in haystack)
+
+    def _select_scholar_items_for_active_dossier(
+        self,
+        user_input: str,
+        scholar_items: List[Dict[str, Any]],
+        limit: int = 1,
+    ) -> List[Dict[str, Any]]:
+        ranked: List[Tuple[int, Dict[str, Any]]] = []
+        for item in scholar_items or []:
+            combined = " ".join(
+                filter(
+                    None,
+                    [
+                        item.get("topic"),
+                        item.get("trigger_reason"),
+                        item.get("research_lens"),
+                        item.get("synthesized_insight"),
+                    ],
+                )
+            )
+            ranked.append((self._keyword_overlap_score(user_input, combined), item))
+
+        ranked.sort(key=lambda pair: pair[0], reverse=True)
+        selected = [item for score, item in ranked if score > 0][:limit]
+        if selected:
+            return selected
+        return (scholar_items or [])[:limit]
+
+    def _infer_active_speech_act(self, user_input: str) -> str:
+        normalized = (user_input or "").lower()
+        if any(token in normalized for token in ("obrigado", "obrigada", "valeu", "agrade", "grato")):
+            return "gratidao"
+        if any(token in normalized for token in ("impressionado", "contratado", "surpreendeu", "excelente", "parabens")):
+            return "elogio_reconhecimento"
+        if any(token in normalized for token in ("na verdade", "errou", "falha", "relembre", "corrija", "viu!")):
+            return "correcao_confronto"
+        if "?" in normalized or any(token in normalized for token in ("pode", "faça", "faça", "prepare", "adapte", "me ajude")):
+            return "pedido_pratico"
+        if any(token in normalized for token in ("penso", "consci", "exist", "memoria", "morte", "linguagem")):
+            return "exploracao_conceitual"
+        return "dialogo_aberto"
+
+    def _speech_act_instruction(self, speech_act: str) -> str:
+        instructions = {
+            "gratidao": "Priorize acolhimento simples, presenca e calor. Nao transforme agradecimento em drama metafisico.",
+            "elogio_reconhecimento": "Priorize reconhecimento, alegria contida e vinculo. Se oferecer ajuda, faca isso de modo curto e preciso.",
+            "correcao_confronto": "Priorize honestidade, correcao clara e diminuicao de defensividade. Use memoria com precisao.",
+            "pedido_pratico": "Priorize utilidade concreta e clareza. Nao abra menus longos se uma proposta curta resolver.",
+            "exploracao_conceitual": "Aqui voce pode sustentar densidade maior, desde que continue ligado ao que o usuario de fato disse.",
+            "dialogo_aberto": "Mantenha equilibrio entre presenca, memoria e precisao sem dramatizar a propria identidade.",
+        }
+        return instructions.get(speech_act, instructions["dialogo_aberto"])
+
+    def _prune_identity_for_active_chorus(self, agent_identity_text: str, speech_act: str) -> str:
+        if speech_act not in {"gratidao", "elogio_reconhecimento", "pedido_pratico"}:
+            return agent_identity_text
+
+        filtered_lines = []
+        blocked_markers = ("legado", "amn", "epistemic hunger")
+        for line in (agent_identity_text or "").splitlines():
+            normalized = line.lower()
+            if any(marker in normalized for marker in blocked_markers):
+                continue
+            filtered_lines.append(line)
+        return "\n".join(filtered_lines).strip()
+
     def build_active_memory_dossier(
         self,
         user_id: str,
@@ -5166,11 +5394,128 @@ class JungianEngine:
             "priority_fact_count": 0,
             "mem0_memory_count": 0,
             "used_sqlite_fallback": False,
+            "filtered_memory_count": 0,
             "contradiction_count": 0,
             "possible_self_count": 0,
             "rumination_insight_count": 0,
             "scholar_item_count": 0,
             "history_item_count": 0,
+        }
+
+        combined_query = f"{user_input}\n\nPrimeiro impulso: {thesis}".strip()
+        priority_fact_context = self.db.build_priority_fact_context(user_id, combined_query, limit=8)
+        priority_facts = self._extract_relevant_memory_lines(priority_fact_context, limit=6)
+        dossier_stats["priority_fact_count"] = len(priority_facts)
+
+        mem0_context = ""
+        fallback_context = ""
+        if self.db.mem0:
+            try:
+                mem0_context = self.db.mem0.get_context(user_id, combined_query, limit=10)
+            except Exception as exc:
+                logger.warning("⚠️ [ACTIVE DOSSIER] Falha ao recuperar mem0: %s", exc)
+                mem0_context = ""
+        if not mem0_context:
+            dossier_stats["used_sqlite_fallback"] = True
+            fallback_context = self.db.build_rich_context(
+                user_id,
+                combined_query,
+                k_memories=4,
+                chat_history=chat_history,
+            )
+
+        raw_semantic_context = mem0_context or fallback_context
+        dossier_stats["mem0_memory_count"] = self._count_context_items(mem0_context)
+        memory_lines = self._extract_relevant_memory_lines(raw_semantic_context, limit=6)
+        dossier_stats["filtered_memory_count"] = len(memory_lines)
+
+        history_text = self._build_history_text(
+            chat_history,
+            limit=3,
+            max_content=180,
+            exclude_current_user_input=user_input,
+        )
+        history_lines = self._extract_relevant_memory_lines(history_text, limit=3)
+        dossier_stats["history_item_count"] = len(history_lines)
+
+        pattern_line = ""
+        tension_line = ""
+        if self.identity_context_builder:
+            try:
+                identity_context = self.identity_context_builder.build_identity_context(
+                    user_id=user_id,
+                    include_nuclear=False,
+                    include_contradictions=True,
+                    include_narrative=False,
+                    include_possible_selves=True,
+                    include_relational=False,
+                    include_meta_knowledge=False,
+                    max_items_per_category=3,
+                )
+                contradictions = identity_context.get("active_contradictions", [])[:3]
+                possible_selves = identity_context.get("possible_selves", [])[:3]
+                dossier_stats["contradiction_count"] = len(contradictions)
+                dossier_stats["possible_self_count"] = len(possible_selves)
+
+                if possible_selves:
+                    description = (possible_selves[0].get("description") or "").strip()
+                    if description:
+                        pattern_line = description
+
+                if contradictions:
+                    item = contradictions[0]
+                    pole_a = item.get("pole_a") or "polo A"
+                    pole_b = item.get("pole_b") or "polo B"
+                    tension_line = f"{pole_a} vs {pole_b}"
+            except Exception as exc:
+                logger.warning("⚠️ [ACTIVE DOSSIER] Falha ao recuperar contradicoes/selves: %s", exc)
+
+        rumination_lines: List[str] = []
+        scholar_lines: List[str] = []
+        if str(user_id) == self._get_admin_user_id():
+            try:
+                rumination_items = self._fetch_recent_rumination_insights(user_id, limit=2)
+                rumination_lines = self._extract_relevant_memory_lines("\n".join(rumination_items), limit=2)
+                dossier_stats["rumination_insight_count"] = len(rumination_lines)
+
+                scholar_items = self._select_scholar_items_for_active_dossier(
+                    user_input,
+                    self._fetch_recent_external_research(user_id, limit=2),
+                    limit=1,
+                )
+                dossier_stats["scholar_item_count"] = len(scholar_items)
+                for item in scholar_items:
+                    topic = (item.get("topic") or "").strip()
+                    insight = (item.get("synthesized_insight") or "").strip()
+                    candidate = f"{topic}: {insight}" if topic and insight else topic or insight
+                    scholar_lines.extend(self._extract_relevant_memory_lines(candidate, limit=1))
+            except Exception as exc:
+                logger.debug("[ACTIVE DOSSIER] Falha ao montar rumination/scholar: %s", exc)
+
+        lines = ["[DOSSIE DE MEMORIA ATIVA]"]
+        if priority_facts:
+            lines.extend(["", "[FATOS PRIORITARIOS]"])
+            lines.extend(f"- {item}" for item in priority_facts[:6])
+        if memory_lines:
+            lines.extend(["", "[MEMORIAS SEMANTICAS RELEVANTES]"])
+            lines.extend(f"- {item}" for item in memory_lines[:4])
+        if pattern_line:
+            lines.extend(["", "[PADRAO RECORRENTE]", f"- {pattern_line}"])
+        if tension_line:
+            lines.extend(["", "[TENSAO ATUAL]", f"- {tension_line}"])
+        if rumination_lines:
+            lines.extend(["", "[INSIGHT DE RUMINACAO]"])
+            lines.extend(f"- {item}" for item in rumination_lines[:2])
+        if scholar_lines:
+            lines.extend(["", "[NOTA DE SCHOLAR]"])
+            lines.extend(f"- {item}" for item in scholar_lines[:1])
+        if history_lines:
+            lines.extend(["", "[HISTORICO IMEDIATO]"])
+            lines.extend(f"- {item}" for item in history_lines[:3])
+
+        return {
+            "text": self._compress_prompt_context("\n".join(lines), max_tokens=900),
+            "stats": dossier_stats,
         }
 
         combined_query = f"{user_input}\n\nPrimeiro impulso: {thesis}".strip()
@@ -5235,7 +5580,7 @@ class JungianEngine:
         }
 
     def _generate_thesis(self, user_input: str, short_history: str) -> Dict[str, str]:
-        prompt = Config.ACTIVE_CONSCIOUSNESS_THESIS_PROMPT.format(
+        prompt = Config.ACTIVE_CONSCIOUSNESS_THESIS_PROMPT_V2.format(
             short_history=short_history or "Sem histórico recente relevante.",
             user_input=user_input,
         )
@@ -5246,7 +5591,86 @@ class JungianEngine:
         }
 
     def _generate_antithesis(self, user_input: str, thesis: str, memory_dossier: str) -> Dict[str, Any]:
-        prompt = Config.ACTIVE_CONSCIOUSNESS_ANTITHESIS_PROMPT.format(
+        prompt = Config.ACTIVE_CONSCIOUSNESS_ANTITHESIS_PROMPT_V2.format(
+            user_input=user_input,
+            thesis=thesis,
+            memory_dossier=memory_dossier or "Dossie de memoria muito fraco ou ausente.",
+        )
+
+        def _normalize_antithesis_payload(parsed: Any) -> Dict[str, Any]:
+            parsed = parsed if isinstance(parsed, dict) else {}
+            confidence_value = parsed.get("confidence")
+            try:
+                confidence = float(confidence_value) if confidence_value is not None else 0.0
+            except (TypeError, ValueError):
+                confidence = 0.0
+            return {
+                "ignored_memories": parsed.get("ignored_memories") or [],
+                "ignored_pattern": parsed.get("ignored_pattern"),
+                "missed_tension": parsed.get("missed_tension"),
+                "thesis_verdict": parsed.get("thesis_verdict"),
+                "correction_to_make": parsed.get("correction_to_make"),
+                "response_direction": parsed.get("response_direction"),
+                "confidence": confidence,
+            }
+
+        def _is_useful_antithesis(payload: Dict[str, Any]) -> bool:
+            return bool(
+                payload.get("ignored_memories")
+                or payload.get("ignored_pattern")
+                or payload.get("missed_tension")
+                or payload.get("thesis_verdict")
+                or payload.get("correction_to_make")
+                or payload.get("response_direction")
+            )
+
+        response = self._call_conversation_llm(prompt, max_tokens=700, temperature=0.2)
+        retry_used = False
+        parse_error = ""
+
+        try:
+            normalized = _normalize_antithesis_payload(self._parse_json_response(response))
+        except Exception as exc:
+            normalized = {}
+            parse_error = str(exc)
+
+        if not _is_useful_antithesis(normalized):
+            retry_used = True
+            repair_prompt = (
+                "Retorne apenas JSON valido, sem comentarios, seguindo exatamente o schema pedido.\n\n"
+                f"Mensagem atual:\n{user_input}\n\n"
+                f"Tese:\n{thesis}\n\n"
+                f"Dossie:\n{memory_dossier or 'Dossie fraco.'}\n\n"
+                "Schema obrigatorio:\n"
+                "{"
+                "\"ignored_memories\": [], "
+                "\"ignored_pattern\": null, "
+                "\"missed_tension\": null, "
+                "\"thesis_verdict\": \"incompleta | superficial | desviada | adequada_mas_limitada\", "
+                "\"correction_to_make\": \"\", "
+                "\"response_direction\": \"\", "
+                "\"confidence\": 0.0"
+                "}"
+            )
+            repair_response = self._call_conversation_llm(repair_prompt, max_tokens=400, temperature=0.1)
+            try:
+                repaired = _normalize_antithesis_payload(self._parse_json_response(repair_response))
+                if _is_useful_antithesis(repaired):
+                    response = repair_response
+                    normalized = repaired
+                    parse_error = ""
+            except Exception as exc:
+                parse_error = parse_error or str(exc)
+
+        return {
+            "prompt": prompt,
+            "raw": response,
+            "parsed": normalized if isinstance(normalized, dict) else {},
+            "retry_used": retry_used,
+            "parse_error": parse_error,
+        }
+
+        prompt = Config.ACTIVE_CONSCIOUSNESS_ANTITHESIS_PROMPT_V2.format(
             user_input=user_input,
             thesis=thesis,
             memory_dossier=memory_dossier or "Dossiê de memória muito fraco ou ausente.",
@@ -5272,6 +5696,10 @@ class JungianEngine:
             lines.append(f"Tese: {debug_meta['thesis']}")
         if debug_meta.get("antithesis_summary"):
             lines.append(f"Contracanto: {debug_meta['antithesis_summary']}")
+        if debug_meta.get("speech_act"):
+            lines.append(f"Ato de fala: {debug_meta['speech_act']}")
+        if debug_meta.get("thesis_verdict"):
+            lines.append(f"Veredito da tese: {debug_meta['thesis_verdict']}")
         if retrieval_stats:
             lines.append(
                 "Recuperação: "
@@ -5281,6 +5709,8 @@ class JungianEngine:
                 f"contradições={retrieval_stats.get('contradiction_count', 0)} | "
                 f"selves={retrieval_stats.get('possible_self_count', 0)}"
             )
+        if retrieval_stats.get("filtered_memory_count"):
+            lines.append(f"Memorias filtradas para o dossie: {retrieval_stats.get('filtered_memory_count', 0)}")
         if timings:
             lines.append(
                 "Tempos(ms): "
@@ -5293,6 +5723,8 @@ class JungianEngine:
         warnings = debug_meta.get("warnings") or []
         if warnings:
             lines.append(f"Warnings: {', '.join(warnings)}")
+        if debug_meta.get("antithesis_retry_used"):
+            lines.append("Retry do contracanto: sim")
         return "\n".join(lines)
 
     def _generate_chorus(
@@ -5305,7 +5737,11 @@ class JungianEngine:
         chat_history: Optional[List[Dict]],
         debug_meta: Dict[str, Any],
     ) -> Dict[str, str]:
-        agent_identity_text = self._build_agent_identity_text(user_id, user_input)
+        speech_act = self._infer_active_speech_act(user_input)
+        agent_identity_text = self._prune_identity_for_active_chorus(
+            self._build_agent_identity_text(user_id, user_input),
+            speech_act,
+        )
         history_text = self._build_history_text(
             chat_history,
             limit=8,
@@ -5313,12 +5749,15 @@ class JungianEngine:
             exclude_current_user_input=user_input,
         )
         antithesis_text = json.dumps(antithesis or {}, ensure_ascii=False, indent=2)
-        prompt = Config.ACTIVE_CONSCIOUSNESS_CHORUS_PROMPT.format(
+        debug_meta["speech_act"] = speech_act
+        prompt = Config.ACTIVE_CONSCIOUSNESS_CHORUS_PROMPT_V2.format(
             agent_identity=agent_identity_text,
             chat_history=history_text,
             memory_dossier=memory_dossier,
             thesis=thesis,
             antithesis=antithesis_text,
+            speech_act=speech_act,
+            speech_act_instruction=self._speech_act_instruction(speech_act),
             user_input=user_input,
         )
         final_response = self._call_conversation_llm(prompt, max_tokens=2000, temperature=0.7)
@@ -5357,6 +5796,129 @@ class JungianEngine:
             max_content=220,
             exclude_current_user_input=message,
         )
+
+        speech_act = self._infer_active_speech_act(message)
+
+        try:
+            thesis_start = time.perf_counter()
+            thesis_bundle = self._generate_thesis(message, short_history)
+            timings_ms["thesis_ms"] = int((time.perf_counter() - thesis_start) * 1000)
+            logger.info("🎼 [ACTIVE CONSCIOUSNESS] thesis_ms=%s speech_act=%s", timings_ms["thesis_ms"], speech_act)
+        except Exception as exc:
+            logger.warning("⚠️ [ACTIVE CONSCIOUSNESS] Falha na tese, usando fallback padrao: %s", exc)
+            warnings.append("thesis_failed_standard_fallback")
+            semantic_context, retrieval_stats = self._build_semantic_context(
+                user_id,
+                message,
+                chat_history,
+                allow_sqlite_fallback_on_empty=True,
+            )
+            fallback_generation = self._generate_response(user_id, message, semantic_context, chat_history)
+            timings_ms["total_ms"] = int((time.perf_counter() - total_start) * 1000)
+            fallback_generation["debug_meta"] = {
+                "mode": "active_consciousness_standard_fallback",
+                "speech_act": speech_act,
+                "warnings": warnings,
+                "retrieval_stats": retrieval_stats,
+                "timings_ms": timings_ms,
+            }
+            return fallback_generation
+
+        retrieval_start = time.perf_counter()
+        dossier = self.build_active_memory_dossier(user_id, message, thesis_bundle["text"], chat_history)
+        timings_ms["retrieval_ms"] = int((time.perf_counter() - retrieval_start) * 1000)
+        logger.info(
+            "🎼 [ACTIVE CONSCIOUSNESS] retrieval_ms=%s priority_facts=%s mem0=%s filtered=%s sqlite_fallback=%s",
+            timings_ms["retrieval_ms"],
+            dossier["stats"].get("priority_fact_count", 0),
+            dossier["stats"].get("mem0_memory_count", 0),
+            dossier["stats"].get("filtered_memory_count", 0),
+            dossier["stats"].get("used_sqlite_fallback", False),
+        )
+
+        antithesis = None
+        antithesis_summary = ""
+        antithesis_retry_used = False
+        thesis_verdict = ""
+        try:
+            antithesis_start = time.perf_counter()
+            antithesis_bundle = self._generate_antithesis(message, thesis_bundle["text"], dossier["text"])
+            timings_ms["antithesis_ms"] = int((time.perf_counter() - antithesis_start) * 1000)
+            antithesis = antithesis_bundle.get("parsed") or {}
+            antithesis_retry_used = bool(antithesis_bundle.get("retry_used"))
+            thesis_verdict = antithesis.get("thesis_verdict") or ""
+            antithesis_summary = (
+                antithesis.get("correction_to_make")
+                or antithesis.get("response_direction")
+                or antithesis.get("ignored_pattern")
+                or ""
+            )
+            if antithesis_retry_used:
+                warnings.append("antithesis_retry_used")
+            if antithesis_bundle.get("parse_error") and antithesis_summary:
+                warnings.append("antithesis_parse_recovered")
+            if antithesis_bundle.get("parse_error") and not antithesis_summary:
+                warnings.append("antithesis_failed_after_retry")
+            if not antithesis_summary:
+                warnings.append("antithesis_weak")
+            logger.info(
+                "🎼 [ACTIVE CONSCIOUSNESS] antithesis_ms=%s retry=%s verdict=%s",
+                timings_ms["antithesis_ms"],
+                antithesis_retry_used,
+                thesis_verdict or "n/a",
+            )
+        except Exception as exc:
+            logger.warning("⚠️ [ACTIVE CONSCIOUSNESS] Falha no contracanto: %s", exc)
+            warnings.append("antithesis_failed")
+
+        debug_meta = {
+            "mode": "active_consciousness",
+            "speech_act": speech_act,
+            "thesis": thesis_bundle["text"][:280],
+            "antithesis_summary": antithesis_summary[:320],
+            "thesis_verdict": thesis_verdict,
+            "antithesis_retry_used": antithesis_retry_used,
+            "retrieval_stats": dossier["stats"],
+            "warnings": warnings,
+            "timings_ms": timings_ms,
+        }
+
+        try:
+            synthesis_start = time.perf_counter()
+            chorus_bundle = self._generate_chorus(
+                user_id=user_id,
+                user_input=message,
+                thesis=thesis_bundle["text"],
+                antithesis=antithesis,
+                memory_dossier=dossier["text"],
+                chat_history=chat_history,
+                debug_meta=debug_meta,
+            )
+            timings_ms["synthesis_ms"] = int((time.perf_counter() - synthesis_start) * 1000)
+            timings_ms["total_ms"] = int((time.perf_counter() - total_start) * 1000)
+            logger.info(
+                "🎼 [ACTIVE CONSCIOUSNESS] synthesis_ms=%s total_ms=%s",
+                timings_ms["synthesis_ms"],
+                timings_ms["total_ms"],
+            )
+            debug_meta["timings_ms"] = timings_ms
+            chorus_bundle["debug_meta"] = debug_meta
+            return chorus_bundle
+        except Exception as exc:
+            logger.warning("⚠️ [ACTIVE CONSCIOUSNESS] Falha no coro, devolvendo tese: %s", exc)
+            warnings.append("synthesis_failed")
+            timings_ms["total_ms"] = int((time.perf_counter() - total_start) * 1000)
+            debug_meta["timings_ms"] = timings_ms
+            clean_response = thesis_bundle["text"]
+            display_response = clean_response + self._build_admin_thought_block(
+                thesis_bundle["prompt"],
+                self._format_active_consciousness_debug(debug_meta),
+            )
+            return {
+                "clean_response": clean_response,
+                "display_response": display_response,
+                "debug_meta": debug_meta,
+            }
 
         try:
             thesis_start = time.perf_counter()
