@@ -47,6 +47,7 @@ from jung_core import (
     format_conflict_for_display,
     format_archetype_info
 )
+from identity_config import ADMIN_USER_ID as ACTIVE_CONSCIOUSNESS_ADMIN_USER_ID
 
 # ✅ IMPORTAR SISTEMA PROATIVO AVANÇADO
 from jung_proactive_advanced import ProactiveAdvancedSystem
@@ -110,6 +111,18 @@ bot_state = BotState()
 # ============================================================
 # FUNÇÕES AUXILIARES
 # ============================================================
+
+async def keep_typing_while_processing(chat, stop_event: asyncio.Event, interval_seconds: float = 4.0):
+    """Mantém o indicador de digitação ativo enquanto um processamento longo roda."""
+    while not stop_event.is_set():
+        try:
+            await chat.send_action(action="typing")
+        except Exception as exc:
+            logger.debug(f"Falha ao enviar typing heartbeat: {exc}")
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+        except asyncio.TimeoutError:
+            continue
 
 def ensure_user_in_database(telegram_user, org_slug=None) -> str:
     """
@@ -717,6 +730,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Garantir usuário no banco
     user_id = ensure_user_in_database(user)
+    use_active_consciousness = (
+        Config.ACTIVE_CONSCIOUSNESS_ENABLED
+        and str(user_id) == str(ACTIVE_CONSCIOUSNESS_ADMIN_USER_ID)
+    )
 
     # ✅ RESET CRONÔMETRO PROATIVO (importante!)
     if bot_state.proactive:
@@ -1153,12 +1170,30 @@ O que você decide?
             "content": message_text
         })
 
-        # Processar com JungianEngine (usa Claude Sonnet 4.5)
-        result = bot_state.jung_engine.process_message(
-            user_id=user_id,
-            message=message_text,
-            chat_history=chat_history
-        )
+        if use_active_consciousness:
+            stop_typing_event = asyncio.Event()
+            typing_task = asyncio.create_task(
+                keep_typing_while_processing(update.message.chat, stop_typing_event)
+            )
+            try:
+                result = await asyncio.to_thread(
+                    bot_state.jung_engine.process_message,
+                    user_id=user_id,
+                    message=message_text,
+                    chat_history=chat_history,
+                )
+            finally:
+                stop_typing_event.set()
+                try:
+                    await typing_task
+                except Exception:
+                    pass
+        else:
+            result = bot_state.jung_engine.process_message(
+                user_id=user_id,
+                message=message_text,
+                chat_history=chat_history
+            )
 
         response = str(result['response'] or "")
 
