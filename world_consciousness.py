@@ -909,21 +909,86 @@ Estado estruturado:
         hobby_seeds = snapshot.get("hobby_seeds", []) or []
         consensus_areas = [AREA_CONFIG[key]["label"] for key in (snapshot.get("consensus_map", {}) or {}).keys()]
         divergence_areas = [AREA_CONFIG[key]["label"] for key in (snapshot.get("divergence_map", {}) or {}).keys()]
+        area_panels = snapshot.get("area_panels", {}) or {}
+        loaded_panels = sorted(
+            [
+                panel
+                for panel in area_panels.values()
+                if panel.get("signal_count", 0) > 0
+            ],
+            key=lambda panel: (panel.get("confidence", 0.0), panel.get("signal_count", 0)),
+            reverse=True,
+        )
+
+        def _compact_reading(text: str, limit: int = 116) -> str:
+            cleaned = (text or "").strip().rstrip(".")
+            if not cleaned:
+                return "sem leitura confiavel nesta janela"
+            cleaned = cleaned.replace("; em paralelo, ", "; ")
+            if len(cleaned) <= limit:
+                return cleaned
+            clipped = cleaned[:limit].rsplit(" ", 1)[0].rstrip(" ,;:")
+            return (clipped or cleaned[:limit]).rstrip(".") + "..."
+
+        def _derive_human_implication() -> str:
+            tension_map = {
+                "cuidado e risco": "o presente pressiona cuidado, vulnerabilidade e decisoes mais prudentes",
+                "descoberta e limite": "o presente mistura curiosidade, possibilidade e freio",
+                "criacao e deslocamento": "o presente pede adaptacao, reposicionamento e algum desapego",
+                "controle e exposicao": "o presente amplia vigilancia, visibilidade e cautela no que se revela",
+                "expressao e mercantilizacao": "o presente tensiona autenticidade, exibicao e captura do que deveria ser vivo",
+                "cuidado e risco, descoberta e limite": "o presente mistura zelo, curiosidade e freios mais duros",
+            }
+
+            dominant_tensions = snapshot.get("dominant_tensions", [])[:2]
+            implications = []
+            for tension in dominant_tensions:
+                mapped = tension_map.get(tension)
+                if mapped and mapped not in implications:
+                    implications.append(mapped)
+
+            if not implications and loaded_panels:
+                top_labels = [panel["label"].lower() for panel in loaded_panels[:2]]
+                return f"o presente pesa mais sobre {', '.join(top_labels)} e tende a reorganizar a sensacao coletiva de prioridade"
+
+            if len(implications) >= 2:
+                return f"{implications[0]}; ao mesmo tempo, {implications[1]}"
+            if implications:
+                return implications[0]
+            return "o presente carrega pressao difusa, mas ainda sem um eixo humano nitido"
+
+        dominant_area_labels = [panel["label"] for panel in loaded_panels[:3]]
+        area_reading_lines = [
+            f"- {panel['label']}: {_compact_reading(panel.get('dominant_reading', ''))}."
+            for panel in loaded_panels[:3]
+        ]
+        human_implication = _derive_human_implication()
 
         lines = [
             "[CONSCIENCIA DA ATUALIDADE (Lucidez do Tempo)]",
-            f"Data/Hora Local: {snapshot['current_time']}",
-            f"Clima Fisico: {snapshot['weather']}",
+            f"Data/Hora Local: {snapshot.get('current_time', 'indisponivel')}",
+            f"Clima Fisico: {snapshot.get('weather', 'indisponivel')}",
             "",
-            f"Atmosfera do Tempo: {snapshot['atmosphere']}",
+            f"Atmosfera do Tempo: {snapshot.get('atmosphere', 'o horizonte externo ainda nao ganhou forma suficiente')}",
             f"Tensoes Centrais: {', '.join(snapshot.get('dominant_tensions', [])[:3]) or 'abertura e incerteza'}",
             f"Areas em consenso: {', '.join(consensus_areas[:4]) or 'nenhuma forte nesta janela'}",
             f"Areas em disputa: {', '.join(divergence_areas[:4]) or 'sem disputa forte detectada'}",
             f"Nivel geral de lucidez: {snapshot.get('lucidity_level', 'media')} ({snapshot.get('confidence_overall', 0.0):.2f})",
-            f"Continuidade Percebida: {snapshot['continuity_note']}",
+            f"Areas mais carregadas agora: {', '.join(dominant_area_labels) or 'nenhuma com peso suficiente nesta janela'}",
+            f"Implicacao humana do tempo: {human_implication}",
+            f"Continuidade Percebida: {snapshot.get('continuity_note', 'sem memoria acumulada do mundo nesta janela')}",
+            "",
+            "Leituras dominantes do momento:",
+        ]
+        if area_reading_lines:
+            lines.extend(area_reading_lines)
+        else:
+            lines.append("- Sem leitura forte por area nesta janela.")
+
+        lines.extend([
             "",
             "Seeds ativos para acao:",
-        ]
+        ])
         if work_seeds:
             for seed in work_seeds[:3]:
                 lines.append(f"- {seed}")
