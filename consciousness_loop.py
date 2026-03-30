@@ -312,6 +312,131 @@ class ConsciousnessLoopManager:
         result["warnings"] = [warning for warning in result["warnings"] if warning != "placeholder_execution"]
         result["metrics"]["phase_placeholder"] = 0
 
+    def _count_rows(self, table: str, where_clause: str = "", params: tuple = ()) -> int:
+        cursor = self.db.conn.cursor()
+        query = f"SELECT COUNT(*) FROM {table}"
+        if where_clause:
+            query += f" WHERE {where_clause}"
+        cursor.execute(query, params)
+        return int(cursor.fetchone()[0])
+
+    def _ingest_loop_materials_to_rumination(self, ruminator, phase_mode: str, cycle_id: str) -> Dict:
+        synthetic_id = -int(self._now().timestamp())
+        injected_fragments: List[int] = []
+        injected_materials: List[str] = []
+
+        def _ingest_material(summary: str, tension: float, affective: float, depth: float):
+            nonlocal synthetic_id
+            synthetic_id -= 1
+            if not summary.strip():
+                return
+            fragment_ids = ruminator.ingest(
+                {
+                    "user_id": self.admin_user_id,
+                    "user_input": summary,
+                    "ai_response": "",
+                    "conversation_id": synthetic_id,
+                    "tension_level": tension,
+                    "affective_charge": affective,
+                    "existential_depth": depth,
+                }
+            )
+            if fragment_ids:
+                injected_materials.append(summary[:160])
+                injected_fragments.extend(fragment_ids)
+
+        cursor = self.db.conn.cursor()
+
+        if phase_mode == "intro":
+            cursor.execute(
+                """
+                SELECT symbolic_theme, extracted_insight
+                FROM agent_dreams
+                WHERE user_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (self.admin_user_id,),
+            )
+            dream_row = cursor.fetchone()
+            if dream_row:
+                _ingest_material(
+                    (
+                        f"[MATERIAL ONIRICO DO CICLO {cycle_id}] "
+                        f"Tema: {dream_row['symbolic_theme'] or 'tema nao nomeado'}. "
+                        f"Residuo: {dream_row['extracted_insight'] or 'sem residuo verbalizado.'}"
+                    ),
+                    0.92,
+                    0.88,
+                    0.91,
+                )
+
+            try:
+                from agent_identity_context_builder import AgentIdentityContextBuilder
+
+                builder = AgentIdentityContextBuilder(self.db)
+                current_state = builder.build_current_mind_state(
+                    user_id=self.admin_user_id,
+                    style="concise",
+                )
+                phase_name = (current_state.get("current_phase") or {}).get("name")
+                active_self = current_state.get("active_possible_self")
+                meta_signal = current_state.get("meta_signal") or {}
+                contradiction = current_state.get("dominant_contradiction") or {}
+                identity_summary = (
+                    f"[ESTADO IDENTITARIO DO CICLO {cycle_id}] "
+                    f"Fase: {phase_name or 'indefinida'}. "
+                    f"Self ativo: {active_self or 'sem self destacado'}. "
+                    f"Meta-sinal: {meta_signal.get('topic') or 'sem topico'} - {meta_signal.get('assessment') or 'sem avaliacao'}. "
+                    f"Tensao dominante: {contradiction.get('pole_a') or 'polo A'} vs {contradiction.get('pole_b') or 'polo B'}."
+                )
+                _ingest_material(identity_summary, 0.78, 0.64, 0.82)
+            except Exception as exc:
+                logger.debug("LOOP RUMINATION intro sem estado identitario adicional: %s", exc)
+        else:
+            try:
+                from world_consciousness import world_consciousness
+
+                world_state = world_consciousness.get_world_state(force_refresh=False)
+                world_summary = (
+                    f"[MATERIAL DE MUNDO DO CICLO {cycle_id}] "
+                    f"Atmosfera: {world_state.get('atmosphere') or 'sem atmosfera definida'}. "
+                    f"Tensoes: {', '.join(world_state.get('dominant_tensions', [])[:3]) or 'abertura e incerteza'}. "
+                    f"Seeds de hobby: {'; '.join(world_state.get('hobby_seeds', [])[:2]) or 'sem seed simbolico forte'}."
+                )
+                _ingest_material(world_summary, 0.74, 0.52, 0.71)
+            except Exception as exc:
+                logger.debug("LOOP RUMINATION extro sem estado de mundo adicional: %s", exc)
+
+            cursor.execute(
+                """
+                SELECT topic, synthesized_insight
+                FROM external_research
+                WHERE user_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (self.admin_user_id,),
+            )
+            scholar_row = cursor.fetchone()
+            if scholar_row:
+                _ingest_material(
+                    (
+                        f"[MATERIAL SCHOLAR DO CICLO {cycle_id}] "
+                        f"Topico: {scholar_row['topic'] or 'tema nao nomeado'}. "
+                        f"Sintese: {(scholar_row['synthesized_insight'] or '')[:320]}"
+                    ),
+                    0.72,
+                    0.48,
+                    0.79,
+                )
+
+        return {
+            "material_count": len(injected_materials),
+            "fragment_count": len(injected_fragments),
+            "material_samples": injected_materials[:3],
+        }
+
     def _build_notification_text(self, result: Dict) -> str:
         phase = PHASE_BY_KEY.get(result["phase"])
         phase_label = phase.label if phase else result["phase"]
@@ -399,9 +524,12 @@ class ConsciousnessLoopManager:
         from dream_engine import DreamEngine
 
         self._promote_from_placeholder(result)
+        dreams_before = self._count_rows("agent_dreams", "user_id = ?", (self.admin_user_id,))
         dream_engine = DreamEngine(self.db)
         success = dream_engine.generate_dream(self.admin_user_id)
         result["raw_result"]["dream_generated"] = success
+        dreams_after = self._count_rows("agent_dreams", "user_id = ?", (self.admin_user_id,))
+        result["metrics"]["dream_rows_delta"] = max(0, dreams_after - dreams_before)
 
         if success:
             cursor = self.db.conn.cursor()
@@ -445,17 +573,20 @@ class ConsciousnessLoopManager:
         from agent_identity_context_builder import AgentIdentityContextBuilder
 
         self._promote_from_placeholder(result)
+        extractions_before = self._count_rows("agent_identity_extractions")
         consolidation_result = asyncio.run(run_agent_identity_consolidation())
         builder = AgentIdentityContextBuilder(self.db)
         current_state = builder.build_current_mind_state(
             user_id=self.admin_user_id,
             style="concise",
         )
+        extractions_after = self._count_rows("agent_identity_extractions")
 
         result["raw_result"]["identity_consolidation"] = consolidation_result
         result["raw_result"]["current_mind_state"] = current_state
         result["metrics"]["conversations_processed"] = consolidation_result.get("processed_count", 0)
         result["metrics"]["elements_extracted"] = consolidation_result.get("elements_total", 0)
+        result["metrics"]["identity_extractions_delta"] = max(0, extractions_after - extractions_before)
 
         self._record_virtual_artifact(
             result,
@@ -645,20 +776,31 @@ class ConsciousnessLoopManager:
         self._promote_from_placeholder(result)
         ruminator = RuminationEngine(self.db)
         before_stats = ruminator.get_stats(self.admin_user_id)
-        digest_stats = ruminator.digest(self.admin_user_id)
-        after_stats = ruminator.get_stats(self.admin_user_id)
-
         bridge_metrics = {
             "tensions_to_contradictions": 0,
+            "insights_to_core": 0,
             "fragments_to_possible_selves": 0,
             "contradictions_to_rumination": 0,
         }
 
+        injected_materials = self._ingest_loop_materials_to_rumination(
+            ruminator=ruminator,
+            phase_mode=phase_mode,
+            cycle_id=result["cycle_id"],
+        )
+
+        if phase_mode == "extro":
+            bridge = IdentityRuminationBridge(self.db)
+            bridge_metrics["contradictions_to_rumination"] = bridge.feed_contradictions_to_rumination()
+
+        digest_stats = ruminator.digest(self.admin_user_id)
+        after_stats = ruminator.get_stats(self.admin_user_id)
+
         if phase_mode == "extro":
             bridge = IdentityRuminationBridge(self.db)
             bridge_metrics["tensions_to_contradictions"] = bridge.sync_mature_tensions_to_contradictions()
+            bridge_metrics["insights_to_core"] = bridge.sync_mature_insights_to_core()
             bridge_metrics["fragments_to_possible_selves"] = bridge.sync_fragments_to_possible_selves()
-            bridge_metrics["contradictions_to_rumination"] = bridge.feed_contradictions_to_rumination()
 
         insights_delta = max(0, after_stats.get("insights_total", 0) - before_stats.get("insights_total", 0))
         tensions_ready_delta = after_stats.get("tensions_ready", 0) - before_stats.get("tensions_ready", 0)
@@ -672,6 +814,7 @@ class ConsciousnessLoopManager:
             "digest_stats": digest_stats,
             "after_stats": after_stats,
             "bridge_metrics": bridge_metrics,
+            "injected_materials": injected_materials,
             "delivery_suppressed": True,
         }
         result["metrics"].update(
@@ -686,7 +829,10 @@ class ConsciousnessLoopManager:
                 "insights_ready": after_stats.get("insights_ready", 0),
                 "insights_delivered": after_stats.get("insights_delivered", 0),
                 "tensions_processed": digest_stats.get("tensions_processed", 0),
+                "injected_material_count": injected_materials["material_count"],
+                "injected_fragment_count": injected_materials["fragment_count"],
                 "bridge_tensions_synced": bridge_metrics["tensions_to_contradictions"],
+                "bridge_insights_to_core": bridge_metrics["insights_to_core"],
                 "bridge_fragments_synced": bridge_metrics["fragments_to_possible_selves"],
                 "bridge_contradictions_fed": bridge_metrics["contradictions_to_rumination"],
                 "delivery_suppressed": 1,
@@ -708,6 +854,8 @@ class ConsciousnessLoopManager:
 
         if phase_mode == "extro" and sum(bridge_metrics.values()) == 0:
             result["warnings"].append("rumination_bridge_no_changes")
+        if injected_materials["material_count"] == 0:
+            result["warnings"].append(f"rumination_{phase_mode}_no_external_material")
 
         return result
 
@@ -715,14 +863,20 @@ class ConsciousnessLoopManager:
         from scholar_engine import ScholarEngine
 
         self._promote_from_placeholder(result)
+        research_before = self._count_rows("external_research", "user_id = ?", (self.admin_user_id,))
+        runs_before = self._count_rows("scholar_runs", "user_id = ?", (self.admin_user_id,))
         scholar = ScholarEngine(self.db)
         scholar_result = scholar.run_scholarly_routine(
             self.admin_user_id,
             trigger_source="consciousness_loop",
         )
+        research_after = self._count_rows("external_research", "user_id = ?", (self.admin_user_id,))
+        runs_after = self._count_rows("scholar_runs", "user_id = ?", (self.admin_user_id,))
         result["raw_result"]["scholar_result"] = scholar_result
         result["metrics"]["article_chars"] = scholar_result.get("article_chars", 0)
         result["metrics"]["research_created"] = 1 if scholar_result.get("research_id") else 0
+        result["metrics"]["scholar_runs_delta"] = max(0, runs_after - runs_before)
+        result["metrics"]["external_research_delta"] = max(0, research_after - research_before)
 
         if scholar_result.get("run_id"):
             self._record_virtual_artifact(
