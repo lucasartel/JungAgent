@@ -520,6 +520,50 @@ class ConsciousnessLoopManager:
         except Exception as exc:
             logger.warning("LOOP NOTIFY erro ao enviar mensagem ao admin: %s", exc)
 
+    def _notify_admin_hobby_art(self, result: Dict):
+        token = os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = self._get_admin_chat_id()
+
+        if not token or not chat_id:
+            logger.warning("LOOP HOBBY NOTIFY skipped: token ou chat_id do admin indisponivel")
+            return
+
+        hobby_art = (result.get("raw_result") or {}).get("hobby_art") or {}
+        image_url = (hobby_art.get("image_url") or "").strip()
+        if not image_url:
+            return
+
+        title = (hobby_art.get("title") or "Peca do ciclo").strip()
+        summary = (hobby_art.get("summary") or "Sintese imagetica do ciclo recente.").strip()
+        caption_lines = [
+            "Hobby / Art",
+            f"Ciclo: {result.get('cycle_id')}",
+            f"Titulo: {title}",
+            "",
+            summary,
+        ]
+        caption = "\n".join(caption_lines).strip()[:1024]
+
+        try:
+            import httpx
+
+            url = f"https://api.telegram.org/bot{token}/sendPhoto"
+            response = httpx.post(
+                url,
+                data={
+                    "chat_id": chat_id,
+                    "photo": image_url,
+                    "caption": caption,
+                },
+                timeout=30.0,
+            )
+            if response.status_code == 200:
+                logger.info("LOOP HOBBY NOTIFY enviado ao admin para ciclo=%s", result.get("cycle_id"))
+            else:
+                logger.warning("LOOP HOBBY NOTIFY falhou (%s): %s", response.status_code, response.text[:300])
+        except Exception as exc:
+            logger.warning("LOOP HOBBY NOTIFY erro ao enviar imagem ao admin: %s", exc)
+
     def _run_dream_phase(self, result: Dict) -> Dict:
         from dream_engine import DreamEngine
 
@@ -982,6 +1026,8 @@ class ConsciousnessLoopManager:
 
         if notify_admin:
             self._notify_admin(result)
+            if result["phase"] == "hobby" and result["status"] != "failed":
+                self._notify_admin_hobby_art(result)
 
         return result
 
