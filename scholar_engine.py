@@ -117,6 +117,102 @@ class ScholarEngine:
             text += f"Admin: {row[0]}\nAgent: {row[1]}\n\n"
         return text.strip()
 
+    def _truncate(self, text: str, limit: int = 220) -> str:
+        cleaned = " ".join((text or "").strip().split())
+        if len(cleaned) <= limit:
+            return cleaned
+        return cleaned[: limit - 3].rstrip(" ,.;:") + "..."
+
+    def get_recent_loop_inspirations(self, user_id: str) -> str:
+        cursor = self.db.conn.cursor()
+        sections: List[str] = []
+
+        cursor.execute(
+            """
+            SELECT symbolic_theme, extracted_insight
+            FROM agent_dreams
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        dream = cursor.fetchone()
+        if dream:
+            sections.append(
+                "Sonho recente: "
+                + " | ".join(
+                    filter(
+                        None,
+                        [
+                            self._truncate(dream["symbolic_theme"], 100),
+                            self._truncate(dream["extracted_insight"], 180),
+                        ],
+                    )
+                )
+            )
+
+        cursor.execute(
+            """
+            SELECT title, core_image, full_message
+            FROM rumination_insights
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT 2
+            """,
+            (user_id,),
+        )
+        rumination_rows = cursor.fetchall()
+        if rumination_rows:
+            rumination_lines = []
+            for row in rumination_rows:
+                parts = [
+                    self._truncate(row["title"], 80),
+                    self._truncate(row["core_image"], 110),
+                    self._truncate(row["full_message"], 160),
+                ]
+                rumination_lines.append(" | ".join(part for part in parts if part))
+            sections.append("Ruminacao recente:\n- " + "\n- ".join(rumination_lines))
+
+        cursor.execute(
+            """
+            SELECT topic, synthesized_insight
+            FROM external_research
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        scholar = cursor.fetchone()
+        if scholar:
+            sections.append(
+                f"Scholar recente: {self._truncate(scholar['topic'], 120)} | "
+                f"{self._truncate(scholar['synthesized_insight'], 220)}"
+            )
+
+        try:
+            from world_consciousness import world_consciousness
+
+            world_state = world_consciousness.get_world_state(force_refresh=False)
+            sections.append(
+                "Mundo recente: "
+                + " | ".join(
+                    filter(
+                        None,
+                        [
+                            self._truncate(world_state.get("atmosphere"), 140),
+                            self._truncate(", ".join(world_state.get("dominant_tensions", [])[:3]), 120),
+                            self._truncate("; ".join(world_state.get("work_seeds", [])[:2]), 180),
+                        ],
+                    )
+                )
+            )
+        except Exception as exc:
+            logger.debug("Scholar sem world context adicional: %s", exc)
+
+        return "\n".join(section for section in sections if section).strip()
+
     def _normalize_topic(self, topic: str) -> str:
         normalized = unicodedata.normalize("NFKD", topic or "")
         normalized = normalized.encode("ascii", "ignore").decode("ascii")
@@ -476,13 +572,14 @@ class ScholarEngine:
             }
 
         history = self.get_recent_admin_interactions(user_id)
+        loop_inspirations = self.get_recent_loop_inspirations(user_id)
         if not history:
             return {
                 "success": True,
                 "status": "no_history",
                 "topic": None,
                 "reason": "Sem historico suficiente para pesquisa.",
-                "history_excerpt": "",
+                "history_excerpt": loop_inspirations,
                 "lineage": None,
                 "selection_mode": None,
             }
@@ -504,6 +601,9 @@ Pense em linhagens tematicas, nao apenas em topicos isolados. Se uma linhagem es
 
 TRANSCRICAO RECENTE:
 {history}
+
+MATERIAIS RECENTES DOS MODULOS INTERNOS E EXTROVERTIDOS:
+{loop_inspirations or 'Sem materiais adicionais desta rodada.'}
 
 TEMAS JA PESQUISADOS RECENTEMENTE:
 {recent_topics}
@@ -546,7 +646,7 @@ Responda APENAS com um objeto JSON valido:
                     "status": "topic_found",
                     "topic": topic,
                     "reason": reason or "Tema relevante identificado pelo Scholar.",
-                    "history_excerpt": history,
+                    "history_excerpt": "\n\n".join(part for part in [history, loop_inspirations] if part),
                     "lineage": lineage,
                     "selection_mode": selection_mode,
                 }
@@ -556,7 +656,7 @@ Responda APENAS com um objeto JSON valido:
                 "status": "no_topic",
                 "topic": None,
                 "reason": reason or "O Scholar avaliou que nao havia tensao suficiente para pesquisa.",
-                "history_excerpt": history,
+                "history_excerpt": "\n\n".join(part for part in [history, loop_inspirations] if part),
                 "lineage": None,
                 "selection_mode": None,
             }
@@ -567,7 +667,7 @@ Responda APENAS com um objeto JSON valido:
                 "status": "topic_error",
                 "topic": None,
                 "reason": f"Falha ao identificar topico: {exc}",
-                "history_excerpt": history,
+                "history_excerpt": "\n\n".join(part for part in [history, loop_inspirations] if part),
                 "lineage": None,
                 "selection_mode": None,
             }

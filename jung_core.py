@@ -1004,6 +1004,25 @@ class HybridDatabaseManager:
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_hobby_artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                cycle_id TEXT,
+                title TEXT,
+                summary TEXT,
+                image_prompt TEXT,
+                image_url TEXT,
+                provider TEXT DEFAULT 'minimax',
+                status TEXT DEFAULT 'generated',
+                inspirations_json TEXT,
+                raw_response_json TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+
         # Auto-migração para bancos antigos
         try:
             cursor.execute("ALTER TABLE agent_dreams ADD COLUMN image_url TEXT;")
