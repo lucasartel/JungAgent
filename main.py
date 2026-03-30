@@ -11,6 +11,7 @@ import logging
 from typing import Dict
 from dotenv import load_dotenv
 from admin_web.auth.middleware import require_master
+from admin_web.template_compat import patch_jinja2_template_response
 from security_config import proactive_messages_enabled, unsafe_admin_endpoints_enabled
 
 # Desabilitar telemetria do ChromaDB
@@ -27,6 +28,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters
 # from admin_web.routes import router as admin_router
 
 load_dotenv()
+patch_jinja2_template_response()
 
 # Configuração de Logging
 logging.basicConfig(
