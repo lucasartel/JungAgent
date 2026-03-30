@@ -3,7 +3,6 @@ Orquestrador do Loop de Consciencia.
 
 - define fases e ritmo base do ciclo;
 - sincroniza a fase atual com o relogio;
-- faz catch-up sequencial das fases faltantes;
 - registra eventos/resultados observaveis no SQLite;
 - executa fases reais do metabolismo introvertido e extrovertido.
 """
@@ -105,71 +104,6 @@ class ConsciousnessLoopManager:
             "phase_deadline_at": midnight + timedelta(hours=2),
             "next_cycle_id": current.date().isoformat(),
         }
-
-    def _phase_index(self, phase_key: str) -> int:
-        return next((index for index, phase in enumerate(PHASES) if phase.key == phase_key), 0)
-
-    def _build_bootstrap_plan(self, cycle_id: str, target_phase_key: str) -> List[Dict]:
-        target_index = self._phase_index(target_phase_key)
-        return [
-            {"cycle_id": cycle_id, "phase_key": phase.key}
-            for phase in PHASES[: target_index + 1]
-        ]
-
-    def _build_catch_up_plan(
-        self,
-        previous_cycle_id: Optional[str],
-        previous_phase_key: Optional[str],
-        target_cycle_id: str,
-        target_phase_key: str,
-    ) -> List[Dict]:
-        if not previous_cycle_id or not previous_phase_key:
-            return self._build_bootstrap_plan(target_cycle_id, target_phase_key)
-
-        try:
-            previous_cycle_date = datetime.fromisoformat(previous_cycle_id).date()
-            target_cycle_date = datetime.fromisoformat(target_cycle_id).date()
-        except ValueError:
-            logger.warning("LOOP CATCH-UP com cycle_id invalido; executando apenas fase atual")
-            return [{"cycle_id": target_cycle_id, "phase_key": target_phase_key}]
-
-        if target_cycle_date < previous_cycle_date:
-            logger.warning("LOOP CATCH-UP encontrou regressao temporal; executando apenas fase atual")
-            return [{"cycle_id": target_cycle_id, "phase_key": target_phase_key}]
-
-        day_span = (target_cycle_date - previous_cycle_date).days
-        max_catchup_days = 3
-        if day_span > max_catchup_days:
-            logger.warning(
-                "LOOP CATCH-UP truncado de %s para %s dias para evitar avalanche de execucao",
-                day_span,
-                max_catchup_days,
-            )
-            previous_cycle_date = target_cycle_date - timedelta(days=max_catchup_days)
-            previous_phase_key = PHASES[-1].key
-            day_span = max_catchup_days
-
-        previous_index = self._phase_index(previous_phase_key)
-        target_index = self._phase_index(target_phase_key)
-        plan: List[Dict] = []
-
-        for offset in range(day_span + 1):
-            current_date = previous_cycle_date + timedelta(days=offset)
-            current_cycle_id = current_date.isoformat()
-
-            if day_span == 0:
-                phase_slice = PHASES[previous_index + 1 : target_index + 1]
-            elif offset == 0:
-                phase_slice = PHASES[previous_index + 1 :]
-            elif offset == day_span:
-                phase_slice = PHASES[: target_index + 1]
-            else:
-                phase_slice = PHASES
-
-            for phase in phase_slice:
-                plan.append({"cycle_id": current_cycle_id, "phase_key": phase.key})
-
-        return plan
 
     def _get_state_row(self):
         cursor = self.db.conn.cursor()
@@ -931,32 +865,6 @@ class ConsciousnessLoopManager:
                 ),
             )
             self.db.conn.commit()
-            phase_plan = self._build_bootstrap_plan(cycle_id, target_phase.key)
-            phase_results = [
-                self.execute_phase(
-                    item["phase_key"],
-                    item["cycle_id"],
-                    trigger_source=trigger_source,
-                    execution_mode="automatic",
-                    notify_admin=notify_admin,
-                )
-                for item in phase_plan
-            ]
-            last_completed_phase = phase_results[-1]["phase"] if phase_results else None
-            cursor.execute(
-                """
-                UPDATE consciousness_loop_state
-                SET last_completed_phase = ?, updated_at = ?, notes = ?
-                WHERE agent_instance = ?
-                """,
-                (
-                    last_completed_phase,
-                    self._now().isoformat(),
-                    f"Loop inicializado com catch-up de {len(phase_results)} fases ate {target_phase.key}.",
-                    self.agent_instance,
-                ),
-            )
-            self.db.conn.commit()
             self._insert_event(
                 cycle_id=cycle_id,
                 phase=target_phase.key,
@@ -965,8 +873,14 @@ class ConsciousnessLoopManager:
                 trigger_source=trigger_source,
                 execution_mode="automatic",
                 input_summary="estado inicial do loop",
-                output_summary=f"bootstrap com {len(phase_results)} fases executadas ate {target_phase.key}",
-                metrics={"phases_executed": len(phase_results)},
+                output_summary=f"fase inicial definida em {target_phase.key}",
+            )
+            phase_result = self.execute_phase(
+                target_phase.key,
+                cycle_id,
+                trigger_source=trigger_source,
+                execution_mode="automatic",
+                notify_admin=notify_admin,
             )
             return {
                 "success": True,
@@ -974,29 +888,15 @@ class ConsciousnessLoopManager:
                 "cycle_id": cycle_id,
                 "current_phase": target_phase.key,
                 "next_phase": next_phase.key,
-                "phase_result": phase_results[-1] if phase_results else None,
-                "phase_results": phase_results,
+                "phase_result": phase_result,
             }
 
         state = dict(state_row)
         action = "noop"
         phase_result = None
-        phase_results: List[Dict] = []
 
         if state["current_phase"] != target_phase.key or state["cycle_id"] != cycle_id:
             previous_phase = state["current_phase"]
-            phase_plan = self._build_catch_up_plan(
-                previous_cycle_id=state.get("cycle_id"),
-                previous_phase_key=previous_phase,
-                target_cycle_id=cycle_id,
-                target_phase_key=target_phase.key,
-            )
-            last_completed_phase = phase_plan[-1]["phase_key"] if phase_plan else previous_phase
-            completed_cycle_ids = {item["cycle_id"] for item in phase_plan if item["phase_key"] == "scholar"}
-            last_cycle_completed_at = state.get("last_cycle_completed_at")
-            if completed_cycle_ids:
-                last_cycle_completed_at = self._now().isoformat()
-
             cursor.execute(
                 """
                 UPDATE consciousness_loop_state
@@ -1008,7 +908,10 @@ class ConsciousnessLoopManager:
                     phase_started_at = ?,
                     phase_deadline_at = ?,
                     last_completed_phase = ?,
-                    last_cycle_completed_at = ?,
+                    last_cycle_completed_at = CASE
+                        WHEN ? = 'dream' AND current_phase = 'scholar' THEN ?
+                        ELSE last_cycle_completed_at
+                    END,
                     updated_at = ?,
                     notes = ?
                 WHERE agent_instance = ?
@@ -1020,10 +923,11 @@ class ConsciousnessLoopManager:
                     next_phase.key,
                     phase_started_at.isoformat(),
                     phase_deadline_at.isoformat(),
-                    last_completed_phase,
-                    last_cycle_completed_at,
+                    previous_phase,
+                    target_phase.key,
                     self._now().isoformat(),
-                    f"Transicao automatica de {previous_phase} para {target_phase.key} com catch-up de {len(phase_plan)} fases.",
+                    self._now().isoformat(),
+                    f"Transicao automatica de {previous_phase} para {target_phase.key}.",
                     self.agent_instance,
                 ),
             )
@@ -1036,21 +940,16 @@ class ConsciousnessLoopManager:
                 trigger_source=trigger_source,
                 execution_mode="automatic",
                 input_summary=f"transicao {previous_phase} -> {target_phase.key}",
-                output_summary=f"fase atual sincronizada para {target_phase.key} com {len(phase_plan)} fases executadas",
-                metrics={"phases_executed": len(phase_plan)},
+                output_summary=f"fase atual sincronizada para {target_phase.key}",
             )
-            phase_results = [
-                self.execute_phase(
-                    item["phase_key"],
-                    item["cycle_id"],
-                    trigger_source=trigger_source,
-                    execution_mode="automatic",
-                    notify_admin=notify_admin,
-                )
-                for item in phase_plan
-            ]
-            phase_result = phase_results[-1] if phase_results else None
-            action = "catch_up_transition" if len(phase_plan) > 1 else "phase_transition"
+            phase_result = self.execute_phase(
+                target_phase.key,
+                cycle_id,
+                trigger_source=trigger_source,
+                execution_mode="automatic",
+                notify_admin=notify_admin,
+            )
+            action = "phase_transition"
         else:
             cursor.execute(
                 """
@@ -1074,7 +973,6 @@ class ConsciousnessLoopManager:
             "current_phase": target_phase.key,
             "next_phase": next_phase.key,
             "phase_result": phase_result,
-            "phase_results": phase_results,
         }
 
     def execute_current_phase(self, trigger_source: str = "manual_admin_trigger", notify_admin: bool = False) -> Dict:
