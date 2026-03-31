@@ -37,18 +37,17 @@ class LoopPhase:
     end_hour: int
     trigger_name: str
     placeholder_summary: str
-    repeat_within_window: bool = False
 
 
 PHASES: List[LoopPhase] = [
     LoopPhase("dream", "Dream", 0, 2, "dream_phase", "Placeholder onirico executado; aguardando integracao nativa do Dream Engine."),
     LoopPhase("identity", "Identity", 2, 3, "identity_phase", "Placeholder identitario executado; aguardando integracao da consolidacao nuclear."),
     LoopPhase("rumination_intro", "Rumination (I)", 3, 6, "rumination_intro_phase", "Placeholder de ruminacao introvertida executado para manter continuidade do ciclo."),
-    LoopPhase("world", "World Consciousness", 6, 9, "world_phase", "Placeholder de abertura ao mundo executado; aguardando integracao total do estado externo.", repeat_within_window=True),
+    LoopPhase("world", "World Consciousness", 6, 9, "world_phase", "Placeholder de abertura ao mundo executado; aguardando integracao total do estado externo."),
     LoopPhase("work", "Work/Action", 9, 15, "work_phase", "Fase de acao extrovertida orientada por seeds do mundo; modulo de trabalho ainda nao implementado."),
     LoopPhase("hobby", "Hobby/Art", 15, 19, "hobby_phase", "Fase de hobby/arte orientada por seeds do mundo; modulo de singularizacao ainda nao implementado."),
     LoopPhase("rumination_extro", "Rumination (II)", 19, 22, "rumination_extro_phase", "Placeholder de ruminacao extrovertida executado para recolher o dia simbolico."),
-    LoopPhase("scholar", "Scholar", 22, 24, "scholar_phase", "Placeholder de fechamento scholar executado; aguardando acoplamento ao Scholar Engine.", repeat_within_window=True),
+    LoopPhase("scholar", "Scholar", 22, 24, "scholar_phase", "Placeholder de fechamento scholar executado; aguardando acoplamento ao Scholar Engine."),
 ]
 
 PHASE_BY_KEY = {phase.key: phase for phase in PHASES}
@@ -1188,10 +1187,7 @@ class ConsciousnessLoopManager:
             self.db.conn.commit()
             run_stats = self._get_phase_run_stats(cycle_id, target_phase.key)
             should_execute_missing_phase = run_stats["successful_runs"] == 0
-            should_repeat_within_window = (
-                target_phase.repeat_within_window and trigger_source == "scheduled_trigger"
-            )
-            if should_execute_missing_phase or should_repeat_within_window:
+            if should_execute_missing_phase:
                 notify_this_execution = notify_admin and run_stats["total_runs"] == 0
                 phase_result = self.execute_phase(
                     target_phase.key,
@@ -1202,10 +1198,8 @@ class ConsciousnessLoopManager:
                 )
                 if should_execute_missing_phase and run_stats["total_runs"] == 0:
                     action = "phase_window_first_run"
-                elif should_execute_missing_phase:
-                    action = "phase_window_retry"
                 else:
-                    action = "phase_reentry"
+                    action = "phase_window_retry"
 
         return {
             "success": True,
