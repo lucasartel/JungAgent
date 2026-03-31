@@ -43,11 +43,11 @@ class LoopPhase:
 PHASES: List[LoopPhase] = [
     LoopPhase("dream", "Dream", 0, 2, "dream_phase", "Placeholder onirico executado; aguardando integracao nativa do Dream Engine."),
     LoopPhase("identity", "Identity", 2, 3, "identity_phase", "Placeholder identitario executado; aguardando integracao da consolidacao nuclear."),
-    LoopPhase("rumination_intro", "Rumination (I)", 3, 6, "rumination_intro_phase", "Placeholder de ruminacao introvertida executado para manter continuidade do ciclo.", repeat_within_window=True),
+    LoopPhase("rumination_intro", "Rumination (I)", 3, 6, "rumination_intro_phase", "Placeholder de ruminacao introvertida executado para manter continuidade do ciclo."),
     LoopPhase("world", "World Consciousness", 6, 9, "world_phase", "Placeholder de abertura ao mundo executado; aguardando integracao total do estado externo.", repeat_within_window=True),
     LoopPhase("work", "Work/Action", 9, 15, "work_phase", "Fase de acao extrovertida orientada por seeds do mundo; modulo de trabalho ainda nao implementado."),
     LoopPhase("hobby", "Hobby/Art", 15, 19, "hobby_phase", "Fase de hobby/arte orientada por seeds do mundo; modulo de singularizacao ainda nao implementado."),
-    LoopPhase("rumination_extro", "Rumination (II)", 19, 22, "rumination_extro_phase", "Placeholder de ruminacao extrovertida executado para recolher o dia simbolico.", repeat_within_window=True),
+    LoopPhase("rumination_extro", "Rumination (II)", 19, 22, "rumination_extro_phase", "Placeholder de ruminacao extrovertida executado para recolher o dia simbolico."),
     LoopPhase("scholar", "Scholar", 22, 24, "scholar_phase", "Placeholder de fechamento scholar executado; aguardando acoplamento ao Scholar Engine.", repeat_within_window=True),
 ]
 
