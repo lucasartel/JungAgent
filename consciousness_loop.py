@@ -1192,12 +1192,13 @@ class ConsciousnessLoopManager:
                 target_phase.repeat_within_window and trigger_source == "scheduled_trigger"
             )
             if should_execute_missing_phase or should_repeat_within_window:
+                notify_this_execution = notify_admin and run_stats["total_runs"] == 0
                 phase_result = self.execute_phase(
                     target_phase.key,
                     cycle_id,
                     trigger_source=trigger_source,
                     execution_mode="automatic",
-                    notify_admin=notify_admin,
+                    notify_admin=notify_this_execution,
                 )
                 if should_execute_missing_phase and run_stats["total_runs"] == 0:
                     action = "phase_window_first_run"
