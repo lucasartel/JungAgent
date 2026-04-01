@@ -123,6 +123,43 @@ class ScholarEngine:
             return cleaned
         return cleaned[: limit - 3].rstrip(" ,.;:") + "..."
 
+    def _format_world_for_scholar(self, world_state: Dict) -> str:
+        if not world_state:
+            return ""
+
+        sections: List[str] = []
+
+        lucidity = world_state.get("world_lucidity_summary", {}) or {}
+        zeitgeist = self._truncate(lucidity.get("zeitgeist", ""), 220)
+        mean_of_truth = self._truncate(lucidity.get("mean_of_truth", ""), 220)
+        if zeitgeist or mean_of_truth:
+            lines = []
+            if zeitgeist:
+                lines.append(f"Zeitgeist: {zeitgeist}")
+            if mean_of_truth:
+                lines.append(f"Media da verdade: {mean_of_truth}")
+            sections.append("Lucidez sintetica do mundo:\n- " + "\n- ".join(lines))
+
+        formatted_prompt_summary = (world_state.get("formatted_prompt_summary") or "").strip()
+        if formatted_prompt_summary:
+            trimmed_lines = [line.strip() for line in formatted_prompt_summary.splitlines() if line.strip()]
+            sections.append("Consciencia do mundo para o Scholar:\n" + "\n".join(trimmed_lines[:18]))
+
+        area_panels = list((world_state.get("area_panels", {}) or {}).values())
+        if area_panels:
+            dominant_area_lines = []
+            sorted_panels = sorted(area_panels, key=lambda p: p.get("confidence", 0.0), reverse=True)
+            for panel in sorted_panels[:3]:
+                parts = [
+                    panel.get("label"),
+                    self._truncate(panel.get("dominant_reading", ""), 180),
+                    f"conf={panel.get('confidence', 0.0):.2f}",
+                ]
+                dominant_area_lines.append(" | ".join(part for part in parts if part))
+            sections.append("Areas dominantes do mundo:\n- " + "\n- ".join(dominant_area_lines))
+
+        return "\n\n".join(section for section in sections if section).strip()
+
     def get_recent_loop_inspirations(self, user_id: str) -> str:
         cursor = self.db.conn.cursor()
         sections: List[str] = []
@@ -234,19 +271,9 @@ class ScholarEngine:
             from world_consciousness import world_consciousness
 
             world_state = world_consciousness.get_world_state(force_refresh=False)
-            sections.append(
-                "Mundo recente: "
-                + " | ".join(
-                    filter(
-                        None,
-                        [
-                            self._truncate(world_state.get("atmosphere"), 140),
-                            self._truncate(", ".join(world_state.get("dominant_tensions", [])[:3]), 120),
-                            self._truncate("; ".join(world_state.get("work_seeds", [])[:2]), 180),
-                        ],
-                    )
-                )
-            )
+            world_section = self._format_world_for_scholar(world_state)
+            if world_section:
+                sections.append(world_section)
         except Exception as exc:
             logger.debug("Scholar sem world context adicional: %s", exc)
 
