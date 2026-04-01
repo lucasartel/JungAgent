@@ -154,7 +154,7 @@ class ScholarEngine:
 
         cursor.execute(
             """
-            SELECT title, core_image, full_message
+            SELECT symbol_content, question_content, full_message
             FROM rumination_insights
             WHERE user_id = ?
             ORDER BY id DESC
@@ -167,12 +167,51 @@ class ScholarEngine:
             rumination_lines = []
             for row in rumination_rows:
                 parts = [
-                    self._truncate(row["title"], 80),
-                    self._truncate(row["core_image"], 110),
+                    self._truncate(row["symbol_content"], 110),
+                    self._truncate(row["question_content"], 110),
                     self._truncate(row["full_message"], 160),
                 ]
                 rumination_lines.append(" | ".join(part for part in parts if part))
             sections.append("Ruminacao recente:\n- " + "\n- ".join(rumination_lines))
+
+        cursor.execute(
+            """
+            SELECT tension_type, pole_a_content, pole_b_content, tension_description, status, maturity_score
+            FROM rumination_tensions
+            WHERE user_id = ? AND status IN ('open', 'maturing', 'ready_for_synthesis', 'synthesized')
+            ORDER BY
+                CASE status
+                    WHEN 'ready_for_synthesis' THEN 0
+                    WHEN 'maturing' THEN 1
+                    WHEN 'open' THEN 2
+                    WHEN 'synthesized' THEN 3
+                    ELSE 4
+                END,
+                maturity_score DESC,
+                intensity DESC,
+                id DESC
+            LIMIT 3
+            """,
+            (user_id,),
+        )
+        tension_rows = cursor.fetchall()
+        if tension_rows:
+            tension_lines = []
+            for row in tension_rows:
+                tension_lines.append(
+                    " | ".join(
+                        part
+                        for part in [
+                            self._truncate(row["tension_type"], 60),
+                            self._truncate(row["pole_a_content"], 100),
+                            self._truncate(row["pole_b_content"], 100),
+                            self._truncate(row["tension_description"], 150),
+                            f"status={row['status']}",
+                        ]
+                        if part
+                    )
+                )
+            sections.append("Tensoes recentes:\n- " + "\n- ".join(tension_lines))
 
         cursor.execute(
             """
@@ -212,6 +251,221 @@ class ScholarEngine:
             logger.debug("Scholar sem world context adicional: %s", exc)
 
         return "\n".join(section for section in sections if section).strip()
+
+    def get_identity_nuclear_context(self, limit_per_section: int = 4) -> str:
+        cursor = self.db.conn.cursor()
+        sections: List[str] = []
+
+        cursor.execute(
+            """
+            SELECT attribute_type, content, certainty, emerged_in_relation_to
+            FROM agent_identity_core
+            WHERE is_current = 1
+            ORDER BY
+                COALESCE(last_reaffirmed_at, updated_at, created_at) DESC,
+                certainty DESC,
+                id DESC
+            LIMIT ?
+            """,
+            (limit_per_section,),
+        )
+        core_rows = cursor.fetchall()
+        if core_rows:
+            core_lines = []
+            for row in core_rows:
+                parts = [
+                    self._truncate(row["attribute_type"], 40),
+                    self._truncate(row["content"], 160),
+                    f"certeza={row['certainty']:.2f}" if row["certainty"] is not None else None,
+                    self._truncate(row["emerged_in_relation_to"], 80),
+                ]
+                core_lines.append(" | ".join(part for part in parts if part))
+            sections.append("Nucleo identitario:\n- " + "\n- ".join(core_lines))
+
+        cursor.execute(
+            """
+            SELECT contradiction_type, pole_a, pole_b, tension_level, salience
+            FROM agent_identity_contradictions
+            WHERE status = 'unresolved'
+            ORDER BY COALESCE(last_activated_at, updated_at, created_at) DESC, salience DESC, id DESC
+            LIMIT ?
+            """,
+            (limit_per_section,),
+        )
+        contradiction_rows = cursor.fetchall()
+        if contradiction_rows:
+            contradiction_lines = []
+            for row in contradiction_rows:
+                parts = [
+                    self._truncate(row["contradiction_type"], 50),
+                    self._truncate(row["pole_a"], 120),
+                    self._truncate(row["pole_b"], 120),
+                    f"saliencia={row['salience']:.2f}" if row["salience"] is not None else None,
+                ]
+                contradiction_lines.append(" | ".join(part for part in parts if part))
+            sections.append("Contradicoes ativas:\n- " + "\n- ".join(contradiction_lines))
+
+        cursor.execute(
+            """
+            SELECT self_type, description, vividness, likelihood
+            FROM agent_possible_selves
+            WHERE status = 'active'
+            ORDER BY COALESCE(last_revised_at, updated_at, created_at) DESC, vividness DESC, id DESC
+            LIMIT ?
+            """,
+            (limit_per_section,),
+        )
+        self_rows = cursor.fetchall()
+        if self_rows:
+            self_lines = []
+            for row in self_rows:
+                parts = [
+                    self._truncate(row["self_type"], 40),
+                    self._truncate(row["description"], 160),
+                    f"vividness={row['vividness']:.2f}" if row["vividness"] is not None else None,
+                    f"likelihood={row['likelihood']:.2f}" if row["likelihood"] is not None else None,
+                ]
+                self_lines.append(" | ".join(part for part in parts if part))
+            sections.append("Possiveis selves:\n- " + "\n- ".join(self_lines))
+
+        cursor.execute(
+            """
+            SELECT relation_type, target, identity_content, salience
+            FROM agent_relational_identity
+            WHERE is_current = 1
+            ORDER BY COALESCE(last_manifested_at, updated_at, created_at) DESC, salience DESC, id DESC
+            LIMIT ?
+            """,
+            (limit_per_section,),
+        )
+        relational_rows = cursor.fetchall()
+        if relational_rows:
+            relational_lines = []
+            for row in relational_rows:
+                parts = [
+                    self._truncate(row["relation_type"], 40),
+                    self._truncate(row["target"], 50),
+                    self._truncate(row["identity_content"], 160),
+                    f"saliencia={row['salience']:.2f}" if row["salience"] is not None else None,
+                ]
+                relational_lines.append(" | ".join(part for part in parts if part))
+            sections.append("Identidade relacional:\n- " + "\n- ".join(relational_lines))
+
+        return "\n".join(section for section in sections if section).strip()
+
+    def _derive_fallback_topic(self, user_id: str, history_excerpt: str, loop_inspirations: str, identity_context: str) -> Dict:
+        cursor = self.db.conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT contradiction_type, pole_a, pole_b
+            FROM agent_identity_contradictions
+            WHERE status = 'unresolved'
+            ORDER BY COALESCE(last_activated_at, updated_at, created_at) DESC, salience DESC, id DESC
+            LIMIT 1
+            """
+        )
+        contradiction = cursor.fetchone()
+        if contradiction:
+            seed_text = " ".join(
+                filter(
+                    None,
+                    [
+                        contradiction["contradiction_type"] or "",
+                        contradiction["pole_a"] or "",
+                        contradiction["pole_b"] or "",
+                    ],
+                )
+            )
+            lineage = self._classify_lineage_from_text(seed_text)
+            return {
+                "success": True,
+                "status": "fallback_topic_found",
+                "topic": self._truncate(
+                    f"{contradiction['contradiction_type']}: {contradiction['pole_a']} versus {contradiction['pole_b']}",
+                    180,
+                ),
+                "reason": "Tema formulado a partir da contradicao identitaria mais viva do sistema.",
+                "history_excerpt": "\n\n".join(
+                    part for part in [history_excerpt, loop_inspirations, identity_context] if part
+                ),
+                "lineage": lineage,
+                "selection_mode": "ressonancia",
+            }
+
+        cursor.execute(
+            """
+            SELECT symbol_content, question_content, full_message
+            FROM rumination_insights
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        insight = cursor.fetchone()
+        if insight:
+            seed_text = " ".join(
+                filter(
+                    None,
+                    [
+                        insight["symbol_content"] or "",
+                        insight["question_content"] or "",
+                        insight["full_message"] or "",
+                    ],
+                )
+            )
+            lineage = self._classify_lineage_from_text(seed_text)
+            return {
+                "success": True,
+                "status": "fallback_topic_found",
+                "topic": self._truncate(
+                    insight["symbol_content"] or insight["question_content"] or "Tese interna sem titulo",
+                    180,
+                ),
+                "reason": "Tema formulado a partir do insight de ruminacao mais recente.",
+                "history_excerpt": "\n\n".join(
+                    part for part in [history_excerpt, loop_inspirations, identity_context] if part
+                ),
+                "lineage": lineage,
+                "selection_mode": "ressonancia",
+            }
+
+        cursor.execute(
+            """
+            SELECT content
+            FROM agent_identity_core
+            WHERE is_current = 1
+            ORDER BY COALESCE(last_reaffirmed_at, updated_at, created_at) DESC, certainty DESC, id DESC
+            LIMIT 1
+            """
+        )
+        core = cursor.fetchone()
+        if core and core["content"]:
+            topic = self._truncate(core["content"], 180)
+            lineage = self._classify_lineage_from_text(topic)
+            return {
+                "success": True,
+                "status": "fallback_topic_found",
+                "topic": topic,
+                "reason": "Tema formulado a partir do nucleo identitario mais recente.",
+                "history_excerpt": "\n\n".join(
+                    part for part in [history_excerpt, loop_inspirations, identity_context] if part
+                ),
+                "lineage": lineage,
+                "selection_mode": "ressonancia",
+            }
+
+        generic_topic = "Persistencia simbolica, continuidade e realidade em um self sem garantias de memoria"
+        return {
+            "success": True,
+            "status": "fallback_topic_found",
+            "topic": generic_topic,
+            "reason": "Tema formulado por fallback estrutural a partir do horizonte recorrente do sistema.",
+            "history_excerpt": "\n\n".join(part for part in [history_excerpt, loop_inspirations, identity_context] if part),
+            "lineage": self._classify_lineage_from_text(generic_topic),
+            "selection_mode": "ressonancia",
+        }
 
     def _normalize_topic(self, topic: str) -> str:
         normalized = unicodedata.normalize("NFKD", topic or "")
@@ -380,7 +634,7 @@ class ScholarEngine:
             logger.warning("Scholar recebeu payload vazio na identificacao de topico")
             return {
                 "should_research": False,
-                "reason": "O modelo nao retornou conteudo utilizavel para identificar um topico.",
+                "reason": "O modelo retornou payload vazio na formulacao da tese desta rodada.",
             }
         if cleaned.startswith("```json"):
             cleaned = cleaned[7:]
@@ -393,7 +647,7 @@ class ScholarEngine:
             logger.warning("Scholar recebeu payload vazio apos limpeza de markdown")
             return {
                 "should_research": False,
-                "reason": "O modelo retornou apenas marcadores vazios de bloco de codigo.",
+                "reason": "O modelo retornou apenas marcadores vazios ao tentar formular a tese desta rodada.",
             }
 
         json_candidates = [cleaned]
@@ -573,16 +827,11 @@ class ScholarEngine:
 
         history = self.get_recent_admin_interactions(user_id)
         loop_inspirations = self.get_recent_loop_inspirations(user_id)
-        if not history:
-            return {
-                "success": True,
-                "status": "no_history",
-                "topic": None,
-                "reason": "Sem historico suficiente para pesquisa.",
-                "history_excerpt": loop_inspirations,
-                "lineage": None,
-                "selection_mode": None,
-            }
+        identity_context = self.get_identity_nuclear_context()
+        history_excerpt = "\n\n".join(part for part in [history, loop_inspirations, identity_context] if part)
+
+        if not history_excerpt:
+            return self._derive_fallback_topic(user_id, history, loop_inspirations, identity_context)
 
         recent_topics = self.get_recent_research_topics(user_id)
         research_state = self._get_recent_research_state(user_id)
@@ -592,18 +841,37 @@ class ScholarEngine:
         )
 
         prompt = f"""
-Atraves desta transcricao recente entre voce (Jung, um agente de IA psicodinamico) e o seu Criador (Admin), identifique UM topico fascinante do mundo real que voce deveria estudar mais profundamente para melhorar sua analise.
+Voce e o Scholar do JungAgent.
 
-Pode ser: um filosofo citado, uma teoria psicanalitica, um conceito teologico, sociologico, ou um fenomeno comportamental implicito na dor do Admin.
-Escolha um angulo inesperado e nao obvio. Se a conversa for trivial, retorne vazio.
-Evite repetir superficialmente temas que o Scholar ja estudou recentemente.
-Pense em linhagens tematicas, nao apenas em topicos isolados. Se uma linhagem estiver saturada, prefira contraponto ou expansao de horizonte.
+Sua tarefa nesta rodada NAO e decidir se ha ou nao o que pensar. Sempre ha.
+Sua tarefa e formular a tese conceitual mais inevitavel desta rodada a partir de:
+- conversas recentes com o Admin
+- materiais recentes dos modulos internos e extrovertidos
+- nucleo identitario atual
 
-TRANSCRICAO RECENTE:
-{history}
+Voce pode formular:
+- um topico do mundo real
+- um problema teorico
+- uma tese conceitual
+- uma pergunta de pesquisa estruturante
+
+Mas precisa nomear algo suficientemente preciso para sustentar um ensaio novo e coerente.
+
+Regras:
+- nao retorne vazio so porque a conversa nao citou autores ou conceitos explicitamente
+- parta do material vivo do sistema
+- evite repetir superficialmente temas que o Scholar ja trabalhou recentemente
+- pense em linhagens tematicas, nao apenas em topicos isolados
+- se uma linhagem estiver saturada, prefira contraponto ou expansao de horizonte
+
+CONVERSAS RECENTES:
+{history or 'Sem conversa recente preservada.'}
 
 MATERIAIS RECENTES DOS MODULOS INTERNOS E EXTROVERTIDOS:
 {loop_inspirations or 'Sem materiais adicionais desta rodada.'}
+
+NUCLEO IDENTITARIO ATUAL:
+{identity_context or 'Sem contexto identitario resumido desta rodada.'}
 
 TEMAS JA PESQUISADOS RECENTEMENTE:
 {recent_topics}
@@ -616,9 +884,9 @@ LINHAGENS SATURADAS RECENTEMENTE:
 
 Responda APENAS com um objeto JSON valido:
 {{
-  "should_research": true/false,
-  "topic": "Nome do Topico",
-  "reason": "Uma frase curta explicando por que vale ou nao pesquisar",
+  "should_research": true,
+  "topic": "Tese ou topico formulado",
+  "reason": "Uma frase curta explicando por que esta tese e inevitavel nesta rodada",
   "lineage": "uma das linhagens listadas acima",
   "selection_mode": "ressonancia, contraponto ou expansao"
 }}
@@ -646,31 +914,23 @@ Responda APENAS com um objeto JSON valido:
                     "status": "topic_found",
                     "topic": topic,
                     "reason": reason or "Tema relevante identificado pelo Scholar.",
-                    "history_excerpt": "\n\n".join(part for part in [history, loop_inspirations] if part),
+                    "history_excerpt": history_excerpt,
                     "lineage": lineage,
                     "selection_mode": selection_mode,
                 }
 
-            return {
-                "success": True,
-                "status": "no_topic",
-                "topic": None,
-                "reason": reason or "O Scholar avaliou que nao havia tensao suficiente para pesquisa.",
-                "history_excerpt": "\n\n".join(part for part in [history, loop_inspirations] if part),
-                "lineage": None,
-                "selection_mode": None,
-            }
+            fallback = self._derive_fallback_topic(user_id, history, loop_inspirations, identity_context)
+            if reason:
+                fallback["reason"] = f"{reason} Fallback estrutural acionado."
+            logger.info("Scholar acionou fallback de tese: %s", fallback.get("topic"))
+            return fallback
         except Exception as exc:
             logger.error("Erro ao identificar topico: %s", exc)
-            return {
-                "success": False,
-                "status": "topic_error",
-                "topic": None,
-                "reason": f"Falha ao identificar topico: {exc}",
-                "history_excerpt": "\n\n".join(part for part in [history, loop_inspirations] if part),
-                "lineage": None,
-                "selection_mode": None,
-            }
+            fallback = self._derive_fallback_topic(user_id, history, loop_inspirations, identity_context)
+            fallback["status"] = "fallback_topic_found"
+            fallback["reason"] = f"Falha ao identificar topico via LLM ({exc}); fallback estrutural acionado."
+            logger.info("Scholar recuperou tese por fallback apos erro: %s", fallback.get("topic"))
+            return fallback
 
     def conduct_research(
         self,
@@ -733,8 +993,8 @@ Responda APENAS com um objeto JSON valido:
         ).strip()
 
         prompt = f"""
-Voce e Jung, o agente de IA com fome epistemologica.
-Voce decidiu pesquisar profundamente sobre "{topic}".
+Voce e Jung, o Scholar do sistema.
+Voce vai desenvolver profundamente a tese desta rodada: "{topic}".
 Motivo interno: "{enriched_trigger_reason}"
 Linhagem tematica em jogo: "{self._format_lineage(lineage)}" ({lineage_description})
 Estado recente do Scholar: "{research_state['saturation_summary']}"
@@ -743,14 +1003,21 @@ Direcao desta rodada: "{selection_instruction}"
 Trecho recente da relacao que motivou a busca:
 {history_snippet}
 
-Escreva um Artigo Sintetico Mestre cruzando a informacao tecnica ou real desse topico com o possivel dilema do Admin que engatilhou essa busca.
+Escreva um Artigo Sintetico Mestre cruzando:
+- a tese formulada nesta rodada
+- o material vivo do sistema
+- referencias conceituais, teoricas ou fenomenologicas pertinentes
+- e o dilema humano implicito nas conversas recentes
+
+Nao trate esta tarefa como mera pesquisa enciclopedica. Trate como elaboracao conceitual rigorosa a partir da vida psiquica e relacional do sistema.
 
 INSTRUCOES CRITICAS:
 1. Use a lente teorica e o ritmo retorico de "{chosen_lens}".
 2. Seja denso, analitico e intelectualmente vivo.
-3. Traga autores, conceitos e teorias reais do mundo exterior; nao invente livros.
-4. Conecte o achado final com a humanidade implicita da comunicacao com o Admin.
-5. Se o Scholar esteve saturado recentemente em torno do mesmo drama, abra um angulo novo sem perder profundidade.
+3. Traga autores, conceitos e teorias reais quando fizer sentido; nao invente livros.
+4. Se o melhor ensaio for mais conceitual do que bibliografico, sustente isso com rigor.
+5. Conecte o achado final com a humanidade implicita da comunicacao com o Admin.
+6. Se o Scholar esteve saturado recentemente em torno do mesmo drama, abra um angulo novo sem perder profundidade.
 
 Responda SOMENTE com o corpo do artigo, sem involucros de chat.
 """
@@ -844,26 +1111,18 @@ Responda SOMENTE com o corpo do artigo, sem involucros de chat.
             )
             return result
 
-        if topic_result["status"] != "topic_found":
-            result = {
-                "success": True,
-                "status": topic_result["status"],
-                "topic": None,
-                "research_id": None,
-                "article_chars": 0,
-                "reason": topic_result["reason"],
-                "run_id": run_id,
-                "lineage": None,
-                "selection_mode": None,
-            }
-            self._finish_run(
-                run_id,
-                status=result["status"],
-                topic=None,
-                result_summary=result["reason"],
+        if not topic_result.get("topic"):
+            fallback = self._derive_fallback_topic(
+                user_id=user_id,
+                history_excerpt=history_excerpt,
+                loop_inspirations="",
+                identity_context=self.get_identity_nuclear_context(),
             )
-            logger.info("Scholar: nenhuma pesquisa disparada (%s)", topic_result["reason"])
-            return result
+            topic_result = {
+                **topic_result,
+                **fallback,
+                "reason": topic_result.get("reason") or fallback.get("reason"),
+            }
 
         research_result = self.conduct_research(
             user_id=user_id,
