@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import urllib.parse
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -266,6 +267,25 @@ Responda APENAS com JSON valido:
             "status": "generated",
             "image_url": image_url,
             "raw_response": response_json,
+            "provider": "minimax",
+        }
+
+    def _generate_image_with_pollinations(self, image_prompt: str, cycle_id: str) -> Dict[str, Any]:
+        seed = abs(hash(f"{cycle_id}:{image_prompt}")) % 1000000
+        encoded_prompt = urllib.parse.quote(image_prompt)
+        image_url = (
+            f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+            f"?width=1024&height=1024&nologo=true&seed={seed}"
+        )
+        return {
+            "success": True,
+            "status": "generated_fallback",
+            "image_url": image_url,
+            "raw_response": {
+                "provider": "pollinations",
+                "fallback_reason": "MiniMax indisponivel ou nao configurado.",
+            },
+            "provider": "pollinations",
         }
 
     def _save_artifact(
@@ -309,16 +329,15 @@ Responda APENAS com JSON valido:
         image_result = self._generate_image_with_minimax(art_payload["image_prompt"])
 
         if not image_result.get("success"):
-            return {
-                "success": False,
-                "status": image_result.get("status", "image_error"),
-                "reason": image_result.get("reason", "Falha ao gerar imagem de hobby."),
-                "title": art_payload["title"],
-                "summary": art_payload["summary"],
-                "image_prompt": art_payload["image_prompt"],
-                "inspirations": inspirations,
-                "raw_response": image_result.get("raw_response"),
-            }
+            logger.info(
+                "HobbyArtEngine usando fallback Pollinations (status=%s, reason=%s)",
+                image_result.get("status"),
+                image_result.get("reason"),
+            )
+            image_result = self._generate_image_with_pollinations(
+                art_payload["image_prompt"],
+                cycle_id=cycle_id,
+            )
 
         artifact_id = self._save_artifact(
             user_id=user_id,
@@ -329,15 +348,16 @@ Responda APENAS com JSON valido:
             image_url=image_result["image_url"],
             inspirations=inspirations,
             raw_response=image_result.get("raw_response") or {},
-            provider="minimax",
+            provider=image_result.get("provider") or "minimax",
         )
         return {
             "success": True,
-            "status": "generated",
+            "status": image_result.get("status") or "generated",
             "artifact_id": artifact_id,
             "title": art_payload["title"],
             "summary": art_payload["summary"],
             "image_prompt": art_payload["image_prompt"],
             "image_url": image_result["image_url"],
             "inspirations": inspirations,
+            "provider": image_result.get("provider") or "minimax",
         }
