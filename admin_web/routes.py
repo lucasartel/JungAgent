@@ -147,7 +147,8 @@ async def dashboard(request: Request, admin: Dict = Depends(require_master)):
             "python_version": platform.python_version(),
             "dependencies": deps_status,
             "error_message": "jung_core não pôde ser carregado.",
-            "error_traceback": None
+            "error_traceback": None,
+            "active_nav": "dashboard",
         })
     
     # Modo normal com jung_core disponível
@@ -169,7 +170,8 @@ async def dashboard(request: Request, admin: Dict = Depends(require_master)):
         "total_interactions": total_interactions,
         "total_conflicts": total_conflicts,
         "users": sqlite_users[:5],  # Top 5 recentes
-        "diagnostic_mode": False
+        "diagnostic_mode": False,
+        "active_nav": "dashboard",
     })
 
 @router.get("/users", response_class=HTMLResponse)

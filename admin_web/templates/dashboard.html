@@ -1,192 +1,146 @@
-{% extends "base.html" %}
+{% extends "base_v2.html" %}
+
+{% block title %}Dashboard - JungAgent Admin{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <!-- Header -->
-    <div>
-        <h1 class="text-3xl font-bold text-gray-900">Dashboard</h1>
-        <p class="mt-1 text-sm text-gray-500">Visão geral do sistema Jung Claude.</p>
-    </div>
-
-<!-- Stats Grid -->
-<div class="stats-grid">
-    <div class="stat-card">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-            <div>
-                <div class="stat-label">👥 Usuários Totais</div>
-                <div class="stat-value">{{ total_users }}</div>
-                <div style="color: #64748b; font-size: 0.875rem; margin-top: 0.5rem;">
-                    Usuários ativos no sistema
-                </div>
-            </div>
-            <div class="stat-icon">👥</div>
-        </div>
-    </div>
-
-    <div class="stat-card">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-            <div>
-                <div class="stat-label">💬 Interações Totais</div>
-                <div class="stat-value">{{ total_interactions }}</div>
-                <div style="color: #64748b; font-size: 0.875rem; margin-top: 0.5rem;">
-                    Conversas processadas
-                </div>
-            </div>
-            <div class="stat-icon">💬</div>
-        </div>
-    </div>
-
-    <div class="stat-card">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-            <div>
-                <div class="stat-label">⚡ Conflitos Detectados</div>
-                <div class="stat-value">{{ total_conflicts }}</div>
-                <div style="color: #64748b; font-size: 0.875rem; margin-top: 0.5rem;">
-                    Tensões psicológicas identificadas
-                </div>
-            </div>
-            <div class="stat-icon">⚡</div>
-        </div>
-    </div>
-</div>
-
-{% if diagnostic_mode %}
-<!-- Diagnostic Alert -->
-<div class="card" style="background: linear-gradient(135deg, rgba(251, 191, 36, 0.1) 0%, rgba(245, 158, 11, 0.05) 100%); border-color: rgba(251, 191, 36, 0.3); margin-bottom: 2rem;">
-    <div class="card-header" style="border-color: rgba(251, 191, 36, 0.2);">
-        <div style="display: flex; align-items: center; gap: 1rem;">
-            <div style="font-size: 2rem;">⚠️</div>
-            <div>
-                <div class="card-title" style="color: #fbbf24;">Modo Diagnóstico</div>
-                <div style="color: #fcd34d; font-size: 0.875rem; margin-top: 0.25rem;">Sistema em modo de diagnóstico</div>
-            </div>
-        </div>
-    </div>
-
-    <div style="background: rgba(0, 0, 0, 0.2); padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">
-        <div style="font-weight: 600; color: #fbbf24; margin-bottom: 0.5rem;">Erro:</div>
-        <div style="color: #fcd34d; font-family: monospace; font-size: 0.9rem;">{{ error_message }}</div>
-    </div>
-
-    {% if error_traceback %}
-    <details style="background: rgba(239, 68, 68, 0.1); padding: 1rem; border-radius: 0.5rem; border: 1px solid rgba(239, 68, 68, 0.3); margin-top: 1rem;">
-        <summary style="cursor: pointer; font-weight: 600; color: #fca5a5;">🔍 Ver Traceback</summary>
-        <pre style="margin-top: 1rem; padding: 1rem; background: rgba(0, 0, 0, 0.3); border-radius: 0.375rem; overflow-x: auto; font-family: monospace; font-size: 0.75rem; color: #fca5a5; max-height: 400px; overflow-y: auto;">{{ error_traceback }}</pre>
-    </details>
-    {% endif %}
-</div>
-{% endif %}
-
-<!-- Quick Access Cards -->
-<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
-
-    <a href="/admin/jung-lab" class="card" style="text-decoration: none; color: inherit; cursor: pointer;">
-        <div style="display: flex; align-items: center; gap: 1.5rem; margin-bottom: 1rem;">
-            <div style="font-size: 3.5rem;">🧠</div>
-            <div>
-                <div style="font-weight: 700; font-size: 1.4rem; color: #f1f5f9; margin-bottom: 0.25rem;">Jung Lab</div>
-                <div style="color: #94a3b8; font-size: 0.95rem;">Ruminação Cognitiva</div>
-            </div>
-        </div>
-        <div style="padding-top: 1rem; border-top: 1px solid rgba(148, 163, 184, 0.1); color: #64748b; font-size: 0.875rem;">
-            Sistema de processamento profundo de tensões psicológicas
-        </div>
-    </a>
-
-    <a href="/admin/api/test/mbti" target="_blank" class="card" style="text-decoration: none; color: inherit; cursor: pointer;">
-        <div style="display: flex; align-items: center; gap: 1.5rem; margin-bottom: 1rem;">
-            <div style="font-size: 3.5rem;">🎭</div>
-            <div>
-                <div style="font-weight: 700; font-size: 1.4rem; color: #f1f5f9; margin-bottom: 0.25rem;">Teste MBTI</div>
-                <div style="color: #94a3b8; font-size: 0.95rem;">Tipos de Personalidade</div>
-            </div>
-        </div>
-        <div style="padding-top: 1rem; border-top: 1px solid rgba(148, 163, 184, 0.1); color: #64748b; font-size: 0.875rem;">
-            Avaliação dos 16 tipos psicológicos (Myers-Briggs)
-        </div>
-    </a>
-
-    <a href="/admin/api/test/desenvolvimento" target="_blank" class="card" style="text-decoration: none; color: inherit; cursor: pointer;">
-        <div style="display: flex; align-items: center; gap: 1.5rem; margin-bottom: 1rem;">
-            <div style="font-size: 3.5rem;">🌱</div>
-            <div>
-                <div style="font-weight: 700; font-size: 1.4rem; color: #f1f5f9; margin-bottom: 0.25rem;">Desenvolvimento</div>
-                <div style="color: #94a3b8; font-size: 0.95rem;">Jornada de Individuação</div>
-            </div>
-        </div>
-        <div style="padding-top: 1rem; border-top: 1px solid rgba(148, 163, 184, 0.1); color: #64748b; font-size: 0.875rem;">
-            Análise do processo de individuação segundo Jung
-        </div>
-    </a>
-
-</div>
-
-<!-- Recent Users -->
-<div class="card">
-    <div class="card-header">
+<section class="page-shell-v2">
+    <header class="page-header-v2">
         <div>
-            <h3 class="card-title">👥 Usuários Recentes</h3>
-            <p style="color: #64748b; font-size: 0.875rem; margin-top: 0.25rem;">Últimos usuários que interagiram com o sistema</p>
+            <p class="page-kicker-v2">Admin - Camada leve</p>
+            <h1 class="page-title-v2">Dashboard</h1>
+            <p class="page-subtitle-v2">
+                Visao geral do sistema com prioridade para leitura rapida, links claros e paginas densas isoladas.
+            </p>
         </div>
-        <a href="/admin/users" class="btn btn-secondary">Ver Todos →</a>
-    </div>
+    </header>
 
-    {% if users %}
-    <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-        {% for user in users %}
-        <div style="background: rgba(15, 23, 42, 0.5); padding: 1.25rem; border-radius: 0.75rem; border: 1px solid rgba(148, 163, 184, 0.1); transition: all 0.3s ease;"
-             onmouseover="this.style.borderColor='rgba(139, 92, 246, 0.3)'; this.style.transform='translateX(4px)';"
-             onmouseout="this.style.borderColor='rgba(148, 163, 184, 0.1)'; this.style.transform='translateX(0)';">
-            <div style="display: flex; justify-between; align-items: center;">
-                <div style="display: flex; align-items: center; gap: 1.25rem;">
-                    <div style="width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%); display: flex; align-items: center; justify-center; font-weight: 700; font-size: 1.5rem; color: white; box-shadow: 0 4px 6px rgba(139, 92, 246, 0.3);">
-                        {{ user.user_name[:2].upper() if user.user_name else 'U' }}
-                    </div>
-                    <div>
-                        <div style="font-weight: 600; color: #f1f5f9; font-size: 1.1rem;">{{ user.user_name or 'Usuário Anônimo' }}</div>
-                        <div style="font-family: monospace; font-size: 0.8rem; color: #64748b; margin-top: 0.25rem;">{{ user.user_id[:16] }}...</div>
-                    </div>
-                </div>
-                <div style="text-align: right;">
-                    <div style="font-size: 2rem; font-weight: 700; background: linear-gradient(135deg, #c4b5fd 0%, #ddd6fe 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
-                        {{ user.total_messages or 0 }}
-                    </div>
-                    <div style="font-size: 0.75rem; color: #64748b; margin-top: 0.25rem;">mensagens</div>
-                    <div style="font-size: 0.75rem; color: #475569; margin-top: 0.5rem;">📅 {{ user.last_seen or 'N/A' }}</div>
-                </div>
+    <section class="metric-grid-v2 metric-grid-v2--triple">
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Usuarios totais</span>
+            <strong class="metric-value-v2">{{ total_users }}</strong>
+            <p class="metric-note-v2">Usuarios Telegram mapeados pelo sistema.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Interacoes totais</span>
+            <strong class="metric-value-v2">{{ total_interactions }}</strong>
+            <p class="metric-note-v2">Volume total de mensagens processadas.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Conflitos detectados</span>
+            <strong class="metric-value-v2">{{ total_conflicts }}</strong>
+            <p class="metric-note-v2">Tensoes psicologicas persistidas pelo sistema.</p>
+        </article>
+    </section>
+
+    {% if diagnostic_mode %}
+    <section class="panel-v2 panel-v2--warning">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Modo diagnostico</h2>
+                <p class="panel-subtitle-v2">O admin entrou em fallback porque o jung_core nao foi carregado.</p>
             </div>
         </div>
-        {% endfor %}
-    </div>
-    {% else %}
-    <div style="text-align: center; padding: 4rem 2rem; color: #64748b;">
-        <div style="font-size: 4rem; margin-bottom: 1rem; opacity: 0.4;">👤</div>
-        <div style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Nenhum usuário encontrado</div>
-        <div style="font-size: 0.95rem; opacity: 0.7;">Aguardando primeiras interações...</div>
-    </div>
+        <div class="panel-body-v2 stack-v2">
+            <div class="notice-v2 notice-v2--warning">
+                <strong>Erro principal</strong>
+                <p>{{ error_message }}</p>
+            </div>
+            <div class="diag-grid-v2">
+                <article class="diag-card-v2">
+                    <span class="metric-label-v2">Python</span>
+                    <strong class="cell-primary-v2">{{ python_version }}</strong>
+                </article>
+                <article class="diag-card-v2">
+                    <span class="metric-label-v2">Dependencias</span>
+                    <div class="stack-compact-v2">
+                        {% for dep_name, dep_status in dependencies.items() %}
+                        <div class="diag-row-v2">
+                            <span class="cell-secondary-v2">{{ dep_name }}</span>
+                            <span class="table-badge-v2">{{ dep_status }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </article>
+            </div>
+            {% if error_traceback %}
+            <details class="details-v2">
+                <summary>Ver traceback</summary>
+                <pre class="code-block-v2">{{ error_traceback }}</pre>
+            </details>
+            {% endif %}
+        </div>
+    </section>
     {% endif %}
-</div>
 
-<!-- Additional Resources -->
-<div style="margin-top: 2rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem;">
-    <a href="/admin/sync-check" class="card" style="text-decoration: none; color: inherit; cursor: pointer;">
-        <div style="display: flex; align-items: center; gap: 1rem;">
-            <div style="font-size: 2.5rem;">🔍</div>
-            <div>
-                <div style="font-weight: 700; font-size: 1.1rem; color: #f1f5f9;">Diagnóstico</div>
-                <div style="color: #94a3b8; font-size: 0.875rem; margin-top: 0.25rem;">Status e sincronização</div>
-            </div>
-        </div>
-    </a>
+    <section class="quick-grid-v2">
+        <a href="/admin/users" class="quick-card-v2">
+            <span class="quick-kicker-v2">Leve</span>
+            <strong class="quick-title-v2">Usuarios</strong>
+            <p class="quick-copy-v2">Lista de referencia para navegacao simples e manutencao diaria.</p>
+        </a>
+        <a href="/admin/organizations" class="quick-card-v2">
+            <span class="quick-kicker-v2">Leve</span>
+            <strong class="quick-title-v2">Organizacoes</strong>
+            <p class="quick-copy-v2">Visao operacional do multi-tenant com poucos elementos por pagina.</p>
+        </a>
+        <a href="/admin/admins" class="quick-card-v2">
+            <span class="quick-kicker-v2">Leve</span>
+            <strong class="quick-title-v2">Admins</strong>
+            <p class="quick-copy-v2">Gestao de acessos com tabela central e acoes discretas.</p>
+        </a>
+        <a href="/admin/jung-lab" class="quick-card-v2 quick-card-v2--heavy">
+            <span class="quick-kicker-v2">Denso</span>
+            <strong class="quick-title-v2">Jung Lab</strong>
+            <p class="quick-copy-v2">Area especializada de ruminacao, tensoes e processamento profundo.</p>
+        </a>
+        <a href="/admin/jung-mind" class="quick-card-v2 quick-card-v2--heavy">
+            <span class="quick-kicker-v2">Denso</span>
+            <strong class="quick-title-v2">Jung Mind</strong>
+            <p class="quick-copy-v2">Mapa vivo da mente do agente, reservado para visualizacoes mais pesadas.</p>
+        </a>
+        <a href="/admin/sync-check" class="quick-card-v2">
+            <span class="quick-kicker-v2">Suporte</span>
+            <strong class="quick-title-v2">Diagnostico</strong>
+            <p class="quick-copy-v2">Checagem de sincronizacao, estado do sistema e troubleshooting rapido.</p>
+        </a>
+    </section>
 
-    <a href="/admin/users" class="card" style="text-decoration: none; color: inherit; cursor: pointer;">
-        <div style="display: flex; align-items: center; gap: 1rem;">
-            <div style="font-size: 2.5rem;">📊</div>
+    <section class="panel-v2">
+        <div class="panel-header-v2">
             <div>
-                <div style="font-weight: 700; font-size: 1.1rem; color: #f1f5f9;">Análises Detalhadas</div>
-                <div style="color: #94a3b8; font-size: 0.875rem; margin-top: 0.25rem;">Perfis psicométricos</div>
+                <h2 class="panel-title-v2">Usuarios recentes</h2>
+                <p class="panel-subtitle-v2">Atividade recente sem transformar o dashboard numa pagina de auditoria pesada.</p>
             </div>
+            <a href="/admin/users" class="button-v2 button-v2--ghost">Ver todos</a>
         </div>
-    </a>
-</div>
+
+        {% if users %}
+        <div class="stack-list-v2">
+            {% for user in users %}
+            <article class="list-card-v2">
+                <div class="list-card-main-v2">
+                    <div class="list-avatar-v2">
+                        {{ (user.user_name or user.first_name or 'U')[:2].upper() }}
+                    </div>
+                    <div class="stack-compact-v2">
+                        <strong class="cell-primary-v2">{{ user.user_name or user.first_name or "Usuario anonimo" }}</strong>
+                        <span class="cell-secondary-v2">{{ user.user_id }}</span>
+                    </div>
+                </div>
+                <div class="list-card-meta-v2">
+                    <span class="metric-inline-v2">{{ user.total_messages or 0 }}</span>
+                    <span class="cell-secondary-v2">{{ user.last_seen or "Sem registro" }}</span>
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state-v2">
+            <div class="empty-state-icon-v2">Sem atividade</div>
+            <p class="empty-state-title-v2">Nenhum usuario recente.</p>
+            <p class="empty-state-copy-v2">Os primeiros registros de conversa aparecerao aqui quando o bot receber novas interacoes.</p>
+        </div>
+        {% endif %}
+    </section>
+</section>
 {% endblock %}

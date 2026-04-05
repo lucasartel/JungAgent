@@ -116,7 +116,11 @@ async def list_organizations(
         return templates.TemplateResponse("organizations/list.html", {
             "request": request,
             "admin": admin,
-            "organizations": organizations
+            "organizations": organizations,
+            "total_organizations": len(organizations),
+            "total_org_users": sum(org["user_count"] for org in organizations),
+            "total_org_admins": sum(org["admin_count"] for org in organizations),
+            "active_nav": "organizations",
         })
 
     except Exception as e:

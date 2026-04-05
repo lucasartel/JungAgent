@@ -18,12 +18,18 @@
                 </div>
             </a>
 
-            <nav class="admin-nav-v2" aria-label="Navegação principal">
+            <nav class="admin-nav-v2" aria-label="Navegacao principal">
                 <a href="/admin" class="admin-nav-link-v2{% if active_nav|default('dashboard') == 'dashboard' %} is-active{% endif %}">
                     Dashboard
                 </a>
                 <a href="/admin/users" class="admin-nav-link-v2{% if active_nav|default('dashboard') == 'users' %} is-active{% endif %}">
-                    Usuários
+                    Usuarios
+                </a>
+                <a href="/admin/organizations" class="admin-nav-link-v2{% if active_nav|default('dashboard') == 'organizations' %} is-active{% endif %}">
+                    Organizacoes
+                </a>
+                <a href="/admin/admins" class="admin-nav-link-v2{% if active_nav|default('dashboard') == 'admins' %} is-active{% endif %}">
+                    Admins
                 </a>
             </nav>
 
@@ -43,7 +49,7 @@
 
     <footer class="admin-footer-v2">
         <div class="admin-footer-inner-v2">
-            <p>JungAgent Admin v3.0 | Frontend leve em migração</p>
+            <p>JungAgent Admin v3.0 | Frontend leve em migracao</p>
         </div>
     </footer>
 

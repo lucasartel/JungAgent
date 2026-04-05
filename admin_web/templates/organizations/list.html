@@ -1,108 +1,98 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Organizações - JungAgent Admin</title>
-    <link rel="stylesheet" href="/static/admin.css">
-</head>
-<body>
-    <div class="header">
-        <div class="header-content">
+{% extends "base_v2.html" %}
+
+{% block title %}Organizacoes - JungAgent Admin{% endblock %}
+
+{% block content %}
+<section class="page-shell-v2">
+    <header class="page-header-v2">
+        <div>
+            <p class="page-kicker-v2">Admin · Multi-tenant</p>
+            <h1 class="page-title-v2">Organizacoes</h1>
+            <p class="page-subtitle-v2">
+                Gestao enxuta das organizacoes do sistema, mantendo foco em leitura, status e acoes administrativas diretas.
+            </p>
+        </div>
+        <div class="page-actions-v2">
+            <a href="/admin/organizations/new" class="button-v2">Nova organizacao</a>
+        </div>
+    </header>
+
+    {% if request.query_params.get('success') %}
+    <div class="notice-v2 notice-v2--success">
+        <strong>Atualizacao concluida</strong>
+        <p>{{ request.query_params.get('success') }}</p>
+    </div>
+    {% endif %}
+
+    <section class="metric-grid-v2 metric-grid-v2--triple">
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Organizacoes</span>
+            <strong class="metric-value-v2">{{ total_organizations }}</strong>
+            <p class="metric-note-v2">Total de tenants atualmente persistidos.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Usuarios vinculados</span>
+            <strong class="metric-value-v2">{{ total_org_users }}</strong>
+            <p class="metric-note-v2">Mapeamentos ativos entre usuarios e organizacoes.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Admins ativos</span>
+            <strong class="metric-value-v2">{{ total_org_admins }}</strong>
+            <p class="metric-note-v2">Administradores ativos distribuidos entre os tenants.</p>
+        </article>
+    </section>
+
+    <section class="panel-v2">
+        <div class="panel-header-v2">
             <div>
-                <h1>🏢 Gestão de Organizações</h1>
-                <p style="opacity: 0.9; margin-top: 5px;">Gerenciar todas as organizações do sistema</p>
-            </div>
-            <div class="header-info">
-                <div class="user-name">{{ admin.full_name or admin.email }}</div>
-                <span class="role-badge">👑 Master Admin</span>
+                <h2 class="panel-title-v2">Lista principal</h2>
+                <p class="panel-subtitle-v2">Tabela central com status, escala e links de continuidade.</p>
             </div>
         </div>
-    </div>
 
-    <div class="nav">
-        <div class="nav-content">
-            <a href="/admin/master/dashboard">Dashboard</a>
-            <a href="/admin/organizations" class="active">Organizações</a>
-            <a href="/admin/admins">Administradores</a>
-            <a href="/admin/users">Usuários Jung</a>
-            <form action="/admin/logout" method="POST" style="margin-left: auto;">
-                <button type="submit" class="logout-btn nav">Sair</button>
-            </form>
-        </div>
-    </div>
-
-    <div class="container">
-        <!-- Success Message -->
-        {% if request.query_params.get('success') %}
-        <div class="alert alert-success">
-            ✅ {{ request.query_params.get('success') }}
-        </div>
-        {% endif %}
-
-        <!-- Actions -->
-        <div class="section">
-            <div class="section-header">
-                <h2>📊 Todas as Organizações</h2>
-                <a href="/admin/organizations/new" class="btn btn-primary" style="pointer-events: auto !important; cursor: pointer !important;">+ Nova Organização</a>
-            </div>
-
-            {% if organizations %}
-            <table>
+        {% if organizations %}
+        <div class="table-shell-v2">
+            <table class="data-table-v2">
                 <thead>
                     <tr>
                         <th>Nome</th>
                         <th>Slug</th>
-                        <th>Indústria</th>
-                        <th>Tamanho</th>
                         <th>Plano</th>
                         <th>Status</th>
-                        <th>Usuários</th>
+                        <th>Usuarios</th>
                         <th>Admins</th>
-                        <th>Link de Convite</th>
-                        <th>Ações</th>
+                        <th>Convite</th>
+                        <th class="actions-col-v2">Acoes</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for org in organizations %}
                     <tr>
-                        <td><strong>{{ org.org_name }}</strong></td>
-                        <td><code>{{ org.org_slug }}</code></td>
-                        <td>{{ org.industry or '—' }}</td>
                         <td>
-                            <span class="badge badge-{{ org.size or 'default' }}">
-                                {{ org.size.upper() if org.size else '—' }}
-                            </span>
+                            <div class="stack-compact-v2">
+                                <span class="cell-primary-v2">{{ org.org_name }}</span>
+                                <span class="cell-secondary-v2">{{ org.industry or "Sem industria" }}</span>
+                            </div>
                         </td>
+                        <td><span class="table-badge-v2 table-badge-v2--mono">{{ org.org_slug }}</span></td>
+                        <td><span class="table-badge-v2">{{ org.subscription_tier|upper }}</span></td>
+                        <td><span class="table-badge-v2">{{ org.subscription_status|upper }}</span></td>
+                        <td><span class="metric-inline-v2">{{ org.user_count }}</span></td>
+                        <td><span class="metric-inline-v2">{{ org.admin_count }}</span></td>
                         <td>
-                            <span class="badge badge-{{ org.subscription_tier }}">
-                                {{ org.subscription_tier.upper() }}
-                            </span>
+                            <button
+                                type="button"
+                                class="button-v2 button-v2--small button-v2--ghost js-copy-link"
+                                data-copy-text="https://t.me/jungagent_bot?start=org_{{ org.org_slug }}"
+                            >
+                                Copiar link
+                            </button>
                         </td>
-                        <td>
-                            <span class="badge badge-{{ org.subscription_status }}">
-                                {{ org.subscription_status.upper() }}
-                            </span>
-                        </td>
-                        <td>{{ org.user_count }}</td>
-                        <td>{{ org.admin_count }}</td>
-                        <td>
-                            <code style="font-size: 0.85em; background: #f5f5f5; padding: 4px 8px; border-radius: 4px; cursor: pointer;"
-                                  onclick="navigator.clipboard.writeText('https://t.me/jungagent_bot?start=org_{{ org.org_slug }}'); alert('Link copiado!');"
-                                  title="Clique para copiar">
-                                🔗 t.me/jungagent_bot?start=org_{{ org.org_slug }}
-                            </code>
-                        </td>
-                        <td class="actions">
-                            <a href="/admin/organizations/{{ org.org_id }}/edit" class="btn-action btn-edit" title="Editar">
-                                ✏️
-                            </a>
-                            {% if org.org_id != 'default-org' %}
-                            <form method="POST" action="/admin/organizations/{{ org.org_id }}/delete" style="display: inline;"
-                                  onsubmit="return confirm('Tem certeza que deseja desativar a organização {{ org.org_name }}?');">
-                                <button type="submit" class="btn-action btn-delete" title="Desativar">
-                                    🗑️
-                                </button>
+                        <td class="actions-cell-v2">
+                            <a href="/admin/organizations/{{ org.org_id }}/edit" class="button-v2 button-v2--small">Editar</a>
+                            {% if org.org_id != "default-org" %}
+                            <form method="POST" action="/admin/organizations/{{ org.org_id }}/delete" onsubmit="return confirm('Tem certeza que deseja desativar a organizacao {{ org.org_name }}?');">
+                                <button type="submit" class="button-v2 button-v2--small button-v2--ghost">Desativar</button>
                             </form>
                             {% endif %}
                         </td>
@@ -110,13 +100,36 @@
                     {% endfor %}
                 </tbody>
             </table>
-            {% else %}
-            <div class="empty-state">
-                <p>Nenhuma organização encontrada</p>
-                <a href="/admin/organizations/new" class="btn btn-primary" style="margin-top: 20px;">+ Criar Primeira Organização</a>
-            </div>
-            {% endif %}
         </div>
-    </div>
-</body>
-</html>
+        {% else %}
+        <div class="empty-state-v2">
+            <div class="empty-state-icon-v2">Sem tenants</div>
+            <p class="empty-state-title-v2">Nenhuma organizacao encontrada.</p>
+            <p class="empty-state-copy-v2">Crie a primeira organizacao para iniciar a camada multi-tenant do sistema.</p>
+        </div>
+        {% endif %}
+    </section>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll(".js-copy-link").forEach((button) => {
+    button.addEventListener("click", async () => {
+        const text = button.dataset.copyText;
+        try {
+            await navigator.clipboard.writeText(text);
+            button.textContent = "Copiado";
+            setTimeout(() => {
+                button.textContent = "Copiar link";
+            }, 1600);
+        } catch (error) {
+            button.textContent = "Falhou";
+            setTimeout(() => {
+                button.textContent = "Copiar link";
+            }, 1600);
+        }
+    });
+});
+</script>
+{% endblock %}

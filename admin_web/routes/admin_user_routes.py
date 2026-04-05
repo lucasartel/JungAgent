@@ -111,7 +111,11 @@ async def list_admins(
         return templates.TemplateResponse("admins/list.html", {
             "request": request,
             "admin": admin,
-            "admins": admins
+            "admins": admins,
+            "total_admins": len(admins),
+            "active_admins": sum(1 for admin_row in admins if admin_row["is_active"]),
+            "master_admins": sum(1 for admin_row in admins if admin_row["role"] == "master"),
+            "active_nav": "admins",
         })
 
     except Exception as e:
