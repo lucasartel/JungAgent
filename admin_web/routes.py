@@ -177,7 +177,17 @@ async def users_list(request: Request, admin: Dict = Depends(require_master)):
     """Lista de usuários"""
     db = get_db()
     users = db.get_all_users(platform="telegram")
-    return templates.TemplateResponse("users.html", {"request": request, "users": users})
+    total_messages = sum(user.get("total_messages", 0) or 0 for user in users)
+    return templates.TemplateResponse(
+        "users.html",
+        {
+            "request": request,
+            "users": users,
+            "total_users": len(users),
+            "total_messages": total_messages,
+            "active_nav": "users",
+        },
+    )
 
 @router.get("/unesco/export", response_class=HTMLResponse)
 async def view_unesco_data(request: Request, admin: Dict = Depends(require_master)):

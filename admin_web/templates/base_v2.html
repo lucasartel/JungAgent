@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}JungAgent Admin{% endblock %}</title>
+    <link rel="stylesheet" href="/static/admin.css">
+    {% block head_extra %}{% endblock %}
+</head>
+<body class="admin-shell-v2">
+    <header class="admin-topbar-v2">
+        <div class="admin-topbar-inner-v2">
+            <a href="/admin" class="admin-brand-v2" aria-label="JungAgent Admin">
+                <img src="/static/jungagentdarkweb.png" alt="JungAgent">
+                <div class="admin-brand-copy-v2">
+                    <span class="admin-brand-kicker-v2">JungAgent</span>
+                    <strong>Admin</strong>
+                </div>
+            </a>
+
+            <nav class="admin-nav-v2" aria-label="Navegação principal">
+                <a href="/admin" class="admin-nav-link-v2{% if active_nav|default('dashboard') == 'dashboard' %} is-active{% endif %}">
+                    Dashboard
+                </a>
+                <a href="/admin/users" class="admin-nav-link-v2{% if active_nav|default('dashboard') == 'users' %} is-active{% endif %}">
+                    Usuários
+                </a>
+            </nav>
+
+            <div class="admin-topbar-meta-v2">
+                {% block topbar_meta %}
+                <span class="admin-status-chip-v2">Admin online</span>
+                {% endblock %}
+            </div>
+        </div>
+    </header>
+
+    <main class="admin-main-v2">
+        <div class="admin-main-inner-v2">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    <footer class="admin-footer-v2">
+        <div class="admin-footer-inner-v2">
+            <p>JungAgent Admin v3.0 | Frontend leve em migração</p>
+        </div>
+    </footer>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>
