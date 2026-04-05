@@ -93,7 +93,11 @@ class HobbyArtEngine:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
-            SELECT id, title, full_message, core_image
+            SELECT
+                id,
+                symbol_content AS title,
+                question_content AS core_image,
+                full_message
             FROM rumination_insights
             WHERE user_id = ?
             ORDER BY id DESC
