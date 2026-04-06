@@ -128,7 +128,8 @@ async def master_dashboard(
             "total_admin_users": len(admin_users),
             "total_interactions": total_interactions,
             "total_conflicts": total_conflicts,
-            "proactive_enabled": proactive_messages_enabled()
+            "proactive_enabled": proactive_messages_enabled(),
+            "active_nav": "dashboard",
         })
 
     except Exception as e:

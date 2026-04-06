@@ -1,601 +1,264 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
+{% extends "base_v2.html" %}
 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Master Dashboard - JungAgent Admin</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+{% block title %}Master Dashboard - JungAgent Admin{% endblock %}
 
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #f5f5f5;
-        }
+{% block topbar_meta %}
+<span class="admin-status-chip-v2">Master admin</span>
+{% endblock %}
 
-        /* Header */
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px 40px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
+{% block content %}
+<section class="page-shell-v2">
+    <header class="page-header-v2">
+        <div>
+            <p class="page-kicker-v2">Admin · Controle global</p>
+            <h1 class="page-title-v2">Master Dashboard</h1>
+            <p class="page-subtitle-v2">
+                Visao executiva do ambiente multi-tenant com links diretos para operacao, diagnostico e areas especializadas.
+            </p>
+        </div>
+    </header>
 
-        .header-content {
-            max-width: 1400px;
-            margin: 0 auto;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
+    <section class="metric-grid-v2 metric-grid-v2--quad">
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Organizacoes</span>
+            <strong class="metric-value-v2">{{ total_organizations }}</strong>
+            <p class="metric-note-v2">Tenants monitorados neste ambiente.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Usuarios Jung</span>
+            <strong class="metric-value-v2">{{ total_jung_users }}</strong>
+            <p class="metric-note-v2">Usuarios finais com historico de conversa persistido.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Admins</span>
+            <strong class="metric-value-v2">{{ total_admin_users }}</strong>
+            <p class="metric-note-v2">Contas administrativas distribuidas entre as organizacoes.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Interacoes</span>
+            <strong class="metric-value-v2">{{ "{:,}".format(total_interactions) }}</strong>
+            <p class="metric-note-v2">Volume total de mensagens processadas pelo sistema.</p>
+        </article>
+    </section>
 
-        .header h1 {
-            font-size: 1.8em;
-            font-weight: 600;
-        }
-
-        .header-info {
-            text-align: right;
-        }
-
-        .header-info .user-name {
-            font-size: 1.1em;
-            margin-bottom: 5px;
-        }
-
-        .header-info .role-badge {
-            background: rgba(255, 255, 255, 0.2);
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 0.85em;
-            display: inline-block;
-        }
-
-        /* Navigation */
-        .nav {
-            background: white;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
-            padding: 15px 40px;
-        }
-
-        .nav-content {
-            max-width: 1400px;
-            margin: 0 auto;
-            display: flex;
-            gap: 30px;
-            align-items: center;
-        }
-
-        .nav a {
-            color: #333;
-            text-decoration: none;
-            padding: 8px 16px;
-            border-radius: 6px;
-            transition: all 0.3s;
-        }
-
-        .nav a:hover {
-            background: #f0f0f0;
-            color: #667eea;
-        }
-
-        .nav a.active {
-            background: #667eea;
-            color: white;
-        }
-
-        .logout-btn {
-            margin-left: auto;
-            background: #dc3545;
-            color: white !important;
-        }
-
-        .logout-btn:hover {
-            background: #c82333 !important;
-        }
-
-        /* Main Content */
-        .container {
-            max-width: 1400px;
-            margin: 40px auto;
-            padding: 0 40px;
-        }
-
-        /* Stats Cards */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 40px;
-        }
-
-        .stat-card {
-            background: white;
-            padding: 25px;
-            border-radius: 12px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
-            transition: transform 0.3s;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
-        }
-
-        .stat-card .label {
-            color: #666;
-            font-size: 0.9em;
-            margin-bottom: 10px;
-        }
-
-        .stat-card .value {
-            font-size: 2.5em;
-            font-weight: 700;
-            color: #667eea;
-        }
-
-        /* Section */
-        .section {
-            background: white;
-            padding: 30px;
-            border-radius: 12px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
-            margin-bottom: 30px;
-        }
-
-        .section-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid #f0f0f0;
-        }
-
-        .section-header h2 {
-            font-size: 1.4em;
-            color: #333;
-        }
-
-        .section-header .btn {
-            background: #667eea;
-            color: white;
-            padding: 10px 20px;
-            border-radius: 6px;
-            text-decoration: none;
-            font-size: 0.9em;
-            transition: all 0.3s;
-        }
-
-        .section-header .btn:hover {
-            background: #5568d3;
-            transform: translateY(-2px);
-        }
-
-        /* Table */
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        th {
-            background: #f8f9fa;
-            padding: 12px;
-            text-align: left;
-            font-weight: 600;
-            color: #666;
-            font-size: 0.9em;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        td {
-            padding: 15px 12px;
-            border-bottom: 1px solid #f0f0f0;
-        }
-
-        tr:hover {
-            background: #f8f9fa;
-        }
-
-        /* Badges */
-        .badge {
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 0.85em;
-            font-weight: 500;
-        }
-
-        .badge.active {
-            background: #d4edda;
-            color: #155724;
-        }
-
-        .badge.inactive {
-            background: #f8d7da;
-            color: #721c24;
-        }
-
-        .badge.master {
-            background: #d1ecf1;
-            color: #0c5460;
-        }
-
-        .badge.org-admin {
-            background: #fff3cd;
-            color: #856404;
-        }
-
-        .badge.free {
-            background: #e2e3e5;
-            color: #383d41;
-        }
-
-        .badge.premium {
-            background: #ffeaa7;
-            color: #6c5ce7;
-        }
-
-        /* Empty State */
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: #999;
-        }
-
-        .empty-state svg {
-            width: 80px;
-            height: 80px;
-            margin-bottom: 20px;
-            opacity: 0.3;
-        }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-            .header-content {
-                flex-direction: column;
-                gap: 15px;
-                text-align: center;
-            }
-
-            .header-info {
-                text-align: center;
-            }
-
-            .nav-content {
-                flex-direction: column;
-                gap: 10px;
-            }
-
-            .container {
-                padding: 0 20px;
-            }
-
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-
-            table {
-                font-size: 0.9em;
-            }
-        }
-    </style>
-</head>
-
-<body>
-    <!-- Header -->
-    <div class="header">
-        <div class="header-content">
+    <section class="panel-v2">
+        <div class="panel-header-v2">
             <div>
-                <h1>🎯 Master Dashboard</h1>
-                <p style="opacity: 0.9; margin-top: 5px;">Controle Total do Sistema Multi-Tenant</p>
-            </div>
-            <div class="header-info">
-                <div class="user-name">{{ admin.full_name or admin.email }}</div>
-                <span class="role-badge">👑 Master Admin</span>
+                <h2 class="panel-title-v2">Acesso rapido</h2>
+                <p class="panel-subtitle-v2">Paginas leves primeiro, areas profundas em seguida.</p>
             </div>
         </div>
-    </div>
-
-    <!-- Navigation -->
-    <div class="nav">
-        <div class="nav-content">
-            <a href="/admin/master/dashboard" class="active">Dashboard</a>
-            <a href="/admin/organizations">Organizações</a>
-            <a href="/admin/admins">Administradores</a>
-            <a href="/admin/org/users">Usuários Jung</a>
-            <a href="/admin/consciousness-loop/dashboard">Dashboard EndoJung</a>
-            <form action="/admin/logout" method="POST" style="margin-left: auto;">
-                <button type="submit" class="logout-btn nav" style="border: none; cursor: pointer;">Sair</button>
-            </form>
+        <div class="quick-grid-v2">
+            <a href="/admin/organizations" class="quick-card-v2">
+                <span class="quick-kicker-v2">Leve</span>
+                <strong class="quick-title-v2">Organizacoes</strong>
+                <p class="quick-copy-v2">Operacao multi-tenant com tabela simples e manutencao rapida.</p>
+            </a>
+            <a href="/admin/admins" class="quick-card-v2">
+                <span class="quick-kicker-v2">Leve</span>
+                <strong class="quick-title-v2">Administradores</strong>
+                <p class="quick-copy-v2">Governanca de acessos, papeis e status das contas internas.</p>
+            </a>
+            <a href="/admin/org/users" class="quick-card-v2">
+                <span class="quick-kicker-v2">Leve</span>
+                <strong class="quick-title-v2">Usuarios Jung</strong>
+                <p class="quick-copy-v2">Listagem operacional dos usuarios com filtro por organizacao.</p>
+            </a>
+            <a href="/admin/consciousness-loop/dashboard" class="quick-card-v2 quick-card-v2--heavy">
+                <span class="quick-kicker-v2">Denso</span>
+                <strong class="quick-title-v2">Dashboard EndoJung</strong>
+                <p class="quick-copy-v2">Visao especializada do loop de consciencia e seus modulos.</p>
+            </a>
+            <a href="/admin/jung-lab" class="quick-card-v2 quick-card-v2--heavy">
+                <span class="quick-kicker-v2">Denso</span>
+                <strong class="quick-title-v2">Jung Lab</strong>
+                <p class="quick-copy-v2">Ruminacao, tensoes, insights e metabolismo profundo do agente.</p>
+            </a>
+            <a href="/admin/jung-mind" class="quick-card-v2 quick-card-v2--heavy">
+                <span class="quick-kicker-v2">Denso</span>
+                <strong class="quick-title-v2">Jung Mind</strong>
+                <p class="quick-copy-v2">Mapa cognitivo e panorama das gravidades psiquicas persistidas.</p>
+            </a>
+            <a href="/admin/dreams" class="quick-card-v2 quick-card-v2--heavy">
+                <span class="quick-kicker-v2">Denso</span>
+                <strong class="quick-title-v2">Motor Onirico</strong>
+                <p class="quick-copy-v2">Repositorio de sonhos, imagens e simbolos recentes do sistema.</p>
+            </a>
+            <a href="/admin/research" class="quick-card-v2 quick-card-v2--heavy">
+                <span class="quick-kicker-v2">Denso</span>
+                <strong class="quick-title-v2">Scholar Engine</strong>
+                <p class="quick-copy-v2">Teses, abstracoes e producao conceitual autonoma do agente.</p>
+            </a>
+            <a href="/admin/agent-identity/dashboard" class="quick-card-v2 quick-card-v2--heavy">
+                <span class="quick-kicker-v2">Denso</span>
+                <strong class="quick-title-v2">Identidade Nuclear</strong>
+                <p class="quick-copy-v2">Painel especializado da identidade persistida e suas contradicoes.</p>
+            </a>
+            <a href="/admin/memory-metrics" class="quick-card-v2 quick-card-v2--heavy">
+                <span class="quick-kicker-v2">Denso</span>
+                <strong class="quick-title-v2">Memory Metrics</strong>
+                <p class="quick-copy-v2">Qualidade de memoria, consolidacao e diagnostico de recuperacao.</p>
+            </a>
+            <a href="/admin/world-consciousness/dashboard" class="quick-card-v2 quick-card-v2--heavy">
+                <span class="quick-kicker-v2">Denso</span>
+                <strong class="quick-title-v2">Lucidez do Mundo</strong>
+                <p class="quick-copy-v2">Zeitgeist, consenso, divergencia e seeds para acao e hobby.</p>
+            </a>
+            <a href="/admin/unesco/export" class="quick-card-v2">
+                <span class="quick-kicker-v2">Suporte</span>
+                <strong class="quick-title-v2">Piloto UNESCO</strong>
+                <p class="quick-copy-v2">Exportacao e leitura de dados anonimizados do piloto.</p>
+            </a>
+            <a href="/admin/irt/dashboard" class="quick-card-v2">
+                <span class="quick-kicker-v2">Suporte</span>
+                <strong class="quick-title-v2">Sistema TRI/IRT</strong>
+                <p class="quick-copy-v2">Painel de avaliacao psicometrica e resposta ao item.</p>
+            </a>
         </div>
-    </div>
+    </section>
 
-    <!-- Main Content -->
-    <div class="container">
-        <!-- Stats Cards -->
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="label">Organizações</div>
-                <div class="value">{{ total_organizations }}</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">Usuários Jung</div>
-                <div class="value">{{ total_jung_users }}</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">Admins</div>
-                <div class="value">{{ total_admin_users }}</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">Interações</div>
-                <div class="value">{{ "{:,}".format(total_interactions) }}</div>
-            </div>
-        </div>
-
-        <!-- 🔬 Ferramentas Avançadas - Apenas Master Admin -->
-        <div class="section" style="margin-bottom: 40px;">
-            <div class="section-header">
-                <h2>🔬 Ferramentas Avançadas de Análise</h2>
-                <p style="color: #666; font-size: 0.9em; margin-top: 5px;">Acesso exclusivo para Master Admin</p>
-            </div>
-
-            <div
-                style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 20px;">
-                <!-- Jung Lab -->
-                <a href="/admin/jung-lab" style="text-decoration: none;">
-                    <div class="stat-card"
-                        style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; cursor: pointer;">
-                        <div style="font-size: 2.5em; margin-bottom: 10px;">🧪</div>
-                        <div class="label" style="color: rgba(255,255,255,0.9); font-size: 1.1em;">Jung Lab</div>
-                        <div style="color: rgba(255,255,255,0.8); font-size: 0.9em; margin-top: 8px;">
-                            Análises psicométricas avançadas e arquétipos
-                        </div>
-                    </div>
-                </a>
-
-                <!-- Jung Mind -->
-                <a href="/admin/jung-mind" style="text-decoration: none;">
-                    <div class="stat-card"
-                        style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; cursor: pointer;">
-                        <div style="font-size: 2.5em; margin-bottom: 10px;">🧠</div>
-                        <div class="label" style="color: rgba(255,255,255,0.9); font-size: 1.1em;">Jung Mind</div>
-                        <div style="color: rgba(255,255,255,0.8); font-size: 0.9em; margin-top: 8px;">
-                            Mapeamento cognitivo e processos mentais
-                        </div>
-                    </div>
-                </a>
-
-                <!-- Motor Onírico -->
-                <a href="/admin/dreams" style="text-decoration: none;">
-                    <div class="stat-card"
-                        style="background: linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%); color: white; cursor: pointer;">
-                        <div style="font-size: 2.5em; margin-bottom: 10px;">🌙</div>
-                        <div class="label" style="color: rgba(255,255,255,0.9); font-size: 1.1em;">Motor Onírico</div>
-                        <div style="color: rgba(255,255,255,0.8); font-size: 0.9em; margin-top: 8px;">
-                            Repositório de metáforas e sonhos gerados pelo agente
-                        </div>
-                    </div>
-                </a>
-
-                <!-- Pesquisa Autônoma (Extroverted Path) -->
-                <a href="/admin/research" style="text-decoration: none;">
-                    <div class="stat-card"
-                        style="background: linear-gradient(135deg, #f6d365 0%, #fda085 100%); color: white; cursor: pointer;">
-                        <div style="font-size: 2.5em; margin-bottom: 10px;">📚</div>
-                        <div class="label" style="color: rgba(255,255,255,0.9); font-size: 1.1em;">Scholar Engine</div>
-                        <div style="color: rgba(255,255,255,0.8); font-size: 0.9em; margin-top: 8px;">
-                            Pesquisas e abstrações acadêmicas autônomas
-                        </div>
-                    </div>
-                </a>
-
-                <!-- Identidade Nuclear do Agente -->
-                <a href="/admin/agent-identity/dashboard" style="text-decoration: none;">
-                    <div class="stat-card"
-                        style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; cursor: pointer;">
-                        <div style="font-size: 2.5em; margin-bottom: 10px;">🧬</div>
-                        <div class="label" style="color: rgba(255,255,255,0.9); font-size: 1.1em;">Identidade Nuclear
-                        </div>
-                        <div style="color: rgba(255,255,255,0.8); font-size: 0.9em; margin-top: 8px;">
-                            Sistema de identidade do agente Jung
-                        </div>
-                    </div>
-                </a>
-
-                <!-- Memory Metrics -->
-                <a href="/admin/memory-metrics" style="text-decoration: none;">
-                    <div class="stat-card"
-                        style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: white; cursor: pointer;">
-                        <div style="font-size: 2.5em; margin-bottom: 10px;">🧩</div>
-                        <div class="label" style="color: rgba(255,255,255,0.9); font-size: 1.1em;">Memory Metrics</div>
-                        <div style="color: rgba(255,255,255,0.8); font-size: 0.9em; margin-top: 8px;">
-                            Monitoramento de qualidade de memória
-                        </div>
-                    </div>
-                </a>
-
-                <!-- Piloto UNESCO Exportação -->
-                <a href="/admin/world-consciousness/dashboard" style="text-decoration: none;">
-                    <div class="stat-card"
-                        style="background: linear-gradient(135deg, #355c7d 0%, #6c5b7b 55%, #c06c84 100%); color: white; cursor: pointer;">
-                        <div style="font-size: 2.5em; margin-bottom: 10px;">WC</div>
-                        <div class="label" style="color: rgba(255,255,255,0.9); font-size: 1.1em;">Lucidez do Mundo</div>
-                        <div style="color: rgba(255,255,255,0.8); font-size: 0.9em; margin-top: 8px;">
-                            Painel de zeitgeist, consenso, divergencia e seeds para acao
-                        </div>
-                    </div>
-                </a>
-
-                <a href="/admin/unesco/export" style="text-decoration: none;">
-                    <div class="stat-card"
-                        style="background: linear-gradient(135deg, #2193b0 0%, #6dd5ed 100%); color: white; cursor: pointer;">
-                        <div style="font-size: 2.5em; margin-bottom: 10px;">📑</div>
-                        <div class="label" style="color: rgba(255,255,255,0.9); font-size: 1.1em;">Piloto UNESCO</div>
-                        <div style="color: rgba(255,255,255,0.8); font-size: 0.9em; margin-top: 8px;">
-                            Exportar CSV Anonimizado (Dados de 7 Dias)
-                        </div>
-                    </div>
-                </a>
-
-                <!-- Sistema TRI/IRT -->
-                <a href="/admin/irt/dashboard" style="text-decoration: none;">
-                    <div class="stat-card"
-                        style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; cursor: pointer;">
-                        <div style="font-size: 2.5em; margin-bottom: 10px;">📊</div>
-                        <div class="label" style="color: rgba(255,255,255,0.9); font-size: 1.1em;">Sistema TRI/IRT</div>
-                        <div style="color: rgba(255,255,255,0.8); font-size: 0.9em; margin-top: 8px;">
-                            Teoria de Resposta ao Item - Big Five avançado
-                        </div>
-                    </div>
-                </a>
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Gatilhos manuais</h2>
+                <p class="panel-subtitle-v2">Execucao sob demanda dos processos de background mais importantes.</p>
             </div>
         </div>
-
-        <!-- ⚡ Gatilhos Manuais do Sistema -->
-        <div class="section" style="margin-bottom: 40px; border-left: 4px solid #ff9a9e;">
-            <div class="section-header" style="margin-bottom: 10px; border-bottom: none;">
-                <h2>⚡ Gatilhos Manuais</h2>
-                <p style="color: #666; font-size: 0.9em; margin-top: 5px;">Rode os processos de background sob demanda
-                </p>
-            </div>
-
-            <div style="display: flex; flex-wrap: wrap; gap: 15px; margin-top: 15px;">
-                <button onclick="triggerJob('/admin/triggers/rumination', this)" class="btn"
-                    style="background: #764ba2; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; transition: 0.3s; display: flex; align-items: center; gap: 8px;">
-                    <span>🌙</span> Motor Onírico (Ruminação Total)
+        <div class="panel-body-v2 stack-v2">
+            <div class="action-grid-v2">
+                <button onclick="triggerJob('/admin/triggers/rumination', this)" class="action-tile-v2">
+                    <span class="action-tile-title-v2">Motor onirico</span>
+                    <span class="action-tile-copy-v2">Executa a ruminacao total do sistema.</span>
                 </button>
-                <button onclick="triggerJob('/admin/triggers/research', this)" class="btn"
-                    style="background: #fda085; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; transition: 0.3s; display: flex; align-items: center; gap: 8px;">
-                    <span>📚</span> Scholar Engine (Síntese Teórica)
+                <button onclick="triggerJob('/admin/triggers/research', this)" class="action-tile-v2">
+                    <span class="action-tile-title-v2">Scholar Engine</span>
+                    <span class="action-tile-copy-v2">Formula nova sintese teorica a partir do material vivo.</span>
                 </button>
-                <button onclick="triggerJob('/admin/triggers/identity-consolidation', this)" class="btn"
-                    style="background: #4facfe; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; transition: 0.3s; display: flex; align-items: center; gap: 8px;">
-                    <span>🧬</span> Consolidação de Identidade
+                <button onclick="triggerJob('/admin/triggers/identity-consolidation', this)" class="action-tile-v2">
+                    <span class="action-tile-title-v2">Consolidacao de identidade</span>
+                    <span class="action-tile-copy-v2">Atualiza identidade nuclear, selves e contradicoes.</span>
                 </button>
-                <button onclick="triggerJob('/admin/triggers/identity-bridge', this)" class="btn"
-                    style="background: #00f2fe; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; transition: 0.3s; display: flex; align-items: center; gap: 8px;">
-                    <span>🌉</span> Bridge Identidade-Ruminação
+                <button onclick="triggerJob('/admin/triggers/identity-bridge', this)" class="action-tile-v2">
+                    <span class="action-tile-title-v2">Bridge identidade-ruminacao</span>
+                    <span class="action-tile-copy-v2">Sincroniza maturacao entre ruminar, contradizer e consolidar.</span>
                 </button>
-                <button onclick="triggerJob('/admin/triggers/memory-metrics', this)" class="btn"
-                    style="background: #fa709a; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; transition: 0.3s; display: flex; align-items: center; gap: 8px;">
-                    <span>🧩</span> Consolidação de Memória Longa
+                <button onclick="triggerJob('/admin/triggers/memory-metrics', this)" class="action-tile-v2">
+                    <span class="action-tile-title-v2">Memory metrics</span>
+                    <span class="action-tile-copy-v2">Atualiza consolidacao e diagnostico da memoria longa.</span>
                 </button>
                 {% if proactive_enabled %}
-                <button onclick="triggerJob('/admin/triggers/proactive-messages', this)" class="btn"
-                    style="background: #38ef7d; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; transition: 0.3s; display: flex; align-items: center; gap: 8px;">
-                    <span>💬</span> Loop de Mensagens Proativas
+                <button onclick="triggerJob('/admin/triggers/proactive-messages', this)" class="action-tile-v2">
+                    <span class="action-tile-title-v2">Mensagens proativas</span>
+                    <span class="action-tile-copy-v2">Dispara o loop de mensagens proativas do sistema.</span>
                 </button>
                 {% else %}
-                <button class="btn"
-                    style="background: #b6c2b6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: not-allowed; opacity: 0.85; display: flex; align-items: center; gap: 8px;"
-                    disabled
-                    title="Defina PROACTIVE_ENABLED=true para reativar">
-                    <span>OFF</span> Loop de Mensagens Proativas Desativado
+                <button class="action-tile-v2 action-tile-v2--disabled" disabled title="Defina PROACTIVE_ENABLED=true para reativar">
+                    <span class="action-tile-title-v2">Mensagens proativas</span>
+                    <span class="action-tile-copy-v2">Desativado no ambiente atual.</span>
                 </button>
                 {% endif %}
             </div>
-            <div id="trigger-status"
-                style="margin-top: 15px; font-size: 0.9em; color: #666; display: none; padding: 10px; border-radius: 6px; background: #f8f9fa;">
-            </div>
+            <div id="trigger-status" class="notice-v2" style="display: none;"></div>
         </div>
+    </section>
 
-        <!-- Organizations Section -->
-        <div class="section">
-            <div class="section-header">
-                <h2>📊 Organizações</h2>
-                <a href="/admin/organizations/new" class="btn">+ Nova Organização</a>
+    <section class="split-panels-v2">
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Organizacoes</h2>
+                    <p class="panel-subtitle-v2">Preview rapido das ultimas organizacoes criadas.</p>
+                </div>
+                <a href="/admin/organizations" class="button-v2 button-v2--ghost">Ver todas</a>
             </div>
             {% if organizations %}
-            <table>
-                <thead>
-                    <tr>
-                        <th>Nome</th>
-                        <th>Slug</th>
-                        <th>Plano</th>
-                        <th>Status</th>
-                        <th>Criada em</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for org in organizations %}
-                    <tr>
-                        <td><strong>{{ org.org_name }}</strong></td>
-                        <td><code>{{ org.org_slug }}</code></td>
-                        <td>
-                            <span class="badge {{ org.subscription_tier }}">
-                                {{ org.subscription_tier.upper() }}
-                            </span>
-                        </td>
-                        <td>
-                            <span class="badge {{ 'active' if org.is_active else 'inactive' }}">
-                                {{ 'Ativo' if org.is_active else 'Inativo' }}
-                            </span>
-                        </td>
-                        <td>{{ org.created_at[:10] if org.created_at else '—' }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+            <div class="table-shell-v2">
+                <table class="data-table-v2">
+                    <thead>
+                        <tr>
+                            <th>Nome</th>
+                            <th>Slug</th>
+                            <th>Plano</th>
+                            <th>Status</th>
+                            <th>Criada em</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for org in organizations[:8] %}
+                        <tr>
+                            <td><span class="cell-primary-v2">{{ org.org_name }}</span></td>
+                            <td><span class="table-badge-v2 table-badge-v2--mono">{{ org.org_slug }}</span></td>
+                            <td><span class="table-badge-v2">{{ org.subscription_tier|upper }}</span></td>
+                            <td><span class="table-badge-v2">{{ "Ativo" if org.is_active else "Inativo" }}</span></td>
+                            <td><span class="cell-secondary-v2">{{ org.created_at[:10] if org.created_at else "-" }}</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
             {% else %}
-            <div class="empty-state">
-                <p>Nenhuma organização encontrada</p>
+            <div class="empty-state-v2">
+                <div class="empty-state-icon-v2">Sem tenants</div>
+                <p class="empty-state-title-v2">Nenhuma organizacao encontrada.</p>
+                <p class="empty-state-copy-v2">As organizacoes criadas aparecerao aqui automaticamente.</p>
             </div>
             {% endif %}
-        </div>
+        </section>
 
-        <!-- Admin Users Section -->
-        <div class="section">
-            <div class="section-header">
-                <h2>👥 Administradores</h2>
-                <a href="/admin/admins/new" class="btn">+ Novo Admin</a>
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Administradores</h2>
+                    <p class="panel-subtitle-v2">Preview das contas internas de governanca.</p>
+                </div>
+                <a href="/admin/admins" class="button-v2 button-v2--ghost">Ver todos</a>
             </div>
             {% if admin_users %}
-            <table>
-                <thead>
-                    <tr>
-                        <th>Nome</th>
-                        <th>Email</th>
-                        <th>Role</th>
-                        <th>Organização</th>
-                        <th>Último Login</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for admin_user in admin_users %}
-                    <tr>
-                        <td><strong>{{ admin_user.full_name or '—' }}</strong></td>
-                        <td>{{ admin_user.email }}</td>
-                        <td>
-                            <span class="badge {{ admin_user.role }}">
-                                {{ 'Master' if admin_user.role == 'master' else 'Org Admin' }}
-                            </span>
-                        </td>
-                        <td><code>{{ admin_user.org_id or '—' }}</code></td>
-                        <td>{{ admin_user.last_login[:16] if admin_user.last_login else 'Nunca' }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+            <div class="table-shell-v2">
+                <table class="data-table-v2">
+                    <thead>
+                        <tr>
+                            <th>Nome</th>
+                            <th>Email</th>
+                            <th>Papel</th>
+                            <th>Org</th>
+                            <th>Ultimo login</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for admin_user in admin_users[:8] %}
+                        <tr>
+                            <td><span class="cell-primary-v2">{{ admin_user.full_name or "-" }}</span></td>
+                            <td><span class="cell-secondary-v2">{{ admin_user.email }}</span></td>
+                            <td><span class="table-badge-v2">{{ "Master" if admin_user.role == "master" else "Org admin" }}</span></td>
+                            <td><span class="cell-secondary-v2">{{ admin_user.org_id or "-" }}</span></td>
+                            <td><span class="cell-secondary-v2">{{ admin_user.last_login[:16] if admin_user.last_login else "Nunca" }}</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
             {% else %}
-            <div class="empty-state">
-                <p>Nenhum administrador encontrado</p>
+            <div class="empty-state-v2">
+                <div class="empty-state-icon-v2">Sem admins</div>
+                <p class="empty-state-title-v2">Nenhum administrador encontrado.</p>
+                <p class="empty-state-copy-v2">As contas administrativas aparecerao aqui quando forem criadas.</p>
             </div>
             {% endif %}
-        </div>
+        </section>
+    </section>
 
-        <!-- Jung Users Preview -->
-        <div class="section">
-            <div class="section-header">
-                <h2>🧠 Usuários Jung (Preview)</h2>
-                <a href="/admin/users" class="btn">Ver Todos</a>
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Usuarios Jung</h2>
+                <p class="panel-subtitle-v2">Preview operacional dos usuarios recentes sem transformar a tela num painel pesado.</p>
             </div>
-            {% if jung_users %}
-            <table>
+            <a href="/admin/org/users" class="button-v2 button-v2--ghost">Ver todos</a>
+        </div>
+        {% if jung_users %}
+        <div class="table-shell-v2">
+            <table class="data-table-v2">
                 <thead>
                     <tr>
                         <th>Nome</th>
@@ -608,70 +271,69 @@
                 <tbody>
                     {% for user in jung_users[:10] %}
                     <tr>
-                        <td><strong>{{ user.user_name }}</strong></td>
-                        <td><code>{{ user.user_id[:12] }}...</code></td>
-                        <td>{{ user.total_messages or 0 }}</td>
-                        <td>{{ user.mbti_type or '—' }}</td>
-                        <td>{{ user.first_interaction[:10] if user.first_interaction else '—' }}</td>
+                        <td><span class="cell-primary-v2">{{ user.user_name or "Usuario anonimo" }}</span></td>
+                        <td><span class="table-badge-v2 table-badge-v2--mono">{{ user.user_id[:12] }}...</span></td>
+                        <td><span class="metric-inline-v2">{{ user.total_messages or 0 }}</span></td>
+                        <td><span class="cell-secondary-v2">{{ user.mbti_type or "-" }}</span></td>
+                        <td><span class="cell-secondary-v2">{{ user.first_interaction[:10] if user.first_interaction else "-" }}</span></td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
-            {% else %}
-            <div class="empty-state">
-                <p>Nenhum usuário Jung encontrado</p>
-            </div>
-            {% endif %}
         </div>
-    </div>
+        {% else %}
+        <div class="empty-state-v2">
+            <div class="empty-state-icon-v2">Sem usuarios</div>
+            <p class="empty-state-title-v2">Nenhum usuario Jung encontrado.</p>
+            <p class="empty-state-copy-v2">Assim que houver atividade persistida, os registros aparecerao aqui.</p>
+        </div>
+        {% endif %}
+    </section>
+</section>
+{% endblock %}
 
-    <script>
-        async function triggerJob(url, btn) {
-            const statusDiv = document.getElementById('trigger-status');
-            const originalText = btn.innerHTML;
+{% block scripts %}
+<script>
+async function triggerJob(url, btn) {
+    const statusDiv = document.getElementById("trigger-status");
+    const originalHtml = btn.innerHTML;
 
-            btn.innerHTML = '<span>⏳</span> Processando...';
-            btn.disabled = true;
-            btn.style.opacity = '0.7';
+    btn.disabled = true;
+    btn.classList.add("action-tile-v2--busy");
+    btn.innerHTML = '<span class="action-tile-title-v2">Processando...</span><span class="action-tile-copy-v2">Aguarde a resposta do backend.</span>';
 
-            statusDiv.style.display = 'block';
-            statusDiv.innerHTML = 'Iniciando requisição... aguarde.';
-            statusDiv.style.color = '#666';
-            statusDiv.style.background = '#f8f9fa';
+    statusDiv.style.display = "block";
+    statusDiv.className = "notice-v2";
+    statusDiv.innerHTML = "<strong>Executando</strong><p>Requisicao enviada. Aguarde o retorno do sistema.</p>";
 
-            try {
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    statusDiv.innerHTML = `✅ Sucesso: ${data.message || 'Job concluído.'}`;
-                    statusDiv.style.color = '#155724';
-                    statusDiv.style.background = '#d4edda';
-                } else {
-                    statusDiv.innerHTML = `❌ Erro: ${data.detail || data.error || 'Falha ao processar job.'}`;
-                    statusDiv.style.color = '#721c24';
-                    statusDiv.style.background = '#f8d7da';
-                }
-            } catch (error) {
-                statusDiv.innerHTML = `❌ Erro de conexão: ${error.message}`;
-                statusDiv.style.color = '#721c24';
-                statusDiv.style.background = '#f8d7da';
-            } finally {
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-                btn.style.opacity = '1';
-                setTimeout(() => {
-                    statusDiv.style.display = 'none';
-                }, 8000);
+    try {
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
             }
-        }
-    </script>
-</body>
+        });
 
-</html>
+        const data = await response.json();
+
+        if (response.ok) {
+            statusDiv.className = "notice-v2 notice-v2--success";
+            statusDiv.innerHTML = `<strong>Sucesso</strong><p>${data.message || "Job concluido."}</p>`;
+        } else {
+            statusDiv.className = "notice-v2 notice-v2--warning";
+            statusDiv.innerHTML = `<strong>Erro</strong><p>${data.detail || data.error || "Falha ao processar job."}</p>`;
+        }
+    } catch (error) {
+        statusDiv.className = "notice-v2 notice-v2--warning";
+        statusDiv.innerHTML = `<strong>Erro de conexao</strong><p>${error.message}</p>`;
+    } finally {
+        btn.disabled = false;
+        btn.classList.remove("action-tile-v2--busy");
+        btn.innerHTML = originalHtml;
+        setTimeout(() => {
+            statusDiv.style.display = "none";
+        }, 8000);
+    }
+}
+</script>
+{% endblock %}
