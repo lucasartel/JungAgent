@@ -1,0 +1,235 @@
+{% extends "base_v2.html" %}
+
+{% block title %}Identidade Nuclear - JungAgent Admin{% endblock %}
+
+{% block content %}
+<section class="page-shell-v2">
+    <header class="page-header-v2">
+        <div>
+            <p class="page-kicker-v2">Loop · Nucleo identitario</p>
+            <h1 class="page-title-v2">Identidade Nuclear</h1>
+            <p class="page-subtitle-v2">Leitura consolidada do self persistido do JungAgent, com crenças, contradicoes, narrativa e vinculos relacionais.</p>
+        </div>
+        <div class="page-actions-v2">
+            <button class="button-v2" onclick="runConsolidation()">Consolidar identidade</button>
+            <a class="button-v2 button-v2--ghost" href="/admin/agent-identity/export/download">Baixar snapshot</a>
+        </div>
+    </header>
+
+    <nav class="subnav-v2">
+        <a href="/admin/consciousness-loop/dashboard" class="subnav-link-v2">Loop</a>
+        <a href="/admin/world-consciousness/dashboard" class="subnav-link-v2">Lucidez do mundo</a>
+        <a href="/admin/agent-identity/dashboard" class="subnav-link-v2 is-active">Identidade nuclear</a>
+        <a href="/admin/work/dashboard" class="subnav-link-v2">Work</a>
+        <a href="/admin/dreams" class="subnav-link-v2">Sonhos</a>
+        <a href="/admin/research" class="subnav-link-v2">Scholar</a>
+        <a href="/admin/memory-metrics" class="subnav-link-v2">Memory metrics</a>
+    </nav>
+
+    <section class="dashboard-grid-v2" id="identityStats"></section>
+
+    <section class="dashboard-columns-v2">
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Estado atual</h2>
+                    <p class="panel-subtitle-v2">Resumo expandido do estado mental sintetizado a partir do nucleo.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="mono-block-v2" id="currentMindState">Carregando...</div>
+            </div>
+        </section>
+
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Contexto identitario</h2>
+                    <p class="panel-subtitle-v2">Camadas consolidadas do self atual.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="tag-list-v2" id="identityContextTags"></div>
+            </div>
+        </section>
+    </section>
+
+    <section class="dashboard-columns-v2">
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Crenças nucleares</h2>
+                    <p class="panel-subtitle-v2">Elementos mais cristalizados do self.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="scroll-list-v2" id="beliefsList"></div>
+            </div>
+        </section>
+
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Contradicoes ativas</h2>
+                    <p class="panel-subtitle-v2">Campos de tensao ainda nao integrados.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="scroll-list-v2" id="contradictionsList"></div>
+            </div>
+        </section>
+    </section>
+
+    <section class="dashboard-columns-v2">
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Narrativa</h2>
+                    <p class="panel-subtitle-v2">Capitulos de formacao e fases do agente.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="scroll-list-v2" id="narrativeList"></div>
+            </div>
+        </section>
+
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Identidade relacional</h2>
+                    <p class="panel-subtitle-v2">Como o agente se entende em relacao aos outros.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="scroll-list-v2" id="relationalList"></div>
+            </div>
+        </section>
+    </section>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function renderIdentityStats(stats) {
+    const cards = Object.entries(stats || {}).slice(0, 8);
+    document.getElementById("identityStats").innerHTML = cards.length
+        ? cards.map(([key, value]) => `
+            <article class="metric-card-v2">
+                <span class="metric-label-v2">${escapeHtml(key.replace(/_/g, " "))}</span>
+                <strong class="cell-primary-v2">${escapeHtml(value)}</strong>
+            </article>
+        `).join("")
+        : '<div class="empty-row-v2">Sem estatisticas ainda.</div>';
+}
+
+function renderCollection(targetId, items, formatter, emptyText) {
+    document.getElementById(targetId).innerHTML = items.length
+        ? items.map(formatter).join("")
+        : `<div class="empty-row-v2">${escapeHtml(emptyText)}</div>`;
+}
+
+async function loadIdentity() {
+    const [statsRes, stateRes, contextRes, beliefsRes, contradictionsRes, narrativeRes, relationalRes] = await Promise.all([
+        fetch("/admin/agent-identity/stats"),
+        fetch("/admin/agent-identity/current-state"),
+        fetch("/admin/agent-identity/context"),
+        fetch("/admin/agent-identity/nuclear"),
+        fetch("/admin/agent-identity/contradictions"),
+        fetch("/admin/agent-identity/narrative"),
+        fetch("/admin/agent-identity/relational")
+    ]);
+
+    const statsData = await statsRes.json();
+    const stateData = await stateRes.json();
+    const contextData = await contextRes.json();
+    const beliefsData = await beliefsRes.json();
+    const contradictionsData = await contradictionsRes.json();
+    const narrativeData = await narrativeRes.json();
+    const relationalData = await relationalRes.json();
+
+    renderIdentityStats(statsData.stats || {});
+    document.getElementById("currentMindState").textContent = JSON.stringify(stateData.current_state || {}, null, 2);
+
+    const context = contextData.context || {};
+    const contextTags = [
+        ...(context.nuclear_identity ? ["nucleo consolidado"] : []),
+        ...(context.contradictions ? [`contradicoes ${context.contradictions.length || 0}`] : []),
+        ...(context.possible_selves ? [`selves ${context.possible_selves.length || 0}`] : []),
+        ...(context.relational_identity ? [`relacoes ${context.relational_identity.length || 0}`] : []),
+        ...(context.meta_knowledge ? [`meta ${context.meta_knowledge.length || 0}`] : [])
+    ];
+    document.getElementById("identityContextTags").innerHTML = contextTags.length
+        ? contextTags.map((item) => `<span class="tag-v2">${escapeHtml(item)}</span>`).join("")
+        : '<span class="tag-v2">Contexto vazio</span>';
+
+    renderCollection(
+        "beliefsList",
+        beliefsData.beliefs || [],
+        (item) => `
+            <article class="data-card-v2">
+                <strong>${escapeHtml(item.type || "crenca")}</strong>
+                <div class="meta-line-v2">certeza ${escapeHtml(item.certainty)} · estabilidade ${escapeHtml(item.stability)}</div>
+                <div class="mono-block-v2">${escapeHtml(item.content || "")}</div>
+            </article>
+        `,
+        "Nenhuma crenca nuclear registrada."
+    );
+
+    renderCollection(
+        "contradictionsList",
+        contradictionsData.contradictions || [],
+        (item) => `
+            <article class="data-card-v2">
+                <strong>${escapeHtml(item.pole_a || "")} ↔ ${escapeHtml(item.pole_b || "")}</strong>
+                <div class="meta-line-v2">${escapeHtml(item.type || "-")} · tensao ${escapeHtml(item.tension)}</div>
+                <div class="mono-block-v2">status ${escapeHtml(item.status || "-")} · tentativas ${escapeHtml(item.integration_attempts ?? 0)}</div>
+            </article>
+        `,
+        "Nenhuma contradicao ativa."
+    );
+
+    renderCollection(
+        "narrativeList",
+        narrativeData.chapters || [],
+        (item) => `
+            <article class="data-card-v2">
+                <strong>${escapeHtml(item.name || "capitulo")}</strong>
+                <div class="meta-line-v2">${escapeHtml(item.theme || "-")} · tom ${escapeHtml(item.tone || "-")}</div>
+                <div class="mono-block-v2">${escapeHtml((item.key_scenes || []).join(" | "))}</div>
+            </article>
+        `,
+        "Nenhum capitulo narrativo registrado."
+    );
+
+    renderCollection(
+        "relationalList",
+        relationalData.identities || [],
+        (item) => `
+            <article class="data-card-v2">
+                <strong>${escapeHtml(item.type || "relacao")} · ${escapeHtml(item.target || "-")}</strong>
+                <div class="meta-line-v2">saliencia ${escapeHtml(item.salience)}</div>
+                <div class="mono-block-v2">${escapeHtml(item.content || "")}</div>
+            </article>
+        `,
+        "Nenhuma identidade relacional registrada."
+    );
+}
+
+async function runConsolidation() {
+    await fetch("/admin/agent-identity/consolidate", { method: "POST" });
+    await loadIdentity();
+}
+
+loadIdentity();
+setInterval(loadIdentity, 60000);
+</script>
+{% endblock %}

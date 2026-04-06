@@ -1,0 +1,137 @@
+{% extends "base_v2.html" %}
+
+{% block title %}Loop de Consciencia - JungAgent Admin{% endblock %}
+
+{% block content %}
+<section class="page-shell-v2">
+    <header class="page-header-v2">
+        <div>
+            <p class="page-kicker-v2">Loop · Observabilidade</p>
+            <h1 class="page-title-v2">Loop de Consciencia</h1>
+            <p class="page-subtitle-v2">Estado persistente, eventos recentes e resultados das fases do dia psiquico.</p>
+        </div>
+        <div class="page-actions-v2">
+            <button class="button-v2" onclick="syncLoop()">Sincronizar loop</button>
+            <button class="button-v2 button-v2--ghost" onclick="executeCurrent()">Executar fase atual</button>
+        </div>
+    </header>
+
+    <nav class="subnav-v2">
+        <a href="/admin/consciousness-loop/dashboard" class="subnav-link-v2 is-active">Loop</a>
+        <a href="/admin/world-consciousness/dashboard" class="subnav-link-v2">Lucidez do mundo</a>
+        <a href="/admin/agent-identity/dashboard" class="subnav-link-v2">Identidade nuclear</a>
+        <a href="/admin/work/dashboard" class="subnav-link-v2">Work</a>
+        <a href="/admin/dreams" class="subnav-link-v2">Sonhos</a>
+        <a href="/admin/research" class="subnav-link-v2">Scholar</a>
+        <a href="/admin/memory-metrics" class="subnav-link-v2">Memory metrics</a>
+    </nav>
+
+    <section class="dashboard-grid-v2" id="stateGrid"></section>
+
+    <section class="dashboard-columns-v2">
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Eventos recentes</h2>
+                    <p class="panel-subtitle-v2">Ultimas transicoes e acoes registradas pelo loop.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="scroll-list-v2" id="eventsList"></div>
+            </div>
+        </section>
+
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Resultados de fase</h2>
+                    <p class="panel-subtitle-v2">Resumo operacional das ultimas execucoes.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="scroll-list-v2" id="resultsList"></div>
+            </div>
+        </section>
+    </section>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadDashboard() {
+    const [stateRes, eventsRes, resultsRes] = await Promise.all([
+        fetch("/admin/consciousness-loop/state"),
+        fetch("/admin/consciousness-loop/events"),
+        fetch("/admin/consciousness-loop/results")
+    ]);
+    const stateData = await stateRes.json();
+    const eventsData = await eventsRes.json();
+    const resultsData = await resultsRes.json();
+
+    renderState(stateData.state || {}, stateData.phase_config || []);
+    renderEvents(eventsData.events || []);
+    renderResults(resultsData.results || []);
+}
+
+function renderState(state, config) {
+    const cards = [
+        ["Status", state.status || "-"],
+        ["Ciclo atual", state.cycle_id || "-"],
+        ["Fase atual", state.current_phase_label || state.current_phase || "-"],
+        ["Proxima fase", state.next_phase_label || state.next_phase || "-"],
+        ["Inicio da fase", state.phase_started_at || "-"],
+        ["Deadline", state.phase_deadline_at || "-"],
+        ["Ultima fase concluida", state.last_completed_phase || "-"],
+        ["Fase recomendada pelo relogio", state.recommended_clock_phase || "-"],
+        ["Configuracao do ciclo", (config || []).map((item) => `${item.order_index}. ${item.phase} (${item.default_duration_minutes} min)`).join(" | ") || "-"]
+    ];
+
+    document.getElementById("stateGrid").innerHTML = cards.map(([label, value]) => `
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">${label}</span>
+            <strong class="cell-primary-v2">${value}</strong>
+        </article>
+    `).join("");
+}
+
+function renderEvents(events) {
+    document.getElementById("eventsList").innerHTML = events.length
+        ? events.map((event) => `
+            <article class="data-card-v2">
+                <strong>${event.phase}</strong> · ${event.status}
+                <div class="meta-line-v2">${event.trigger_source || "-"} · ${event.execution_mode || "-"}</div>
+                <div class="mono-block-v2">${event.output_summary || event.input_summary || ""}</div>
+            </article>
+        `).join("")
+        : '<div class="empty-row-v2">Nenhum evento ainda.</div>';
+}
+
+function renderResults(results) {
+    document.getElementById("resultsList").innerHTML = results.length
+        ? results.map((result) => `
+            <article class="data-card-v2">
+                <strong>${result.phase}</strong> · ${result.status}
+                <div class="meta-line-v2">${result.trigger_name || "-"} · ${result.duration_ms || 0} ms</div>
+                <div class="mono-block-v2">${result.output_summary || ""}</div>
+                <div class="mono-block-v2">Warnings: ${result.warnings_json || "[]"}</div>
+                <div class="mono-block-v2">Errors: ${result.errors_json || "[]"}</div>
+                <div class="mono-block-v2">Metrics: ${result.metrics_json || "{}"}</div>
+            </article>
+        `).join("")
+        : '<div class="empty-row-v2">Nenhum resultado ainda.</div>';
+}
+
+async function syncLoop() {
+    await fetch("/admin/consciousness-loop/sync", { method: "POST" });
+    await loadDashboard();
+}
+
+async function executeCurrent() {
+    await fetch("/admin/consciousness-loop/execute-current", { method: "POST" });
+    await loadDashboard();
+}
+
+loadDashboard();
+setInterval(loadDashboard, 30000);
+</script>
+{% endblock %}

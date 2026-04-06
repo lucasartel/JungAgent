@@ -2112,6 +2112,7 @@ async def memory_metrics_dashboard(
         "request": request,
         "unsafe_admin_endpoints_enabled": UNSAFE_ADMIN_ENDPOINTS_ENABLED,
         "initial_data_json": json.dumps(initial_data, ensure_ascii=False),
+        "active_nav": "dashboard",
     })
 
 
@@ -2142,7 +2143,8 @@ async def dreams_dashboard(
     
     return templates.TemplateResponse("dashboards/dreams.html", {
         "request": request,
-        "dreams": dreams
+        "dreams": dreams,
+        "active_nav": "dashboard",
     })
 
 # ============================================================
@@ -2228,6 +2230,7 @@ async def research_dashboard(
         "researches": researches,
         "recent_runs": recent_runs,
         "run_stats": run_stats,
+        "active_nav": "dashboard",
     })
 
 # ============================================================

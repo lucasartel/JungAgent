@@ -1,227 +1,150 @@
-{% extends "base.html" %}
+{% extends "base_v2.html" %}
+
+{% block title %}Scholar - JungAgent Admin{% endblock %}
 
 {% block content %}
-<div class="mb-8">
-    <h1 class="text-3xl font-bold text-white mb-2">Scholar Engine (Pesquisa Autônoma)</h1>
-    <p class="text-gray-400">O Caminho Extrovertido: temas que o agente pesquisou espontaneamente durante a madrugada
-        para sustentar seu próprio referencial teórico.</p>
-</div>
+<section class="page-shell-v2">
+    <header class="page-header-v2">
+        <div>
+            <p class="page-kicker-v2">Loop · Elaboracao conceitual</p>
+            <h1 class="page-title-v2">Scholar Engine</h1>
+            <p class="page-subtitle-v2">Ensaios autonomos, rastros de execucao e material conceitual produzido a partir do sistema vivo.</p>
+        </div>
+    </header>
 
-<!-- Stats / Filters -->
-<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-    <div class="bg-gray-800 rounded-xl border border-gray-700 p-6 flex flex-col justify-center">
-        <h3 class="text-gray-400 text-sm font-medium uppercase tracking-wider mb-1">Total de Ensaios</h3>
-        <p class="text-3xl font-bold text-yellow-400">{{ researches|length }}</p>
-    </div>
-    <div class="bg-gray-800 rounded-xl border border-gray-700 p-6 flex flex-col justify-center">
-        <h3 class="text-gray-400 text-sm font-medium uppercase tracking-wider mb-1">Pesquisas Ativas no Prompt</h3>
-        <p class="text-3xl font-bold text-green-400">{{ researches|selectattr('status', 'equalto', 'active')|list|length
-            }}</p>
-    </div>
-</div>
+    <nav class="subnav-v2">
+        <a href="/admin/consciousness-loop/dashboard" class="subnav-link-v2">Loop</a>
+        <a href="/admin/world-consciousness/dashboard" class="subnav-link-v2">Lucidez do mundo</a>
+        <a href="/admin/agent-identity/dashboard" class="subnav-link-v2">Identidade nuclear</a>
+        <a href="/admin/work/dashboard" class="subnav-link-v2">Work</a>
+        <a href="/admin/dreams" class="subnav-link-v2">Sonhos</a>
+        <a href="/admin/research" class="subnav-link-v2 is-active">Scholar</a>
+        <a href="/admin/memory-metrics" class="subnav-link-v2">Memory metrics</a>
+    </nav>
 
-<div class="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
-    <div class="bg-gray-800 rounded-xl border border-gray-700 p-5">
-        <h3 class="text-gray-400 text-xs font-medium uppercase tracking-wider mb-1">Execuções do Scholar</h3>
-        <p class="text-2xl font-bold text-white">{{ run_stats.total_runs }}</p>
-    </div>
-    <div class="bg-gray-800 rounded-xl border border-gray-700 p-5">
-        <h3 class="text-gray-400 text-xs font-medium uppercase tracking-wider mb-1">Execuções concluídas</h3>
-        <p class="text-2xl font-bold text-green-400">{{ run_stats.completed_runs }}</p>
-    </div>
-    <div class="bg-gray-800 rounded-xl border border-gray-700 p-5">
-        <h3 class="text-gray-400 text-xs font-medium uppercase tracking-wider mb-1">Sem tema útil</h3>
-        <p class="text-2xl font-bold text-yellow-400">{{ run_stats.no_topic_runs }}</p>
-    </div>
-    <div class="bg-gray-800 rounded-xl border border-gray-700 p-5">
-        <h3 class="text-gray-400 text-xs font-medium uppercase tracking-wider mb-1">Tema repetido</h3>
-        <p class="text-2xl font-bold text-sky-400">{{ run_stats.duplicate_runs }}</p>
-    </div>
-    <div class="bg-gray-800 rounded-xl border border-gray-700 p-5">
-        <h3 class="text-gray-400 text-xs font-medium uppercase tracking-wider mb-1">Falhas</h3>
-        <p class="text-2xl font-bold text-red-400">{{ run_stats.failed_runs }}</p>
-    </div>
-</div>
+    <section class="metric-grid-v2 metric-grid-v2--double">
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Total de ensaios</span>
+            <strong class="metric-value-v2">{{ researches|length }}</strong>
+            <p class="metric-note-v2">Biblioteca conceitual persistida no banco.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Pesquisas ativas</span>
+            <strong class="metric-value-v2">{{ researches|selectattr('status', 'equalto', 'active')|list|length }}</strong>
+            <p class="metric-note-v2">Ensaios ainda ativos no prompt e no metabolismo do sistema.</p>
+        </article>
+    </section>
 
-{% if recent_runs %}
-<div class="mb-10">
-    <h2 class="text-xl font-semibold text-white mb-4">Últimas Execuções do Órgão</h2>
-    <div class="space-y-3">
-        {% for run in recent_runs %}
-        <div class="bg-gray-900 rounded-xl border border-gray-800 p-5">
-            <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-3">
-                <div>
-                    <p class="text-sm text-white font-medium">
-                        Execução #{{ run.id }} · {{ run.started_at or 'sem data' }}
-                    </p>
-                    <p class="text-xs text-gray-400">
-                        Trigger: {{ run.trigger_source }}{% if run.topic %} · Tópico: {{ run.topic }}{% endif %}
-                    </p>
-                </div>
-                <span class="px-3 py-1 rounded-full text-xs font-medium border
-                    {% if run.status == 'completed' %}
-                        bg-green-900/30 text-green-400 border-green-700/50
-                    {% elif run.status == 'duplicate_topic' %}
-                        bg-sky-900/30 text-sky-300 border-sky-700/50
-                    {% elif run.status in ['no_topic', 'no_history'] %}
-                        bg-yellow-900/30 text-yellow-300 border-yellow-700/50
-                    {% else %}
-                        bg-red-900/30 text-red-300 border-red-700/50
-                    {% endif %}">
-                    {{ run.status|upper }}
-                </span>
-            </div>
+    <section class="metric-grid-v2 metric-grid-v2--quad">
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Runs</span>
+            <strong class="metric-value-v2">{{ run_stats.total_runs }}</strong>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Concluidas</span>
+            <strong class="metric-value-v2">{{ run_stats.completed_runs }}</strong>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Sem topico</span>
+            <strong class="metric-value-v2">{{ run_stats.no_topic_runs }}</strong>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Tema repetido</span>
+            <strong class="metric-value-v2">{{ run_stats.duplicate_runs }}</strong>
+        </article>
+    </section>
 
-            {% if run.result_summary %}
-            <p class="text-sm text-gray-300 leading-relaxed">{{ run.result_summary }}</p>
-            {% endif %}
-
-            {% if run.error_message %}
-            <p class="text-sm text-red-300 mt-2">{{ run.error_message }}</p>
-            {% endif %}
-
-            <div class="mt-3 text-xs text-gray-500 flex flex-wrap gap-4">
-                <span>Chars do artigo: {{ run.article_chars or 0 }}</span>
-                {% if run.research_id %}
-                <span>Registro criado: #{{ run.research_id }}</span>
-                {% endif %}
-                {% if run.finished_at %}
-                <span>Finalizado: {{ run.finished_at }}</span>
-                {% endif %}
+    {% if recent_runs %}
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Ultimas execucoes do orgao</h2>
+                <p class="panel-subtitle-v2">Diagnostico do que o Scholar tentou formular recentemente.</p>
             </div>
         </div>
-        {% endfor %}
-    </div>
-</div>
-{% endif %}
-
-<!-- Research Gallery -->
-<div class="space-y-6">
-    {% set ns = namespace(found=false) %}
-    {% for research in researches %}
-    {% set ns.found = true %}
-    <div
-        class="bg-gray-900 rounded-xl border shadow-lg overflow-hidden flex flex-col {{ 'border-yellow-500/50 shadow-[0_0_15px_rgba(234,179,8,0.1)]' if research.status == 'active' else 'border-gray-700 opacity-80' }}">
-
-        <!-- Header -->
-        <div
-            class="px-6 py-4 flex justify-between items-center border-b {{ 'border-yellow-500/20 bg-yellow-900/10' if research.status == 'active' else 'border-gray-800 bg-gray-800/50' }}">
-            <div class="flex items-center gap-3">
-                <span class="text-xl">📚</span>
-                <div>
-                    <h3 class="text-white font-medium">Ensaio: {{ research.topic }}</h3>
-                    <p class="text-xs text-gray-500">{{ research.created_at }}</p>
+        <div class="panel-body-v2 stack-v2">
+            {% for run in recent_runs %}
+            <article class="data-card-v2">
+                <div class="table-controls-v2">
+                    <div>
+                        <strong>Execucao #{{ run.id }} · {{ run.started_at or 'sem data' }}</strong>
+                        <div class="meta-line-v2">Trigger: {{ run.trigger_source }}{% if run.topic %} · Topico: {{ run.topic }}{% endif %}</div>
+                    </div>
+                    <span class="table-badge-v2">{{ run.status|upper }}</span>
                 </div>
-            </div>
-
-            <div class="flex items-center gap-4">
-                {% if research.research_lineage or research.selection_mode %}
-                <div class="hidden xl:flex flex-col items-end gap-1">
-                    {% if research.research_lineage %}
-                    <span class="text-[11px] px-2 py-1 rounded-full bg-sky-900/30 text-sky-300 border border-sky-700/40">
-                        Linhagem: {{ research.research_lineage }}
-                    </span>
+                {% if run.result_summary %}
+                <div class="mono-block-v2">{{ run.result_summary }}</div>
+                {% endif %}
+                {% if run.error_message %}
+                <div class="mono-block-v2">{{ run.error_message }}</div>
+                {% endif %}
+                <div class="meta-line-v2">
+                    <span>Chars do artigo: {{ run.article_chars or 0 }}</span>
+                    {% if run.research_id %}
+                    · <span>Registro criado: #{{ run.research_id }}</span>
                     {% endif %}
-                    {% if research.selection_mode %}
-                    <span class="text-[11px] px-2 py-1 rounded-full bg-emerald-900/30 text-emerald-300 border border-emerald-700/40">
-                        Modo: {{ research.selection_mode }}
-                    </span>
+                    {% if run.finished_at %}
+                    · <span>Finalizado: {{ run.finished_at }}</span>
                     {% endif %}
                 </div>
-                {% endif %}
-                <div class="text-right">
-                    <span class="text-xs text-gray-400 block">Identidade Base</span>
-                    <code
-                        class="text-xs bg-gray-800 px-2 py-1 rounded text-yellow-300">{{ research.user_id[:8] }}...</code>
-                </div>
-
-                {% if research.status == 'active' %}
-                <span
-                    class="px-3 py-1 bg-yellow-900/40 text-yellow-400 text-xs font-semibold rounded-full border border-yellow-700/50 flex items-center gap-1.5">
-                    <span class="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-pulse"></span>
-                    ATIVA
-                </span>
-                {% else %}
-                <span
-                    class="px-3 py-1 bg-gray-800 text-gray-400 text-xs font-medium rounded-full border border-gray-700">
-                    {{ research.status|upper }}
-                </span>
-                {% endif %}
-            </div>
+            </article>
+            {% endfor %}
         </div>
-
-        <div class="p-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <!-- Raw Material -->
-            <div class="bg-black/30 rounded-lg p-5 border border-yellow-500/10 flex flex-col">
-                <div class="flex items-center gap-2 mb-3">
-                    <span class="text-yellow-400 text-sm font-semibold tracking-wide uppercase">Material Bruto
-                        Estudado</span>
-                </div>
-                {% if research.trigger_reason %}
-                <div class="mb-4 p-3 rounded-md bg-yellow-900/10 border border-yellow-700/20">
-                    <span class="text-xs text-yellow-300 uppercase tracking-wide block mb-1">Motivo interno da pesquisa</span>
-                    <p class="text-sm text-yellow-100/90 leading-relaxed">{{ research.trigger_reason }}</p>
-                </div>
-                {% endif %}
-                {% if research.research_lineage or research.selection_mode %}
-                <div class="mb-4 flex flex-wrap gap-2">
-                    {% if research.research_lineage %}
-                    <span class="text-xs px-2.5 py-1 rounded-full bg-sky-900/30 text-sky-300 border border-sky-700/40">
-                        Linhagem: {{ research.research_lineage }}
-                    </span>
-                    {% endif %}
-                    {% if research.selection_mode %}
-                    <span class="text-xs px-2.5 py-1 rounded-full bg-emerald-900/30 text-emerald-300 border border-emerald-700/40">
-                        Modo: {{ research.selection_mode }}
-                    </span>
-                    {% endif %}
-                </div>
-                {% endif %}
-                <p class="text-gray-300 text-sm leading-relaxed mb-4 whitespace-pre-line">
-                    {{ research.raw_excerpt }}
-                </p>
-                {% if research.source_url %}
-                <div class="mt-auto pt-3 border-t border-gray-800/60 break-all">
-                    <span class="text-xs text-gray-500 block mb-1">Fonte original:</span>
-                    <a href="{{ research.source_url }}" target="_blank"
-                        class="text-xs text-blue-400 hover:text-blue-300 hover:underline">{{ research.source_url }}</a>
-                </div>
-                {% endif %}
-            </div>
-
-            <!-- Extracted Insight -->
-            <div class="bg-purple-900/10 rounded-lg p-5 border border-purple-500/10 flex flex-col">
-                <div class="flex items-center gap-2 mb-3">
-                    <span class="text-purple-400 text-sm font-semibold tracking-wide uppercase">Síntese Autoral
-                        (JungAgent)</span>
-                </div>
-                <p class="text-gray-200 text-sm leading-relaxed mb-4 italic font-serif">
-                    "{{ research.synthesized_insight }}"
-                </p>
-                {% if research.research_lens %}
-                <div class="mb-4 p-3 rounded-md bg-purple-950/30 border border-purple-700/20">
-                    <span class="text-xs text-purple-300 uppercase tracking-wide block mb-1">Lente teÃ³rica usada</span>
-                    <p class="text-sm text-purple-100/90 leading-relaxed">{{ research.research_lens }}</p>
-                </div>
-                {% endif %}
-                <div class="mt-auto text-xs text-gray-500 bg-black/40 p-3 rounded-md border border-gray-800">
-                    <p class="mb-1"><strong class="text-gray-400">Aplicação Sistêmica:</strong> Esta síntese acadêmica
-                        será injetada inconscientemente na memória de trabalho do LLM quando ele for raciocinar sobre as
-                        dores deste usuário, conferindo peso filosófico às suas respostas.</p>
-                </div>
-            </div>
-        </div>
-    </div>
-    {% endfor %}
-
-    {% if not ns.found %}
-    <div class="text-center py-20 bg-gray-900/50 rounded-xl border border-gray-800">
-        <span class="text-6xl mb-4 block filter grayscale opacity-50">📖</span>
-        <h3 class="text-xl font-medium text-gray-400 mb-2">Biblioteca Vazia</h3>
-        <p class="text-gray-500 text-sm max-w-md mx-auto">O Scholar Engine ainda não realizou nenhuma pesquisa
-            filosófica externa para este usuário. Ele fará isso autonomamente na próxima madrugada caso encontre brechas
-            epistemológicas nas conversas.</p>
-    </div>
+    </section>
     {% endif %}
-</div>
+
+    <section class="stack-v2">
+        {% set ns = namespace(found=false) %}
+        {% for research in researches %}
+        {% set ns.found = true %}
+        <article class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">{{ research.topic }}</h2>
+                    <p class="panel-subtitle-v2">{{ research.created_at }} · {{ research.status|upper }} · {{ research.user_id[:8] }}...</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="dashboard-columns-v2 dashboard-columns-v2--balanced">
+                    <section class="data-card-v2">
+                        <strong>Material bruto estudado</strong>
+                        {% if research.trigger_reason %}
+                        <div class="mono-block-v2">{{ research.trigger_reason }}</div>
+                        {% endif %}
+                        {% if research.research_lineage or research.selection_mode %}
+                        <div class="tag-list-v2">
+                            {% if research.research_lineage %}
+                            <span class="tag-v2">Linhagem: {{ research.research_lineage }}</span>
+                            {% endif %}
+                            {% if research.selection_mode %}
+                            <span class="tag-v2">Modo: {{ research.selection_mode }}</span>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                        <div class="mono-block-v2">{{ research.raw_excerpt }}</div>
+                        {% if research.source_url %}
+                        <div class="meta-line-v2"><a href="{{ research.source_url }}" target="_blank">{{ research.source_url }}</a></div>
+                        {% endif %}
+                    </section>
+                    <section class="data-card-v2">
+                        <strong>Sintese autoral</strong>
+                        <div class="mono-block-v2">{{ research.synthesized_insight }}</div>
+                        {% if research.research_lens %}
+                        <div class="mono-block-v2">{{ research.research_lens }}</div>
+                        {% endif %}
+                    </section>
+                </div>
+            </div>
+        </article>
+        {% endfor %}
+
+        {% if not ns.found %}
+        <div class="empty-state-v2">
+            <div class="empty-state-icon-v2">Sem ensaios</div>
+            <p class="empty-state-title-v2">A biblioteca conceitual ainda esta vazia.</p>
+            <p class="empty-state-copy-v2">Quando o scholar produzir novas teses, elas aparecerao aqui com o mesmo shell do admin leve.</p>
+        </div>
+        {% endif %}
+    </section>
+</section>
 {% endblock %}

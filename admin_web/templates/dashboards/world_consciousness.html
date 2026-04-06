@@ -1,0 +1,176 @@
+{% extends "base_v2.html" %}
+
+{% block title %}Lucidez do Mundo - JungAgent Admin{% endblock %}
+
+{% block content %}
+<section class="page-shell-v2">
+    <header class="page-header-v2">
+        <div>
+            <p class="page-kicker-v2">Loop · Lucidez externa</p>
+            <h1 class="page-title-v2">Consciencia do Mundo</h1>
+            <p class="page-subtitle-v2">Estado atual do zeitgeist, areas dominantes e historico recente de leitura do mundo.</p>
+        </div>
+        <div class="page-actions-v2">
+            <button class="button-v2" onclick="refreshWorld()">Atualizar leitura</button>
+        </div>
+    </header>
+
+    <nav class="subnav-v2">
+        <a href="/admin/consciousness-loop/dashboard" class="subnav-link-v2">Loop</a>
+        <a href="/admin/world-consciousness/dashboard" class="subnav-link-v2 is-active">Lucidez do mundo</a>
+        <a href="/admin/agent-identity/dashboard" class="subnav-link-v2">Identidade nuclear</a>
+        <a href="/admin/work/dashboard" class="subnav-link-v2">Work</a>
+        <a href="/admin/dreams" class="subnav-link-v2">Sonhos</a>
+        <a href="/admin/research" class="subnav-link-v2">Scholar</a>
+        <a href="/admin/memory-metrics" class="subnav-link-v2">Memory metrics</a>
+    </nav>
+
+    <section class="dashboard-grid-v2" id="worldStateGrid"></section>
+
+    <section class="dashboard-columns-v2 dashboard-columns-v2--balanced">
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Tensoes e implicacao humana</h2>
+                    <p class="panel-subtitle-v2">O que o modulo percebe como pano de fundo do presente.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2 stack-v2">
+                <div id="worldNarrative"></div>
+                <div class="tag-list-v2" id="worldTensions"></div>
+                <div class="tag-list-v2" id="worldSeeds"></div>
+            </div>
+        </section>
+
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Areas carregadas</h2>
+                    <p class="panel-subtitle-v2">Leitura resumida por area com sinais, consenso e divergencia.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="scroll-list-v2" id="areaPanels"></div>
+            </div>
+        </section>
+    </section>
+
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Historico recente</h2>
+                <p class="panel-subtitle-v2">Ultimos snapshots para leitura de continuidade.</p>
+            </div>
+        </div>
+        <div class="panel-body-v2">
+            <div class="scroll-list-v2" id="worldHistory"></div>
+        </div>
+    </section>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function renderState(state) {
+    const cards = [
+        ["Lucidez", state.lucidity_level || "-"],
+        ["Confianca geral", state.confidence_overall ?? "-"],
+        ["Atmosfera", state.atmosphere || "-"],
+        ["Continuidade", state.continuity?.summary || state.continuity_note || "-"],
+        ["Tempo local", state.generated_at_local || state.generated_at || "-"],
+        ["Areas em consenso", (state.consensus_map ? Object.keys(state.consensus_map).length : 0)],
+        ["Areas em disputa", (state.divergence_map ? Object.keys(state.divergence_map).length : 0)],
+        ["Areas stale", (state.stale_areas || []).length]
+    ];
+
+    document.getElementById("worldStateGrid").innerHTML = cards.map(([label, value]) => `
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">${escapeHtml(label)}</span>
+            <strong class="cell-primary-v2">${escapeHtml(value)}</strong>
+        </article>
+    `).join("");
+}
+
+function renderNarrative(state) {
+    document.getElementById("worldNarrative").innerHTML = `
+        <article class="data-card-v2">
+            <strong>Implicacao humana do tempo</strong>
+            <div class="mono-block-v2">${escapeHtml(state.human_implication || state.implicacao_humana || state.formatted_admin_summary || state.formatted_prompt_summary || "Sem sintese disponivel.")}</div>
+        </article>
+    `;
+
+    document.getElementById("worldTensions").innerHTML = (state.dominant_tensions || []).length
+        ? (state.dominant_tensions || []).map((item) => `<span class="tag-v2">${escapeHtml(item)}</span>`).join("")
+        : '<span class="tag-v2">Sem tensoes registradas</span>';
+
+    const seeds = [
+        ...(state.work_seeds || []).slice(0, 3).map((item) => `Acao: ${item}`),
+        ...(state.hobby_seeds || []).slice(0, 3).map((item) => `Arte: ${item}`)
+    ];
+    document.getElementById("worldSeeds").innerHTML = seeds.length
+        ? seeds.map((item) => `<span class="tag-v2">${escapeHtml(item)}</span>`).join("")
+        : '<span class="tag-v2">Sem seeds ativas</span>';
+}
+
+function renderAreas(state) {
+    const panels = Object.entries(state.area_panels || {});
+    document.getElementById("areaPanels").innerHTML = panels.length
+        ? panels.map(([key, panel]) => `
+            <article class="data-card-v2">
+                <strong>${escapeHtml(panel.label || key)}</strong>
+                <div class="meta-line-v2">Confianca ${escapeHtml(panel.confidence ?? "-")} · sinais ${escapeHtml(panel.signal_count ?? 0)}</div>
+                <div class="mono-block-v2">${escapeHtml(panel.reading || panel.summary || "Sem leitura sintetica.")}</div>
+                <div class="tag-list-v2">
+                    ${(panel.consensus_signals || []).slice(0, 4).map((item) => `<span class="tag-v2">${escapeHtml(item)}</span>`).join("")}
+                    ${(panel.divergent_signals || []).slice(0, 3).map((item) => `<span class="tag-v2">${escapeHtml(item)}</span>`).join("")}
+                </div>
+            </article>
+        `).join("")
+        : '<div class="empty-row-v2">Nenhuma area carregada ainda.</div>';
+}
+
+function renderHistory(history) {
+    document.getElementById("worldHistory").innerHTML = history.length
+        ? history.map((item) => `
+            <article class="data-card-v2">
+                <strong>${escapeHtml(item.generated_at_local || item.generated_at || "snapshot")}</strong>
+                <div class="meta-line-v2">${escapeHtml(item.lucidity_level || "-")} · confianca ${escapeHtml(item.confidence_overall ?? "-")}</div>
+                <div class="mono-block-v2">${escapeHtml(item.atmosphere || "")}</div>
+                <div class="mono-block-v2">${escapeHtml((item.dominant_tensions || []).join(" | "))}</div>
+            </article>
+        `).join("")
+        : '<div class="empty-row-v2">Sem historico recente.</div>';
+}
+
+async function loadWorld() {
+    const [stateRes, historyRes] = await Promise.all([
+        fetch("/admin/world-consciousness/state"),
+        fetch("/admin/world-consciousness/history")
+    ]);
+    const stateData = await stateRes.json();
+    const historyData = await historyRes.json();
+    const state = stateData.state || {};
+    renderState(state);
+    renderNarrative(state);
+    renderAreas(state);
+    renderHistory(historyData.history || []);
+}
+
+async function refreshWorld() {
+    await fetch("/admin/world-consciousness/refresh", { method: "POST" });
+    await loadWorld();
+}
+
+loadWorld();
+setInterval(loadWorld, 30000);
+</script>
+{% endblock %}

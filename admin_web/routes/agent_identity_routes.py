@@ -9,6 +9,7 @@ Data: 2026-01-12
 
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.templating import Jinja2Templates
 from typing import Dict
 import logging
 import json
@@ -18,6 +19,7 @@ from io import BytesIO
 from admin_web.auth.middleware import require_master
 
 logger = logging.getLogger(__name__)
+templates = Jinja2Templates(directory="admin_web/templates")
 
 router = APIRouter(prefix="/admin/agent-identity", tags=["Agent Identity"])
 _hybrid_db = None
@@ -598,6 +600,14 @@ async def agent_identity_dashboard(
     """
 
     logger.info(f"🎨 Dashboard de identidade acessado por master admin: {admin['email']}")
+
+    return templates.TemplateResponse(
+        "dashboards/agent_identity.html",
+        {
+            "request": request,
+            "active_nav": "dashboard",
+        },
+    )
 
     html_content = """
 <!DOCTYPE html>

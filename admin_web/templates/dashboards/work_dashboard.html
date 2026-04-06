@@ -1,0 +1,154 @@
+{% extends "base_v2.html" %}
+
+{% block title %}Work - JungAgent Admin{% endblock %}
+
+{% block content %}
+<section class="page-shell-v2">
+    <header class="page-header-v2">
+        <div>
+            <p class="page-kicker-v2">Loop · Trabalho e publicacao</p>
+            <h1 class="page-title-v2">Modulo Work</h1>
+            <p class="page-subtitle-v2">Destinos, briefs, tickets e artefatos do fluxo editorial do JungAgent.</p>
+        </div>
+    </header>
+
+    <nav class="subnav-v2">
+        <a href="/admin/consciousness-loop/dashboard" class="subnav-link-v2">Loop</a>
+        <a href="/admin/world-consciousness/dashboard" class="subnav-link-v2">Lucidez do mundo</a>
+        <a href="/admin/agent-identity/dashboard" class="subnav-link-v2">Identidade nuclear</a>
+        <a href="/admin/work/dashboard" class="subnav-link-v2 is-active">Work</a>
+        <a href="/admin/dreams" class="subnav-link-v2">Sonhos</a>
+        <a href="/admin/research" class="subnav-link-v2">Scholar</a>
+        <a href="/admin/memory-metrics" class="subnav-link-v2">Memory metrics</a>
+    </nav>
+
+    <section class="dashboard-grid-v2" id="workStateGrid"></section>
+
+    <section class="dashboard-columns-v2">
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Destinos e briefs</h2>
+                    <p class="panel-subtitle-v2">Para onde o modulo pode publicar e o que esta em preparacao.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="scroll-list-v2" id="briefsList"></div>
+            </div>
+        </section>
+
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Tickets e entregas</h2>
+                    <p class="panel-subtitle-v2">Fila de aprovacao, artefatos e eventos de entrega.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="scroll-list-v2" id="ticketsList"></div>
+            </div>
+        </section>
+    </section>
+
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Ultimas execucoes</h2>
+                <p class="panel-subtitle-v2">Historico do orgao de trabalho para diagnostico rapido.</p>
+            </div>
+        </div>
+        <div class="panel-body-v2">
+            <div class="scroll-list-v2" id="runsList"></div>
+        </div>
+    </section>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function renderWorkState(state) {
+    const cards = [
+        ["Credenciais", state.credentials_configured ? "Configuradas" : "Ausentes"],
+        ["Providers", (state.providers || []).length],
+        ["Destinos", (state.destinations || []).length],
+        ["Briefs", (state.briefs || []).length],
+        ["Tickets", (state.tickets || []).length],
+        ["Runs", (state.runs || []).length],
+        ["Artifacts", (state.artifacts || []).length],
+        ["Deliveries", (state.deliveries || []).length]
+    ];
+
+    document.getElementById("workStateGrid").innerHTML = cards.map(([label, value]) => `
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">${escapeHtml(label)}</span>
+            <strong class="cell-primary-v2">${escapeHtml(value)}</strong>
+        </article>
+    `).join("");
+}
+
+function renderCollection(targetId, items, formatter, emptyText) {
+    document.getElementById(targetId).innerHTML = items.length
+        ? items.map(formatter).join("")
+        : `<div class="empty-row-v2">${escapeHtml(emptyText)}</div>`;
+}
+
+async function loadWork() {
+    const response = await fetch("/admin/work/state");
+    const payload = await response.json();
+    const state = payload.state || {};
+
+    renderWorkState(state);
+
+    renderCollection(
+        "briefsList",
+        [...(state.destinations || []).slice(0, 3), ...(state.briefs || []).slice(0, 6)],
+        (item) => `
+            <article class="data-card-v2">
+                <strong>${escapeHtml(item.label || item.title_hint || item.objective || item.slug || "registro")}</strong>
+                <div class="meta-line-v2">${escapeHtml(item.base_url || item.origin || item.status || "-")}</div>
+                <div class="mono-block-v2">${escapeHtml(item.notes || item.raw_input || item.default_voice_mode || "")}</div>
+            </article>
+        `,
+        "Nenhum destino ou brief registrado."
+    );
+
+    renderCollection(
+        "ticketsList",
+        [...(state.tickets || []).slice(0, 5), ...(state.deliveries || []).slice(0, 5), ...(state.artifacts || []).slice(0, 4)],
+        (item) => `
+            <article class="data-card-v2">
+                <strong>${escapeHtml(item.status || item.delivery_status || item.title || "item")}</strong>
+                <div class="meta-line-v2">${escapeHtml(item.created_at || item.requested_at || item.updated_at || "-")}</div>
+                <div class="mono-block-v2">${escapeHtml(item.note || item.summary || item.external_id || item.url || "")}</div>
+            </article>
+        `,
+        "Nenhum ticket, entrega ou artefato recente."
+    );
+
+    renderCollection(
+        "runsList",
+        (state.runs || []).slice(0, 12),
+        (item) => `
+            <article class="data-card-v2">
+                <strong>${escapeHtml(item.status || "run")}</strong>
+                <div class="meta-line-v2">${escapeHtml(item.started_at || item.created_at || "-")}</div>
+                <div class="mono-block-v2">${escapeHtml(item.output_summary || item.error_message || item.trigger_source || "")}</div>
+            </article>
+        `,
+        "Nenhuma execucao recente."
+    );
+}
+
+loadWork();
+setInterval(loadWork, 30000);
+</script>
+{% endblock %}
