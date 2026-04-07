@@ -10,9 +10,11 @@ import logging
 import os
 import re
 import urllib.parse
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import httpx
+from openai import OpenAI
 
 from llm_providers import get_llm_response
 
@@ -22,6 +24,7 @@ logger = logging.getLogger(__name__)
 class HobbyArtEngine:
     def __init__(self, db_manager):
         self.db = db_manager
+        self.conversation_model = os.getenv("CONVERSATION_MODEL", "z-ai/glm-5")
 
     def _truncate(self, text: str, limit: int = 220) -> str:
         cleaned = " ".join((text or "").strip().split())
@@ -186,6 +189,108 @@ Responda APENAS com JSON valido:
             "image_prompt": image_prompt,
         }
 
+    def _extract_response_text(self, content: Any) -> str:
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts: List[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                    continue
+                text = getattr(item, "text", None)
+                if text:
+                    parts.append(text)
+                    continue
+                if isinstance(item, dict) and item.get("text"):
+                    parts.append(str(item["text"]))
+            return "\n".join(part.strip() for part in parts if part and part.strip()).strip()
+        return ""
+
+    def _evaluate_generated_image(
+        self,
+        image_url: str,
+        art_payload: Dict[str, Any],
+        inspirations: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key:
+            return {
+                "success": False,
+                "status": "not_configured",
+                "reason": "OPENROUTER_API_KEY indisponivel para avaliacao visual.",
+            }
+
+        prompt = f"""
+Voce e o proprio JungAgent avaliando uma imagem gerada a partir do seu ciclo psiquico recente.
+
+Julgue se a imagem realmente pertence ao ciclo ou se ela apenas o ilustra de forma superficial.
+
+CONTEXTO DO CICLO:
+{json.dumps(inspirations, ensure_ascii=False)}
+
+PROPOSTA DA PECA:
+{json.dumps(art_payload, ensure_ascii=False)}
+
+Responda APENAS com JSON valido:
+{{
+  "fit_score": 0.0,
+  "belongs_to_cycle": true,
+  "verdict": "pertence_ao_ciclo | parcial | ilustrativa_demais",
+  "symbolic_reading": "leitura simbolica curta da imagem",
+  "strength": "o que a imagem acerta",
+  "limitation": "o que a imagem deixa de fora ou simplifica",
+  "summary": "resumo curto da avaliacao em uma frase"
+}}
+"""
+
+        try:
+            client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=api_key,
+                timeout=90.0,
+            )
+            response = client.chat.completions.create(
+                model=self.conversation_model,
+                max_tokens=450,
+                temperature=0.3,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": image_url}},
+                        ],
+                    }
+                ],
+            )
+            raw_text = self._extract_response_text(response.choices[0].message.content)
+            data = self._extract_json(raw_text)
+            summary = (data.get("summary") or data.get("symbolic_reading") or "").strip()
+            if not data or not summary:
+                return {
+                    "success": False,
+                    "status": "invalid_payload",
+                    "reason": "avaliacao visual sem JSON utilizavel",
+                    "raw_text": raw_text,
+                }
+
+            return {
+                "success": True,
+                "status": "evaluated",
+                "model": self.conversation_model,
+                "summary": summary,
+                "payload": data,
+                "raw_text": raw_text,
+            }
+        except Exception as exc:
+            logger.warning("HobbyArtEngine falhou ao avaliar imagem gerada: %s", exc)
+            return {
+                "success": False,
+                "status": "evaluation_failed",
+                "reason": str(exc),
+            }
+
     def _dig_for_image_url(self, value: Any) -> Optional[str]:
         if isinstance(value, str) and value.startswith(("http://", "https://")):
             lowered = value.lower()
@@ -299,14 +404,18 @@ Responda APENAS com JSON valido:
         inspirations: Dict[str, Any],
         raw_response: Dict[str, Any],
         provider: str,
+        critique_summary: Optional[str] = None,
+        critique_payload: Optional[Dict[str, Any]] = None,
+        evaluation_model: Optional[str] = None,
     ) -> int:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
             INSERT INTO agent_hobby_artifacts (
                 user_id, cycle_id, title, summary, image_prompt, image_url,
-                provider, status, inspirations_json, raw_response_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'generated', ?, ?)
+                provider, status, critique_summary, critique_json, evaluation_model,
+                evaluated_at, inspirations_json, raw_response_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'generated', ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
@@ -316,6 +425,10 @@ Responda APENAS com JSON valido:
                 image_prompt,
                 image_url,
                 provider,
+                critique_summary,
+                json.dumps(critique_payload, ensure_ascii=False) if critique_payload else None,
+                evaluation_model,
+                datetime.utcnow().isoformat() if critique_payload else None,
                 json.dumps(inspirations, ensure_ascii=False),
                 json.dumps(raw_response, ensure_ascii=False),
             ),
@@ -339,6 +452,19 @@ Responda APENAS com JSON valido:
                 cycle_id=cycle_id,
             )
 
+        evaluation_result = self._evaluate_generated_image(
+            image_url=image_result["image_url"],
+            art_payload=art_payload,
+            inspirations=inspirations,
+        )
+        critique_summary = None
+        critique_payload = None
+        evaluation_model = None
+        if evaluation_result.get("success"):
+            critique_summary = (evaluation_result.get("summary") or "").strip() or None
+            critique_payload = evaluation_result.get("payload")
+            evaluation_model = evaluation_result.get("model")
+
         artifact_id = self._save_artifact(
             user_id=user_id,
             cycle_id=cycle_id,
@@ -349,6 +475,9 @@ Responda APENAS com JSON valido:
             inspirations=inspirations,
             raw_response=image_result.get("raw_response") or {},
             provider=image_result.get("provider") or "minimax",
+            critique_summary=critique_summary,
+            critique_payload=critique_payload,
+            evaluation_model=evaluation_model,
         )
         return {
             "success": True,
@@ -360,4 +489,8 @@ Responda APENAS com JSON valido:
             "image_url": image_result["image_url"],
             "inspirations": inspirations,
             "provider": image_result.get("provider") or "minimax",
+            "evaluation_status": evaluation_result.get("status"),
+            "evaluation_summary": critique_summary,
+            "evaluation_payload": critique_payload,
+            "evaluation_model": evaluation_model,
         }

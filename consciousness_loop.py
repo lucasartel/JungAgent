@@ -555,6 +555,7 @@ class ConsciousnessLoopManager:
 
         title = (hobby_art.get("title") or "Peca do ciclo").strip()
         summary = (hobby_art.get("summary") or "Sintese imagetica do ciclo recente.").strip()
+        evaluation_summary = (hobby_art.get("evaluation_summary") or "").strip()
         caption_lines = [
             "Hobby / Art",
             f"Ciclo: {result.get('cycle_id')}",
@@ -562,6 +563,8 @@ class ConsciousnessLoopManager:
             "",
             summary,
         ]
+        if evaluation_summary:
+            caption_lines.extend(["", f"Leitura: {evaluation_summary}"])
         caption = "\n".join(caption_lines).strip()[:1024]
 
         try:

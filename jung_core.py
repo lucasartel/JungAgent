@@ -1015,6 +1015,10 @@ class HybridDatabaseManager:
                 image_url TEXT,
                 provider TEXT DEFAULT 'minimax',
                 status TEXT DEFAULT 'generated',
+                critique_summary TEXT,
+                critique_json TEXT,
+                evaluation_model TEXT,
+                evaluated_at DATETIME,
                 inspirations_json TEXT,
                 raw_response_json TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1033,6 +1037,26 @@ class HybridDatabaseManager:
             cursor.execute("ALTER TABLE agent_dreams ADD COLUMN image_prompt TEXT;")
         except sqlite3.OperationalError:
             pass # Coluna já existe
+
+        try:
+            cursor.execute("ALTER TABLE agent_hobby_artifacts ADD COLUMN critique_summary TEXT;")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE agent_hobby_artifacts ADD COLUMN critique_json TEXT;")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE agent_hobby_artifacts ADD COLUMN evaluation_model TEXT;")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE agent_hobby_artifacts ADD COLUMN evaluated_at DATETIME;")
+        except sqlite3.OperationalError:
+            pass
 
         # ========== PESQUISA AUTÔNOMA (Caminho Extrovertido) ==========
         cursor.execute("""
