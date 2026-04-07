@@ -8,9 +8,14 @@
     {% block head_extra %}{% endblock %}
 </head>
 <body class="admin-shell-v2">
+    {% set current_admin = request.state.admin if request.state.admin is defined else None %}
+    {% set is_master_admin = current_admin and current_admin.role == 'master' %}
+    {% set is_org_admin = current_admin and current_admin.role == 'org_admin' %}
+    {% set dashboard_href = '/admin/master/dashboard' if is_master_admin else '/admin/org/dashboard' if is_org_admin else '/admin' %}
+    {% set users_href = '/admin/users' if is_master_admin else '/admin/org/users' if is_org_admin else '/admin/users' %}
     <header class="admin-topbar-v2">
         <div class="admin-topbar-inner-v2">
-            <a href="/admin" class="admin-brand-v2" aria-label="JungAgent Admin">
+            <a href="{{ dashboard_href }}" class="admin-brand-v2" aria-label="JungAgent Admin">
                 <img src="/static/jungagentdarkweb.png" alt="JungAgent">
                 <div class="admin-brand-copy-v2">
                     <span class="admin-brand-kicker-v2">JungAgent</span>
@@ -19,21 +24,29 @@
             </a>
 
             <nav class="admin-nav-v2" aria-label="Navegacao principal">
-                <a href="/admin" class="admin-nav-link-v2{% if active_nav|default('dashboard') == 'dashboard' %} is-active{% endif %}">
+                <a href="{{ dashboard_href }}" class="admin-nav-link-v2{% if active_nav|default('dashboard') == 'dashboard' %} is-active{% endif %}">
                     Dashboard
                 </a>
-                <a href="/admin/users" class="admin-nav-link-v2{% if active_nav|default('dashboard') == 'users' %} is-active{% endif %}">
+                <a href="{{ users_href }}" class="admin-nav-link-v2{% if active_nav|default('dashboard') == 'users' %} is-active{% endif %}">
                     Usuarios
                 </a>
+                {% if is_master_admin %}
                 <a href="/admin/organizations" class="admin-nav-link-v2{% if active_nav|default('dashboard') == 'organizations' %} is-active{% endif %}">
                     Organizacoes
                 </a>
                 <a href="/admin/admins" class="admin-nav-link-v2{% if active_nav|default('dashboard') == 'admins' %} is-active{% endif %}">
                     Admins
                 </a>
+                {% endif %}
             </nav>
 
             <div class="admin-topbar-meta-v2">
+                {% if is_master_admin and request.url.path != '/admin/master/dashboard' %}
+                <a href="/admin/master/dashboard" class="admin-meta-link-v2">Voltar ao master</a>
+                {% elif is_org_admin and request.url.path != '/admin/org/dashboard' %}
+                <a href="/admin/org/dashboard" class="admin-meta-link-v2">Voltar ao dashboard</a>
+                {% endif %}
+                <a href="/admin/logout" class="admin-meta-link-v2">Sair</a>
                 {% block topbar_meta %}
                 <span class="admin-status-chip-v2">Admin online</span>
                 {% endblock %}

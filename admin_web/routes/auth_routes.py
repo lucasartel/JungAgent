@@ -29,6 +29,12 @@ router = APIRouter(prefix="/admin", tags=["auth"])
 templates = Jinja2Templates(directory="admin_web/templates")
 
 
+def _is_safe_next_path(next_url: str | None) -> bool:
+    if not next_url:
+        return False
+    return next_url.startswith("/admin") and not next_url.startswith("//")
+
+
 def init_auth_routes(db_manager):
     """
     Inicializa managers para as rotas de auth.
@@ -50,7 +56,7 @@ def init_auth_routes(db_manager):
 
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request, error: str = None, info: str = None):
+async def login_page(request: Request, error: str = None, info: str = None, next: str = None):
     """
     Página de login.
 
@@ -61,7 +67,8 @@ async def login_page(request: Request, error: str = None, info: str = None):
     return templates.TemplateResponse("auth/login.html", {
         "request": request,
         "error": error,
-        "info": info
+        "info": info,
+        "next": next if _is_safe_next_path(next) else None
     })
 
 
@@ -69,7 +76,8 @@ async def login_page(request: Request, error: str = None, info: str = None):
 async def login(
     request: Request,
     email: str = Form(...),
-    password: str = Form(...)
+    password: str = Form(...),
+    next: str = Form(None)
 ):
     """
     Processar login.
@@ -121,7 +129,9 @@ async def login(
         # Redirecionar para dashboard
         # Master vai para /admin/master/dashboard
         # Org Admin vai para /admin/org/users (lista de usuários da org)
-        if admin['role'] == 'master':
+        if _is_safe_next_path(next):
+            redirect_url = next
+        elif admin['role'] == 'master':
             redirect_url = "/admin/master/dashboard"
         else:
             redirect_url = "/admin/org/users"

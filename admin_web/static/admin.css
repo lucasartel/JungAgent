@@ -568,14 +568,15 @@ table {
 }
 
 th {
-    background: #f8f9fa;
+    background: transparent;
     padding: 12px;
     text-align: left;
     font-weight: 600;
-    color: #666;
+    color: #cbd5e1;
     font-size: 0.9em;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.16);
 }
 
 td {
@@ -837,6 +838,8 @@ tr:hover {
 .admin-topbar-meta-v2 {
     display: flex;
     justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
 }
 
 .admin-status-chip-v2 {
@@ -849,6 +852,26 @@ tr:hover {
     color: var(--shell-muted);
     font-size: 0.83rem;
     font-weight: 600;
+}
+
+.admin-meta-link-v2 {
+    display: inline-flex;
+    align-items: center;
+    padding: 9px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--shell-border);
+    background: rgba(15, 23, 42, 0.65);
+    color: var(--shell-muted);
+    text-decoration: none;
+    font-size: 0.83rem;
+    font-weight: 600;
+    transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+
+.admin-meta-link-v2:hover {
+    color: var(--shell-text);
+    border-color: rgba(168, 85, 247, 0.22);
+    background: rgba(168, 85, 247, 0.12);
 }
 
 .admin-main-v2 {

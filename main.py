@@ -1,6 +1,10 @@
 import asyncio
 import uvicorn
+from urllib.parse import urlencode
 from fastapi import Depends, FastAPI, Request
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.responses import RedirectResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
@@ -250,6 +254,38 @@ async def lifespan(app: FastAPI):
 # ============================================================================
 
 app = FastAPI(title="Jung Claude Admin", lifespan=lifespan)
+
+
+def _should_redirect_admin_login(request: Request, exc: StarletteHTTPException) -> bool:
+    if exc.status_code != 401:
+        return False
+    if not request.url.path.startswith("/admin"):
+        return False
+    if request.url.path.startswith("/admin/login"):
+        return False
+    if request.method != "GET":
+        return False
+
+    accept = request.headers.get("accept", "")
+    sec_fetch_mode = request.headers.get("sec-fetch-mode", "")
+    return "text/html" in accept or sec_fetch_mode == "navigate"
+
+
+@app.exception_handler(StarletteHTTPException)
+async def admin_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if _should_redirect_admin_login(request, exc):
+        next_target = request.url.path
+        if request.url.query:
+            next_target = f"{next_target}?{request.url.query}"
+        params = urlencode({
+            "info": "Sua sessao expirou. Faca login novamente.",
+            "next": next_target,
+        })
+        response = RedirectResponse(url=f"/admin/login?{params}", status_code=302)
+        response.delete_cookie("session_id", path="/")
+        return response
+
+    return await http_exception_handler(request, exc)
 
 # ============================================================================
 # ROTAS BÁSICAS

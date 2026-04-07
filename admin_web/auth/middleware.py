@@ -87,6 +87,7 @@ async def get_current_admin(request: Request) -> Optional[Dict]:
             headers={"WWW-Authenticate": "Bearer"}
         )
 
+    request.state.admin = admin
     return admin
 
 

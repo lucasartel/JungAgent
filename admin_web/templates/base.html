@@ -6,49 +6,56 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JungAgent Admin</title>
 
-    <!-- TailwindCSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-
-    <!-- HTMX -->
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-
-    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
-    <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-
-    <!-- Admin Custom Styles -->
     <link rel="stylesheet" href="/static/admin.css">
 </head>
 
 <body class="min-h-screen flex flex-col" style="background: #000000;">
+    {% set current_admin = request.state.admin if request.state.admin is defined else None %}
+    {% set is_master_admin = current_admin and current_admin.role == 'master' %}
+    {% set is_org_admin = current_admin and current_admin.role == 'org_admin' %}
+    {% set dashboard_href = '/admin/master/dashboard' if is_master_admin else '/admin/org/dashboard' if is_org_admin else '/admin' %}
+    {% set users_href = '/admin/users' if is_master_admin else '/admin/org/users' if is_org_admin else '/admin/users' %}
 
-    <!-- Navbar -->
-    <nav style="background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-bottom: 1px solid rgba(139, 92, 246, 0.2);"
-        class="sticky top-0 z-50">
+    <nav style="background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-bottom: 1px solid rgba(139, 92, 246, 0.2);" class="sticky top-0 z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16">
                 <div class="flex">
                     <div class="flex-shrink-0 flex items-center">
-                        <img src="/static/jungagentdarkweb.png" alt="JungAgent" style="height: 40px;">
+                        <a href="{{ dashboard_href }}">
+                            <img src="/static/jungagentdarkweb.png" alt="JungAgent" style="height: 40px;">
+                        </a>
                     </div>
                     <div class="hidden sm:ml-6 sm:flex sm:space-x-8">
-                        <a href="/admin"
+                        <a href="{{ dashboard_href }}"
                             style="border-bottom: 2px solid #8b5cf6; color: #ffffff; padding-top: 1rem; padding-bottom: 1rem; padding-left: 0.5rem; padding-right: 0.5rem; text-decoration: none; font-weight: 500; display: inline-flex; align-items: center;">
                             Dashboard
                         </a>
-                        <a href="/admin/users"
+                        <a href="{{ users_href }}"
                             style="border-bottom: 2px solid transparent; color: #94a3b8; padding-top: 1rem; padding-bottom: 1rem; padding-left: 0.5rem; padding-right: 0.5rem; text-decoration: none; font-weight: 500; display: inline-flex; align-items: center; transition: all 0.3s;"
                             onmouseover="this.style.borderBottomColor='#64748b'; this.style.color='#e2e8f0';"
                             onmouseout="this.style.borderBottomColor='transparent'; this.style.color='#94a3b8';">
-                            Usuários
+                            Usuarios
                         </a>
+                        {% if is_master_admin %}
+                        <a href="/admin/master/dashboard"
+                            style="border-bottom: 2px solid transparent; color: #94a3b8; padding-top: 1rem; padding-bottom: 1rem; padding-left: 0.5rem; padding-right: 0.5rem; text-decoration: none; font-weight: 500; display: inline-flex; align-items: center; transition: all 0.3s;"
+                            onmouseover="this.style.borderBottomColor='#64748b'; this.style.color='#e2e8f0';"
+                            onmouseout="this.style.borderBottomColor='transparent'; this.style.color='#94a3b8';">
+                            Master
+                        </a>
+                        {% endif %}
                     </div>
                 </div>
                 <div class="flex items-center">
+                    <a href="/admin/logout"
+                        style="display: inline-flex; align-items: center; padding: 0.45rem 0.8rem; border-radius: 9999px; border: 1px solid rgba(139, 92, 246, 0.2); color: #cbd5e1; text-decoration: none; margin-right: 0.8rem; font-size: 0.82rem;">
+                        Sair
+                    </a>
                     <div id="sync-status-indicator" hx-get="/admin/api/sync-status" hx-trigger="load, every 30s">
-                        <!-- Status carregado via HTMX -->
                         <span
                             style="display: inline-flex; align-items: center; padding: 0.25rem 0.625rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; background: rgba(139, 92, 246, 0.15); color: #c4b5fd;">
                             Carregando...
@@ -59,12 +66,10 @@
         </div>
     </nav>
 
-    <!-- Main Content -->
     <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {% block content %}{% endblock %}
     </main>
 
-    <!-- Footer -->
     <footer style="background: rgba(15, 23, 42, 0.8); border-top: 1px solid rgba(139, 92, 246, 0.2);" class="mt-auto">
         <div class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
             <p class="text-center text-sm" style="color: #64748b;">
