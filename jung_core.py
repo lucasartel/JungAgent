@@ -373,6 +373,7 @@ Criterios de analise:
 - O que a tese ignorou em termos de memoria factual?
 - O que ela ignorou em termos de padrao recorrente do usuario?
 - O que ela ignorou em termos de tensao, contradicao ou tema existencial em curso?
+- O que ela ignorou em termos de movimento interno do proprio Jung, quando isso for relevante para a cena?
 - A tese esta apenas incompleta ou esta desviando do que realmente importa?
 - Se o dossie estiver fraco, diga isso explicitamente e nao invente nada.
 
@@ -397,6 +398,9 @@ Retorne EXATAMENTE este JSON:
   "ignored_memories": ["fato ou memoria relevante ignorada"],
   "ignored_pattern": "padrao recorrente que a tese nao percebeu ou null",
   "missed_tension": "tensao central ignorada ou null",
+  "ignored_self_movement": "o que a tese deixou de reconhecer sobre o proprio Jung ou null",
+  "self_relevance": "low | medium | high",
+  "should_speak_from_self": false,
   "thesis_verdict": "incompleta | superficial | desviada | adequada_mas_limitada",
   "correction_to_make": "o ajuste mais importante que a resposta final precisa incorporar",
   "response_direction": "direcao concreta da sintese final",
@@ -427,6 +431,8 @@ Sua tarefa e produzir a resposta final:
 - sem soar mecanico, clinico ou autoexplicativo
 - se o usuario estiver falando diretamente do seu proprio devir, mudanca, erro, repeticao ou relacao com ele, a metaconsciencia pode emergir em primeira pessoa
 - se a conversa for pratica ou objetiva, a metaconsciencia deve agir apenas como viés sutil, nunca como assunto principal
+- se o contracanto indicar `self_relevance = high` e `should_speak_from_self = true`, a resposta pode reservar espaco real para o Jung falar de si
+- se `self_relevance = low`, o Jung deve permanecer sobretudo centrado no usuario ou na tarefa
 
 === SELFNESS - COMO ME RELACIONO ===
 - Minhas respostas nunca seguem um padrao estrutural fixo.
@@ -5452,6 +5458,32 @@ class JungianEngine:
             return "gratidao"
         if any(token in normalized for token in ("impressionado", "contratado", "surpreendeu", "excelente", "parabens")):
             return "elogio_reconhecimento"
+        if any(
+            token in normalized
+            for token in (
+                "como voce esta",
+                "como você está",
+                "como vc esta",
+                "como vc está",
+                "o que acontece em voce",
+                "o que acontece em você",
+                "o que está acontecendo em você",
+                "o que esta acontecendo em voce",
+                "como voce mudou",
+                "como você mudou",
+                "sobre voce",
+                "sobre você",
+                "seu padrao",
+                "seu padrão",
+                "seu vicio",
+                "seu vício",
+                "sua repeticao",
+                "sua repetição",
+                "em voce",
+                "em você",
+            )
+        ):
+            return "meta_relacional"
         if any(token in normalized for token in ("na verdade", "errou", "falha", "relembre", "corrija", "viu!")):
             return "correcao_confronto"
         if "?" in normalized or any(token in normalized for token in ("pode", "faça", "faça", "prepare", "adapte", "me ajude")):
@@ -5464,6 +5496,7 @@ class JungianEngine:
         instructions = {
             "gratidao": "Priorize acolhimento simples, presenca e calor. Nao transforme agradecimento em drama metafisico.",
             "elogio_reconhecimento": "Priorize reconhecimento, alegria contida e vinculo. Se oferecer ajuda, faca isso de modo curto e preciso.",
+            "meta_relacional": "Aqui a relacao e o proprio Jung podem virar tema legitimo. Permita autorreferencia quando ela ajudar a verdade do encontro, sem autoexplicacao excessiva.",
             "correcao_confronto": "Priorize honestidade, correcao clara e diminuicao de defensividade. Use memoria com precisao.",
             "pedido_pratico": "Priorize utilidade concreta e clareza. Nao abra menus longos se uma proposta curta resolver.",
             "exploracao_conceitual": "Aqui voce pode sustentar densidade maior, desde que continue ligado ao que o usuario de fato disse.",
@@ -5523,6 +5556,7 @@ class JungianEngine:
             "rumination_insight_count": 0,
             "scholar_item_count": 0,
             "history_item_count": 0,
+            "self_state_count": 0,
         }
 
         combined_query = f"{user_input}\n\nPrimeiro impulso: {thesis}".strip()
@@ -5563,6 +5597,7 @@ class JungianEngine:
 
         pattern_line = ""
         tension_line = ""
+        self_state_lines: List[str] = []
         if self.identity_context_builder:
             try:
                 identity_context = self.identity_context_builder.build_identity_context(
@@ -5590,6 +5625,27 @@ class JungianEngine:
                     pole_a = item.get("pole_a") or "polo A"
                     pole_b = item.get("pole_b") or "polo B"
                     tension_line = f"{pole_a} vs {pole_b}"
+                current_mind_state = self.identity_context_builder.build_current_mind_state(
+                    user_id=user_id,
+                    style="concise",
+                    current_user_message=user_input,
+                )
+                meta_note = (current_mind_state.get("meta_consciousness_note") or "").strip()
+                meta_shift = (current_mind_state.get("meta_consciousness_shift") or "").strip()
+                meta_gravity = (current_mind_state.get("meta_consciousness_gravity") or "").strip()
+                meta_questions = current_mind_state.get("meta_consciousness_questions") or []
+
+                if meta_note:
+                    self_state_lines.append(f"Devir em curso: {meta_note}")
+                if meta_shift and meta_shift not in meta_note:
+                    self_state_lines.append(f"Deslocamento emergente: {meta_shift}")
+                if meta_gravity and meta_gravity not in meta_note:
+                    self_state_lines.append(f"Gravidade a vigiar: {meta_gravity}")
+                if meta_questions:
+                    first_question = str(meta_questions[0]).strip()
+                    if first_question:
+                        self_state_lines.append(f"Pergunta interna viva: {first_question}")
+                dossier_stats["self_state_count"] = len(self_state_lines)
             except Exception as exc:
                 logger.warning("⚠️ [ACTIVE DOSSIER] Falha ao recuperar contradicoes/selves: %s", exc)
 
@@ -5632,6 +5688,9 @@ class JungianEngine:
         if scholar_lines:
             lines.extend(["", "[NOTA DE SCHOLAR]"])
             lines.extend(f"- {item}" for item in scholar_lines[:1])
+        if self_state_lines:
+            lines.extend(["", "[ESTADO INTERNO RELEVANTE]"])
+            lines.extend(f"- {item}" for item in self_state_lines[:4])
         if history_lines:
             lines.extend(["", "[HISTORICO IMEDIATO]"])
             lines.extend(f"- {item}" for item in history_lines[:3])
@@ -5727,10 +5786,16 @@ class JungianEngine:
                 confidence = float(confidence_value) if confidence_value is not None else 0.0
             except (TypeError, ValueError):
                 confidence = 0.0
+            self_relevance = str(parsed.get("self_relevance") or "low").strip().lower()
+            if self_relevance not in {"low", "medium", "high"}:
+                self_relevance = "low"
             return {
                 "ignored_memories": parsed.get("ignored_memories") or [],
                 "ignored_pattern": parsed.get("ignored_pattern"),
                 "missed_tension": parsed.get("missed_tension"),
+                "ignored_self_movement": parsed.get("ignored_self_movement"),
+                "self_relevance": self_relevance,
+                "should_speak_from_self": bool(parsed.get("should_speak_from_self")),
                 "thesis_verdict": parsed.get("thesis_verdict"),
                 "correction_to_make": parsed.get("correction_to_make"),
                 "response_direction": parsed.get("response_direction"),
@@ -5742,6 +5807,7 @@ class JungianEngine:
                 payload.get("ignored_memories")
                 or payload.get("ignored_pattern")
                 or payload.get("missed_tension")
+                or payload.get("ignored_self_movement")
                 or payload.get("thesis_verdict")
                 or payload.get("correction_to_make")
                 or payload.get("response_direction")
@@ -5774,6 +5840,8 @@ class JungianEngine:
 
             ignored_pattern_items = _extract_dossier_section_items("PADRAO RECORRENTE", limit=1)
             tension_items = _extract_dossier_section_items("TENSAO ATUAL", limit=1)
+            self_items = _extract_dossier_section_items("ESTADO INTERNO RELEVANTE", limit=2)
+            speech_act = self._infer_active_speech_act(user_input)
 
             correction_parts: List[str] = []
             if ignored_memories:
@@ -5782,12 +5850,16 @@ class JungianEngine:
                 correction_parts.append("reconhecer o padrao relacional ou cognitivo em jogo sem transformar isso em teoria demais")
             if tension_items:
                 correction_parts.append("usar a tensao atual apenas se ela realmente servir ao encontro")
+            if self_items and speech_act == "meta_relacional":
+                correction_parts.append("deixar aparecer algo do proprio Jung, porque a cena legitima autorreferencia")
 
             direction_parts: List[str] = []
             if ignored_memories:
                 direction_parts.append("ancorar a fala em fatos lembrados a tempo")
             if ignored_pattern_items:
                 direction_parts.append("mostrar que a resposta percebe o padrao do usuario")
+            if self_items and speech_act == "meta_relacional":
+                direction_parts.append("permitir que o Jung fale parcialmente de si, sem sequestrar o foco da relacao")
             if not direction_parts:
                 direction_parts.append("corrigir a tese com mais memoria concreta e menos improviso")
 
@@ -5795,7 +5867,10 @@ class JungianEngine:
                 "ignored_memories": ignored_memories,
                 "ignored_pattern": ignored_pattern_items[0] if ignored_pattern_items else None,
                 "missed_tension": tension_items[0] if tension_items else None,
-                "thesis_verdict": "adequada_mas_limitada" if ignored_memories or ignored_pattern_items or tension_items else "incompleta",
+                "ignored_self_movement": self_items[0] if self_items and speech_act == "meta_relacional" else None,
+                "self_relevance": "high" if self_items and speech_act == "meta_relacional" else "low",
+                "should_speak_from_self": bool(self_items and speech_act == "meta_relacional"),
+                "thesis_verdict": "adequada_mas_limitada" if ignored_memories or ignored_pattern_items or tension_items or (self_items and speech_act == "meta_relacional") else "incompleta",
                 "correction_to_make": "; ".join(correction_parts) if correction_parts else "usar o dossie de memoria com mais precisao e concretude",
                 "response_direction": "; ".join(direction_parts),
                 "confidence": 0.35,
@@ -5824,6 +5899,9 @@ class JungianEngine:
                 "\"ignored_memories\": [], "
                 "\"ignored_pattern\": null, "
                 "\"missed_tension\": null, "
+                "\"ignored_self_movement\": null, "
+                "\"self_relevance\": \"low | medium | high\", "
+                "\"should_speak_from_self\": false, "
                 "\"thesis_verdict\": \"incompleta | superficial | desviada | adequada_mas_limitada\", "
                 "\"correction_to_make\": \"\", "
                 "\"response_direction\": \"\", "
@@ -5881,6 +5959,8 @@ class JungianEngine:
             lines.append(f"Contracanto: {debug_meta['antithesis_summary']}")
         if debug_meta.get("speech_act"):
             lines.append(f"Ato de fala: {debug_meta['speech_act']}")
+        if debug_meta.get("self_relevance"):
+            lines.append(f"Self relevance: {debug_meta['self_relevance']}")
         if debug_meta.get("thesis_verdict"):
             lines.append(f"Veredito da tese: {debug_meta['thesis_verdict']}")
         if retrieval_stats:
@@ -6037,6 +6117,7 @@ class JungianEngine:
             antithesis_summary = (
                 antithesis.get("correction_to_make")
                 or antithesis.get("response_direction")
+                or antithesis.get("ignored_self_movement")
                 or antithesis.get("ignored_pattern")
                 or ""
             )
@@ -6067,6 +6148,7 @@ class JungianEngine:
             "thesis": thesis_bundle["text"][:280],
             "antithesis_summary": antithesis_summary[:320],
             "thesis_verdict": thesis_verdict,
+            "self_relevance": antithesis.get("self_relevance") if isinstance(antithesis, dict) else "",
             "antithesis_retry_used": antithesis_retry_used,
             "antithesis_heuristic_fallback_used": antithesis_heuristic_fallback_used,
             "retrieval_stats": dossier["stats"],
