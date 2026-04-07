@@ -199,6 +199,46 @@ class AgentIdentityContextBuilder:
             "key_scenes": json.loads(row[7]) if row[7] else [],
         }
 
+    def _get_latest_meta_consciousness(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
+        if not user_id:
+            return None
+
+        cursor.execute(
+            """
+            SELECT
+                dominant_form,
+                emergent_shift,
+                dominant_gravity,
+                blind_spot,
+                integration_note,
+                internal_questions_json,
+                cycle_id,
+                status,
+                created_at
+            FROM agent_meta_consciousness
+            WHERE agent_instance = ? AND user_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (self.agent_instance, user_id),
+        )
+
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        return {
+            "dominant_form": row[0],
+            "emergent_shift": row[1],
+            "dominant_gravity": row[2],
+            "blind_spot": row[3],
+            "integration_note": row[4],
+            "internal_questions": json.loads(row[5]) if row[5] else [],
+            "cycle_id": row[6],
+            "status": row[7],
+            "created_at": row[8],
+        }
+
     def _get_possible_selves(self, cursor, limit: int) -> List[Dict]:
         cursor.execute(
             """
@@ -954,6 +994,7 @@ class AgentIdentityContextBuilder:
         agency_events = self._get_recent_agency_events(cursor, 3)
         dream_signal = self._get_latest_dream_residue(cursor, user_id)
         scholar_signal = self._get_latest_scholar_signal(cursor, user_id)
+        meta_consciousness = self._get_latest_meta_consciousness(cursor, user_id)
 
         self_kernel = self._pick_top_beliefs(
             beliefs, current_user_message, limit=2 if style == "concise" else 3
@@ -1023,6 +1064,10 @@ class AgentIdentityContextBuilder:
             ),
             "recent_shift": recent_shift,
             "response_bias": response_bias,
+            "meta_consciousness_note": (meta_consciousness or {}).get("integration_note") or (meta_consciousness or {}).get("dominant_form"),
+            "meta_consciousness_questions": (meta_consciousness or {}).get("internal_questions") or [],
+            "meta_consciousness_gravity": (meta_consciousness or {}).get("dominant_gravity"),
+            "meta_consciousness_shift": (meta_consciousness or {}).get("emergent_shift"),
             "dream_residue": dream_signal,
             "scholar_signal": scholar_signal,
         }
@@ -1291,6 +1336,19 @@ class AgentIdentityContextBuilder:
                     f"- Voce esta especialmente consciente de si no tema '{meta_signal.get('topic')}': "
                     f"{meta_signal.get('assessment')}."
                 )
+            lines.append("")
+
+        meta_consciousness_note = current_state.get("meta_consciousness_note")
+        meta_consciousness_gravity = current_state.get("meta_consciousness_gravity")
+        meta_consciousness_questions = current_state.get("meta_consciousness_questions") or []
+        if meta_consciousness_note or meta_consciousness_gravity or meta_consciousness_questions:
+            lines.append("### Metaconsciousness")
+            if meta_consciousness_note:
+                lines.append(f"- No seu proprio devir agora, voce percebe: {meta_consciousness_note}")
+            if meta_consciousness_gravity:
+                lines.append(f"- Ha uma gravidade que vale vigiar: {meta_consciousness_gravity}")
+            if meta_consciousness_questions:
+                lines.append(f"- Pergunta interna viva: {meta_consciousness_questions[0]}")
             lines.append("")
 
         if current_state.get("dominant_conflict"):

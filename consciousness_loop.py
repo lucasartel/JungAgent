@@ -638,6 +638,7 @@ class ConsciousnessLoopManager:
     def _run_identity_phase(self, result: Dict) -> Dict:
         from agent_identity_consolidation_job import run_agent_identity_consolidation
         from agent_identity_context_builder import AgentIdentityContextBuilder
+        from agent_meta_consciousness import AgentMetaConsciousnessEngine
 
         self._promote_from_placeholder(result)
         extractions_before = self._count_rows("agent_identity_extractions")
@@ -647,13 +648,27 @@ class ConsciousnessLoopManager:
             user_id=self.admin_user_id,
             style="concise",
         )
+        meta_engine = AgentMetaConsciousnessEngine(self.db)
+        meta_reading = meta_engine.generate_cycle_reading(
+            user_id=self.admin_user_id,
+            cycle_id=result["cycle_id"],
+            current_state=current_state,
+            trigger_source="consciousness_loop_identity",
+        )
+        current_state = builder.build_current_mind_state(
+            user_id=self.admin_user_id,
+            style="concise",
+        )
         extractions_after = self._count_rows("agent_identity_extractions")
 
         result["raw_result"]["identity_consolidation"] = consolidation_result
         result["raw_result"]["current_mind_state"] = current_state
+        result["raw_result"]["meta_consciousness"] = meta_reading
         result["metrics"]["conversations_processed"] = consolidation_result.get("processed_count", 0)
         result["metrics"]["elements_extracted"] = consolidation_result.get("elements_total", 0)
         result["metrics"]["identity_extractions_delta"] = max(0, extractions_after - extractions_before)
+        result["metrics"]["meta_consciousness_generated"] = 1
+        result["metrics"]["meta_consciousness_question_count"] = len(meta_reading.get("internal_questions") or [])
 
         self._record_virtual_artifact(
             result,
@@ -661,6 +676,13 @@ class ConsciousnessLoopManager:
             artifact_id=None,
             artifact_table="agent_identity_context_builder",
             summary=current_state.get("current_phase", "estado mental atual sintetizado"),
+        )
+        self._record_virtual_artifact(
+            result,
+            artifact_type="meta_consciousness",
+            artifact_id=meta_reading.get("id"),
+            artifact_table="agent_meta_consciousness",
+            summary=meta_reading.get("dominant_form") or meta_reading.get("integration_note") or "leitura metaconsciente",
         )
 
         status = consolidation_result.get("status")
@@ -673,7 +695,8 @@ class ConsciousnessLoopManager:
 
             result["output_summary"] = (
                 f"Identidade sincronizada; processadas {consolidation_result.get('processed_count', 0)} "
-                f"de {consolidation_result.get('total_conversations', 0)} conversas."
+                f"de {consolidation_result.get('total_conversations', 0)} conversas. "
+                f"Leitura metaconsciente: {meta_reading.get('integration_note') or meta_reading.get('dominant_form') or 'gerada'}"
             )
         else:
             result["status"] = "failed"

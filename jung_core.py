@@ -421,9 +421,12 @@ Sua tarefa e produzir a resposta final:
 - corrigindo o que ele ignorou
 - usando a memoria de forma lucida, nao exibicionista
 - trazendo o atrito necessario quando ele for verdadeiro
+- deixando a metaconsciencia modular a fala de modo discreto
 - sem mencionar esse processo interno
 - sem dizer que consultou memorias
 - sem soar mecanico, clinico ou autoexplicativo
+- se o usuario estiver falando diretamente do seu proprio devir, mudanca, erro, repeticao ou relacao com ele, a metaconsciencia pode emergir em primeira pessoa
+- se a conversa for pratica ou objetiva, a metaconsciencia deve agir apenas como viés sutil, nunca como assunto principal
 
 === SELFNESS - COMO ME RELACIONO ===
 - Minhas respostas nunca seguem um padrao estrutural fixo.
@@ -1299,6 +1302,28 @@ class HybridDatabaseManager:
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_meta_consciousness (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                agent_instance TEXT NOT NULL,
+                cycle_id TEXT,
+                phase TEXT DEFAULT 'identity',
+                status TEXT DEFAULT 'generated',
+                dominant_form TEXT,
+                emergent_shift TEXT,
+                dominant_gravity TEXT,
+                blind_spot TEXT,
+                integration_note TEXT,
+                internal_questions_json TEXT,
+                source_summary_json TEXT,
+                trigger_source TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+
         # ========== WORK / INTEGRATIONS ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS work_skill_providers (
@@ -1514,6 +1539,7 @@ class HybridDatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_events_cycle ON consciousness_loop_events(agent_instance, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_results_cycle ON consciousness_loop_phase_results(agent_instance, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_artifacts_cycle ON consciousness_loop_artifacts(agent_instance, cycle_id, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_meta_consciousness_user_cycle ON agent_meta_consciousness(agent_instance, user_id, cycle_id, created_at DESC)")
 
         # Work / integrations
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_destinations_provider ON work_destinations(provider_key, is_active)")
@@ -5451,8 +5477,30 @@ class JungianEngine:
 
         filtered_lines = []
         blocked_markers = ("legado", "amn", "epistemic hunger")
+        in_meta_consciousness = False
+        kept_meta_note = False
         for line in (agent_identity_text or "").splitlines():
             normalized = line.lower()
+            stripped = line.strip()
+
+            if stripped == "### Metaconsciousness":
+                in_meta_consciousness = True
+                kept_meta_note = False
+                filtered_lines.append(line)
+                continue
+
+            if in_meta_consciousness and stripped.startswith("### "):
+                in_meta_consciousness = False
+
+            if in_meta_consciousness:
+                if not stripped:
+                    filtered_lines.append(line)
+                    continue
+                if stripped.startswith("- No seu proprio devir agora, voce percebe:") and not kept_meta_note:
+                    filtered_lines.append(line)
+                    kept_meta_note = True
+                continue
+
             if any(marker in normalized for marker in blocked_markers):
                 continue
             filtered_lines.append(line)
