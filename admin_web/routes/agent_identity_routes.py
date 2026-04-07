@@ -159,6 +159,101 @@ async def get_current_mind_state(
         }
 
 
+@router.get("/meta-consciousness")
+async def get_meta_consciousness_status(
+    request: Request,
+    admin: Dict = Depends(require_master)
+):
+    """
+    Leitura metaconsciente mais recente do agente.
+
+    Restrito ao master admin.
+    """
+    try:
+        from identity_config import ADMIN_USER_ID, AGENT_INSTANCE
+
+        db = get_hybrid_db()
+        cursor = db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                id,
+                cycle_id,
+                phase,
+                status,
+                dominant_form,
+                emergent_shift,
+                dominant_gravity,
+                blind_spot,
+                integration_note,
+                internal_questions_json,
+                source_summary_json,
+                trigger_source,
+                created_at
+            FROM agent_meta_consciousness
+            WHERE agent_instance = ? AND user_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (AGENT_INSTANCE, ADMIN_USER_ID),
+        )
+        row = cursor.fetchone()
+
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM agent_meta_consciousness
+            WHERE agent_instance = ? AND user_id = ?
+            """,
+            (AGENT_INSTANCE, ADMIN_USER_ID),
+        )
+        total_readings = int(cursor.fetchone()[0])
+
+        if not row:
+            return {
+                "success": True,
+                "meta_consciousness": None,
+                "stats": {
+                    "total_readings": total_readings,
+                    "is_active": False,
+                },
+            }
+
+        meta = {
+            "id": row[0],
+            "cycle_id": row[1],
+            "phase": row[2],
+            "status": row[3],
+            "dominant_form": row[4],
+            "emergent_shift": row[5],
+            "dominant_gravity": row[6],
+            "blind_spot": row[7],
+            "integration_note": row[8],
+            "internal_questions": json.loads(row[9]) if row[9] else [],
+            "source_summary": json.loads(row[10]) if row[10] else {},
+            "trigger_source": row[11],
+            "created_at": row[12],
+        }
+
+        logger.info(f"🪞 Metaconsciência acessada por master admin: {admin['email']}")
+
+        return {
+            "success": True,
+            "meta_consciousness": meta,
+            "stats": {
+                "total_readings": total_readings,
+                "is_active": True,
+            },
+        }
+
+    except Exception as e:
+        logger.error(f"Erro ao obter status da metaconsciência: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
 @router.get("/nuclear")
 async def get_nuclear_beliefs(
     request: Request,

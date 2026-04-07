@@ -44,6 +44,18 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
+                    <h2 class="panel-title-v2">Metaconsciência</h2>
+                    <p class="panel-subtitle-v2">Leitura viva do devir atual do Jung e das perguntas que ficam para o próximo giro.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="scroll-list-v2" id="metaConsciousnessPanel">Carregando...</div>
+            </div>
+        </section>
+
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
                     <h2 class="panel-title-v2">Contexto identitario</h2>
                     <p class="panel-subtitle-v2">Camadas consolidadas do self atual.</p>
                 </div>
@@ -138,9 +150,10 @@ function renderCollection(targetId, items, formatter, emptyText) {
 }
 
 async function loadIdentity() {
-    const [statsRes, stateRes, contextRes, beliefsRes, contradictionsRes, narrativeRes, relationalRes] = await Promise.all([
+    const [statsRes, stateRes, metaRes, contextRes, beliefsRes, contradictionsRes, narrativeRes, relationalRes] = await Promise.all([
         fetch("/admin/agent-identity/stats"),
         fetch("/admin/agent-identity/current-state"),
+        fetch("/admin/agent-identity/meta-consciousness"),
         fetch("/admin/agent-identity/context"),
         fetch("/admin/agent-identity/nuclear"),
         fetch("/admin/agent-identity/contradictions"),
@@ -150,6 +163,7 @@ async function loadIdentity() {
 
     const statsData = await statsRes.json();
     const stateData = await stateRes.json();
+    const metaData = await metaRes.json();
     const contextData = await contextRes.json();
     const beliefsData = await beliefsRes.json();
     const contradictionsData = await contradictionsRes.json();
@@ -159,13 +173,43 @@ async function loadIdentity() {
     renderIdentityStats(statsData.stats || {});
     document.getElementById("currentMindState").textContent = JSON.stringify(stateData.current_state || {}, null, 2);
 
+    const meta = metaData.meta_consciousness || null;
+    document.getElementById("metaConsciousnessPanel").innerHTML = meta ? `
+        <article class="data-card-v2">
+            <strong>Status ${escapeHtml(meta.status || "-")} · ciclo ${escapeHtml(meta.cycle_id || "-")}</strong>
+            <div class="meta-line-v2">fase ${escapeHtml(meta.phase || "-")} · trigger ${escapeHtml(meta.trigger_source || "-")} · ${escapeHtml(meta.created_at || "-")}</div>
+            <div class="mono-block-v2">${escapeHtml(meta.integration_note || meta.dominant_form || "")}</div>
+        </article>
+        <article class="data-card-v2">
+            <strong>Forma dominante</strong>
+            <div class="mono-block-v2">${escapeHtml(meta.dominant_form || "-")}</div>
+        </article>
+        <article class="data-card-v2">
+            <strong>Deslocamento emergente</strong>
+            <div class="mono-block-v2">${escapeHtml(meta.emergent_shift || "-")}</div>
+        </article>
+        <article class="data-card-v2">
+            <strong>Gravidade a vigiar</strong>
+            <div class="mono-block-v2">${escapeHtml(meta.dominant_gravity || "-")}</div>
+        </article>
+        <article class="data-card-v2">
+            <strong>Ponto cego</strong>
+            <div class="mono-block-v2">${escapeHtml(meta.blind_spot || "-")}</div>
+        </article>
+        <article class="data-card-v2">
+            <strong>Perguntas internas</strong>
+            <div class="mono-block-v2">${escapeHtml((meta.internal_questions || []).join(" | ") || "-")}</div>
+        </article>
+    ` : '<div class="empty-row-v2">Nenhuma leitura metaconsciente registrada ainda.</div>';
+
     const context = contextData.context || {};
     const contextTags = [
         ...(context.nuclear_identity ? ["nucleo consolidado"] : []),
         ...(context.contradictions ? [`contradicoes ${context.contradictions.length || 0}`] : []),
         ...(context.possible_selves ? [`selves ${context.possible_selves.length || 0}`] : []),
         ...(context.relational_identity ? [`relacoes ${context.relational_identity.length || 0}`] : []),
-        ...(context.meta_knowledge ? [`meta ${context.meta_knowledge.length || 0}`] : [])
+        ...(context.meta_knowledge ? [`meta ${context.meta_knowledge.length || 0}`] : []),
+        ...(meta ? [`metaconsciencia ${meta.status || "ativa"}`] : [])
     ];
     document.getElementById("identityContextTags").innerHTML = contextTags.length
         ? contextTags.map((item) => `<span class="tag-v2">${escapeHtml(item)}</span>`).join("")
