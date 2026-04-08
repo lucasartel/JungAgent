@@ -38,7 +38,7 @@
         .public-brand-v2 {
             display: inline-flex;
             align-items: center;
-            gap: 14px;
+            gap: 10px;
             color: inherit;
             text-decoration: none;
         }
@@ -48,6 +48,24 @@
             height: 36px;
             object-fit: contain;
             border-radius: 10px;
+        }
+
+        .public-brand-copy-v2 {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 0;
+            color: #f8fafc;
+            font-size: 1.05rem;
+            letter-spacing: -0.02em;
+            line-height: 1;
+        }
+
+        .public-brand-copy-v2 strong {
+            font-weight: 700;
+        }
+
+        .public-brand-copy-v2 span {
+            font-weight: 400;
         }
 
         .public-nav-links-v2 {
@@ -181,6 +199,7 @@
     <nav class="public-nav-v2">
         <a href="/" class="public-brand-v2">
             <img src="/static/jungagentdarkweb.png" alt="JungAgent">
+            <span class="public-brand-copy-v2"><strong>Jung</strong><span>Agent</span></span>
         </a>
         <div class="public-nav-links-v2">
             <a href="#architecture">Architecture</a>
@@ -208,16 +227,15 @@
             <aside class="panel-v2 hero-panel-v2">
                 <div class="panel-header-v2">
                     <div>
-                        <h2 class="panel-title-v2">Live system snapshot</h2>
-                        <p class="panel-subtitle-v2">A small public glimpse of the running architecture.</p>
+                        <h2 class="panel-title-v2">A dialogic premise</h2>
+                        <p class="panel-subtitle-v2">A line that captures why JungAgent treats language as a living field rather than a neutral transport layer.</p>
                     </div>
                 </div>
                 <div class="panel-body-v2 hero-proof-v2">
-                    <div class="proof-row-v2"><span>Users</span><strong>{{ metrics.users }}</strong></div>
-                    <div class="proof-row-v2"><span>Messages processed</span><strong>{{ metrics.messages }}</strong></div>
-                    <div class="proof-row-v2"><span>Rumination fragments</span><strong>{{ metrics.fragments }}</strong></div>
-                    <div class="proof-row-v2"><span>Scholar records</span><strong>{{ metrics.researches }}</strong></div>
-                    <div class="proof-row-v2"><span>Current loop phase</span><strong>{{ metrics.current_phase }}</strong></div>
+                    <div class="mono-block-v2" style="margin-top:0; font-size:0.95rem; line-height:1.8;">
+                        "Language is not a neutral medium that passes freely and easily into the private property of the speaker's intentions; it is populated, overpopulated, with the intentions of others."
+                    </div>
+                    <div class="proof-row-v2"><span>Source</span><strong>Mikhail Bakhtin, <em>The Dialogic Imagination</em></strong></div>
                 </div>
             </aside>
         </section>

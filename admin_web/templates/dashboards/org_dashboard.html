@@ -61,6 +61,25 @@
             margin-right: 30px;
         }
 
+        .brand-text {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 0;
+            color: #f8fafc;
+            font-size: 1.02rem;
+            line-height: 1;
+            letter-spacing: -0.02em;
+            margin-right: 24px;
+        }
+
+        .brand-text strong {
+            font-weight: 700;
+        }
+
+        .brand-text span {
+            font-weight: 400;
+        }
+
         /* Navigation */
         .nav {
             background: rgba(15, 23, 42, 0.95);
@@ -336,6 +355,7 @@
     <div class="nav">
         <div class="nav-content">
             <img src="/static/jungagentdarkweb.png" alt="JungAgent" class="logo">
+            <span class="brand-text"><strong>Jung</strong><span>Agent</span></span>
             <a href="/admin/org/dashboard" class="active">Dashboard</a>
             <a href="/admin/org/users">Usuários Jung</a>
             <form action="/admin/logout" method="POST" style="margin-left: auto;">
