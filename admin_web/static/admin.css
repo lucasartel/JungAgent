@@ -781,7 +781,7 @@ tr:hover {
 .admin-brand-v2 {
     display: inline-flex;
     align-items: center;
-    gap: 14px;
+    gap: 0;
     text-decoration: none;
     color: var(--shell-text);
 }
@@ -791,8 +791,8 @@ tr:hover {
 }
 
 .admin-brand-v2 img {
-    width: 42px;
-    height: 42px;
+    width: 36px;
+    height: 36px;
     object-fit: contain;
 }
 

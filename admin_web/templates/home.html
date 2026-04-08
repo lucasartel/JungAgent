@@ -44,9 +44,10 @@
         }
 
         .public-brand-v2 img {
-            width: 42px;
-            height: 42px;
-            border-radius: 12px;
+            width: 36px;
+            height: 36px;
+            object-fit: contain;
+            border-radius: 10px;
         }
 
         .public-nav-links-v2 {
@@ -180,16 +181,13 @@
     <nav class="public-nav-v2">
         <a href="/" class="public-brand-v2">
             <img src="/static/jungagentdarkweb.png" alt="JungAgent">
-            <div>
-                <div class="page-kicker-v2" style="margin-bottom:4px;">JungAgent</div>
-                <strong>Persistent AI architecture</strong>
-            </div>
         </a>
         <div class="public-nav-links-v2">
             <a href="#architecture">Architecture</a>
             <a href="#modules">Modules</a>
             <a href="#research">Research</a>
-            <a href="/admin/login" class="button-v2 button-v2--ghost">Admin</a>
+            <a href="#open-source">Open source</a>
+            <a href="#contact">Contact</a>
         </div>
     </nav>
 
@@ -203,7 +201,7 @@
                 </p>
                 <div class="hero-actions-v2">
                     <a href="#architecture" class="button-v2">Explore the architecture</a>
-                    <a href="/admin/login" class="button-v2 button-v2--ghost">Enter admin</a>
+                    <a href="#open-source" class="button-v2 button-v2--ghost">Explore the code</a>
                 </div>
             </div>
 
@@ -267,6 +265,20 @@
             </div>
         </section>
 
+        <section id="open-source" class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Open Source Project</h2>
+                    <p class="panel-subtitle-v2">Explore the architecture, dive into the code, and discover how we are emulating the human psyche with Large Language Models. The entire system is open-source.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="hero-actions-v2">
+                    <a href="https://github.com/lucasartel/jungclaude" target="_blank" rel="noopener noreferrer" class="button-v2">View on GitHub</a>
+                </div>
+            </div>
+        </section>
+
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
@@ -288,9 +300,20 @@
             <p class="page-subtitle-v2" style="margin-left:auto;margin-right:auto;">
                 JungAgent is a public-facing experiment in persistent AI architecture: memory, inner loops, symbolic production, conceptual study, and world-situated conversation in one coherent system.
             </p>
-            <div class="hero-actions-v2" style="justify-content:center;">
-                <a href="/admin/login" class="button-v2">Open the admin</a>
-                <a href="#modules" class="button-v2 button-v2--ghost">See the modules</a>
+            <div class="hero-actions-v2" style="justify-content:center;"><a href="#modules" class="button-v2">See the modules</a><a href="#contact" class="button-v2 button-v2--ghost">Talk to the author</a></div>
+        </section>
+
+        <section id="contact" class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Contact the author</h2>
+                    <p class="panel-subtitle-v2">Direct contact for research, collaboration, and project conversations.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2 stack-v2">
+                <div class="proof-row-v2"><span>Author</span><strong>Lucas Pedro</strong></div>
+                <div class="proof-row-v2"><span>Location</span><strong>Brazil</strong></div>
+                <div class="proof-row-v2"><span>Email</span><strong><a href="mailto:contato@lucaspedro.com.br" style="color:#f8fafc; text-decoration:none;">contato@lucaspedro.com.br</a></strong></div>
             </div>
         </section>
     </main>
