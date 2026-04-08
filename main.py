@@ -254,6 +254,7 @@ async def lifespan(app: FastAPI):
 # ============================================================================
 
 app = FastAPI(title="Jung Claude Admin", lifespan=lifespan)
+templates = Jinja2Templates(directory="admin_web/templates")
 
 
 def _should_redirect_admin_login(request: Request, exc: StarletteHTTPException) -> bool:
@@ -292,10 +293,46 @@ async def admin_http_exception_handler(request: Request, exc: StarletteHTTPExcep
 # ============================================================================
 
 @app.get("/")
-async def root():
-    """Rota raiz - redireciona para o admin"""
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/admin")
+async def root(request: Request):
+    """Landing page publica do projeto."""
+    metrics = {
+        "users": 0,
+        "messages": 0,
+        "fragments": 0,
+        "researches": 0,
+        "current_phase": "offline",
+    }
+
+    try:
+        if getattr(bot_state, "db", None) is not None and getattr(bot_state.db, "conn", None) is not None:
+            cursor = bot_state.db.conn.cursor()
+
+            cursor.execute("SELECT COUNT(*) FROM users")
+            metrics["users"] = cursor.fetchone()[0] or 0
+
+            cursor.execute("SELECT COUNT(*) FROM conversations")
+            metrics["messages"] = cursor.fetchone()[0] or 0
+
+            cursor.execute("SELECT COUNT(*) FROM rumination_fragments")
+            metrics["fragments"] = cursor.fetchone()[0] or 0
+
+            cursor.execute("SELECT COUNT(*) FROM external_research")
+            metrics["researches"] = cursor.fetchone()[0] or 0
+
+            cursor.execute("SELECT current_phase FROM consciousness_loop_state WHERE id = 1")
+            row = cursor.fetchone()
+            if row and row[0]:
+                metrics["current_phase"] = row[0]
+    except Exception as exc:
+        logger.warning("⚠️ Erro ao montar métricas da landing: %s", exc)
+
+    return templates.TemplateResponse(
+        "home.html",
+        {
+            "request": request,
+            "metrics": metrics,
+        }
+    )
 
 @app.get("/health")
 async def health_check():

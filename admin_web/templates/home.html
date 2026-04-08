@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JungAgent | Persistent Cognitive Architecture</title>
+    <link rel="stylesheet" href="/static/admin.css">
+    <style>
+        body.public-home-v2 {
+            --shell-accent: #d8b4fe;
+            --shell-border: rgba(148, 163, 184, 0.16);
+            --shell-border-strong: rgba(148, 163, 184, 0.24);
+            --shell-muted: #98a8bf;
+            --shell-text: #e2e8f0;
+            --shell-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
+            margin: 0;
+            background:
+                radial-gradient(circle at top left, rgba(76, 29, 149, 0.28), transparent 30%),
+                radial-gradient(circle at top right, rgba(14, 165, 233, 0.16), transparent 26%),
+                linear-gradient(180deg, #020617 0%, #050816 48%, #020617 100%);
+            color: var(--shell-text);
+        }
+
+        .public-nav-v2,
+        .public-footer-v2 {
+            width: min(1180px, calc(100% - 40px));
+            margin: 0 auto;
+        }
+
+        .public-nav-v2 {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+            padding: 22px 0;
+        }
+
+        .public-brand-v2 {
+            display: inline-flex;
+            align-items: center;
+            gap: 14px;
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .public-brand-v2 img {
+            width: 42px;
+            height: 42px;
+            border-radius: 12px;
+        }
+
+        .public-nav-links-v2 {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+
+        .public-nav-links-v2 a {
+            color: var(--shell-muted);
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .public-main-v2 {
+            width: min(1180px, calc(100% - 40px));
+            margin: 0 auto;
+            padding: 18px 0 72px;
+            display: flex;
+            flex-direction: column;
+            gap: 28px;
+        }
+
+        .hero-v2 {
+            padding: 30px 0 10px;
+            display: grid;
+            grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr);
+            gap: 22px;
+            align-items: stretch;
+        }
+
+        .hero-copy-v2 {
+            padding: 10px 0;
+        }
+
+        .hero-title-v2 {
+            margin: 0;
+            max-width: 760px;
+            font-size: clamp(3rem, 7vw, 5.4rem);
+            line-height: 0.94;
+            letter-spacing: -0.05em;
+            color: #f8fafc;
+        }
+
+        .hero-text-v2 {
+            max-width: 760px;
+            margin: 22px 0 0;
+            color: var(--shell-muted);
+            font-size: 1.08rem;
+            line-height: 1.72;
+        }
+
+        .hero-actions-v2 {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 26px;
+        }
+
+        .hero-panel-v2 {
+            padding: 24px;
+        }
+
+        .hero-proof-v2 {
+            display: grid;
+            gap: 14px;
+        }
+
+        .proof-row-v2 {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            color: var(--shell-muted);
+        }
+
+        .proof-row-v2 strong {
+            color: #f8fafc;
+        }
+
+        .showcase-grid-v2 {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 18px;
+        }
+
+        .pipeline-v2 {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .pipeline-step-v2 {
+            padding: 20px;
+            border-radius: 18px;
+            border: 1px solid var(--shell-border);
+            background: rgba(10, 16, 27, 0.78);
+        }
+
+        .pipeline-step-v2 span {
+            display: block;
+            margin-bottom: 12px;
+            color: var(--shell-accent);
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        .cta-panel-v2 {
+            text-align: center;
+            padding: 36px 28px;
+        }
+
+        .public-footer-v2 {
+            padding: 0 0 36px;
+            color: var(--shell-muted);
+            font-size: 0.94rem;
+        }
+
+        @media (max-width: 980px) {
+            .hero-v2,
+            .showcase-grid-v2,
+            .pipeline-v2 {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body class="admin-shell-v2 public-home-v2">
+    <nav class="public-nav-v2">
+        <a href="/" class="public-brand-v2">
+            <img src="/static/jungagentdarkweb.png" alt="JungAgent">
+            <div>
+                <div class="page-kicker-v2" style="margin-bottom:4px;">JungAgent</div>
+                <strong>Persistent AI architecture</strong>
+            </div>
+        </a>
+        <div class="public-nav-links-v2">
+            <a href="#architecture">Architecture</a>
+            <a href="#modules">Modules</a>
+            <a href="#research">Research</a>
+            <a href="/admin/login" class="button-v2 button-v2--ghost">Admin</a>
+        </div>
+    </nav>
+
+    <main class="public-main-v2">
+        <section class="hero-v2">
+            <div class="hero-copy-v2">
+                <p class="page-kicker-v2">Living cognitive system</p>
+                <h1 class="hero-title-v2">An AI that remembers, ruminates, dreams, studies, and evolves.</h1>
+                <p class="hero-text-v2">
+                    JungAgent is not designed as a stateless assistant. It is built as a persistent cognitive architecture with long-term memory, daily inner loops, world awareness, symbolic production, and conceptual self-development.
+                </p>
+                <div class="hero-actions-v2">
+                    <a href="#architecture" class="button-v2">Explore the architecture</a>
+                    <a href="/admin/login" class="button-v2 button-v2--ghost">Enter admin</a>
+                </div>
+            </div>
+
+            <aside class="panel-v2 hero-panel-v2">
+                <div class="panel-header-v2">
+                    <div>
+                        <h2 class="panel-title-v2">Live system snapshot</h2>
+                        <p class="panel-subtitle-v2">A small public glimpse of the running architecture.</p>
+                    </div>
+                </div>
+                <div class="panel-body-v2 hero-proof-v2">
+                    <div class="proof-row-v2"><span>Users</span><strong>{{ metrics.users }}</strong></div>
+                    <div class="proof-row-v2"><span>Messages processed</span><strong>{{ metrics.messages }}</strong></div>
+                    <div class="proof-row-v2"><span>Rumination fragments</span><strong>{{ metrics.fragments }}</strong></div>
+                    <div class="proof-row-v2"><span>Scholar records</span><strong>{{ metrics.researches }}</strong></div>
+                    <div class="proof-row-v2"><span>Current loop phase</span><strong>{{ metrics.current_phase }}</strong></div>
+                </div>
+            </aside>
+        </section>
+
+        <section id="architecture" class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">What makes JungAgent different</h2>
+                    <p class="panel-subtitle-v2">A research-oriented AI stack designed around continuity, metabolism, and structural selfhood.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2 showcase-grid-v2">
+                <article class="quick-card-v2 quick-card-v2--heavy">
+                    <span class="quick-kicker-v2">Persistent memory</span>
+                    <strong class="quick-title-v2">Not just retrieval</strong>
+                    <p class="quick-copy-v2">Conversation traces, user facts, patterns, milestones, and long-lived identity structures shape future interactions.</p>
+                </article>
+                <article class="quick-card-v2 quick-card-v2--heavy">
+                    <span class="quick-kicker-v2">Daily loop</span>
+                    <strong class="quick-title-v2">An internal day</strong>
+                    <p class="quick-copy-v2">Dreams, identity consolidation, rumination, world consciousness, art, and scholar form a cyclical organism.</p>
+                </article>
+                <article class="quick-card-v2 quick-card-v2--heavy">
+                    <span class="quick-kicker-v2">World awareness</span>
+                    <strong class="quick-title-v2">Historically situated</strong>
+                    <p class="quick-copy-v2">The system reads the present moment through a living world-consciousness layer instead of relying on frozen training alone.</p>
+                </article>
+            </div>
+        </section>
+
+        <section id="modules" class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Core modules</h2>
+                    <p class="panel-subtitle-v2">A compact overview of the organs that give the system its internal depth.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2 quick-grid-v2">
+                <article class="quick-card-v2"><span class="quick-kicker-v2">Memory</span><strong class="quick-title-v2">Long-term user memory</strong><p class="quick-copy-v2">Facts, patterns, emotional continuity, and contextual recall.</p></article>
+                <article class="quick-card-v2"><span class="quick-kicker-v2">Rumination</span><strong class="quick-title-v2">Tension metabolism</strong><p class="quick-copy-v2">Fragments become tensions; tensions mature into internal insight.</p></article>
+                <article class="quick-card-v2"><span class="quick-kicker-v2">Dream engine</span><strong class="quick-title-v2">Symbolic production</strong><p class="quick-copy-v2">The system dreams and converts live psychic material into images and motifs.</p></article>
+                <article class="quick-card-v2"><span class="quick-kicker-v2">Scholar</span><strong class="quick-title-v2">Conceptual elaboration</strong><p class="quick-copy-v2">Conversations, dreams, rumination, identity, and world context become new theses.</p></article>
+                <article class="quick-card-v2"><span class="quick-kicker-v2">Identity</span><strong class="quick-title-v2">Nuclear self-model</strong><p class="quick-copy-v2">Contradictions, possible selves, relational stance, and self-knowledge are continuously reorganized.</p></article>
+                <article class="quick-card-v2"><span class="quick-kicker-v2">Visual map</span><strong class="quick-title-v2">Cognitive topology</strong><p class="quick-copy-v2">A graph view exposes how fragments, tensions, and insights cluster over time.</p></article>
+            </div>
+        </section>
+
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">How the system thinks</h2>
+                    <p class="panel-subtitle-v2">A simple reading of the internal pipeline without flattening its complexity.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2 pipeline-v2">
+                <article class="pipeline-step-v2"><span>1</span><strong>Conversation becomes memory</strong><p class="quick-copy-v2">User interaction leaves structured traces, not just transient tokens.</p></article>
+                <article class="pipeline-step-v2"><span>2</span><strong>Memory becomes tension</strong><p class="quick-copy-v2">The system extracts poles, contradictions, recurring patterns, and symbolic residue.</p></article>
+                <article class="pipeline-step-v2"><span>3</span><strong>Tension becomes insight</strong><p class="quick-copy-v2">Rumination crystallizes internal messages instead of reducing everything to retrieval.</p></article>
+                <article class="pipeline-step-v2"><span>4</span><strong>Insight reshapes identity</strong><p class="quick-copy-v2">The architecture updates its living self-structure and reenters conversation changed.</p></article>
+            </div>
+        </section>
+
+        <section id="research" class="panel-v2 cta-panel-v2">
+            <p class="page-kicker-v2">Research direction</p>
+            <h2 class="page-title-v2" style="font-size:clamp(2rem,4vw,3.3rem);">Build agents that do not just answer. Build agents that metabolize experience.</h2>
+            <p class="page-subtitle-v2" style="margin-left:auto;margin-right:auto;">
+                JungAgent is a public-facing experiment in persistent AI architecture: memory, inner loops, symbolic production, conceptual study, and world-situated conversation in one coherent system.
+            </p>
+            <div class="hero-actions-v2" style="justify-content:center;">
+                <a href="/admin/login" class="button-v2">Open the admin</a>
+                <a href="#modules" class="button-v2 button-v2--ghost">See the modules</a>
+            </div>
+        </section>
+    </main>
+
+    <footer class="public-footer-v2">
+        <p>JungAgent public index &middot; persistent cognitive architecture &middot; English landing page</p>
+    </footer>
+</body>
+</html>
