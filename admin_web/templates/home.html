@@ -71,7 +71,7 @@
         .public-nav-links-v2 {
             display: flex;
             align-items: center;
-            gap: 14px;
+            gap: 22px;
             flex-wrap: wrap;
         }
 
@@ -79,6 +79,32 @@
             color: var(--shell-muted);
             text-decoration: none;
             font-weight: 600;
+        }
+
+        .public-nav-toggle-v2 {
+            display: none;
+            width: 44px;
+            height: 44px;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            border: 1px solid var(--shell-border);
+            background: rgba(15, 23, 42, 0.72);
+            color: #f8fafc;
+            cursor: pointer;
+        }
+
+        .public-nav-toggle-lines-v2 {
+            display: grid;
+            gap: 4px;
+        }
+
+        .public-nav-toggle-lines-v2 span {
+            display: block;
+            width: 18px;
+            height: 2px;
+            border-radius: 999px;
+            background: currentColor;
         }
 
         .public-main-v2 {
@@ -133,6 +159,30 @@
         .hero-proof-v2 {
             display: grid;
             gap: 14px;
+        }
+
+        .hero-quote-v2 {
+            margin: 0;
+            padding: 0;
+            background: transparent;
+            color: #f8fafc;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 1.02rem;
+            line-height: 1.95;
+            font-family: Consolas, "SFMono-Regular", monospace;
+        }
+
+        .hero-attribution-v2 {
+            color: #f8fafc;
+            font-size: 1.02rem;
+            line-height: 1.5;
+            font-weight: 700;
+        }
+
+        .hero-attribution-v2 em {
+            font-style: italic;
+            font-weight: 700;
         }
 
         .proof-row-v2 {
@@ -192,6 +242,47 @@
             .pipeline-v2 {
                 grid-template-columns: 1fr;
             }
+
+            .public-nav-v2 {
+                position: relative;
+                align-items: center;
+                gap: 14px;
+            }
+
+            .public-nav-toggle-v2 {
+                display: inline-flex;
+            }
+
+            .public-nav-links-v2 {
+                position: absolute;
+                top: calc(100% + 10px);
+                right: 0;
+                min-width: 220px;
+                display: none;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 0;
+                padding: 10px;
+                border: 1px solid var(--shell-border);
+                border-radius: 18px;
+                background: rgba(8, 15, 30, 0.96);
+                box-shadow: var(--shell-shadow);
+            }
+
+            .public-nav-links-v2.is-open {
+                display: flex;
+            }
+
+            .public-nav-links-v2 a {
+                display: block;
+                padding: 12px 14px;
+                border-radius: 12px;
+            }
+
+            .public-nav-links-v2 a:hover {
+                background: rgba(148, 163, 184, 0.08);
+                transform: none;
+            }
         }
     </style>
 </head>
@@ -201,7 +292,10 @@
             <img src="/static/jungagentdarkweb.png" alt="JungAgent">
             <span class="public-brand-copy-v2"><strong>Jung</strong><span>Agent</span></span>
         </a>
-        <div class="public-nav-links-v2">
+        <button class="public-nav-toggle-v2" id="public-nav-toggle" aria-label="Open navigation" aria-expanded="false" aria-controls="public-nav-links">
+            <span class="public-nav-toggle-lines-v2"><span></span><span></span><span></span></span>
+        </button>
+        <div class="public-nav-links-v2" id="public-nav-links">
             <a href="#architecture">Architecture</a>
             <a href="#modules">Modules</a>
             <a href="#research">Research</a>
@@ -225,17 +319,11 @@
             </div>
 
             <aside class="panel-v2 hero-panel-v2">
-                <div class="panel-header-v2">
-                    <div>
-                        <h2 class="panel-title-v2">A dialogic premise</h2>
-                        <p class="panel-subtitle-v2">A line that captures why JungAgent treats language as a living field rather than a neutral transport layer.</p>
-                    </div>
-                </div>
                 <div class="panel-body-v2 hero-proof-v2">
-                    <div class="mono-block-v2" style="margin-top:0; font-size:0.95rem; line-height:1.8;">
+                    <div class="hero-quote-v2">
                         "Language is not a neutral medium that passes freely and easily into the private property of the speaker's intentions; it is populated, overpopulated, with the intentions of others."
                     </div>
-                    <div class="proof-row-v2"><span>Source</span><strong>Mikhail Bakhtin, <em>The Dialogic Imagination</em></strong></div>
+                    <div class="hero-attribution-v2">Mikhail Bakhtin, <em>The Dialogic Imagination</em></div>
                 </div>
             </aside>
         </section>
@@ -339,5 +427,31 @@
     <footer class="public-footer-v2">
         <p>JungAgent public index &middot; persistent cognitive architecture &middot; English landing page</p>
     </footer>
+
+    <script>
+        const navToggle = document.getElementById("public-nav-toggle");
+        const navLinks = document.getElementById("public-nav-links");
+
+        if (navToggle && navLinks) {
+            navToggle.addEventListener("click", () => {
+                const isOpen = navLinks.classList.toggle("is-open");
+                navToggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+            });
+
+            navLinks.querySelectorAll("a").forEach((link) => {
+                link.addEventListener("click", () => {
+                    navLinks.classList.remove("is-open");
+                    navToggle.setAttribute("aria-expanded", "false");
+                });
+            });
+
+            window.addEventListener("resize", () => {
+                if (window.innerWidth > 980) {
+                    navLinks.classList.remove("is-open");
+                    navToggle.setAttribute("aria-expanded", "false");
+                }
+            });
+        }
+    </script>
 </body>
 </html>
