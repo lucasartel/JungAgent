@@ -116,26 +116,18 @@ class AgentMetaConsciousnessEngine:
         ]
 
     def _latest_will(self, user_id: str) -> Optional[Dict[str, str]]:
-        cursor = self.db.conn.cursor()
-        cursor.execute(
-            """
-            SELECT dominant_will, constrained_will, will_conflict, daily_text, created_at
-            FROM agent_will_states
-            WHERE user_id = ?
-            ORDER BY created_at DESC, id DESC
-            LIMIT 1
-            """,
-            (user_id,),
-        )
-        row = cursor.fetchone()
-        if not row:
+        from will_engine import load_latest_will_state
+
+        state = load_latest_will_state(self.db, user_id=user_id)
+        if not state:
             return None
         return {
-            "dominant_will": row["dominant_will"],
-            "constrained_will": row["constrained_will"],
-            "will_conflict": self._truncate(row["will_conflict"], 220),
-            "daily_text": self._truncate(row["daily_text"], 220),
-            "created_at": row["created_at"],
+            "dominant_will": state.get("dominant_will"),
+            "constrained_will": state.get("constrained_will"),
+            "will_conflict": self._truncate(state.get("will_conflict"), 220),
+            "daily_text": self._truncate(state.get("daily_text"), 220),
+            "message_signal_summary": self._truncate(state.get("message_signal_summary"), 220),
+            "created_at": state.get("created_at"),
         }
 
     def _build_source_payload(self, user_id: str, cycle_id: str, current_state: Dict[str, Any]) -> Dict[str, Any]:

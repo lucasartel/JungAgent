@@ -927,6 +927,8 @@ class AgentIdentityContextBuilder:
         if not user_id:
             return None
 
+        from will_engine import _aggregate_message_signals, _blend_state_with_message_signals
+
         cursor.execute(
             """
             SELECT
@@ -954,9 +956,9 @@ class AgentIdentityContextBuilder:
         )
         row = cursor.fetchone()
         if not row:
-            return None
-
-        return {
+            base_state = None
+        else:
+            base_state = {
             "id": row[0],
             "cycle_id": row[1],
             "phase": row[2],
@@ -973,6 +975,8 @@ class AgentIdentityContextBuilder:
             "source_summary": json.loads(row[13]) if row[13] else {},
             "created_at": row[14],
         }
+        message_summary = _aggregate_message_signals(cursor, user_id=user_id, cycle_id=base_state.get("cycle_id") if base_state else None, limit=10)
+        return _blend_state_with_message_signals(base_state, message_summary)
 
     def build_current_mind_state(
         self,
@@ -1061,6 +1065,8 @@ class AgentIdentityContextBuilder:
                 additions.append("vigie a tendencia de soar inspirado antes de ser claro")
             elif constrained == "expressar":
                 additions.append("vigie a tendencia de explicar demais sem dar forma suficiente")
+            if will_signal.get("message_signal_count"):
+                additions.append("deixe a inclinacao recente das conversas ajustar o foco sem abandonar a direcao mais profunda do ciclo")
             if additions:
                 response_bias = ((response_bias or "").rstrip(".") + "; " if response_bias else "") + "; ".join(additions[:2]) + "."
 
@@ -1113,6 +1119,8 @@ class AgentIdentityContextBuilder:
             "secondary_will": will_signal.get("secondary_will") if will_signal else None,
             "constrained_will": will_signal.get("constrained_will") if will_signal else None,
             "will_conflict": will_signal.get("will_conflict") if will_signal else None,
+            "conversation_micro_shift": will_signal.get("conversation_micro_shift") if will_signal else None,
+            "message_signal_summary": will_signal.get("message_signal_summary") if will_signal else None,
         }
 
     def build_context_summary_for_llm(
@@ -1451,6 +1459,8 @@ class AgentIdentityContextBuilder:
                 f"- Seu fechamento diario mais recente consolidou saber={will_signal.get('saber_score', 0):.2f}, "
                 f"relacionar={will_signal.get('relacionar_score', 0):.2f} e expressar={will_signal.get('expressar_score', 0):.2f}."
             )
+            if will_signal.get("message_signal_summary"):
+                lines.append(f"- As conversas mais recentes inclinaram o foco assim: {will_signal['message_signal_summary']}")
             lines.append("")
 
         return "\n".join(lines)

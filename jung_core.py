@@ -1156,6 +1156,25 @@ class HybridDatabaseManager:
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_will_message_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                conversation_id INTEGER,
+                cycle_id TEXT NOT NULL,
+                phase TEXT DEFAULT 'conversation',
+                source TEXT DEFAULT 'conversation',
+                saber_delta REAL DEFAULT 0.34,
+                relacionar_delta REAL DEFAULT 0.33,
+                expressar_delta REAL DEFAULT 0.33,
+                dominant_signal TEXT,
+                signal_summary TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+            )
+        """)
+
         # ========== ANÁLISES PSICOMÉTRICAS (RH) ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_psychometrics (
@@ -1571,6 +1590,7 @@ class HybridDatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_artifacts_cycle ON consciousness_loop_artifacts(agent_instance, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_meta_consciousness_user_cycle ON agent_meta_consciousness(agent_instance, user_id, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_will_states_user_cycle ON agent_will_states(user_id, cycle_id, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_will_message_signals_cycle ON agent_will_message_signals(user_id, cycle_id, created_at DESC)")
 
         # Work / integrations
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_destinations_provider ON work_destinations(provider_key, is_active)")
@@ -5016,6 +5036,12 @@ class JungianEngine:
             platform=platform,
             chat_history=chat_history
         )
+        self._persist_conversation_will_signal(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_input=message,
+            ai_response=clean_response,
+        )
 
         logger.info("✅ Processamento completo (ID=%s)", conversation_id)
         logger.info("%s\n", "=" * 60)
@@ -5150,6 +5176,12 @@ class JungianEngine:
             platform=platform,
             chat_history=chat_history
         )
+        self._persist_conversation_will_signal(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_input=message,
+            ai_response=clean_response,
+        )
 
         logger.info(f"✅ Processamento completo (ID={conversation_id})")
         logger.info(f"{'='*60}\n")
@@ -5181,6 +5213,21 @@ class JungianEngine:
 
     def _active_consciousness_enabled_for_user(self, user_id: str) -> bool:
         return bool(Config.ACTIVE_CONSCIOUSNESS_ENABLED and str(user_id) == self._get_admin_user_id())
+
+    def _persist_conversation_will_signal(self, user_id: str, conversation_id: int, user_input: str, ai_response: str) -> None:
+        try:
+            from will_engine import WillEngine
+
+            will_engine = WillEngine(self.db)
+            will_engine.record_message_signal(
+                user_id=str(user_id),
+                conversation_id=conversation_id,
+                user_input=user_input,
+                ai_response=ai_response,
+                source="conversation",
+            )
+        except Exception as exc:
+            logger.warning("⚠️ [WILL] Falha ao persistir micro-sinal da conversa: %s", exc)
 
     def _count_context_items(self, text: str) -> int:
         if not text:

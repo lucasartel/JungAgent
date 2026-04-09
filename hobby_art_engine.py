@@ -112,19 +112,9 @@ class HobbyArtEngine:
         return [dict(row) for row in cursor.fetchall()]
 
     def _latest_will(self, user_id: str) -> Optional[Dict[str, Any]]:
-        cursor = self.db.conn.cursor()
-        cursor.execute(
-            """
-            SELECT id, dominant_will, secondary_will, constrained_will, will_conflict, daily_text
-            FROM agent_will_states
-            WHERE user_id = ?
-            ORDER BY created_at DESC, id DESC
-            LIMIT 1
-            """,
-            (user_id,),
-        )
-        row = cursor.fetchone()
-        return dict(row) if row else None
+        from will_engine import load_latest_will_state
+
+        return load_latest_will_state(self.db, user_id=user_id)
 
     def _build_inspirations(self, user_id: str, cycle_id: str, world_state: Dict[str, Any]) -> Dict[str, Any]:
         dream = self._latest_dream(user_id)

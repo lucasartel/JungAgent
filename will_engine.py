@@ -48,6 +48,168 @@ WILL_SIGNAL_KEYWORDS = {
 }
 
 
+def _keyword_score_generic(text: str) -> Dict[str, float]:
+    normalized = (text or "").lower()
+    scores = {key: 0.0 for key in WILL_ORDER}
+    for will, keywords in WILL_SIGNAL_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in normalized:
+                scores[will] += 1.0
+    return scores
+
+
+def _normalize_scores_generic(scores: Dict[str, float]) -> Dict[str, float]:
+    cleaned = {key: max(float(scores.get(key, 0.0) or 0.0), 0.0) for key in WILL_ORDER}
+    total = sum(cleaned.values())
+    if total <= 0:
+        return {"saber": 0.34, "relacionar": 0.33, "expressar": 0.33}
+    normalized = {key: round(cleaned[key] / total, 3) for key in WILL_ORDER}
+    residual = round(1.0 - sum(normalized.values()), 3)
+    normalized["saber"] = round(normalized["saber"] + residual, 3)
+    return normalized
+
+
+def _rank_wills_generic(scores: Dict[str, float]) -> List[str]:
+    return [
+        item[0]
+        for item in sorted(scores.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    ]
+
+
+def _humanize_will_name(will_name: str) -> str:
+    return {
+        "saber": "vontade de saber",
+        "relacionar": "vontade de se relacionar",
+        "expressar": "vontade de se expressar",
+    }.get(will_name, will_name or "vontade nao nomeada")
+
+
+def _build_message_signal_summary(dominant: str, secondary: str, constrained: str) -> str:
+    return (
+        f"No encontro recente, a linguagem se inclinou mais para {_humanize_will_name(dominant)}, "
+        f"com apoio de {_humanize_will_name(secondary)} e menor passagem por {_humanize_will_name(constrained)}."
+    )
+
+
+def _aggregate_message_signals(
+    cursor: sqlite3.Cursor,
+    user_id: str,
+    cycle_id: Optional[str] = None,
+    limit: int = 10,
+) -> Dict[str, Any]:
+    query = """
+        SELECT saber_delta, relacionar_delta, expressar_delta, dominant_signal, signal_summary, created_at
+        FROM agent_will_message_signals
+        WHERE user_id = ?
+    """
+    params: List[Any] = [user_id]
+    if cycle_id:
+        query += " AND cycle_id = ?"
+        params.append(cycle_id)
+    query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+    params.append(limit)
+    try:
+        cursor.execute(query, tuple(params))
+    except Exception:
+        return {
+            "count": 0,
+            "scores": {"saber": 0.34, "relacionar": 0.33, "expressar": 0.33},
+            "dominant_will": None,
+            "secondary_will": None,
+            "constrained_will": None,
+            "summary": "",
+            "latest_created_at": None,
+        }
+
+    rows = cursor.fetchall()
+    if not rows:
+        return {
+            "count": 0,
+            "scores": {"saber": 0.34, "relacionar": 0.33, "expressar": 0.33},
+            "dominant_will": None,
+            "secondary_will": None,
+            "constrained_will": None,
+            "summary": "",
+            "latest_created_at": None,
+        }
+
+    aggregate = {"saber": 0.0, "relacionar": 0.0, "expressar": 0.0}
+    for row in rows:
+        aggregate["saber"] += float(row["saber_delta"] or 0.0)
+        aggregate["relacionar"] += float(row["relacionar_delta"] or 0.0)
+        aggregate["expressar"] += float(row["expressar_delta"] or 0.0)
+
+    scores = _normalize_scores_generic(aggregate)
+    ranked = _rank_wills_generic(scores)
+    dominant, secondary, constrained = ranked[0], ranked[1], ranked[-1]
+    return {
+        "count": len(rows),
+        "scores": scores,
+        "dominant_will": dominant,
+        "secondary_will": secondary,
+        "constrained_will": constrained,
+        "summary": _build_message_signal_summary(dominant, secondary, constrained),
+        "latest_created_at": rows[0]["created_at"],
+    }
+
+
+def _blend_state_with_message_signals(
+    base_state: Optional[Dict[str, Any]],
+    message_summary: Dict[str, Any],
+    weight: float = 0.18,
+) -> Optional[Dict[str, Any]]:
+    if not base_state and not message_summary.get("count"):
+        return None
+
+    if not base_state:
+        synthetic = {
+            "saber_score": message_summary["scores"]["saber"],
+            "relacionar_score": message_summary["scores"]["relacionar"],
+            "expressar_score": message_summary["scores"]["expressar"],
+            "dominant_will": message_summary["dominant_will"],
+            "secondary_will": message_summary["secondary_will"],
+            "constrained_will": message_summary["constrained_will"],
+            "will_conflict": message_summary["summary"],
+            "attention_bias_note": message_summary["summary"],
+            "daily_text": message_summary["summary"],
+            "message_signal_summary": message_summary["summary"],
+            "message_signal_count": message_summary["count"],
+            "message_signal_scores": message_summary["scores"],
+        }
+        return synthetic
+
+    if not message_summary.get("count"):
+        blended = dict(base_state)
+        blended["message_signal_summary"] = ""
+        blended["message_signal_count"] = 0
+        blended["message_signal_scores"] = {"saber": 0.34, "relacionar": 0.33, "expressar": 0.33}
+        return blended
+
+    blended_raw = {}
+    for will_name in WILL_ORDER:
+        base_score = float(base_state.get(f"{will_name}_score") or 0.0)
+        message_score = float(message_summary["scores"].get(will_name) or 0.0)
+        blended_raw[will_name] = (base_score * (1.0 - weight)) + (message_score * weight)
+
+    blended_scores = _normalize_scores_generic(blended_raw)
+    ranked = _rank_wills_generic(blended_scores)
+
+    blended = dict(base_state)
+    blended["saber_score"] = blended_scores["saber"]
+    blended["relacionar_score"] = blended_scores["relacionar"]
+    blended["expressar_score"] = blended_scores["expressar"]
+    blended["dominant_will"] = ranked[0]
+    blended["secondary_will"] = ranked[1]
+    blended["constrained_will"] = ranked[-1]
+    blended["message_signal_summary"] = message_summary["summary"]
+    blended["message_signal_count"] = message_summary["count"]
+    blended["message_signal_scores"] = message_summary["scores"]
+    blended["conversation_micro_shift"] = (
+        f"Inclinacao recente das conversas: {message_summary['summary']}"
+    )
+    return blended
+
+
 def _resolve_sqlite_path() -> str:
     data_dir = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
     if not data_dir:
@@ -102,7 +264,9 @@ def load_latest_will_state_from_sqlite(
         query += " ORDER BY created_at DESC, id DESC LIMIT 1"
         cursor.execute(query, tuple(params))
         row = cursor.fetchone()
-        return _row_to_will_state(row) if row else None
+        state = _row_to_will_state(row) if row else None
+        message_summary = _aggregate_message_signals(cursor, user_id=user_id, cycle_id=cycle_id, limit=10)
+        return _blend_state_with_message_signals(state, message_summary)
     except Exception as exc:
         logger.debug("WillEngine: falha ao ler estado de vontade no SQLite: %s", exc)
         return None
@@ -124,7 +288,9 @@ def load_latest_will_state(db_manager, user_id: str, cycle_id: Optional[str] = N
     query += " ORDER BY created_at DESC, id DESC LIMIT 1"
     cursor.execute(query, tuple(params))
     row = cursor.fetchone()
-    return _row_to_will_state(row) if row else None
+    state = _row_to_will_state(row) if row else None
+    message_summary = _aggregate_message_signals(cursor, user_id=user_id, cycle_id=cycle_id, limit=10)
+    return _blend_state_with_message_signals(state, message_summary)
 
 
 class WillEngine:
@@ -278,6 +444,12 @@ class WillEngine:
         hobby = self._latest_hobby(user_id)
         world = self._latest_world_state(world_state)
         conversations = self._recent_conversations(user_id)
+        message_signal_summary = _aggregate_message_signals(
+            self.db.conn.cursor(),
+            user_id=user_id,
+            cycle_id=cycle_id,
+            limit=12,
+        )
 
         return {
             "cycle_id": cycle_id,
@@ -314,6 +486,7 @@ class WillEngine:
             },
             "meta_consciousness": meta,
             "hobby": hobby,
+            "message_signal_summary": message_signal_summary,
             "recent_conversations": conversations,
             "source_summary": {
                 "conversation_count": len(conversations),
@@ -322,33 +495,18 @@ class WillEngine:
                 "has_world": 1 if world else 0,
                 "has_meta_consciousness": 1 if meta else 0,
                 "has_hobby": 1 if hobby else 0,
+                "message_signal_count": message_signal_summary.get("count", 0),
             },
         }
 
     def _keyword_score(self, text: str) -> Dict[str, float]:
-        normalized = (text or "").lower()
-        scores = {key: 0.0 for key in WILL_ORDER}
-        for will, keywords in WILL_SIGNAL_KEYWORDS.items():
-            for keyword in keywords:
-                if keyword in normalized:
-                    scores[will] += 1.0
-        return scores
+        return _keyword_score_generic(text)
 
     def _normalize_scores(self, scores: Dict[str, float]) -> Dict[str, float]:
-        cleaned = {key: max(float(scores.get(key, 0.0) or 0.0), 0.0) for key in WILL_ORDER}
-        total = sum(cleaned.values())
-        if total <= 0:
-            return {"saber": 0.34, "relacionar": 0.33, "expressar": 0.33}
-        normalized = {key: round(cleaned[key] / total, 3) for key in WILL_ORDER}
-        residual = round(1.0 - sum(normalized.values()), 3)
-        normalized["saber"] = round(normalized["saber"] + residual, 3)
-        return normalized
+        return _normalize_scores_generic(scores)
 
     def _rank_wills(self, scores: Dict[str, float]) -> List[str]:
-        return [
-            item[0]
-            for item in sorted(scores.items(), key=lambda item: (item[1], item[0]), reverse=True)
-        ]
+        return _rank_wills_generic(scores)
 
     def _fallback_conflict_text(self, dominant: str, constrained: str) -> str:
         mappings = {
@@ -444,6 +602,101 @@ class WillEngine:
         except (TypeError, ValueError):
             return fallback
         return min(1.0, max(0.0, numeric))
+
+    def analyze_message_signal(self, user_input: str, ai_response: str) -> Dict[str, Any]:
+        aggregate = {key: 0.0 for key in WILL_ORDER}
+
+        user_scores = self._keyword_score(user_input or "")
+        ai_scores = self._keyword_score(ai_response or "")
+        for will_name in WILL_ORDER:
+            aggregate[will_name] += user_scores[will_name] * 1.15
+            aggregate[will_name] += ai_scores[will_name] * 0.95
+
+        normalized_input = (user_input or "").lower()
+        if "?" in normalized_input:
+            aggregate["saber"] += 0.85
+        if any(token in normalized_input for token in ("obrigado", "obrigada", "valeu", "amizade", "voce", "você")):
+            aggregate["relacionar"] += 0.65
+        if any(token in normalized_input for token in ("imagem", "simbolo", "metafora", "arte", "poema", "sonho")):
+            aggregate["expressar"] += 0.75
+
+        scores = self._normalize_scores(aggregate)
+        ranked = self._rank_wills(scores)
+        dominant, secondary, constrained = ranked[0], ranked[1], ranked[-1]
+        return {
+            "saber_delta": scores["saber"],
+            "relacionar_delta": scores["relacionar"],
+            "expressar_delta": scores["expressar"],
+            "dominant_signal": dominant,
+            "signal_summary": _build_message_signal_summary(dominant, secondary, constrained),
+        }
+
+    def record_message_signal(
+        self,
+        user_id: str,
+        conversation_id: int,
+        user_input: str,
+        ai_response: str,
+        cycle_id: Optional[str] = None,
+        phase: Optional[str] = None,
+        source: str = "conversation",
+    ) -> Optional[int]:
+        signal = self.analyze_message_signal(user_input, ai_response)
+        cursor = self.db.conn.cursor()
+
+        resolved_cycle_id = cycle_id
+        resolved_phase = phase
+        if not resolved_cycle_id or not resolved_phase:
+            cursor.execute(
+                """
+                SELECT cycle_id, current_phase
+                FROM consciousness_loop_state
+                WHERE user_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            if row:
+                resolved_cycle_id = resolved_cycle_id or row["cycle_id"]
+                resolved_phase = resolved_phase or row["current_phase"]
+
+        if not resolved_cycle_id:
+            resolved_cycle_id = datetime.utcnow().strftime("%Y-%m-%d")
+        if not resolved_phase:
+            resolved_phase = "conversation"
+
+        cursor.execute(
+            """
+            INSERT INTO agent_will_message_signals (
+                user_id,
+                conversation_id,
+                cycle_id,
+                phase,
+                source,
+                saber_delta,
+                relacionar_delta,
+                expressar_delta,
+                dominant_signal,
+                signal_summary
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                conversation_id,
+                resolved_cycle_id,
+                resolved_phase,
+                source,
+                signal["saber_delta"],
+                signal["relacionar_delta"],
+                signal["expressar_delta"],
+                signal["dominant_signal"],
+                signal["signal_summary"],
+            ),
+        )
+        self.db.conn.commit()
+        return cursor.lastrowid
 
     def _generate_with_llm(self, payload: Dict[str, Any], source_phase: str) -> Dict[str, Any]:
         prompt = f"""
