@@ -927,9 +927,21 @@ class AgentIdentityContextBuilder:
         trigger_reason = trigger_reason or ""
         lineage_match = re.search(r"Linhagem tematica:\s*([^\.]+)", trigger_reason, re.IGNORECASE)
         mode_match = re.search(r"Modo de escolha:\s*([^\.]+)", trigger_reason, re.IGNORECASE)
+        will_match = re.search(
+            r"Triade de vontades:\s*dominante=([^;]+);\s*secundaria=([^;]+);\s*ausente=([^\.]+)",
+            trigger_reason,
+            re.IGNORECASE,
+        )
+        conflict_match = re.search(r"Conflito de vontades:\s*(.+?)\.\s*Pergunta geradora:", trigger_reason, re.IGNORECASE)
+        question_match = re.search(r"Pergunta geradora:\s*(.+)$", trigger_reason, re.IGNORECASE)
         return {
             "lineage": lineage_match.group(1).strip() if lineage_match else None,
             "selection_mode": mode_match.group(1).strip() if mode_match else None,
+            "dominant_will": will_match.group(1).strip() if will_match else None,
+            "secondary_will": will_match.group(2).strip() if will_match else None,
+            "absent_will": will_match.group(3).strip() if will_match else None,
+            "will_conflict": conflict_match.group(1).strip() if conflict_match else None,
+            "will_question": question_match.group(1).strip() if question_match else None,
         }
 
     def _get_latest_scholar_signal(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
@@ -960,6 +972,11 @@ class AgentIdentityContextBuilder:
             "created_at": row[5],
             "lineage": metadata["lineage"],
             "selection_mode": metadata["selection_mode"],
+            "dominant_will": metadata["dominant_will"],
+            "secondary_will": metadata["secondary_will"],
+            "absent_will": metadata["absent_will"],
+            "will_conflict": metadata["will_conflict"],
+            "will_question": metadata["will_question"],
         }
 
     def build_current_mind_state(

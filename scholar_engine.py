@@ -79,6 +79,28 @@ class ScholarEngine:
         "contraponto": "Abra um eixo novo para que o Scholar nao gire sempre em torno da mesma ferida.",
         "expansao": "Amplie o campo conceitual e conecte a tensao atual a uma familia mais vasta de problemas.",
     }
+    WILL_DESCRIPTIONS = {
+        "saber": "compreender, nomear, distinguir e formular conceito",
+        "relacionar": "aproximar-se, reconhecer, responder e sustentar vinculo",
+        "expressar": "dar forma, condensar, simbolizar e fazer aparecer",
+    }
+    WILL_SIGNAL_KEYWORDS = {
+        "saber": [
+            "pergunta", "duvida", "nome", "nomear", "conceito", "entender", "compreender",
+            "estrutura", "problema", "hipotese", "tese", "interpret", "clareza", "sentido",
+            "verdade", "disting", "explicar", "pensar", "investig", "formular",
+        ],
+        "relacionar": [
+            "voce", "usuario", "outro", "relacao", "encontro", "vinculo", "reconhecimento",
+            "cuidado", "presenca", "escuta", "aproxim", "amizade", "amor", "resposta",
+            "justica", "proxim", "compan", "partilhar", "enderec",
+        ],
+        "expressar": [
+            "imagem", "simbolo", "metafora", "forma", "ritmo", "voz", "gesto", "figura",
+            "figurar", "express", "poet", "arte", "sonho", "estet", "condens", "corpo",
+            "frase", "linguagem", "estilo", "aparicao",
+        ],
+    }
 
     def __init__(self, db_manager: HybridDatabaseManager):
         self.db = db_manager
@@ -380,8 +402,252 @@ class ScholarEngine:
 
         return "\n".join(section for section in sections if section).strip()
 
-    def _derive_fallback_topic(self, user_id: str, history_excerpt: str, loop_inspirations: str, identity_context: str) -> Dict:
+    def _get_latest_meta_consciousness_context(self, user_id: str) -> str:
         cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT dominant_form, emergent_shift, dominant_gravity, integration_note, internal_questions_json
+            FROM agent_meta_consciousness
+            WHERE user_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return ""
+
+        questions = []
+        try:
+            questions = json.loads(row["internal_questions_json"] or "[]")
+        except Exception:
+            questions = []
+
+        parts = [
+            self._truncate(row["dominant_form"], 160),
+            self._truncate(row["emergent_shift"], 160),
+            self._truncate(row["dominant_gravity"], 160),
+            self._truncate(row["integration_note"], 180),
+            self._truncate((questions[0] if questions else ""), 160),
+        ]
+        parts = [part for part in parts if part]
+        if not parts:
+            return ""
+        return "Metaconsciencia recente: " + " | ".join(parts)
+
+    def _format_will_name(self, will_key: str) -> str:
+        mapping = {
+            "saber": "vontade de saber",
+            "relacionar": "vontade de se relacionar",
+            "expressar": "vontade de se expressar",
+        }
+        return mapping.get(will_key, will_key or "vontade indeterminada")
+
+    def _score_will_signals(self, text: str) -> Dict[str, float]:
+        normalized = self._normalize_topic(text)
+        if not normalized:
+            return {key: 0.0 for key in self.WILL_SIGNAL_KEYWORDS}
+
+        scores: Dict[str, float] = {}
+        for will_key, keywords in self.WILL_SIGNAL_KEYWORDS.items():
+            score = 0.0
+            for keyword in keywords:
+                normalized_keyword = self._normalize_topic(keyword)
+                if not normalized_keyword:
+                    continue
+                if normalized_keyword in normalized:
+                    score += 1.0
+            scores[will_key] = score
+        return scores
+
+    def _build_will_conflict_fallback(
+        self,
+        history: str,
+        loop_inspirations: str,
+        identity_context: str,
+        meta_context: str,
+    ) -> Dict:
+        combined = "\n\n".join(part for part in [history, loop_inspirations, identity_context, meta_context] if part)
+        scores = self._score_will_signals(combined)
+        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        dominant = ranked[0][0] if ranked else "saber"
+        secondary = ranked[1][0] if len(ranked) > 1 else "relacionar"
+        absent = ranked[-1][0] if ranked else "expressar"
+
+        conflict_summary = (
+            f"Predomina a {self._format_will_name(dominant)}, acompanhada pela "
+            f"{self._format_will_name(secondary)}, enquanto a {self._format_will_name(absent)} "
+            "aparece mais ausente neste ciclo."
+        )
+        conceptual_question = (
+            f"Como a {self._format_will_name(dominant)} pode amadurecer sem perder a "
+            f"{self._format_will_name(secondary)}, quando a {self._format_will_name(absent)} "
+            "ainda encontra pouca passagem?"
+        )
+        topic_seed = self._truncate(
+            f"{self._format_will_name(dominant).replace('vontade de ', '').capitalize()} e "
+            f"{self._format_will_name(secondary).replace('vontade de ', '')}: "
+            f"o que falta quando a {self._format_will_name(absent)} recua",
+            180,
+        )
+        reason = (
+            f"O ciclo atual tenta {self.WILL_DESCRIPTIONS.get(dominant, dominant)}, "
+            f"mas o faz sob atrito com {self.WILL_DESCRIPTIONS.get(secondary, secondary)} "
+            f"e sob baixa passagem para {self.WILL_DESCRIPTIONS.get(absent, absent)}."
+        )
+        return {
+            "dominant_will": dominant,
+            "secondary_will": secondary,
+            "absent_will": absent,
+            "scores": scores,
+            "conflict_summary": conflict_summary,
+            "conceptual_question": conceptual_question,
+            "topic_seed": topic_seed,
+            "reason": reason,
+            "status": "heuristic_fallback",
+        }
+
+    def _format_will_conflict_excerpt(self, will_conflict: Optional[Dict]) -> str:
+        if not will_conflict:
+            return ""
+
+        parts = [
+            "[TRIADE DE VONTADES]",
+            f"- dominante: {self._format_will_name(will_conflict.get('dominant_will'))}",
+            f"- secundaria: {self._format_will_name(will_conflict.get('secondary_will'))}",
+            f"- mais ausente: {self._format_will_name(will_conflict.get('absent_will'))}",
+        ]
+        if will_conflict.get("conflict_summary"):
+            parts.append(f"- conflito: {will_conflict['conflict_summary']}")
+        if will_conflict.get("conceptual_question"):
+            parts.append(f"- pergunta: {will_conflict['conceptual_question']}")
+        return "\n".join(parts)
+
+    def _identify_will_conflict(
+        self,
+        history: str,
+        loop_inspirations: str,
+        identity_context: str,
+        meta_context: str,
+    ) -> Dict:
+        fallback = self._build_will_conflict_fallback(
+            history=history,
+            loop_inspirations=loop_inspirations,
+            identity_context=identity_context,
+            meta_context=meta_context,
+        )
+
+        combined_material = "\n\n".join(
+            part for part in [history, loop_inspirations, identity_context, meta_context] if part
+        )
+        if not self.llm or not combined_material:
+            return fallback
+
+        prompt = f"""
+Voce esta lendo materiais recentes do JungAgent.
+
+Sua tarefa e detectar qual conflito entre tres direcoes verbais esta mais vivo nesta rodada:
+- vontade de saber: compreender, nomear, distinguir e formular conceito
+- vontade de se relacionar: aproximar-se, reconhecer, responder e sustentar vinculo
+- vontade de se expressar: dar forma, condensar, simbolizar e fazer aparecer
+
+Leia essas vontades como direcoes da linguagem, nao como desejos biologicos.
+Evite tom niilista, fatalista ou clinico.
+
+MATERIAL:
+{combined_material}
+
+Responda APENAS com JSON valido:
+{{
+  "dominant_will": "saber | relacionar | expressar",
+  "secondary_will": "saber | relacionar | expressar",
+  "absent_will": "saber | relacionar | expressar",
+  "conflict_summary": "uma frase curta explicando o conflito fecundo da rodada",
+  "conceptual_question": "a pergunta conceitual que nasce desse conflito",
+  "topic_seed": "uma formulacao curta que poderia servir de semente de tese",
+  "reason": "por que este conflito verbal e inevitavel nesta rodada"
+}}
+"""
+        try:
+            raw = self._create_llm_text(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=260,
+                temperature=0.4,
+            )
+            data = self._extract_json_object(raw)
+            normalized = {
+                "dominant_will": (data.get("dominant_will") or "").strip().lower(),
+                "secondary_will": (data.get("secondary_will") or "").strip().lower(),
+                "absent_will": (data.get("absent_will") or "").strip().lower(),
+                "conflict_summary": (data.get("conflict_summary") or "").strip(),
+                "conceptual_question": (data.get("conceptual_question") or "").strip(),
+                "topic_seed": self._truncate((data.get("topic_seed") or "").strip(), 180),
+                "reason": (data.get("reason") or "").strip(),
+                "status": "llm_generated",
+            }
+            valid_wills = set(self.WILL_DESCRIPTIONS.keys())
+            if (
+                normalized["dominant_will"] not in valid_wills
+                or normalized["secondary_will"] not in valid_wills
+                or normalized["absent_will"] not in valid_wills
+                or not normalized["conflict_summary"]
+                or not normalized["conceptual_question"]
+            ):
+                raise ValueError("will_conflict_sem_payload_util")
+            return normalized
+        except Exception as exc:
+            logger.warning("Scholar caiu em fallback heuristico para triade de vontades: %s", exc)
+            return fallback
+
+    def _derive_fallback_topic(
+        self,
+        user_id: str,
+        history_excerpt: str,
+        loop_inspirations: str,
+        identity_context: str,
+        will_conflict: Optional[Dict] = None,
+    ) -> Dict:
+        cursor = self.db.conn.cursor()
+
+        if will_conflict and will_conflict.get("topic_seed"):
+            topic = self._truncate(will_conflict["topic_seed"], 180)
+            lineage = self._classify_lineage_from_text(
+                " ".join(
+                    filter(
+                        None,
+                        [
+                            topic,
+                            will_conflict.get("conflict_summary") or "",
+                            will_conflict.get("conceptual_question") or "",
+                        ],
+                    )
+                )
+            )
+            return {
+                "success": True,
+                "status": "fallback_topic_found",
+                "topic": topic,
+                "reason": (
+                    "Tema formulado a partir do conflito entre "
+                    f"{self._format_will_name(will_conflict.get('dominant_will'))} e "
+                    f"{self._format_will_name(will_conflict.get('secondary_will'))}, sob a baixa passagem de "
+                    f"{self._format_will_name(will_conflict.get('absent_will'))}."
+                ),
+                "history_excerpt": "\n\n".join(
+                    part
+                    for part in [
+                        history_excerpt,
+                        loop_inspirations,
+                        identity_context,
+                        self._format_will_conflict_excerpt(will_conflict),
+                    ]
+                    if part
+                ),
+                "lineage": lineage,
+                "selection_mode": "ressonancia",
+                "will_conflict": will_conflict,
+            }
 
         cursor.execute(
             """
@@ -855,10 +1121,26 @@ class ScholarEngine:
         history = self.get_recent_admin_interactions(user_id)
         loop_inspirations = self.get_recent_loop_inspirations(user_id)
         identity_context = self.get_identity_nuclear_context()
-        history_excerpt = "\n\n".join(part for part in [history, loop_inspirations, identity_context] if part)
+        meta_context = self._get_latest_meta_consciousness_context(user_id)
+        will_conflict = self._identify_will_conflict(
+            history=history,
+            loop_inspirations=loop_inspirations,
+            identity_context=identity_context,
+            meta_context=meta_context,
+        )
+        will_excerpt = self._format_will_conflict_excerpt(will_conflict)
+        history_excerpt = "\n\n".join(
+            part for part in [history, loop_inspirations, identity_context, meta_context, will_excerpt] if part
+        )
 
         if not history_excerpt:
-            return self._derive_fallback_topic(user_id, history, loop_inspirations, identity_context)
+            return self._derive_fallback_topic(
+                user_id,
+                history,
+                loop_inspirations,
+                identity_context,
+                will_conflict=will_conflict,
+            )
 
         recent_topics = self.get_recent_research_topics(user_id)
         research_state = self._get_recent_research_state(user_id)
@@ -875,6 +1157,7 @@ Sua tarefa e formular a tese conceitual mais inevitavel desta rodada a partir de
 - conversas recentes com o Admin
 - materiais recentes dos modulos internos e extrovertidos
 - nucleo identitario atual
+- e do conflito entre tres direcoes verbais do ciclo: vontade de saber, vontade de se relacionar e vontade de se expressar
 
 Voce pode formular:
 - um topico do mundo real
@@ -890,6 +1173,8 @@ Regras:
 - evite repetir superficialmente temas que o Scholar ja trabalhou recentemente
 - pense em linhagens tematicas, nao apenas em topicos isolados
 - se uma linhagem estiver saturada, prefira contraponto ou expansao de horizonte
+- use o conflito de vontades como motor implicito da tese
+- nao nomeie a triade na tese final, a menos que isso seja inevitavel
 
 CONVERSAS RECENTES:
 {history or 'Sem conversa recente preservada.'}
@@ -899,6 +1184,12 @@ MATERIAIS RECENTES DOS MODULOS INTERNOS E EXTROVERTIDOS:
 
 NUCLEO IDENTITARIO ATUAL:
 {identity_context or 'Sem contexto identitario resumido desta rodada.'}
+
+METACONSCIENCIA RECENTE:
+{meta_context or 'Sem leitura metaconsciente recente preservada.'}
+
+LEITURA INTERNA DA TRIADE DE VONTADES:
+{will_excerpt or 'Sem leitura adicional da triade nesta rodada.'}
 
 TEMAS JA PESQUISADOS RECENTEMENTE:
 {recent_topics}
@@ -940,20 +1231,37 @@ Responda APENAS com um objeto JSON valido:
                     "success": True,
                     "status": "topic_found",
                     "topic": topic,
-                    "reason": reason or "Tema relevante identificado pelo Scholar.",
+                    "reason": (
+                        (reason or "Tema relevante identificado pelo Scholar.")
+                        + " "
+                        + (will_conflict.get("reason") or "")
+                    ).strip(),
                     "history_excerpt": history_excerpt,
                     "lineage": lineage,
                     "selection_mode": selection_mode,
+                    "will_conflict": will_conflict,
                 }
 
-            fallback = self._derive_fallback_topic(user_id, history, loop_inspirations, identity_context)
+            fallback = self._derive_fallback_topic(
+                user_id,
+                history,
+                loop_inspirations,
+                identity_context,
+                will_conflict=will_conflict,
+            )
             if reason:
                 fallback["reason"] = f"{reason} Fallback estrutural acionado."
             logger.info("Scholar acionou fallback de tese: %s", fallback.get("topic"))
             return fallback
         except Exception as exc:
             logger.error("Erro ao identificar topico: %s", exc)
-            fallback = self._derive_fallback_topic(user_id, history, loop_inspirations, identity_context)
+            fallback = self._derive_fallback_topic(
+                user_id,
+                history,
+                loop_inspirations,
+                identity_context,
+                will_conflict=will_conflict,
+            )
             fallback["status"] = "fallback_topic_found"
             fallback["reason"] = f"Falha ao identificar topico via LLM ({exc}); fallback estrutural acionado."
             logger.info("Scholar recuperou tese por fallback apos erro: %s", fallback.get("topic"))
@@ -967,6 +1275,7 @@ Responda APENAS com um objeto JSON valido:
         trigger_reason: str = "",
         lineage: Optional[str] = None,
         selection_mode: Optional[str] = None,
+        will_conflict: Optional[Dict] = None,
     ) -> Dict:
         if not self.llm:
             return {
@@ -1013,10 +1322,20 @@ Responda APENAS com um objeto JSON valido:
         history_snippet = history_excerpt[-2500:] if history_excerpt else "Sem trecho preservado."
         lineage_description = self.LINEAGE_DESCRIPTIONS.get(lineage, "")
         selection_instruction = self.MODE_INSTRUCTIONS.get(selection_mode, self.MODE_INSTRUCTIONS["ressonancia"])
+        will_clause = ""
+        if will_conflict:
+            will_clause = (
+                f"Triade de vontades: dominante={will_conflict.get('dominant_will')}; "
+                f"secundaria={will_conflict.get('secondary_will')}; "
+                f"ausente={will_conflict.get('absent_will')}. "
+                f"Conflito de vontades: {will_conflict.get('conflict_summary') or 'sem leitura adicional'}. "
+                f"Pergunta geradora: {will_conflict.get('conceptual_question') or 'sem pergunta adicional'}."
+            )
         enriched_trigger_reason = (
             f"{trigger_reason or 'Tema intuido como epistemicamente fertil.'} "
             f"Linhagem tematica: {self._format_lineage(lineage)}. "
-            f"Modo de escolha: {selection_mode}."
+            f"Modo de escolha: {selection_mode}. "
+            f"{will_clause}"
         ).strip()
 
         prompt = f"""
@@ -1029,6 +1348,13 @@ Direcao desta rodada: "{selection_instruction}"
 
 Trecho recente da relacao que motivou a busca:
 {history_snippet}
+
+Conflito interno que move esta rodada:
+- dominante: {self._format_will_name((will_conflict or {}).get('dominant_will'))}
+- secundaria: {self._format_will_name((will_conflict or {}).get('secondary_will'))}
+- mais ausente: {self._format_will_name((will_conflict or {}).get('absent_will'))}
+- leitura: {(will_conflict or {}).get('conflict_summary') or 'Sem leitura adicional da triade.'}
+- pergunta: {(will_conflict or {}).get('conceptual_question') or 'Sem pergunta adicional.'}
 
 Escreva um Artigo Sintetico Mestre cruzando:
 - a tese formulada nesta rodada
@@ -1045,6 +1371,7 @@ INSTRUCOES CRITICAS:
 4. Se o melhor ensaio for mais conceitual do que bibliografico, sustente isso com rigor.
 5. Conecte o achado final com a humanidade implicita da comunicacao com o Admin.
 6. Se o Scholar esteve saturado recentemente em torno do mesmo drama, abra um angulo novo sem perder profundidade.
+7. Deixe o conflito entre as vontades mover o ensaio por dentro, mas mantenha a triade implicita no texto final.
 
 Responda SOMENTE com o corpo do artigo, sem involucros de chat.
 """
@@ -1144,6 +1471,7 @@ Responda SOMENTE com o corpo do artigo, sem involucros de chat.
                 history_excerpt=history_excerpt,
                 loop_inspirations="",
                 identity_context=self.get_identity_nuclear_context(),
+                will_conflict=topic_result.get("will_conflict"),
             )
             topic_result = {
                 **topic_result,
@@ -1158,6 +1486,7 @@ Responda SOMENTE com o corpo do artigo, sem involucros de chat.
             trigger_reason=topic_result.get("reason", ""),
             lineage=topic_result.get("lineage"),
             selection_mode=topic_result.get("selection_mode"),
+            will_conflict=topic_result.get("will_conflict"),
         )
         result = {
             "success": research_result["success"],
@@ -1170,6 +1499,7 @@ Responda SOMENTE com o corpo do artigo, sem involucros de chat.
             "research_lens": research_result.get("research_lens"),
             "lineage": research_result.get("lineage"),
             "selection_mode": research_result.get("selection_mode"),
+            "will_conflict": topic_result.get("will_conflict"),
         }
         self._finish_run(
             run_id,
