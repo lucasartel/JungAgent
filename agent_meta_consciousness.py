@@ -115,14 +115,14 @@ class AgentMetaConsciousnessEngine:
             for row in cursor.fetchall()
         ]
 
-    def _latest_scholar(self, user_id: str) -> Optional[Dict[str, str]]:
+    def _latest_will(self, user_id: str) -> Optional[Dict[str, str]]:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
-            SELECT topic, synthesized_insight, created_at
-            FROM external_research
+            SELECT dominant_will, constrained_will, will_conflict, daily_text, created_at
+            FROM agent_will_states
             WHERE user_id = ?
-            ORDER BY id DESC
+            ORDER BY created_at DESC, id DESC
             LIMIT 1
             """,
             (user_id,),
@@ -131,15 +131,17 @@ class AgentMetaConsciousnessEngine:
         if not row:
             return None
         return {
-            "topic": row["topic"],
-            "insight": self._truncate(row["synthesized_insight"], 220),
+            "dominant_will": row["dominant_will"],
+            "constrained_will": row["constrained_will"],
+            "will_conflict": self._truncate(row["will_conflict"], 220),
+            "daily_text": self._truncate(row["daily_text"], 220),
             "created_at": row["created_at"],
         }
 
     def _build_source_payload(self, user_id: str, cycle_id: str, current_state: Dict[str, Any]) -> Dict[str, Any]:
         conversations = self._recent_conversations(user_id, limit=3)
         rumination = self._recent_rumination_insights(user_id, limit=3)
-        scholar = self._latest_scholar(user_id)
+        will_state = self._latest_will(user_id)
         loop_results = self._recent_loop_results(limit=6)
         return {
             "cycle_id": cycle_id,
@@ -154,13 +156,13 @@ class AgentMetaConsciousnessEngine:
             },
             "recent_conversations": conversations,
             "recent_rumination_insights": rumination,
-            "latest_scholar": scholar,
+            "latest_will": will_state,
             "recent_loop_results": loop_results,
             "source_summary": {
                 "conversation_count": len(conversations),
                 "rumination_count": len(rumination),
                 "loop_result_count": len(loop_results),
-                "has_scholar": 1 if scholar else 0,
+                "has_will": 1 if will_state else 0,
             },
         }
 

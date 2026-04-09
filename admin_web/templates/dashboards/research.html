@@ -1,14 +1,14 @@
 {% extends "base_v2.html" %}
 
-{% block title %}Scholar - JungAgent Admin{% endblock %}
+{% block title %}Will - JungAgent Admin{% endblock %}
 
 {% block content %}
 <section class="page-shell-v2">
     <header class="page-header-v2">
         <div>
-            <p class="page-kicker-v2">Loop · Elaboracao conceitual</p>
-            <h1 class="page-title-v2">Scholar Engine</h1>
-            <p class="page-subtitle-v2">Ensaios autonomos, rastros de execucao e material conceitual produzido a partir do sistema vivo.</p>
+            <p class="page-kicker-v2">Loop · Direção interna</p>
+            <h1 class="page-title-v2">Módulo Will</h1>
+            <p class="page-subtitle-v2">Leitura diária das três vontades do agente e arquivo histórico do antigo Scholar.</p>
         </div>
     </header>
 
@@ -18,135 +18,174 @@
         <a href="/admin/agent-identity/dashboard" class="subnav-link-v2">Identidade nuclear</a>
         <a href="/admin/work/dashboard" class="subnav-link-v2">Work</a>
         <a href="/admin/dreams" class="subnav-link-v2">Sonhos</a>
-        <a href="/admin/jung-lab" class="subnav-link-v2">Rumina&ccedil;&atilde;o</a>
-        <a href="/admin/research" class="subnav-link-v2 is-active">Scholar</a>
+        <a href="/admin/jung-lab" class="subnav-link-v2">Ruminação</a>
+        <a href="/admin/research" class="subnav-link-v2 is-active">Will</a>
         <a href="/admin/jung-mind" class="subnav-link-v2">Mapa visual</a>
         <a href="/admin/memory-metrics" class="subnav-link-v2">Memory metrics</a>
     </nav>
 
-    <section class="metric-grid-v2 metric-grid-v2--double">
-        <article class="metric-card-v2">
-            <span class="metric-label-v2">Total de ensaios</span>
-            <strong class="metric-value-v2">{{ researches|length }}</strong>
-            <p class="metric-note-v2">Biblioteca conceitual persistida no banco.</p>
-        </article>
-        <article class="metric-card-v2">
-            <span class="metric-label-v2">Pesquisas ativas</span>
-            <strong class="metric-value-v2">{{ researches|selectattr('status', 'equalto', 'active')|list|length }}</strong>
-            <p class="metric-note-v2">Ensaios ainda ativos no prompt e no metabolismo do sistema.</p>
-        </article>
-    </section>
-
     <section class="metric-grid-v2 metric-grid-v2--quad">
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Runs</span>
-            <strong class="metric-value-v2">{{ run_stats.total_runs }}</strong>
+            <span class="metric-label-v2">Snapshots</span>
+            <strong class="metric-value-v2">{{ will_stats.total_states }}</strong>
+            <p class="metric-note-v2">Leituras persistidas do estado das vontades.</p>
         </article>
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Concluidas</span>
-            <strong class="metric-value-v2">{{ run_stats.completed_runs }}</strong>
+            <span class="metric-label-v2">Gerados</span>
+            <strong class="metric-value-v2">{{ will_stats.generated_states }}</strong>
+            <p class="metric-note-v2">Formulações consolidadas pelo módulo Will.</p>
         </article>
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Sem topico</span>
-            <strong class="metric-value-v2">{{ run_stats.no_topic_runs }}</strong>
+            <span class="metric-label-v2">Preliminares</span>
+            <strong class="metric-value-v2">{{ will_stats.preliminary_states }}</strong>
+            <p class="metric-note-v2">Leituras abertas ainda na fase identity.</p>
         </article>
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Tema repetido</span>
-            <strong class="metric-value-v2">{{ run_stats.duplicate_runs }}</strong>
+            <span class="metric-label-v2">Ciclos lidos</span>
+            <strong class="metric-value-v2">{{ will_stats.distinct_cycles }}</strong>
+            <p class="metric-note-v2">Quantos ciclos já tiveram direção de vontade registrada.</p>
         </article>
     </section>
 
-    {% if recent_runs %}
+    {% if latest_will %}
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Ultimas execucoes do orgao</h2>
-                <p class="panel-subtitle-v2">Diagnostico do que o Scholar tentou formular recentemente.</p>
+                <h2 class="panel-title-v2">Texto diário vigente</h2>
+                <p class="panel-subtitle-v2">Síntese do estado atual das três vontades no ciclo {{ latest_will.cycle_id }}.</p>
             </div>
+            <span class="table-badge-v2">{{ latest_will.status|upper }}</span>
         </div>
         <div class="panel-body-v2 stack-v2">
-            {% for run in recent_runs %}
             <article class="data-card-v2">
-                <div class="table-controls-v2">
-                    <div>
-                        <strong>Execucao #{{ run.id }} · {{ run.started_at or 'sem data' }}</strong>
-                        <div class="meta-line-v2">Trigger: {{ run.trigger_source }}{% if run.topic %} · Topico: {{ run.topic }}{% endif %}</div>
-                    </div>
-                    <span class="table-badge-v2">{{ run.status|upper }}</span>
+                <div class="tag-list-v2">
+                    <span class="tag-v2">Dominante: {{ latest_will.dominant_will or '-' }}</span>
+                    <span class="tag-v2">Secundária: {{ latest_will.secondary_will or '-' }}</span>
+                    <span class="tag-v2">Constrita: {{ latest_will.constrained_will or '-' }}</span>
                 </div>
-                {% if run.result_summary %}
-                <div class="mono-block-v2">{{ run.result_summary }}</div>
+                <div class="mono-block-v2">{{ latest_will.daily_text or 'Sem texto diário.' }}</div>
+                {% if latest_will.will_conflict %}
+                <div class="mono-block-v2">Conflito atual: {{ latest_will.will_conflict }}</div>
                 {% endif %}
-                {% if run.error_message %}
-                <div class="mono-block-v2">{{ run.error_message }}</div>
+                {% if latest_will.attention_bias_note %}
+                <div class="mono-block-v2">Impacto no organismo: {{ latest_will.attention_bias_note }}</div>
                 {% endif %}
                 <div class="meta-line-v2">
-                    <span>Chars do artigo: {{ run.article_chars or 0 }}</span>
-                    {% if run.research_id %}
-                    · <span>Registro criado: #{{ run.research_id }}</span>
-                    {% endif %}
-                    {% if run.finished_at %}
-                    · <span>Finalizado: {{ run.finished_at }}</span>
-                    {% endif %}
+                    <span>Saber: {{ '%.2f'|format(latest_will.saber_score or 0) }}</span>
+                    · <span>Relacionar: {{ '%.2f'|format(latest_will.relacionar_score or 0) }}</span>
+                    · <span>Expressar: {{ '%.2f'|format(latest_will.expressar_score or 0) }}</span>
+                    · <span>{{ latest_will.created_at }}</span>
                 </div>
+                {% if latest_will.source_summary %}
+                <div class="tag-list-v2">
+                    {% for key, value in latest_will.source_summary.items() %}
+                    <span class="tag-v2">{{ key }}: {{ value }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
             </article>
-            {% endfor %}
         </div>
     </section>
     {% endif %}
 
-    <section class="stack-v2">
-        {% set ns = namespace(found=false) %}
-        {% for research in researches %}
-        {% set ns.found = true %}
-        <article class="panel-v2">
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Histórico recente do Will</h2>
+                <p class="panel-subtitle-v2">Como a direção interna foi se consolidando entre identity e o fechamento diário.</p>
+            </div>
+        </div>
+        <div class="panel-body-v2 stack-v2">
+            {% for state in will_states %}
+            <article class="data-card-v2">
+                <div class="table-controls-v2">
+                    <div>
+                        <strong>Ciclo {{ state.cycle_id }} · {{ state.phase|upper }}</strong>
+                        <div class="meta-line-v2">{{ state.trigger_source }} · {{ state.created_at }}</div>
+                    </div>
+                    <span class="table-badge-v2">{{ state.status|upper }}</span>
+                </div>
+                <div class="tag-list-v2">
+                    <span class="tag-v2">Dominante: {{ state.dominant_will or '-' }}</span>
+                    <span class="tag-v2">Secundária: {{ state.secondary_will or '-' }}</span>
+                    <span class="tag-v2">Constrita: {{ state.constrained_will or '-' }}</span>
+                </div>
+                {% if state.will_conflict %}
+                <div class="mono-block-v2">{{ state.will_conflict }}</div>
+                {% endif %}
+                <div class="mono-block-v2">{{ state.daily_text or 'Sem texto diário.' }}</div>
+                {% if state.attention_bias_note %}
+                <div class="mono-block-v2">Impacto: {{ state.attention_bias_note }}</div>
+                {% endif %}
+                <div class="meta-line-v2">
+                    <span>Saber: {{ '%.2f'|format(state.saber_score or 0) }}</span>
+                    · <span>Relacionar: {{ '%.2f'|format(state.relacionar_score or 0) }}</span>
+                    · <span>Expressar: {{ '%.2f'|format(state.expressar_score or 0) }}</span>
+                </div>
+            </article>
+            {% else %}
+            <div class="empty-state-v2">
+                <div class="empty-state-icon-v2">Sem leituras</div>
+                <p class="empty-state-title-v2">O módulo Will ainda não produziu snapshots persistidos.</p>
+                <p class="empty-state-copy-v2">Quando o fechamento diário acontecer, o texto das vontades aparecerá aqui.</p>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="dashboard-columns-v2 dashboard-columns-v2--balanced">
+        <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">{{ research.topic }}</h2>
-                    <p class="panel-subtitle-v2">{{ research.created_at }} · {{ research.status|upper }} · {{ research.user_id[:8] }}...</p>
+                    <h2 class="panel-title-v2">Arquivo do Scholar</h2>
+                    <p class="panel-subtitle-v2">Ensaios e artigos antigos preservados como memória histórica.</p>
                 </div>
             </div>
-            <div class="panel-body-v2">
-                <div class="dashboard-columns-v2 dashboard-columns-v2--balanced">
-                    <section class="data-card-v2">
-                        <strong>Material bruto estudado</strong>
-                        {% if research.trigger_reason %}
-                        <div class="mono-block-v2">{{ research.trigger_reason }}</div>
-                        {% endif %}
-                        {% if research.research_lineage or research.selection_mode %}
-                        <div class="tag-list-v2">
-                            {% if research.research_lineage %}
-                            <span class="tag-v2">Linhagem: {{ research.research_lineage }}</span>
-                            {% endif %}
-                            {% if research.selection_mode %}
-                            <span class="tag-v2">Modo: {{ research.selection_mode }}</span>
-                            {% endif %}
-                        </div>
-                        {% endif %}
-                        <div class="mono-block-v2">{{ research.raw_excerpt }}</div>
-                        {% if research.source_url %}
-                        <div class="meta-line-v2"><a href="{{ research.source_url }}" target="_blank">{{ research.source_url }}</a></div>
-                        {% endif %}
-                    </section>
-                    <section class="data-card-v2">
-                        <strong>Sintese autoral</strong>
-                        <div class="mono-block-v2">{{ research.synthesized_insight }}</div>
-                        {% if research.research_lens %}
-                        <div class="mono-block-v2">{{ research.research_lens }}</div>
-                        {% endif %}
-                    </section>
-                </div>
+            <div class="panel-body-v2 stack-v2">
+                {% for research in archived_researches %}
+                <article class="data-card-v2">
+                    <strong>{{ research.topic }}</strong>
+                    <div class="meta-line-v2">{{ research.created_at }} · {{ research.status|upper }}</div>
+                    {% if research.trigger_reason %}
+                    <div class="mono-block-v2">{{ research.trigger_reason }}</div>
+                    {% endif %}
+                    <div class="mono-block-v2">{{ research.synthesized_insight }}</div>
+                </article>
+                {% else %}
+                <div class="empty-row-v2">Nenhum ensaio histórico registrado.</div>
+                {% endfor %}
             </div>
-        </article>
-        {% endfor %}
+        </section>
 
-        {% if not ns.found %}
-        <div class="empty-state-v2">
-            <div class="empty-state-icon-v2">Sem ensaios</div>
-            <p class="empty-state-title-v2">A biblioteca conceitual ainda esta vazia.</p>
-            <p class="empty-state-copy-v2">Quando o scholar produzir novas teses, elas aparecerao aqui com o mesmo shell do admin leve.</p>
-        </div>
-        {% endif %}
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Runs arquivados</h2>
+                    <p class="panel-subtitle-v2">Rastro operacional do antigo Scholar, mantido apenas como arquivo.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2 stack-v2">
+                <article class="metric-card-v2">
+                    <span class="metric-label-v2">Total</span>
+                    <strong class="metric-value-v2">{{ archive_stats.total_runs }}</strong>
+                    <p class="metric-note-v2">Runs históricos do módulo descontinuado.</p>
+                </article>
+                {% for run in scholar_archive_runs %}
+                <article class="data-card-v2">
+                    <strong>#{{ run.id }} · {{ run.topic or 'sem tópico' }}</strong>
+                    <div class="meta-line-v2">{{ run.started_at }} · {{ run.status|upper }}</div>
+                    {% if run.result_summary %}
+                    <div class="mono-block-v2">{{ run.result_summary }}</div>
+                    {% endif %}
+                    {% if run.error_message %}
+                    <div class="mono-block-v2">{{ run.error_message }}</div>
+                    {% endif %}
+                </article>
+                {% else %}
+                <div class="empty-row-v2">Sem runs arquivados.</div>
+                {% endfor %}
+            </div>
+        </section>
     </section>
 </section>
 {% endblock %}

@@ -30,34 +30,62 @@ async def trigger_rumination(admin: Dict = Depends(require_master)):
 
 @router.post("/research")
 async def trigger_research(admin: Dict = Depends(require_master)):
-    """Aciona apenas a Pesquisa Autônoma e a Síntese Teórica (Scholar Engine)"""
-    logger.info("⚙️ GATILHO: Acionando Scholar Engine (Pesquisa e Síntese Teórica)")
+    """Aciona manualmente o módulo Will para formular o estado das vontades."""
+    logger.info("⚙️ GATILHO: Acionando módulo Will")
     try:
-        from scholar_engine import ScholarEngine
+        from will_engine import WillEngine
+        from agent_identity_context_builder import AgentIdentityContextBuilder
         from jung_core import HybridDatabaseManager
         from rumination_config import ADMIN_USER_ID
+        from world_consciousness import world_consciousness
         
-        def run_scholar():
+        def run_will():
             db = HybridDatabaseManager()
             try:
-                scholar = ScholarEngine(db)
-                return scholar.run_scholarly_routine(
-                    ADMIN_USER_ID,
-                    trigger_source="manual_admin_trigger"
+                cursor = db.conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT cycle_id
+                    FROM consciousness_loop_state
+                    WHERE user_id = ?
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (ADMIN_USER_ID,),
+                )
+                cycle_row = cursor.fetchone()
+                current_state = AgentIdentityContextBuilder(db).build_current_mind_state(
+                    user_id=ADMIN_USER_ID,
+                    style="concise",
+                )
+                world_state = world_consciousness.get_world_state()
+                will = WillEngine(db)
+                return will.refresh_cycle_state(
+                    user_id=ADMIN_USER_ID,
+                    cycle_id=(cycle_row[0] if cycle_row else None),
+                    source_phase="will",
+                    trigger_source="manual_admin_trigger",
+                    current_state=current_state,
+                    world_state=world_state,
                 )
             finally:
                 db.close()
                 
-        result = await asyncio.to_thread(run_scholar)
+        result = await asyncio.to_thread(run_will)
         payload = {
             "status": "success" if result.get("success") else "error",
-            "message": result.get("reason", "Scholar executado."),
+            "message": result.get("reason", "Will executado."),
             "result": result
         }
-        status_code = 200 if result.get("success") or result.get("status") in {"no_topic", "no_history"} else 500
+        status_code = 200 if result.get("success") or result.get("status") in {
+            "generated",
+            "fallback",
+            "preliminary_generated",
+            "preliminary_fallback",
+        } else 500
         return JSONResponse(payload, status_code=status_code)
     except Exception as e:
-        logger.error(f"❌ Trigger Research error: {e}")
+        logger.error(f"❌ Trigger Will error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/identity-consolidation")

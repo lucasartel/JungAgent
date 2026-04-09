@@ -22,7 +22,7 @@
         <a href="/admin/work/dashboard" class="subnav-link-v2">Work</a>
         <a href="/admin/dreams" class="subnav-link-v2">Sonhos</a>
         <a href="/admin/jung-lab" class="subnav-link-v2">Rumina&ccedil;&atilde;o</a>
-        <a href="/admin/research" class="subnav-link-v2">Scholar</a>
+        <a href="/admin/research" class="subnav-link-v2">Will</a>
         <a href="/admin/jung-mind" class="subnav-link-v2">Mapa visual</a>
         <a href="/admin/memory-metrics" class="subnav-link-v2">Memory metrics</a>
     </nav>
@@ -87,6 +87,7 @@ function renderState(state) {
         ["Lucidez", state.lucidity_level || "-"],
         ["Confianca geral", state.confidence_overall ?? "-"],
         ["Atmosfera", state.atmosphere || "-"],
+        ["Vies de atencao", state.will_bias_summary || "-"],
         ["Continuidade", state.continuity?.summary || state.continuity_note || "-"],
         ["Tempo local", state.generated_at_local || state.generated_at || "-"],
         ["Areas em consenso", (state.consensus_map ? Object.keys(state.consensus_map).length : 0)],
@@ -107,6 +108,7 @@ function renderNarrative(state) {
         <article class="data-card-v2">
             <strong>Implicacao humana do tempo</strong>
             <div class="mono-block-v2">${escapeHtml(state.human_implication || state.implicacao_humana || state.formatted_admin_summary || state.formatted_prompt_summary || "Sem sintese disponivel.")}</div>
+            ${state.will_bias_summary ? `<div class="mono-block-v2">Vies do ciclo: ${escapeHtml(state.will_bias_summary)}</div>` : ""}
         </article>
     `;
 

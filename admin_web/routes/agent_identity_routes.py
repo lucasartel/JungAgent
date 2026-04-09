@@ -1113,7 +1113,7 @@ async def agent_identity_dashboard(
                 const conflict = state.dominant_conflict || null;
                 const metaSignal = state.meta_signal || null;
                 const dream = state.dream_residue || null;
-                const scholar = state.scholar_signal || null;
+                const will = state.will_signal || null;
                 const selfKernel = Array.isArray(state.self_kernel) ? state.self_kernel : [];
 
                 let html = '';
@@ -1195,14 +1195,15 @@ async def agent_identity_dashboard(
                     </div>`;
                 }
 
-                if (scholar) {
+                if (will) {
                     html += `<div class="belief-item">
-                        <div class="belief-content"><strong>Scholar</strong></div>
-                        <div class="belief-content">${scholar.topic || 'N/A'}</div>
+                        <div class="belief-content"><strong>Will</strong></div>
+                        <div class="belief-content">Dominante: ${will.dominant_will || 'N/A'}</div>
                         <div class="belief-meta">
-                            <span class="badge badge-theme">${scholar.lineage || 'sem linhagem'}</span>
-                            <span class="badge badge-type">${scholar.selection_mode || 'sem modo'}</span>
+                            <span class="badge badge-theme">Secundaria: ${will.secondary_will || 'sem apoio'}</span>
+                            <span class="badge badge-type">Constrita: ${will.constrained_will || 'sem constricao'}</span>
                         </div>
+                        ${will.will_conflict ? `<div class="belief-content">${will.will_conflict}</div>` : ''}
                     </div>`;
                 }
 

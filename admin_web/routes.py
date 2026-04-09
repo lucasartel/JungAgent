@@ -2148,7 +2148,7 @@ async def dreams_dashboard(
     })
 
 # ============================================================
-# SCHOLAR ENGINE - PESQUISA AUTÔNOMA (Admin Dashboard)
+# WILL ENGINE - TRÍADE DE VONTADES (Admin Dashboard)
 # ============================================================
 
 @router.get("/research", response_class=HTMLResponse)
@@ -2156,80 +2156,123 @@ async def research_dashboard(
     request: Request,
     admin: Dict = Depends(require_master)
 ):
-    """Dashboard da Pesquisa Autônoma (Extroverted Path)"""
+    """Dashboard do módulo Will e arquivo histórico do Scholar."""
     db = get_db()
     cursor = db.conn.cursor()
 
+    cursor.execute(
+        """
+        SELECT
+            id,
+            cycle_id,
+            phase,
+            trigger_source,
+            status,
+            saber_score,
+            relacionar_score,
+            expressar_score,
+            dominant_will,
+            secondary_will,
+            constrained_will,
+            will_conflict,
+            attention_bias_note,
+            daily_text,
+            source_summary_json,
+            datetime(created_at, 'localtime') as created_at,
+            datetime(updated_at, 'localtime') as updated_at
+        FROM agent_will_states
+        ORDER BY created_at DESC, id DESC
+        LIMIT 30
+        """
+    )
+    will_states = [dict(row) for row in cursor.fetchall()]
+
+    for state in will_states:
+        raw_source_summary = state.get("source_summary_json")
+        try:
+            state["source_summary"] = json.loads(raw_source_summary) if raw_source_summary else {}
+        except Exception:
+            state["source_summary"] = {}
+
+    latest_will = will_states[0] if will_states else None
+
+    will_stats = {
+        "total_states": 0,
+        "generated_states": 0,
+        "preliminary_states": 0,
+        "distinct_cycles": 0,
+    }
+    cursor.execute("SELECT COUNT(*) FROM agent_will_states")
+    will_stats["total_states"] = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM agent_will_states WHERE status = 'generated'")
+    will_stats["generated_states"] = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM agent_will_states WHERE status = 'preliminary_generated'")
+    will_stats["preliminary_states"] = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(DISTINCT cycle_id) FROM agent_will_states")
+    will_stats["distinct_cycles"] = cursor.fetchone()[0]
+
     cursor.execute("PRAGMA table_info(external_research)")
     research_columns = {row[1] for row in cursor.fetchall()}
-    status_expr = "status" if "status" in research_columns else "'active' AS status"
-    source_url_expr = "source_url" if "source_url" in research_columns else "NULL AS source_url"
-    raw_excerpt_expr = "raw_excerpt" if "raw_excerpt" in research_columns else "NULL AS raw_excerpt"
-    trigger_reason_expr = "trigger_reason" if "trigger_reason" in research_columns else "NULL AS trigger_reason"
-    research_lens_expr = "research_lens" if "research_lens" in research_columns else "NULL AS research_lens"
+    archived_researches = []
+    if research_columns:
+        status_expr = "status" if "status" in research_columns else "'active' AS status"
+        source_url_expr = "source_url" if "source_url" in research_columns else "NULL AS source_url"
+        raw_excerpt_expr = "raw_excerpt" if "raw_excerpt" in research_columns else "NULL AS raw_excerpt"
+        trigger_reason_expr = "trigger_reason" if "trigger_reason" in research_columns else "NULL AS trigger_reason"
+        research_lens_expr = "research_lens" if "research_lens" in research_columns else "NULL AS research_lens"
 
-    # Buscar todas as pesquisas do banco
-    cursor.execute(f"""
-        SELECT id, user_id, topic, {source_url_expr}, {raw_excerpt_expr}, synthesized_insight,
-               {trigger_reason_expr}, {research_lens_expr}, {status_expr},
-               datetime(created_at, 'localtime') as created_at
-        FROM external_research
-        ORDER BY created_at DESC
-        LIMIT 100
-    """)
-    researches = [dict(row) for row in cursor.fetchall()]
+        cursor.execute(f"""
+            SELECT id, user_id, topic, {source_url_expr}, {raw_excerpt_expr}, synthesized_insight,
+                   {trigger_reason_expr}, {research_lens_expr}, {status_expr},
+                   datetime(created_at, 'localtime') as created_at
+            FROM external_research
+            ORDER BY created_at DESC
+            LIMIT 12
+        """)
+        archived_researches = [dict(row) for row in cursor.fetchall()]
 
-    for research in researches:
-        trigger_reason = research.get("trigger_reason") or ""
-        lineage_match = re.search(r"Linhagem tematica:\s*([^\.]+)", trigger_reason, re.IGNORECASE)
-        mode_match = re.search(r"Modo de escolha:\s*([^\.]+)", trigger_reason, re.IGNORECASE)
-        research["research_lineage"] = lineage_match.group(1).strip() if lineage_match else None
-        research["selection_mode"] = mode_match.group(1).strip() if mode_match else None
+        for research in archived_researches:
+            trigger_reason = research.get("trigger_reason") or ""
+            lineage_match = re.search(r"Linhagem tematica:\s*([^\.]+)", trigger_reason, re.IGNORECASE)
+            mode_match = re.search(r"Modo de escolha:\s*([^\.]+)", trigger_reason, re.IGNORECASE)
+            research["research_lineage"] = lineage_match.group(1).strip() if lineage_match else None
+            research["selection_mode"] = mode_match.group(1).strip() if mode_match else None
 
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scholar_runs'")
     has_scholar_runs = cursor.fetchone() is not None
-
-    recent_runs = []
-    run_stats = {
+    scholar_archive_runs = []
+    archive_stats = {
         "total_runs": 0,
         "completed_runs": 0,
         "failed_runs": 0,
-        "no_topic_runs": 0,
-        "duplicate_runs": 0,
     }
-
     if has_scholar_runs:
         cursor.execute("""
-            SELECT id, user_id, trigger_source, status, topic, result_summary, error_message,
+            SELECT id, trigger_source, status, topic, result_summary, error_message,
                    article_chars, research_id,
                    datetime(started_at, 'localtime') as started_at,
                    datetime(finished_at, 'localtime') as finished_at
             FROM scholar_runs
             ORDER BY started_at DESC
-            LIMIT 20
+            LIMIT 12
         """)
-        recent_runs = [dict(row) for row in cursor.fetchall()]
+        scholar_archive_runs = [dict(row) for row in cursor.fetchall()]
 
         cursor.execute("SELECT COUNT(*) FROM scholar_runs")
-        run_stats["total_runs"] = cursor.fetchone()[0]
-
+        archive_stats["total_runs"] = cursor.fetchone()[0]
         cursor.execute("SELECT COUNT(*) FROM scholar_runs WHERE status = 'completed'")
-        run_stats["completed_runs"] = cursor.fetchone()[0]
-
+        archive_stats["completed_runs"] = cursor.fetchone()[0]
         cursor.execute("SELECT COUNT(*) FROM scholar_runs WHERE status IN ('topic_error', 'research_error', 'no_llm', 'empty_article')")
-        run_stats["failed_runs"] = cursor.fetchone()[0]
-
-        cursor.execute("SELECT COUNT(*) FROM scholar_runs WHERE status IN ('no_topic', 'no_history')")
-        run_stats["no_topic_runs"] = cursor.fetchone()[0]
-
-        cursor.execute("SELECT COUNT(*) FROM scholar_runs WHERE status = 'duplicate_topic'")
-        run_stats["duplicate_runs"] = cursor.fetchone()[0]
+        archive_stats["failed_runs"] = cursor.fetchone()[0]
 
     return templates.TemplateResponse("dashboards/research.html", {
         "request": request,
-        "researches": researches,
-        "recent_runs": recent_runs,
-        "run_stats": run_stats,
+        "latest_will": latest_will,
+        "will_states": will_states,
+        "will_stats": will_stats,
+        "archived_researches": archived_researches,
+        "scholar_archive_runs": scholar_archive_runs,
+        "archive_stats": archive_stats,
         "active_nav": "dashboard",
     })
 

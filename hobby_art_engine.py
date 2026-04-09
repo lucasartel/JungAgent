@@ -111,14 +111,14 @@ class HobbyArtEngine:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def _latest_scholar(self, user_id: str) -> Optional[Dict[str, Any]]:
+    def _latest_will(self, user_id: str) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
-            SELECT id, topic, synthesized_insight
-            FROM external_research
+            SELECT id, dominant_will, secondary_will, constrained_will, will_conflict, daily_text
+            FROM agent_will_states
             WHERE user_id = ?
-            ORDER BY id DESC
+            ORDER BY created_at DESC, id DESC
             LIMIT 1
             """,
             (user_id,),
@@ -129,7 +129,7 @@ class HobbyArtEngine:
     def _build_inspirations(self, user_id: str, cycle_id: str, world_state: Dict[str, Any]) -> Dict[str, Any]:
         dream = self._latest_dream(user_id)
         rumination = self._latest_rumination(user_id)
-        scholar = self._latest_scholar(user_id)
+        will_state = self._latest_will(user_id)
         conversations = self._recent_conversations(user_id)
 
         return {
@@ -152,9 +152,12 @@ class HobbyArtEngine:
                 }
                 for item in rumination
             ],
-            "scholar": {
-                "topic": (scholar or {}).get("topic"),
-                "insight": self._truncate((scholar or {}).get("synthesized_insight", ""), 240),
+            "will": {
+                "dominant": (will_state or {}).get("dominant_will"),
+                "secondary": (will_state or {}).get("secondary_will"),
+                "constrained": (will_state or {}).get("constrained_will"),
+                "conflict": self._truncate((will_state or {}).get("will_conflict", ""), 220),
+                "daily_text": self._truncate((will_state or {}).get("daily_text", ""), 240),
             },
             "conversations": conversations,
         }
@@ -166,6 +169,7 @@ Receba as inspirações abaixo e transforme isso em uma imagem única que sintet
 - o que ficou do sonho
 - o que a ruminacao cristalizou
 - o que o mundo pressionou por fora
+- o que o estado atual das vontades quer aproximar, compreender ou figurar
 - o que as conversas com o usuario deixaram aceso
 
 INSPIRACOES:

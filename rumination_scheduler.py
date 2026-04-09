@@ -102,21 +102,41 @@ def run_rumination_job():
             logger.error("Erro no Motor Onirico: %s", e)
             status_msg += " Erro no Motor Onirico."
 
-        # FASE 2: PESQUISA AUTONOMA
+        # FASE 2: WILL
         try:
-            from scholar_engine import ScholarEngine
+            from will_engine import WillEngine
+            from agent_identity_context_builder import AgentIdentityContextBuilder
+            from world_consciousness import world_consciousness
 
-            scholar = ScholarEngine(db)
-            logger.info("\nFASE 2: PESQUISA (Caminho Extrovertido)")
-            scholar_result = scholar.run_scholarly_routine(
-                user_id,
-                trigger_source="scheduled_rumination_job",
+            cursor = db.conn.cursor()
+            cursor.execute(
+                """
+                SELECT cycle_id
+                FROM consciousness_loop_state
+                WHERE user_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (user_id,),
             )
-            status_msg += f" Pesquisa: {scholar_result.get('status', 'unknown')}."
-            logger.info("Scholar result: %s", scholar_result)
+            cycle_row = cursor.fetchone()
+            builder = AgentIdentityContextBuilder(db)
+            current_state = builder.build_current_mind_state(user_id=user_id, style="concise")
+            will = WillEngine(db)
+            logger.info("\nFASE 2: WILL (Direcao interna do ciclo)")
+            will_result = will.refresh_cycle_state(
+                user_id,
+                cycle_id=(cycle_row[0] if cycle_row else None),
+                trigger_source="scheduled_rumination_job",
+                source_phase="will",
+                current_state=current_state,
+                world_state=world_consciousness.get_world_state(),
+            )
+            status_msg += f" Will: {will_result.get('status', 'unknown')}."
+            logger.info("Will result: %s", will_result)
         except Exception as e:
-            logger.error("Erro no Motor Scholar: %s", e)
-            status_msg += " Erro no Motor Scholar."
+            logger.error("Erro no Motor Will: %s", e)
+            status_msg += " Erro no Motor Will."
 
         # FASE 3: DIGESTAO
         logger.info("\nFASE 3: DIGESTAO (Revisita de tensoes)")

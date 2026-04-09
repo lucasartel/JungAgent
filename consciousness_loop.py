@@ -47,7 +47,7 @@ PHASES: List[LoopPhase] = [
     LoopPhase("work", "Work/Action", 9, 15, "work_phase", "Fase de acao extrovertida orientada por seeds do mundo; modulo de trabalho ainda nao implementado."),
     LoopPhase("hobby", "Hobby/Art", 15, 19, "hobby_phase", "Fase de hobby/arte orientada por seeds do mundo; modulo de singularizacao ainda nao implementado."),
     LoopPhase("rumination_extro", "Rumination (II)", 19, 22, "rumination_extro_phase", "Placeholder de ruminacao extrovertida executado para recolher o dia simbolico."),
-    LoopPhase("scholar", "Scholar", 22, 24, "scholar_phase", "Placeholder de fechamento scholar executado; aguardando acoplamento ao Scholar Engine."),
+    LoopPhase("will", "Will", 22, 24, "will_phase", "Placeholder de fechamento volitivo executado; aguardando acoplamento ao Will Engine."),
 ]
 
 PHASE_BY_KEY = {phase.key: phase for phase in PHASES}
@@ -82,7 +82,7 @@ class ConsciousnessLoopManager:
 
                 next_phase = PHASES[(index + 1) % len(PHASES)]
                 next_cycle_id = current.date().isoformat()
-                if phase.key == "scholar":
+                if phase.key == "will":
                     next_cycle_id = (current.date() + timedelta(days=1)).isoformat()
 
                 return {
@@ -403,12 +403,18 @@ class ConsciousnessLoopManager:
                 active_self = current_state.get("active_possible_self")
                 meta_signal = current_state.get("meta_signal") or {}
                 contradiction = current_state.get("dominant_contradiction") or {}
+                dominant_will = current_state.get("dominant_will")
+                constrained_will = current_state.get("constrained_will")
+                will_conflict = current_state.get("will_conflict")
                 identity_summary = (
                     f"[ESTADO IDENTITARIO DO CICLO {cycle_id}] "
                     f"Fase: {phase_name or 'indefinida'}. "
                     f"Self ativo: {active_self or 'sem self destacado'}. "
                     f"Meta-sinal: {meta_signal.get('topic') or 'sem topico'} - {meta_signal.get('assessment') or 'sem avaliacao'}. "
-                    f"Tensao dominante: {contradiction.get('pole_a') or 'polo A'} vs {contradiction.get('pole_b') or 'polo B'}."
+                    f"Tensao dominante: {contradiction.get('pole_a') or 'polo A'} vs {contradiction.get('pole_b') or 'polo B'}. "
+                    f"Vontade dominante: {dominant_will or 'nao nomeada'}. "
+                    f"Vontade constrita: {constrained_will or 'nao nomeada'}. "
+                    f"Conflito das vontades: {will_conflict or 'sem conflito nomeado'}."
                 )
                 _ingest_material(identity_summary, 0.78, 0.64, 0.82)
             except Exception as exc:
@@ -430,21 +436,23 @@ class ConsciousnessLoopManager:
 
             cursor.execute(
                 """
-                SELECT topic, synthesized_insight
-                FROM external_research
+                SELECT dominant_will, constrained_will, will_conflict, daily_text
+                FROM agent_will_states
                 WHERE user_id = ?
-                ORDER BY id DESC
+                ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
                 (self.admin_user_id,),
             )
-            scholar_row = cursor.fetchone()
-            if scholar_row:
+            will_row = cursor.fetchone()
+            if will_row:
                 _ingest_material(
                     (
-                        f"[MATERIAL SCHOLAR DO CICLO {cycle_id}] "
-                        f"Topico: {scholar_row['topic'] or 'tema nao nomeado'}. "
-                        f"Sintese: {(scholar_row['synthesized_insight'] or '')[:320]}"
+                        f"[MATERIAL VOLITIVO DO CICLO {cycle_id}] "
+                        f"Dominante: {will_row['dominant_will'] or 'nao nomeada'}. "
+                        f"Constrita: {will_row['constrained_will'] or 'nao nomeada'}. "
+                        f"Conflito: {(will_row['will_conflict'] or '')[:220]}. "
+                        f"Leitura: {(will_row['daily_text'] or '')[:260]}"
                     ),
                     0.72,
                     0.48,
@@ -639,6 +647,7 @@ class ConsciousnessLoopManager:
         from agent_identity_consolidation_job import run_agent_identity_consolidation
         from agent_identity_context_builder import AgentIdentityContextBuilder
         from agent_meta_consciousness import AgentMetaConsciousnessEngine
+        from will_engine import WillEngine
 
         self._promote_from_placeholder(result)
         extractions_before = self._count_rows("agent_identity_extractions")
@@ -655,6 +664,14 @@ class ConsciousnessLoopManager:
             current_state=current_state,
             trigger_source="consciousness_loop_identity",
         )
+        will_engine = WillEngine(self.db)
+        preliminary_will = will_engine.refresh_cycle_state(
+            user_id=self.admin_user_id,
+            cycle_id=result["cycle_id"],
+            source_phase="identity",
+            trigger_source="consciousness_loop_identity",
+            current_state=current_state,
+        )
         current_state = builder.build_current_mind_state(
             user_id=self.admin_user_id,
             style="concise",
@@ -664,11 +681,13 @@ class ConsciousnessLoopManager:
         result["raw_result"]["identity_consolidation"] = consolidation_result
         result["raw_result"]["current_mind_state"] = current_state
         result["raw_result"]["meta_consciousness"] = meta_reading
+        result["raw_result"]["will_state"] = preliminary_will
         result["metrics"]["conversations_processed"] = consolidation_result.get("processed_count", 0)
         result["metrics"]["elements_extracted"] = consolidation_result.get("elements_total", 0)
         result["metrics"]["identity_extractions_delta"] = max(0, extractions_after - extractions_before)
         result["metrics"]["meta_consciousness_generated"] = 1
         result["metrics"]["meta_consciousness_question_count"] = len(meta_reading.get("internal_questions") or [])
+        result["metrics"]["will_seeded"] = 1
 
         self._record_virtual_artifact(
             result,
@@ -684,6 +703,13 @@ class ConsciousnessLoopManager:
             artifact_table="agent_meta_consciousness",
             summary=meta_reading.get("dominant_form") or meta_reading.get("integration_note") or "leitura metaconsciente",
         )
+        self._record_virtual_artifact(
+            result,
+            artifact_type="will_state",
+            artifact_id=preliminary_will.get("id"),
+            artifact_table="agent_will_states",
+            summary=preliminary_will.get("daily_text") or preliminary_will.get("will_conflict") or "estado preliminar das vontades",
+        )
 
         status = consolidation_result.get("status")
         if consolidation_result.get("success") or status in {"no_conversations", "partial_success"}:
@@ -696,7 +722,8 @@ class ConsciousnessLoopManager:
             result["output_summary"] = (
                 f"Identidade sincronizada; processadas {consolidation_result.get('processed_count', 0)} "
                 f"de {consolidation_result.get('total_conversations', 0)} conversas. "
-                f"Leitura metaconsciente: {meta_reading.get('integration_note') or meta_reading.get('dominant_form') or 'gerada'}"
+                f"Leitura metaconsciente: {meta_reading.get('integration_note') or meta_reading.get('dominant_form') or 'gerada'}. "
+                f"Estado preliminar das vontades: {preliminary_will.get('dominant_will') or 'em formacao'}."
             )
         else:
             result["status"] = "failed"
@@ -707,9 +734,11 @@ class ConsciousnessLoopManager:
 
     def _run_world_phase(self, result: Dict) -> Dict:
         from world_consciousness import world_consciousness
+        from will_engine import load_latest_will_state
 
         self._promote_from_placeholder(result)
-        world_state = world_consciousness.get_world_state(force_refresh=True)
+        will_state = load_latest_will_state(self.db, self.admin_user_id, cycle_id=result["cycle_id"])
+        world_state = world_consciousness.get_world_state(force_refresh=True, will_state=will_state)
         result["raw_result"]["world_state"] = {
             "dominant_tensions": world_state.get("dominant_tensions", []),
             "atmosphere": world_state.get("atmosphere"),
@@ -719,6 +748,8 @@ class ConsciousnessLoopManager:
             "divergence_map": world_state.get("divergence_map", {}),
             "work_seeds": world_state.get("work_seeds", []),
             "hobby_seeds": world_state.get("hobby_seeds", []),
+            "attention_profile": world_state.get("attention_profile", {}),
+            "will_bias_summary": world_state.get("will_bias_summary"),
         }
         result["metrics"]["world_areas_loaded"] = len([k for k, v in (world_state.get("area_panels", {}) or {}).items() if v.get("signal_count", 0) > 0])
         result["metrics"]["stale_area_count"] = len(world_state.get("stale_areas", []) or [])
@@ -727,6 +758,7 @@ class ConsciousnessLoopManager:
         result["metrics"]["work_seed_count"] = len(world_state.get("work_seeds", []) or [])
         result["metrics"]["hobby_seed_count"] = len(world_state.get("hobby_seeds", []) or [])
         result["metrics"]["confidence_overall"] = world_state.get("confidence_overall", 0.0)
+        result["metrics"]["will_bias_active"] = 1 if world_state.get("will_bias_summary") else 0
         self._record_virtual_artifact(
             result,
             artifact_type="world_state_snapshot",
@@ -757,7 +789,8 @@ class ConsciousnessLoopManager:
         result["output_summary"] = (
             "World Consciousness atualizado; "
             f"lucidez {world_state.get('lucidity_level', 'media')} "
-            f"com tensoes centrais em {', '.join(world_state.get('dominant_tensions', [])[:2]) or 'abertura e incerteza'}."
+            f"com tensoes centrais em {', '.join(world_state.get('dominant_tensions', [])[:2]) or 'abertura e incerteza'}. "
+            f"Viés de atencao: {world_state.get('will_bias_summary') or 'neutro'}"
         )
         return result
 
@@ -949,55 +982,49 @@ class ConsciousnessLoopManager:
 
         return result
 
-    def _run_scholar_phase(self, result: Dict) -> Dict:
-        from scholar_engine import ScholarEngine
+    def _run_will_phase(self, result: Dict) -> Dict:
+        from agent_identity_context_builder import AgentIdentityContextBuilder
+        from will_engine import WillEngine
+        from world_consciousness import world_consciousness
 
         self._promote_from_placeholder(result)
-        research_before = self._count_rows("external_research", "user_id = ?", (self.admin_user_id,))
-        runs_before = self._count_rows("scholar_runs", "user_id = ?", (self.admin_user_id,))
-        scholar = ScholarEngine(self.db)
-        scholar_result = scholar.run_scholarly_routine(
-            self.admin_user_id,
-            trigger_source="consciousness_loop",
+        will_before = self._count_rows("agent_will_states", "user_id = ?", (self.admin_user_id,))
+        builder = AgentIdentityContextBuilder(self.db)
+        current_state = builder.build_current_mind_state(
+            user_id=self.admin_user_id,
+            style="concise",
         )
-        research_after = self._count_rows("external_research", "user_id = ?", (self.admin_user_id,))
-        runs_after = self._count_rows("scholar_runs", "user_id = ?", (self.admin_user_id,))
-        result["raw_result"]["scholar_result"] = scholar_result
-        result["metrics"]["article_chars"] = scholar_result.get("article_chars", 0)
-        result["metrics"]["research_created"] = 1 if scholar_result.get("research_id") else 0
-        result["metrics"]["scholar_runs_delta"] = max(0, runs_after - runs_before)
-        result["metrics"]["external_research_delta"] = max(0, research_after - research_before)
+        world_state = world_consciousness.get_world_state(force_refresh=False)
+        will_engine = WillEngine(self.db)
+        will_result = will_engine.refresh_cycle_state(
+            user_id=self.admin_user_id,
+            cycle_id=result["cycle_id"],
+            source_phase="will",
+            trigger_source="consciousness_loop_will",
+            current_state=current_state,
+            world_state=world_state,
+        )
+        will_after = self._count_rows("agent_will_states", "user_id = ?", (self.admin_user_id,))
+        result["raw_result"]["will_result"] = will_result
+        result["metrics"]["will_states_delta"] = max(0, will_after - will_before)
+        result["metrics"]["saber_score"] = will_result.get("saber_score", 0.0)
+        result["metrics"]["relacionar_score"] = will_result.get("relacionar_score", 0.0)
+        result["metrics"]["expressar_score"] = will_result.get("expressar_score", 0.0)
 
-        if scholar_result.get("run_id"):
-            self._record_virtual_artifact(
-                result,
-                artifact_type="scholar_run",
-                artifact_id=scholar_result.get("run_id"),
-                artifact_table="scholar_runs",
-                summary=scholar_result.get("status", "scholar run"),
-            )
-        if scholar_result.get("research_id"):
-            self._record_virtual_artifact(
-                result,
-                artifact_type="external_research",
-                artifact_id=scholar_result.get("research_id"),
-                artifact_table="external_research",
-                summary=scholar_result.get("topic") or scholar_result.get("reason", "pesquisa autonoma"),
-            )
+        self._record_virtual_artifact(
+            result,
+            artifact_type="will_state",
+            artifact_id=will_result.get("id"),
+            artifact_table="agent_will_states",
+            summary=will_result.get("daily_text") or will_result.get("will_conflict") or "estado das vontades",
+        )
 
-        if scholar_result.get("success"):
-            if scholar_result.get("status") == "completed":
-                result["output_summary"] = (
-                    f"Scholar concluiu pesquisa sobre {scholar_result.get('topic', 'tema nao nomeado')}."
-                )
-            else:
-                result["status"] = "partial_success"
-                result["warnings"].append(f"scholar_{scholar_result.get('status', 'unknown')}")
-                result["output_summary"] = scholar_result.get("reason", "Scholar executado sem pesquisa nova.")
+        if will_result.get("status") in {"generated", "preliminary_generated"}:
+            result["output_summary"] = will_result.get("daily_text") or "Modulo Will consolidou o estado atual das tres vontades."
         else:
-            result["status"] = "failed"
-            result["errors"].append(scholar_result.get("reason", "scholar_failed"))
-            result["output_summary"] = "Scholar falhou ao concluir a fase."
+            result["status"] = "partial_success"
+            result["warnings"].append(f"will_{will_result.get('status', 'unknown')}")
+            result["output_summary"] = will_result.get("daily_text") or "Modulo Will consolidado via fallback heuristico."
 
         return result
 
@@ -1033,8 +1060,8 @@ class ConsciousnessLoopManager:
             result = self._run_hobby_phase(result)
         elif phase.key == "rumination_extro":
             result = self._run_rumination_phase(result, "extro")
-        elif phase.key == "scholar":
-            result = self._run_scholar_phase(result)
+        elif phase.key == "will":
+            result = self._run_will_phase(result)
 
         phase_result_id = self._save_phase_result(result)
         self._insert_event(
@@ -1155,7 +1182,7 @@ class ConsciousnessLoopManager:
                     phase_deadline_at = ?,
                     last_completed_phase = ?,
                     last_cycle_completed_at = CASE
-                        WHEN ? = 'dream' AND current_phase = 'scholar' THEN ?
+                        WHEN ? = 'dream' AND (current_phase = 'will' OR current_phase = 'scholar') THEN ?
                         ELSE last_cycle_completed_at
                     END,
                     updated_at = ?,

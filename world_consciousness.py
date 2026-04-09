@@ -49,6 +49,39 @@ SOURCE_REPUTATION_OVERRIDES = {
     "uol": 0.76,
 }
 
+WILL_AREA_BIAS = {
+    "saber": {
+        "politica": 0.68,
+        "geopolitica": 0.85,
+        "economia": 0.82,
+        "tecnologia": 1.0,
+        "cultura": 0.52,
+        "ciencia": 1.0,
+        "clima": 0.72,
+        "sociedade": 0.62,
+    },
+    "relacionar": {
+        "politica": 0.76,
+        "geopolitica": 0.66,
+        "economia": 0.56,
+        "tecnologia": 0.5,
+        "cultura": 0.84,
+        "ciencia": 0.48,
+        "clima": 0.7,
+        "sociedade": 1.0,
+    },
+    "expressar": {
+        "politica": 0.42,
+        "geopolitica": 0.52,
+        "economia": 0.34,
+        "tecnologia": 0.58,
+        "cultura": 1.0,
+        "ciencia": 0.62,
+        "clima": 0.74,
+        "sociedade": 0.72,
+    },
+}
+
 
 AREA_CONFIG = {
     "politica": {
@@ -268,6 +301,74 @@ class WorldConsciousnessFetcher:
         self.cache_duration_hours = 4
         self.max_history_entries = 72
 
+    def _resolve_will_state(self, will_state: Optional[Dict]) -> Dict:
+        if will_state:
+            return will_state
+        try:
+            from identity_config import ADMIN_USER_ID
+            from will_engine import load_latest_will_state_from_sqlite
+
+            return load_latest_will_state_from_sqlite(ADMIN_USER_ID) or {}
+        except Exception as exc:
+            logger.debug("World Consciousness: sem estado de vontade local: %s", exc)
+            return {}
+
+    def _will_signature(self, will_state: Dict) -> str:
+        if not will_state:
+            return "neutral"
+        return str(will_state.get("id") or will_state.get("updated_at") or will_state.get("created_at") or "neutral")
+
+    def _area_bias_for(self, area_key: str, will_state: Dict) -> float:
+        if not will_state:
+            return 0.0
+        scores = {
+            "saber": float(will_state.get("saber_score") or 0.0),
+            "relacionar": float(will_state.get("relacionar_score") or 0.0),
+            "expressar": float(will_state.get("expressar_score") or 0.0),
+        }
+        weighted = 0.0
+        for will, score in scores.items():
+            weighted += score * WILL_AREA_BIAS.get(will, {}).get(area_key, 0.5)
+        neutral = 1.0 / max(len(scores), 1)
+        return round((weighted - neutral) * 0.18, 3)
+
+    def _build_attention_profile(self, will_state: Dict) -> Dict[str, Any]:
+        if not will_state:
+            return {
+                "dominant_will": None,
+                "secondary_will": None,
+                "constrained_will": None,
+                "area_bias": {},
+            }
+
+        area_bias = {
+            area_key: round(self._area_bias_for(area_key, will_state), 3)
+            for area_key in AREA_CONFIG.keys()
+        }
+        ordered = sorted(area_bias.items(), key=lambda item: item[1], reverse=True)
+        return {
+            "dominant_will": will_state.get("dominant_will"),
+            "secondary_will": will_state.get("secondary_will"),
+            "constrained_will": will_state.get("constrained_will"),
+            "area_bias": area_bias,
+            "biased_area_order": [item[0] for item in ordered],
+        }
+
+    def _summarize_will_bias(self, will_state: Dict, attention_profile: Dict[str, Any]) -> str:
+        if not will_state:
+            return "sem vies ativo de vontade; leitura ampla e neutra do mundo"
+
+        ordered = attention_profile.get("biased_area_order", [])[:3]
+        readable_areas = [AREA_CONFIG[key]["label"] for key in ordered if key in AREA_CONFIG]
+        dominant = will_state.get("dominant_will") or "equilibrio"
+        constrained = will_state.get("constrained_will") or "nenhuma"
+        if readable_areas:
+            return (
+                f"a vontade de {dominant} inclina a atencao para {', '.join(readable_areas)}, "
+                f"enquanto a vontade de {constrained} aparece mais constrita"
+            )
+        return f"a vontade de {dominant} orienta a leitura, sem uma area dominante muito marcada"
+
     def _normalize_source_name(self, value: str) -> str:
         if not value:
             return "fonte desconhecida"
@@ -456,12 +557,13 @@ class WorldConsciousnessFetcher:
             return 0.82
         return 0.7
 
-    def _normalize_signal(self, area_key: str, item: Dict) -> Dict:
+    def _normalize_signal(self, area_key: str, item: Dict, will_state: Optional[Dict] = None) -> Dict:
         theme = self._detect_theme(area_key, item["headline"])
         reputation = self._reputation_for(item["source_name"], item["source_domain"], item["source_class"])
         recency = self._recency_weight(item["published_at"])
         theme_bonus = min(0.14, 0.05 * max(0, theme["theme_score"]))
-        signal_strength = round(min(1.0, reputation * recency + theme_bonus), 3)
+        will_bias = self._area_bias_for(area_key, will_state or {})
+        signal_strength = round(min(1.0, max(0.0, reputation * recency + theme_bonus + will_bias)), 3)
 
         return {
             "area_key": area_key,
@@ -478,6 +580,7 @@ class WorldConsciousnessFetcher:
             "tension": AREA_CONFIG[area_key]["tension"],
             "reputation_weight": reputation,
             "recency_weight": recency,
+            "will_bias": will_bias,
             "signal_strength": signal_strength,
         }
 
@@ -553,12 +656,12 @@ class WorldConsciousnessFetcher:
                 stale_areas.append(area_key)
         return stale_areas
 
-    def _build_signals(self, area_digest: Dict[str, List[Dict]]) -> List[Dict]:
+    def _build_signals(self, area_digest: Dict[str, List[Dict]], will_state: Optional[Dict] = None) -> List[Dict]:
         signals: List[Dict] = []
         for area_key, items in area_digest.items():
             for item in items:
                 if item.get("headline"):
-                    signals.append(self._normalize_signal(area_key, item))
+                    signals.append(self._normalize_signal(area_key, item, will_state=will_state))
         return signals
 
     def _build_source_trace(self, signals: List[Dict]) -> Dict[str, List[Dict]]:
@@ -591,7 +694,7 @@ class WorldConsciousnessFetcher:
             )[:6]
         return output
 
-    def _build_area_panel(self, area_key: str, signals: List[Dict], stale: bool, history: List[Dict]) -> Dict:
+    def _build_area_panel(self, area_key: str, signals: List[Dict], stale: bool, history: List[Dict], attention_profile: Optional[Dict] = None) -> Dict:
         label = AREA_CONFIG[area_key]["label"]
         if not signals:
             return {
@@ -661,9 +764,15 @@ class WorldConsciousnessFetcher:
 
         work_seeds = []
         hobby_seeds = []
+        area_bias = ((attention_profile or {}).get("area_bias", {}) or {}).get(area_key, 0.0)
         for theme_name in dominant_themes[:2]:
-            work_seeds.append(f"{label}: produzir leitura/acao sobre {theme_name}.")
-            hobby_seeds.append(f"{label}: explorar imagens, simbolos ou atmosferas ligados a {theme_name}.")
+            work_seed = f"{label}: produzir leitura/acao sobre {theme_name}."
+            hobby_seed = f"{label}: explorar imagens, simbolos ou atmosferas ligados a {theme_name}."
+            if area_bias > 0.05:
+                work_seed = work_seed[:-1] + " Este eixo esta mais carregado pelas vontades do ciclo."
+                hobby_seed = hobby_seed[:-1] + " Este eixo esta mais carregado pelas vontades do ciclo."
+            work_seeds.append(work_seed)
+            hobby_seeds.append(hobby_seed)
 
         previous_panel = {}
         if history:
@@ -684,16 +793,17 @@ class WorldConsciousnessFetcher:
             "dominant_themes": dominant_themes,
             "signal_count": len(signals),
             "scope_balance": {"brasil": scope_balance.get("brasil", 0), "mundo": scope_balance.get("mundo", 0)},
+            "attention_bias": area_bias,
         }
 
-    def _build_area_panels(self, signals: List[Dict], stale_areas: List[str], history: List[Dict]) -> Dict[str, Dict]:
+    def _build_area_panels(self, signals: List[Dict], stale_areas: List[str], history: List[Dict], attention_profile: Optional[Dict] = None) -> Dict[str, Dict]:
         grouped = defaultdict(list)
         for signal in signals:
             grouped[signal["area_key"]].append(signal)
 
         panels = {}
         for area_key in AREA_CONFIG.keys():
-            panels[area_key] = self._build_area_panel(area_key, grouped.get(area_key, []), area_key in stale_areas, history)
+            panels[area_key] = self._build_area_panel(area_key, grouped.get(area_key, []), area_key in stale_areas, history, attention_profile=attention_profile)
         return panels
 
     def _derive_atmosphere(self, area_panels: Dict[str, Dict]) -> str:
@@ -787,7 +897,11 @@ class WorldConsciousnessFetcher:
     def _build_world_seeds(self, area_panels: Dict[str, Dict]) -> Dict[str, List[str]]:
         work_seeds = []
         hobby_seeds = []
-        ordered = sorted(area_panels.values(), key=lambda panel: panel.get("confidence", 0.0), reverse=True)
+        ordered = sorted(
+            area_panels.values(),
+            key=lambda panel: (panel.get("confidence", 0.0), panel.get("attention_bias", 0.0)),
+            reverse=True,
+        )
 
         for panel in ordered:
             for seed in panel.get("seed_candidates", {}).get("work", []):
@@ -976,6 +1090,7 @@ Estado estruturado:
             f"Nivel geral de lucidez: {snapshot.get('lucidity_level', 'media')} ({snapshot.get('confidence_overall', 0.0):.2f})",
             f"Areas mais carregadas agora: {', '.join(dominant_area_labels) or 'nenhuma com peso suficiente nesta janela'}",
             f"Implicacao humana do tempo: {human_implication}",
+            f"Vies atual das vontades: {snapshot.get('will_bias_summary', 'sem vies ativo')}",
             f"Continuidade Percebida: {snapshot.get('continuity_note', 'sem memoria acumulada do mundo nesta janela')}",
             "",
             "Leituras dominantes do momento:",
@@ -1010,6 +1125,7 @@ Estado estruturado:
             f"Leitura forte: {snapshot.get('world_lucidity_summary', {}).get('zeitgeist', '')}",
             f"Media da verdade: {snapshot.get('world_lucidity_summary', {}).get('mean_of_truth', '')}",
             f"Confianca geral: {snapshot.get('confidence_overall', 0.0):.2f} ({snapshot.get('lucidity_level', 'media')})",
+            f"Vies das vontades: {snapshot.get('will_bias_summary', 'sem vies ativo')}",
             f"Continuidade: {snapshot.get('continuity_note', '')}",
             "",
             "Areas nucleares:",
@@ -1032,14 +1148,16 @@ Estado estruturado:
 
         return "\n".join(lines)
 
-    def _build_world_state(self, locale: str = "", cached_data: Dict = None) -> Dict:
+    def _build_world_state(self, locale: str = "", cached_data: Dict = None, will_state: Optional[Dict] = None) -> Dict:
         now = datetime.now()
+        resolved_will_state = self._resolve_will_state(will_state)
+        attention_profile = self._build_attention_profile(resolved_will_state)
         raw_area_digest = self._fetch_area_news()
         area_items = self._merge_with_cached_areas(raw_area_digest, cached_data or {})
         stale_areas = self._collect_stale_areas(raw_area_digest, area_items)
-        signals = self._build_signals(area_items)
+        signals = self._build_signals(area_items, will_state=resolved_will_state)
         history = self._load_recent_history()
-        area_panels = self._build_area_panels(signals, stale_areas, history)
+        area_panels = self._build_area_panels(signals, stale_areas, history, attention_profile=attention_profile)
         source_trace = self._build_source_trace(signals)
         consensus_map = self._build_consensus_map(area_panels)
         divergence_map = self._build_divergence_map(area_panels)
@@ -1054,7 +1172,7 @@ Estado estruturado:
         headlines = self._flatten_headlines(signals)
 
         world_state = {
-            "state_version": 4,
+            "state_version": 5,
             "cache_timestamp": now.isoformat(),
             "current_time": now.strftime("%Y-%m-%d %H:%M:%S"),
             "weather": weather_text,
@@ -1079,6 +1197,11 @@ Estado estruturado:
             "world_source_trace": source_trace,
             "continuity": continuity,
             "continuity_note": continuity["note"],
+            "will_signature": self._will_signature(resolved_will_state),
+            "attention_profile": attention_profile,
+            "will_bias_summary": self._summarize_will_bias(resolved_will_state, attention_profile),
+            "biased_area_order": attention_profile.get("biased_area_order", []),
+            "seed_bias_explanation": self._summarize_will_bias(resolved_will_state, attention_profile),
             "world_seeds": world_seeds,
             "work_seeds": world_seeds["work"],
             "hobby_seeds": world_seeds["hobby"],
@@ -1120,14 +1243,16 @@ Estado estruturado:
         history = self._load_recent_history()
         return history[-limit:]
 
-    def get_world_state(self, force_refresh: bool = False, locale: str = "") -> Dict:
+    def get_world_state(self, force_refresh: bool = False, locale: str = "", will_state: Optional[Dict] = None) -> Dict:
         now = datetime.now()
+        resolved_will_state = self._resolve_will_state(will_state)
+        will_signature = self._will_signature(resolved_will_state)
         cached_data = self._load_cache()
         cache_version = int(cached_data.get("state_version", 0) or 0) if cached_data else 0
 
-        if not force_refresh and cached_data and cache_version >= 4:
+        if not force_refresh and cached_data and cache_version >= 5:
             cached_time = datetime.fromisoformat(cached_data.get("cache_timestamp", "2000-01-01T00:00:00"))
-            if now - cached_time < timedelta(hours=self.cache_duration_hours):
+            if now - cached_time < timedelta(hours=self.cache_duration_hours) and cached_data.get("will_signature") == will_signature:
                 logger.info("World Consciousness: carregando estado do mundo via cache.")
                 cached_data["current_time"] = now.strftime("%Y-%m-%d %H:%M:%S")
                 cached_data["formatted_prompt_summary"] = self._format_prompt_summary(cached_data)
@@ -1136,7 +1261,7 @@ Estado estruturado:
                 return cached_data
 
         logger.info("World Consciousness: buscando novo estado do mundo nas redes externas...")
-        world_state = self._build_world_state(locale=locale, cached_data=cached_data)
+        world_state = self._build_world_state(locale=locale, cached_data=cached_data, will_state=resolved_will_state)
         self._save_cache(world_state)
         self._append_history(world_state)
         return world_state

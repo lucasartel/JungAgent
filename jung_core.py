@@ -1132,6 +1132,30 @@ class HybridDatabaseManager:
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_will_states (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                cycle_id TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                trigger_source TEXT DEFAULT 'unknown',
+                status TEXT DEFAULT 'generated',
+                saber_score REAL DEFAULT 0.34,
+                relacionar_score REAL DEFAULT 0.33,
+                expressar_score REAL DEFAULT 0.33,
+                dominant_will TEXT,
+                secondary_will TEXT,
+                constrained_will TEXT,
+                will_conflict TEXT,
+                attention_bias_note TEXT,
+                daily_text TEXT,
+                source_summary_json TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+
         # ========== ANÁLISES PSICOMÉTRICAS (RH) ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_psychometrics (
@@ -1546,6 +1570,7 @@ class HybridDatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_results_cycle ON consciousness_loop_phase_results(agent_instance, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_artifacts_cycle ON consciousness_loop_artifacts(agent_instance, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_meta_consciousness_user_cycle ON agent_meta_consciousness(agent_instance, user_id, cycle_id, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_will_states_user_cycle ON agent_will_states(user_id, cycle_id, created_at DESC)")
 
         # Work / integrations
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_destinations_provider ON work_destinations(provider_key, is_active)")
@@ -5233,6 +5258,35 @@ class JungianEngine:
                 )
         return items
 
+    def _fetch_recent_will_states(self, user_id: str, limit: int = 2) -> List[Dict[str, Any]]:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT dominant_will, secondary_will, constrained_will,
+                   will_conflict, attention_bias_note, daily_text
+            FROM agent_will_states
+            WHERE user_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        )
+        items = []
+        for row in cursor.fetchall():
+            daily_text = (row[5] or "").strip()
+            if daily_text:
+                items.append(
+                    {
+                        "dominant_will": row[0],
+                        "secondary_will": row[1],
+                        "constrained_will": row[2],
+                        "will_conflict": row[3],
+                        "attention_bias_note": row[4],
+                        "daily_text": daily_text,
+                    }
+                )
+        return items
+
     def _build_semantic_context(
         self,
         user_id: str,
@@ -5245,7 +5299,7 @@ class JungianEngine:
             "mem0_memory_count": 0,
             "used_sqlite_fallback": False,
             "rumination_insight_count": 0,
-            "scholar_item_count": 0,
+            "will_item_count": 0,
         }
 
         priority_fact_context = self.db.build_priority_fact_context(user_id, user_input, limit=8)
@@ -5290,20 +5344,22 @@ class JungianEngine:
                     semantic_context = semantic_context + "\n".join(lines)
                     stats["rumination_insight_count"] = len(rumination_items)
 
-                scholar_items = self._fetch_recent_external_research(user_id, limit=2)
-                if scholar_items:
-                    lines = ["\n[SÍNTESES ACADÊMICAS RECENTES QUE VOCÊ ESTUDOU AUTONOMAMENTE:]"]
-                    for item in scholar_items:
-                        lines.append(f"Tópico Estudado: {item['topic']}")
-                        if item.get("trigger_reason"):
-                            lines.append(f"Motivo interno da pesquisa: {item['trigger_reason']}")
-                        if item.get("research_lens"):
-                            lines.append(f"Lente teórica usada: {item['research_lens']}")
-                        lines.append(f"- {item['synthesized_insight']}")
+                will_items = self._fetch_recent_will_states(user_id, limit=2)
+                if will_items:
+                    lines = ["\n[ESTADO RECENTE DAS SUAS VONTADES:]"]
+                    for item in will_items:
+                        lines.append(
+                            f"Dominante: {item['dominant_will']}; secundaria: {item['secondary_will']}; constrita: {item['constrained_will']}."
+                        )
+                        if item.get("will_conflict"):
+                            lines.append(f"Conflito: {item['will_conflict']}")
+                        if item.get("attention_bias_note"):
+                            lines.append(f"Vies de atencao: {item['attention_bias_note']}")
+                        lines.append(f"- {item['daily_text']}")
                     semantic_context = semantic_context + "\n".join(lines)
-                    stats["scholar_item_count"] = len(scholar_items)
+                    stats["will_item_count"] = len(will_items)
             except Exception as exc:
-                logger.debug("[RUMINATION/SCHOLAR] Falha em injeções inconscientes: %s", exc)
+                logger.debug("[RUMINATION/WILL] Falha em injecoes inconscientes: %s", exc)
 
         return semantic_context, stats
 
@@ -5392,6 +5448,7 @@ class JungianEngine:
             "recent identity shift",
             "dream residue",
             "scholar trajectory",
+            "will trajectory",
             "self kernel",
             "current mind state",
             "dominant tension",
@@ -5425,22 +5482,24 @@ class JungianEngine:
         haystack = candidate.lower()
         return sum(1 for token in tokens if token in haystack)
 
-    def _select_scholar_items_for_active_dossier(
+    def _select_will_items_for_active_dossier(
         self,
         user_input: str,
-        scholar_items: List[Dict[str, Any]],
+        will_items: List[Dict[str, Any]],
         limit: int = 1,
     ) -> List[Dict[str, Any]]:
         ranked: List[Tuple[int, Dict[str, Any]]] = []
-        for item in scholar_items or []:
+        for item in will_items or []:
             combined = " ".join(
                 filter(
                     None,
                     [
-                        item.get("topic"),
-                        item.get("trigger_reason"),
-                        item.get("research_lens"),
-                        item.get("synthesized_insight"),
+                        item.get("dominant_will"),
+                        item.get("secondary_will"),
+                        item.get("constrained_will"),
+                        item.get("will_conflict"),
+                        item.get("attention_bias_note"),
+                        item.get("daily_text"),
                     ],
                 )
             )
@@ -5450,7 +5509,7 @@ class JungianEngine:
         selected = [item for score, item in ranked if score > 0][:limit]
         if selected:
             return selected
-        return (scholar_items or [])[:limit]
+        return (will_items or [])[:limit]
 
     def _infer_active_speech_act(self, user_input: str) -> str:
         normalized = (user_input or "").lower()
@@ -5554,7 +5613,7 @@ class JungianEngine:
             "contradiction_count": 0,
             "possible_self_count": 0,
             "rumination_insight_count": 0,
-            "scholar_item_count": 0,
+            "will_item_count": 0,
             "history_item_count": 0,
             "self_state_count": 0,
         }
@@ -5650,26 +5709,31 @@ class JungianEngine:
                 logger.warning("⚠️ [ACTIVE DOSSIER] Falha ao recuperar contradicoes/selves: %s", exc)
 
         rumination_lines: List[str] = []
-        scholar_lines: List[str] = []
+        will_lines: List[str] = []
         if str(user_id) == self._get_admin_user_id():
             try:
                 rumination_items = self._fetch_recent_rumination_insights(user_id, limit=2)
                 rumination_lines = self._extract_relevant_memory_lines("\n".join(rumination_items), limit=2)
                 dossier_stats["rumination_insight_count"] = len(rumination_lines)
 
-                scholar_items = self._select_scholar_items_for_active_dossier(
+                will_items = self._select_will_items_for_active_dossier(
                     user_input,
-                    self._fetch_recent_external_research(user_id, limit=2),
+                    self._fetch_recent_will_states(user_id, limit=2),
                     limit=1,
                 )
-                dossier_stats["scholar_item_count"] = len(scholar_items)
-                for item in scholar_items:
-                    topic = (item.get("topic") or "").strip()
-                    insight = (item.get("synthesized_insight") or "").strip()
-                    candidate = f"{topic}: {insight}" if topic and insight else topic or insight
-                    scholar_lines.extend(self._extract_relevant_memory_lines(candidate, limit=1))
+                dossier_stats["will_item_count"] = len(will_items)
+                for item in will_items:
+                    candidate_parts = [
+                        f"Dominante: {item.get('dominant_will')}" if item.get("dominant_will") else "",
+                        f"Secundaria: {item.get('secondary_will')}" if item.get("secondary_will") else "",
+                        f"Constrita: {item.get('constrained_will')}" if item.get("constrained_will") else "",
+                        item.get("will_conflict") or "",
+                        item.get("daily_text") or "",
+                    ]
+                    candidate = " ".join(part for part in candidate_parts if part)
+                    will_lines.extend(self._extract_relevant_memory_lines(candidate, limit=2))
             except Exception as exc:
-                logger.debug("[ACTIVE DOSSIER] Falha ao montar rumination/scholar: %s", exc)
+                logger.debug("[ACTIVE DOSSIER] Falha ao montar rumination/will: %s", exc)
 
         lines = ["[DOSSIE DE MEMORIA ATIVA]"]
         if priority_facts:
@@ -5685,9 +5749,9 @@ class JungianEngine:
         if rumination_lines:
             lines.extend(["", "[INSIGHT DE RUMINACAO]"])
             lines.extend(f"- {item}" for item in rumination_lines[:2])
-        if scholar_lines:
-            lines.extend(["", "[NOTA DE SCHOLAR]"])
-            lines.extend(f"- {item}" for item in scholar_lines[:1])
+        if will_lines:
+            lines.extend(["", "[ESTADO RECENTE DAS VONTADES]"])
+            lines.extend(f"- {item}" for item in will_lines[:2])
         if self_state_lines:
             lines.extend(["", "[ESTADO INTERNO RELEVANTE]"])
             lines.extend(f"- {item}" for item in self_state_lines[:4])

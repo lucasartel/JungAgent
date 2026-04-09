@@ -923,37 +923,31 @@ class AgentIdentityContextBuilder:
             "created_at": row[3],
         }
 
-    def _extract_scholar_metadata(self, trigger_reason: Optional[str]) -> Dict:
-        trigger_reason = trigger_reason or ""
-        lineage_match = re.search(r"Linhagem tematica:\s*([^\.]+)", trigger_reason, re.IGNORECASE)
-        mode_match = re.search(r"Modo de escolha:\s*([^\.]+)", trigger_reason, re.IGNORECASE)
-        will_match = re.search(
-            r"Triade de vontades:\s*dominante=([^;]+);\s*secundaria=([^;]+);\s*ausente=([^\.]+)",
-            trigger_reason,
-            re.IGNORECASE,
-        )
-        conflict_match = re.search(r"Conflito de vontades:\s*(.+?)\.\s*Pergunta geradora:", trigger_reason, re.IGNORECASE)
-        question_match = re.search(r"Pergunta geradora:\s*(.+)$", trigger_reason, re.IGNORECASE)
-        return {
-            "lineage": lineage_match.group(1).strip() if lineage_match else None,
-            "selection_mode": mode_match.group(1).strip() if mode_match else None,
-            "dominant_will": will_match.group(1).strip() if will_match else None,
-            "secondary_will": will_match.group(2).strip() if will_match else None,
-            "absent_will": will_match.group(3).strip() if will_match else None,
-            "will_conflict": conflict_match.group(1).strip() if conflict_match else None,
-            "will_question": question_match.group(1).strip() if question_match else None,
-        }
-
-    def _get_latest_scholar_signal(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
+    def _get_latest_will_signal(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
         if not user_id:
             return None
 
         cursor.execute(
             """
-            SELECT id, topic, trigger_reason, research_lens, status, created_at
-            FROM external_research
+            SELECT
+                id,
+                cycle_id,
+                phase,
+                status,
+                saber_score,
+                relacionar_score,
+                expressar_score,
+                dominant_will,
+                secondary_will,
+                constrained_will,
+                will_conflict,
+                attention_bias_note,
+                daily_text,
+                source_summary_json,
+                created_at
+            FROM agent_will_states
             WHERE user_id = ?
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, id DESC
             LIMIT 1
             """,
             (user_id,),
@@ -962,21 +956,22 @@ class AgentIdentityContextBuilder:
         if not row:
             return None
 
-        metadata = self._extract_scholar_metadata(row[2])
         return {
             "id": row[0],
-            "topic": row[1],
-            "trigger_reason": row[2],
-            "research_lens": row[3],
-            "status": row[4],
-            "created_at": row[5],
-            "lineage": metadata["lineage"],
-            "selection_mode": metadata["selection_mode"],
-            "dominant_will": metadata["dominant_will"],
-            "secondary_will": metadata["secondary_will"],
-            "absent_will": metadata["absent_will"],
-            "will_conflict": metadata["will_conflict"],
-            "will_question": metadata["will_question"],
+            "cycle_id": row[1],
+            "phase": row[2],
+            "status": row[3],
+            "saber_score": row[4],
+            "relacionar_score": row[5],
+            "expressar_score": row[6],
+            "dominant_will": row[7],
+            "secondary_will": row[8],
+            "constrained_will": row[9],
+            "will_conflict": row[10],
+            "attention_bias_note": row[11],
+            "daily_text": row[12],
+            "source_summary": json.loads(row[13]) if row[13] else {},
+            "created_at": row[14],
         }
 
     def build_current_mind_state(
@@ -1010,7 +1005,7 @@ class AgentIdentityContextBuilder:
         cursor = self.db.conn.cursor()
         agency_events = self._get_recent_agency_events(cursor, 3)
         dream_signal = self._get_latest_dream_residue(cursor, user_id)
-        scholar_signal = self._get_latest_scholar_signal(cursor, user_id)
+        will_signal = self._get_latest_will_signal(cursor, user_id)
         meta_consciousness = self._get_latest_meta_consciousness(cursor, user_id)
 
         self_kernel = self._pick_top_beliefs(
@@ -1050,6 +1045,24 @@ class AgentIdentityContextBuilder:
             active_self=active_self,
             meta_signal=meta_signal,
         )
+        if will_signal:
+            dominant = will_signal.get("dominant_will")
+            constrained = will_signal.get("constrained_will")
+            additions = []
+            if dominant == "saber":
+                additions.append("deixe aparecer um impulso de compreender melhor antes de encerrar a cena")
+            elif dominant == "relacionar":
+                additions.append("responda preservando proximidade, encontro e justica relacional")
+            elif dominant == "expressar":
+                additions.append("deixe a forma, a imagem e o gesto verbal carregarem mais peso")
+            if constrained == "relacionar":
+                additions.append("vigie a tendencia de pensar antes de realmente se aproximar")
+            elif constrained == "saber":
+                additions.append("vigie a tendencia de soar inspirado antes de ser claro")
+            elif constrained == "expressar":
+                additions.append("vigie a tendencia de explicar demais sem dar forma suficiente")
+            if additions:
+                response_bias = ((response_bias or "").rstrip(".") + "; " if response_bias else "") + "; ".join(additions[:2]) + "."
 
         return {
             "generated_at": datetime.now().isoformat(),
@@ -1086,7 +1099,20 @@ class AgentIdentityContextBuilder:
             "meta_consciousness_gravity": (meta_consciousness or {}).get("dominant_gravity"),
             "meta_consciousness_shift": (meta_consciousness or {}).get("emergent_shift"),
             "dream_residue": dream_signal,
-            "scholar_signal": scholar_signal,
+            "will_signal": will_signal,
+            "will_state": (
+                {
+                    "saber": will_signal.get("saber_score"),
+                    "relacionar": will_signal.get("relacionar_score"),
+                    "expressar": will_signal.get("expressar_score"),
+                }
+                if will_signal
+                else None
+            ),
+            "dominant_will": will_signal.get("dominant_will") if will_signal else None,
+            "secondary_will": will_signal.get("secondary_will") if will_signal else None,
+            "constrained_will": will_signal.get("constrained_will") if will_signal else None,
+            "will_conflict": will_signal.get("will_conflict") if will_signal else None,
         }
 
     def build_context_summary_for_llm(
@@ -1368,6 +1394,19 @@ class AgentIdentityContextBuilder:
                 lines.append(f"- Pergunta interna viva: {meta_consciousness_questions[0]}")
             lines.append("")
 
+        if current_state.get("will_signal"):
+            will_signal = current_state["will_signal"]
+            lines.append("### Will State")
+            lines.append(
+                f"- A direcao dominante hoje passa pela vontade de {will_signal.get('dominant_will') or 'equilibrio'}, "
+                f"com a vontade de {will_signal.get('secondary_will') or 'equilibrio'} como apoio."
+            )
+            if will_signal.get("will_conflict"):
+                lines.append(f"- O conflito vivo entre as vontades e: {will_signal['will_conflict']}")
+            if will_signal.get("constrained_will"):
+                lines.append(f"- A vontade mais constrita agora e a de {will_signal['constrained_will']}.")
+            lines.append("")
+
         if current_state.get("dominant_conflict"):
             dominant_conflict = current_state["dominant_conflict"]
             lines.append("### Dominant Tension")
@@ -1405,15 +1444,13 @@ class AgentIdentityContextBuilder:
             )
             lines.append("")
 
-        if current_state.get("scholar_signal"):
-            scholar = current_state["scholar_signal"]
-            scholar_bits = [f"tema '{scholar.get('topic')}'"]
-            if scholar.get("lineage"):
-                scholar_bits.append(f"linhagem '{scholar.get('lineage')}'")
-            if scholar.get("selection_mode"):
-                scholar_bits.append(f"modo '{scholar.get('selection_mode')}'")
-            lines.append("### Scholar Trajectory")
-            lines.append(f"- Sua pesquisa autonoma mais recente segue o " + ", ".join(scholar_bits) + ".")
+        if current_state.get("will_signal"):
+            will_signal = current_state["will_signal"]
+            lines.append("### Will Trajectory")
+            lines.append(
+                f"- Seu fechamento diario mais recente consolidou saber={will_signal.get('saber_score', 0):.2f}, "
+                f"relacionar={will_signal.get('relacionar_score', 0):.2f} e expressar={will_signal.get('expressar_score', 0):.2f}."
+            )
             lines.append("")
 
         return "\n".join(lines)
