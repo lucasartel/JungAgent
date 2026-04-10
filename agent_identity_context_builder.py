@@ -1121,6 +1121,10 @@ class AgentIdentityContextBuilder:
             "will_conflict": will_signal.get("will_conflict") if will_signal else None,
             "conversation_micro_shift": will_signal.get("conversation_micro_shift") if will_signal else None,
             "message_signal_summary": will_signal.get("message_signal_summary") if will_signal else None,
+            "pressure_summary": will_signal.get("pressure_summary") if will_signal else None,
+            "dominant_pressure": will_signal.get("dominant_pressure") if will_signal else None,
+            "last_release_will": will_signal.get("last_release_will") if will_signal else None,
+            "last_action_status": will_signal.get("last_action_status") if will_signal else None,
         }
 
     def build_context_summary_for_llm(
@@ -1461,6 +1465,13 @@ class AgentIdentityContextBuilder:
             )
             if will_signal.get("message_signal_summary"):
                 lines.append(f"- As conversas mais recentes inclinaram o foco assim: {will_signal['message_signal_summary']}")
+            if will_signal.get("pressure_summary"):
+                lines.append(f"- A pressao psiquica atual do organismo esta assim: {will_signal['pressure_summary']}")
+            if will_signal.get("last_release_will"):
+                lines.append(
+                    f"- A ultima catarse reconhecida veio de {will_signal.get('last_release_will')}, "
+                    f"com status {will_signal.get('last_action_status') or 'nao informado'}."
+                )
             lines.append("")
 
         return "\n".join(lines)

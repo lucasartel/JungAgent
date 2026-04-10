@@ -1175,6 +1175,50 @@ class HybridDatabaseManager:
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_will_pressure_state (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                cycle_id TEXT NOT NULL,
+                saber_pressure REAL DEFAULT 0,
+                relacionar_pressure REAL DEFAULT 0,
+                expressar_pressure REAL DEFAULT 0,
+                dominant_pressure TEXT,
+                threshold_crossed BOOLEAN DEFAULT 0,
+                refractory_until_saber DATETIME,
+                refractory_until_relacionar DATETIME,
+                refractory_until_expressar DATETIME,
+                last_release_will TEXT,
+                last_release_at DATETIME,
+                last_action_status TEXT,
+                last_action_summary TEXT,
+                source_markers_json TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_will_pulse_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                cycle_id TEXT NOT NULL,
+                trigger_source TEXT DEFAULT 'will_pulse',
+                saber_pressure REAL DEFAULT 0,
+                relacionar_pressure REAL DEFAULT 0,
+                expressar_pressure REAL DEFAULT 0,
+                winning_will TEXT,
+                decision_reason TEXT,
+                action_attempted TEXT,
+                action_summary TEXT,
+                status TEXT DEFAULT 'no_action',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+
         # ========== ANÁLISES PSICOMÉTRICAS (RH) ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_psychometrics (
@@ -1591,6 +1635,8 @@ class HybridDatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_meta_consciousness_user_cycle ON agent_meta_consciousness(agent_instance, user_id, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_will_states_user_cycle ON agent_will_states(user_id, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_will_message_signals_cycle ON agent_will_message_signals(user_id, cycle_id, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_will_pressure_user_cycle ON agent_will_pressure_state(user_id, cycle_id, updated_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_will_pulse_events_user_cycle ON agent_will_pulse_events(user_id, cycle_id, created_at DESC)")
 
         # Work / integrations
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_destinations_provider ON work_destinations(provider_key, is_active)")

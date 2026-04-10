@@ -4,7 +4,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 import os
 from typing import Dict, List, Optional
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import re
 
@@ -2211,6 +2211,89 @@ async def research_dashboard(
     cursor.execute("SELECT COUNT(DISTINCT cycle_id) FROM agent_will_states")
     will_stats["distinct_cycles"] = cursor.fetchone()[0]
 
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_will_pressure_state'")
+    has_pressure_state = cursor.fetchone() is not None
+    latest_pressure = None
+    pressure_stats = {
+        "total_pulse_events": 0,
+        "completed_actions": 0,
+        "failed_actions": 0,
+        "refractory_blocks": 0,
+        "threshold": 80,
+        "next_pulse_at": None,
+    }
+    pulse_events = []
+
+    if has_pressure_state:
+        cursor.execute("""
+            SELECT
+                id,
+                cycle_id,
+                saber_pressure,
+                relacionar_pressure,
+                expressar_pressure,
+                dominant_pressure,
+                threshold_crossed,
+                refractory_until_saber,
+                refractory_until_relacionar,
+                refractory_until_expressar,
+                last_release_will,
+                last_release_at,
+                last_action_status,
+                last_action_summary,
+                source_markers_json,
+                datetime(updated_at, 'localtime') as updated_at,
+                datetime(created_at, 'localtime') as created_at
+            FROM agent_will_pressure_state
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+        """)
+        pressure_row = cursor.fetchone()
+        latest_pressure = dict(pressure_row) if pressure_row else None
+        if latest_pressure:
+            raw_markers = latest_pressure.get("source_markers_json")
+            try:
+                latest_pressure["source_markers"] = json.loads(raw_markers) if raw_markers else {}
+            except Exception:
+                latest_pressure["source_markers"] = {}
+
+        cursor.execute("""
+            SELECT
+                id,
+                cycle_id,
+                trigger_source,
+                saber_pressure,
+                relacionar_pressure,
+                expressar_pressure,
+                winning_will,
+                decision_reason,
+                action_attempted,
+                action_summary,
+                status,
+                datetime(created_at, 'localtime') as created_at,
+                datetime(updated_at, 'localtime') as updated_at
+            FROM agent_will_pulse_events
+            ORDER BY created_at DESC, id DESC
+            LIMIT 16
+        """)
+        pulse_events = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute("SELECT COUNT(*) FROM agent_will_pulse_events")
+        pressure_stats["total_pulse_events"] = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM agent_will_pulse_events WHERE status = 'completed'")
+        pressure_stats["completed_actions"] = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM agent_will_pulse_events WHERE status = 'failed'")
+        pressure_stats["failed_actions"] = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM agent_will_pulse_events WHERE status = 'refractory_blocked'")
+        pressure_stats["refractory_blocks"] = cursor.fetchone()[0]
+
+        if pulse_events:
+            try:
+                next_pulse_dt = datetime.fromisoformat(pulse_events[0]["created_at"]) + timedelta(hours=3)
+                pressure_stats["next_pulse_at"] = next_pulse_dt.strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                pressure_stats["next_pulse_at"] = None
+
     cursor.execute("PRAGMA table_info(external_research)")
     research_columns = {row[1] for row in cursor.fetchall()}
     archived_researches = []
@@ -2268,8 +2351,11 @@ async def research_dashboard(
     return templates.TemplateResponse("dashboards/research.html", {
         "request": request,
         "latest_will": latest_will,
+        "latest_pressure": latest_pressure,
         "will_states": will_states,
         "will_stats": will_stats,
+        "pressure_stats": pressure_stats,
+        "pulse_events": pulse_events,
         "archived_researches": archived_researches,
         "scholar_archive_runs": scholar_archive_runs,
         "archive_stats": archive_stats,

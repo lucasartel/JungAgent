@@ -326,9 +326,16 @@ class WorldConsciousnessFetcher:
             "relacionar": float(will_state.get("relacionar_score") or 0.0),
             "expressar": float(will_state.get("expressar_score") or 0.0),
         }
+        pressures = {
+            "saber": float(will_state.get("saber_pressure") or 0.0) / 100.0,
+            "relacionar": float(will_state.get("relacionar_pressure") or 0.0) / 100.0,
+            "expressar": float(will_state.get("expressar_pressure") or 0.0) / 100.0,
+        }
         weighted = 0.0
         for will, score in scores.items():
             weighted += score * WILL_AREA_BIAS.get(will, {}).get(area_key, 0.5)
+        for will, pressure in pressures.items():
+            weighted += pressure * WILL_AREA_BIAS.get(will, {}).get(area_key, 0.5) * 0.7
         neutral = 1.0 / max(len(scores), 1)
         return round((weighted - neutral) * 0.18, 3)
 
@@ -350,6 +357,7 @@ class WorldConsciousnessFetcher:
             "dominant_will": will_state.get("dominant_will"),
             "secondary_will": will_state.get("secondary_will"),
             "constrained_will": will_state.get("constrained_will"),
+            "dominant_pressure": will_state.get("dominant_pressure"),
             "area_bias": area_bias,
             "biased_area_order": [item[0] for item in ordered],
         }
@@ -362,12 +370,19 @@ class WorldConsciousnessFetcher:
         readable_areas = [AREA_CONFIG[key]["label"] for key in ordered if key in AREA_CONFIG]
         dominant = will_state.get("dominant_will") or "equilibrio"
         constrained = will_state.get("constrained_will") or "nenhuma"
+        dominant_pressure = will_state.get("dominant_pressure")
         if readable_areas:
-            return (
+            summary = (
                 f"a vontade de {dominant} inclina a atencao para {', '.join(readable_areas)}, "
                 f"enquanto a vontade de {constrained} aparece mais constrita"
             )
-        return f"a vontade de {dominant} orienta a leitura, sem uma area dominante muito marcada"
+            if dominant_pressure:
+                summary += f"; a pressao psiquica hoje pesa mais em {dominant_pressure}"
+            return summary
+        summary = f"a vontade de {dominant} orienta a leitura, sem uma area dominante muito marcada"
+        if dominant_pressure:
+            summary += f"; a pressao psiquica dominante e {dominant_pressure}"
+        return summary
 
     def _normalize_source_name(self, value: str) -> str:
         if not value:

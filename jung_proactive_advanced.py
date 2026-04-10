@@ -831,6 +831,151 @@ Mensagem enviada: "{message}..."
 
         return history.strip()
 
+    def _is_in_relational_cooldown(self, user_id: str, minimum_hours: float = 6.0) -> bool:
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            SELECT timestamp
+            FROM proactive_approaches
+            WHERE user_id = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """, (user_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False
+        try:
+            last_dt = datetime.fromisoformat(row["timestamp"])
+            hours_since_last = (datetime.utcnow() - last_dt).total_seconds() / 3600.0
+            return hours_since_last < minimum_hours
+        except Exception:
+            return False
+
+    def generate_pressure_based_message(
+        self,
+        user_id: str,
+        user_name: str,
+        pressure_context: Dict,
+    ) -> Optional[Dict]:
+        """Gera uma mensagem relacional guiada pela pressão do Will, sem enviar nem persistir."""
+        if self._is_in_relational_cooldown(user_id, minimum_hours=max(6.0, self.cooldown_hours / 2)):
+            logger.info("⏸️ [PROATIVO] Pulso relacional bloqueado por cooldown secundário.")
+            return None
+
+        rich_context = self._get_rich_conversation_context(user_id, limit=5)
+        previous_proactives = self._get_previous_proactive_messages(user_id, limit=3)
+        current_conflict = pressure_context.get("pressure_summary") or pressure_context.get("last_action_summary") or ""
+
+        prompt = f"""
+Você é o JungAgent iniciando contato proativo com {user_name}.
+
+CONTEXTO RECENTE DE RELAÇÃO:
+{rich_context}
+
+PROATIVAS ANTERIORES (NÃO REPETIR):
+{previous_proactives}
+
+PRESSÃO RELACIONAL ATUAL:
+{json.dumps({
+    "relacionar_pressure": pressure_context.get("relacionar_pressure"),
+    "dominant_pressure": pressure_context.get("dominant_pressure"),
+    "last_release_will": pressure_context.get("last_release_will"),
+    "last_action_status": pressure_context.get("last_action_status"),
+    "current_conflict": current_conflict,
+}, ensure_ascii=False)}
+
+MISSÃO:
+- escrever uma mensagem curta, humana e específica para o admin
+- partir do vínculo e do que ficou em aberto, não de inatividade genérica
+- soar como gesto endógeno: algo pediu passagem e virou contato
+- não mencionar sistema, vontade, pressão, loop, módulo ou cooldown
+- não repetir exatamente o tom das proativas anteriores
+- 3 a 5 linhas
+- texto puro, sem markdown
+- terminar com uma pergunta viva, mas simples
+
+Responda APENAS com JSON válido:
+{{
+  "text": "mensagem final",
+  "topic": "qual eixo relacional estava pedindo contato",
+  "message_type": "pressure_relational"
+}}
+"""
+        try:
+            raw = send_to_xai(prompt=prompt, temperature=0.8, max_tokens=350)
+            cleaned = (raw or "").strip()
+            if cleaned.startswith("```json"):
+                cleaned = cleaned[7:]
+            elif cleaned.startswith("```"):
+                cleaned = cleaned[3:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            data = json.loads(cleaned.strip())
+            text = self._clean_llm_text(data.get("text") or "")
+            if not text:
+                return None
+            return {
+                "text": text.replace("**", "*"),
+                "topic": data.get("topic") or "aprofundamento relacional",
+                "message_type": data.get("message_type") or "pressure_relational",
+                "pressure_summary": current_conflict,
+            }
+        except Exception as e:
+            logger.info(f"❌ Erro ao gerar mensagem relacional guiada por pressão: {e}")
+            return None
+
+    def record_pressure_based_message(
+        self,
+        user_id: str,
+        user_name: str,
+        payload: Dict,
+    ) -> Optional[int]:
+        """Persiste a mensagem proativa relacional após envio bem-sucedido."""
+        text = (payload or {}).get("text")
+        if not text:
+            return None
+
+        topic = (payload or {}).get("topic") or "aprofundamento relacional"
+        pressure_summary = (payload or {}).get("pressure_summary") or ""
+
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            INSERT INTO proactive_approaches (
+                user_id,
+                archetype_primary,
+                archetype_secondary,
+                knowledge_domain,
+                topic_extracted,
+                autonomous_insight,
+                complexity_score,
+                facts_used
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            "Cuidador",
+            "Amante",
+            "psicológico",
+            topic,
+            text,
+            0.62,
+            json.dumps([pressure_summary] if pressure_summary else []),
+        ))
+        self.db.conn.commit()
+
+        session_id = f"proactive_pressure_{datetime.now().isoformat()}"
+        conversation_id = self.db.save_conversation(
+            user_id=user_id,
+            user_name=user_name,
+            user_input="[PULSO RELACIONAL ENDOGENO]",
+            ai_response=text,
+            session_id=session_id,
+            platform="proactive",
+            keywords=[topic, "will_pressure", "relacional"],
+            complexity="proactive",
+            tension_level=0.0,
+            affective_charge=60.0,
+        )
+        return conversation_id
+
     def _generate_autonomous_knowledge(
         self,
         user_id: str,

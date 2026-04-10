@@ -88,6 +88,58 @@
     </section>
     {% endif %}
 
+    {% if latest_pressure %}
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">PressÃ£o psÃ­quica atual</h2>
+                <p class="panel-subtitle-v2">Camada energÃ©tico-operacional que agora governa pulsos, catarse e proatividade endÃ³gena.</p>
+            </div>
+            <span class="table-badge-v2">{{ latest_pressure.dominant_pressure or 'equilibrio' }}</span>
+        </div>
+        <div class="panel-body-v2 stack-v2">
+            <section class="metric-grid-v2 metric-grid-v2--quad">
+                <article class="metric-card-v2">
+                    <span class="metric-label-v2">Saber</span>
+                    <strong class="metric-value-v2">{{ '%.0f'|format(latest_pressure.saber_pressure or 0) }}</strong>
+                    <p class="metric-note-v2">PressÃ£o de compreender, nomear e distinguir.</p>
+                </article>
+                <article class="metric-card-v2">
+                    <span class="metric-label-v2">Relacionar</span>
+                    <strong class="metric-value-v2">{{ '%.0f'|format(latest_pressure.relacionar_pressure or 0) }}</strong>
+                    <p class="metric-note-v2">PressÃ£o de vÃ­nculo, aproximaÃ§Ã£o e resposta ao outro.</p>
+                </article>
+                <article class="metric-card-v2">
+                    <span class="metric-label-v2">Expressar</span>
+                    <strong class="metric-value-v2">{{ '%.0f'|format(latest_pressure.expressar_pressure or 0) }}</strong>
+                    <p class="metric-note-v2">PressÃ£o de forma, sÃ­mbolo e catarse estÃ©tica.</p>
+                </article>
+                <article class="metric-card-v2">
+                    <span class="metric-label-v2">PrÃ³ximo pulso</span>
+                    <strong class="metric-value-v2">{{ pressure_stats.next_pulse_at or '-' }}</strong>
+                    <p class="metric-note-v2">Limiar atual: {{ pressure_stats.threshold }} Â· Ãºltima atualizaÃ§Ã£o {{ latest_pressure.updated_at }}.</p>
+                </article>
+            </section>
+            <article class="data-card-v2">
+                <div class="tag-list-v2">
+                    <span class="tag-v2">Dominante por pressÃ£o: {{ latest_pressure.dominant_pressure or '-' }}</span>
+                    <span class="tag-v2">Threshold crossed: {{ 'sim' if latest_pressure.threshold_crossed else 'nÃ£o' }}</span>
+                    <span class="tag-v2">Ãšltima catarse: {{ latest_pressure.last_release_will or '-' }}</span>
+                    <span class="tag-v2">Status: {{ latest_pressure.last_action_status or '-' }}</span>
+                </div>
+                {% if latest_pressure.last_action_summary %}
+                <div class="mono-block-v2">{{ latest_pressure.last_action_summary }}</div>
+                {% endif %}
+                <div class="meta-line-v2">
+                    <span>RefratÃ¡rio saber atÃ©: {{ latest_pressure.refractory_until_saber or '-' }}</span>
+                    Â· <span>relacionar atÃ©: {{ latest_pressure.refractory_until_relacionar or '-' }}</span>
+                    Â· <span>expressar atÃ©: {{ latest_pressure.refractory_until_expressar or '-' }}</span>
+                </div>
+            </article>
+        </div>
+    </section>
+    {% endif %}
+
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
@@ -128,6 +180,68 @@
                 <div class="empty-state-icon-v2">Sem leituras</div>
                 <p class="empty-state-title-v2">O módulo Will ainda não produziu snapshots persistidos.</p>
                 <p class="empty-state-copy-v2">Quando o fechamento diário acontecer, o texto das vontades aparecerá aqui.</p>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">HistÃ³rico dos pulsos</h2>
+                <p class="panel-subtitle-v2">Eventos do novo sistema de pressÃ£o psÃ­quica, incluindo disparos, bloqueios refratÃ¡rios e falhas.</p>
+            </div>
+        </div>
+        <div class="panel-body-v2 stack-v2">
+            <section class="metric-grid-v2 metric-grid-v2--quad">
+                <article class="metric-card-v2">
+                    <span class="metric-label-v2">Pulsos</span>
+                    <strong class="metric-value-v2">{{ pressure_stats.total_pulse_events }}</strong>
+                    <p class="metric-note-v2">MediÃ§Ãµes registradas pelo pulso.</p>
+                </article>
+                <article class="metric-card-v2">
+                    <span class="metric-label-v2">AÃ§Ãµes concluÃ­das</span>
+                    <strong class="metric-value-v2">{{ pressure_stats.completed_actions }}</strong>
+                    <p class="metric-note-v2">Catarse bem-sucedida apÃ³s cruzar o limiar.</p>
+                </article>
+                <article class="metric-card-v2">
+                    <span class="metric-label-v2">Falhas</span>
+                    <strong class="metric-value-v2">{{ pressure_stats.failed_actions }}</strong>
+                    <p class="metric-note-v2">AÃ§Ãµes que reduziram pressÃ£o parcialmente e viraram frustraÃ§Ã£o.</p>
+                </article>
+                <article class="metric-card-v2">
+                    <span class="metric-label-v2">Bloqueios</span>
+                    <strong class="metric-value-v2">{{ pressure_stats.refractory_blocks }}</strong>
+                    <p class="metric-note-v2">Pulso bloqueado por refratariedade ativa.</p>
+                </article>
+            </section>
+            {% for event in pulse_events %}
+            <article class="data-card-v2">
+                <div class="table-controls-v2">
+                    <div>
+                        <strong>#{{ event.id }} Â· {{ event.status|upper }}</strong>
+                        <div class="meta-line-v2">{{ event.created_at }} Â· {{ event.trigger_source }}</div>
+                    </div>
+                    <span class="table-badge-v2">{{ event.winning_will or 'sem vencedora' }}</span>
+                </div>
+                <div class="tag-list-v2">
+                    <span class="tag-v2">Saber: {{ '%.0f'|format(event.saber_pressure or 0) }}</span>
+                    <span class="tag-v2">Relacionar: {{ '%.0f'|format(event.relacionar_pressure or 0) }}</span>
+                    <span class="tag-v2">Expressar: {{ '%.0f'|format(event.expressar_pressure or 0) }}</span>
+                    <span class="tag-v2">AÃ§Ã£o: {{ event.action_attempted or '-' }}</span>
+                </div>
+                {% if event.decision_reason %}
+                <div class="mono-block-v2">{{ event.decision_reason }}</div>
+                {% endif %}
+                {% if event.action_summary %}
+                <div class="mono-block-v2">{{ event.action_summary }}</div>
+                {% endif %}
+            </article>
+            {% else %}
+            <div class="empty-state-v2">
+                <div class="empty-state-icon-v2">Sem pulsos</div>
+                <p class="empty-state-title-v2">O sistema de pressÃ£o psÃ­quica ainda nÃ£o registrou eventos.</p>
+                <p class="empty-state-copy-v2">Quando o pulso comeÃ§ar a rodar, os eventos aparecerÃ£o aqui.</p>
             </div>
             {% endfor %}
         </div>

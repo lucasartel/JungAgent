@@ -146,65 +146,94 @@ async def lifespan(app: FastAPI):
 
     # Iniciar scheduler de Curiosidade Ontológica (Consciência do Mundo)
     async def world_consciousness_scheduler():
-        """Atualiza o estado de mundo e depois executa a verificação proativa."""
-        from telegram_bot import bot_state
-        from datetime import datetime
+        """Atualiza o estado de mundo para manter a consciência externa viva."""
         from world_consciousness import world_consciousness
 
-        # ⏳ Aguarda 5 minutos antes da primeira verificação
-        # Evita que deploys/reinicializações disparem proativas imediatamente
-        logger.info("⏳ [SCHEDULER] Aguardando 5 min antes da primeira verificação proativa...")
+        logger.info("⏳ [SCHEDULER] Aguardando 5 min antes da primeira atualizacao de mundo...")
         await asyncio.sleep(300)
 
         while True:
             try:
                 await asyncio.to_thread(world_consciousness.get_world_state, True)
                 logger.info("🌍 [SCHEDULER] Estado de mundo atualizado.")
-
-                # Verificação ativa entre 6h e 11h
-                if not proactive_messages_enabled():
-                    logger.info("⏸️ [SCHEDULER] Mensagens proativas desativadas por PROACTIVE_ENABLED=false.")
-                    await asyncio.sleep(3600)
-                    continue
-
-                current_hour = datetime.now().hour
-                if True:  # Removido limite de horario matinal para o Piloto 7 dias
-                    logger.info("🌍 [SCHEDULER] Acionando verificação de Curiosidade Ontológica...")
-                    users = bot_state.db.get_all_users()
-                    for user in users:
-                        user_id = user.get('user_id')
-                        user_name = user.get('user_name', 'Usuário')
-                        platform_id = user.get('platform_id')
-                        
-                        if user_id and platform_id:
-                            # ⚠️ Executar em thread pool para evitar bloqueio do event loop do Telegram/FastAPI
-                            msg = await asyncio.to_thread(
-                                bot_state.proactive.check_and_generate_advanced_message,
-                                user_id, 
-                                user_name
-                            )
-                            if msg:
-                                telegram_id = int(platform_id)
-                                try:
-                                    await telegram_app.bot.send_message(
-                                        chat_id=telegram_id,
-                                        text=msg
-                                    )
-                                except Exception:
-                                    await telegram_app.bot.send_message(
-                                        chat_id=telegram_id,
-                                        text=msg
-                                    )
-                                logger.info(f"✅ [PROATIVO] Mensagem enviada para {user_name} ({telegram_id})")
-                                await asyncio.sleep(2)
             except Exception as e:
                 logger.error(f"❌ Erro no scheduler de Consciência do Mundo: {e}")
-            
-            # Dorme por 1 hora antes da próxima verificação
+
             await asyncio.sleep(3600)
 
     asyncio.create_task(world_consciousness_scheduler())
     logger.info("✅ Job de Curiosidade Ontológica (World Consciousness) agendado!")
+
+    async def will_pulse_scheduler():
+        """Mede pressão psíquica e aciona proatividade endógena quando houver transbordamento."""
+        from rumination_config import ADMIN_USER_ID
+        from will_pressure import PULSE_INTERVAL_HOURS, WillPressureEngine
+
+        logger.info("⏳ [WILL PULSE] Aguardando 2 min antes do primeiro pulso de pressão...")
+        await asyncio.sleep(120)
+
+        while True:
+            try:
+                engine = WillPressureEngine(bot_state.db)
+                proactive_executor = bot_state.proactive if proactive_messages_enabled() else None
+                pulse = await asyncio.to_thread(
+                    engine.run_pulse,
+                    ADMIN_USER_ID,
+                    "will_pulse_scheduler",
+                    proactive_executor,
+                )
+                logger.info(
+                    "⚡ [WILL PULSE] status=%s winner=%s event_id=%s",
+                    pulse.get("status"),
+                    pulse.get("winner"),
+                    pulse.get("event_id"),
+                )
+
+                if pulse.get("status") == "triggered" and pulse.get("pending_delivery"):
+                    delivery = pulse["pending_delivery"]
+                    user = bot_state.db.get_user(ADMIN_USER_ID) or {}
+                    user_name = user.get("user_name", "Admin")
+                    try:
+                        await telegram_app.bot.send_message(
+                            chat_id=int(delivery["platform_id"]),
+                            text=delivery["text"],
+                        )
+                        await asyncio.to_thread(
+                            bot_state.proactive.record_pressure_based_message,
+                            ADMIN_USER_ID,
+                            user_name,
+                            delivery,
+                        )
+                        await asyncio.to_thread(
+                            engine.finalize_pending_delivery,
+                            pulse["event_id"],
+                            ADMIN_USER_ID,
+                            delivery.get("cycle_id"),
+                            pulse.get("winner"),
+                            True,
+                            delivery.get("text"),
+                        )
+                        logger.info("✅ [WILL PULSE] Proatividade relacional enviada ao admin.")
+                    except Exception as send_exc:
+                        await asyncio.to_thread(
+                            engine.finalize_pending_delivery,
+                            pulse["event_id"],
+                            ADMIN_USER_ID,
+                            delivery.get("cycle_id"),
+                            pulse.get("winner"),
+                            False,
+                            f"Falha ao enviar proatividade relacional: {send_exc}",
+                        )
+                        logger.error(f"❌ [WILL PULSE] Falha ao enviar proatividade relacional: {send_exc}")
+                elif pulse.get("winner") == "relacionar" and not proactive_messages_enabled():
+                    logger.info("⏸️ [WILL PULSE] Pressão relacional medida, mas envio externo bloqueado por PROACTIVE_ENABLED=false.")
+            except Exception as e:
+                logger.error(f"❌ Erro no scheduler de Pressão Psíquica: {e}")
+
+            await asyncio.sleep(PULSE_INTERVAL_HOURS * 3600)
+
+    asyncio.create_task(will_pulse_scheduler())
+    logger.info("✅ Scheduler de Pressão Psíquica / Will Pulse agendado!")
 
     async def consciousness_loop_scheduler():
         """Mantem o Loop de Consciencia sincronizado com o relogio proprio."""

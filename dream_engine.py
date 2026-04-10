@@ -176,28 +176,24 @@ class DreamEngine:
     def _get_latest_will_residue(self, user_id: str) -> str:
         """Recupera o ultimo estado consolidado das vontades para colorir o sonho seguinte."""
         try:
-            cursor = self.db.conn.cursor()
-            cursor.execute(
-                """
-                SELECT dominant_will, secondary_will, constrained_will, will_conflict, daily_text
-                FROM agent_will_states
-                WHERE user_id = ?
-                ORDER BY created_at DESC, id DESC
-                LIMIT 1
-                """,
-                (user_id,),
-            )
-            row = cursor.fetchone()
-            if not row:
+            from will_engine import load_latest_will_state
+
+            state = load_latest_will_state(self.db, user_id=user_id)
+            if not state:
                 return "Nenhum residuo de vontade consolidado."
-            return (
+            residue = (
                 "=== RESIDUO VOLITIVO DO CICLO ANTERIOR ===\n"
-                f"- Vontade dominante: {row['dominant_will'] or 'indefinida'}\n"
-                f"- Vontade secundaria: {row['secondary_will'] or 'indefinida'}\n"
-                f"- Vontade constrita: {row['constrained_will'] or 'indefinida'}\n"
-                f"- Conflito: {row['will_conflict'] or 'sem conflito nomeado'}\n"
-                f"- Nota diaria: {row['daily_text'] or 'sem nota diaria'}"
+                f"- Vontade dominante: {state.get('dominant_will') or 'indefinida'}\n"
+                f"- Vontade secundaria: {state.get('secondary_will') or 'indefinida'}\n"
+                f"- Vontade constrita: {state.get('constrained_will') or 'indefinida'}\n"
+                f"- Conflito: {state.get('will_conflict') or 'sem conflito nomeado'}\n"
+                f"- Nota diaria: {state.get('daily_text') or 'sem nota diaria'}"
             )
+            if state.get("pressure_summary"):
+                residue += f"\n- Pressao residual: {state['pressure_summary']}"
+            if state.get("last_release_will"):
+                residue += f"\n- Ultima catarse: {state.get('last_release_will')} ({state.get('last_action_status') or 'sem status'})"
+            return residue
         except Exception as e:
             logger.error(f"Erro ao buscar residuo de vontade para sonho: {e}")
             return "Erro ao acessar residuo de vontade."

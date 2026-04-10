@@ -406,6 +406,7 @@ class ConsciousnessLoopManager:
                 dominant_will = current_state.get("dominant_will")
                 constrained_will = current_state.get("constrained_will")
                 will_conflict = current_state.get("will_conflict")
+                pressure_summary = current_state.get("pressure_summary")
                 identity_summary = (
                     f"[ESTADO IDENTITARIO DO CICLO {cycle_id}] "
                     f"Fase: {phase_name or 'indefinida'}. "
@@ -414,7 +415,8 @@ class ConsciousnessLoopManager:
                     f"Tensao dominante: {contradiction.get('pole_a') or 'polo A'} vs {contradiction.get('pole_b') or 'polo B'}. "
                     f"Vontade dominante: {dominant_will or 'nao nomeada'}. "
                     f"Vontade constrita: {constrained_will or 'nao nomeada'}. "
-                    f"Conflito das vontades: {will_conflict or 'sem conflito nomeado'}."
+                    f"Conflito das vontades: {will_conflict or 'sem conflito nomeado'}. "
+                    f"Pressao psiquica: {pressure_summary or 'sem pressao destacada'}."
                 )
                 _ingest_material(identity_summary, 0.78, 0.64, 0.82)
             except Exception as exc:
@@ -434,25 +436,22 @@ class ConsciousnessLoopManager:
             except Exception as exc:
                 logger.debug("LOOP RUMINATION extro sem estado de mundo adicional: %s", exc)
 
-            cursor.execute(
-                """
-                SELECT dominant_will, constrained_will, will_conflict, daily_text
-                FROM agent_will_states
-                WHERE user_id = ?
-                ORDER BY created_at DESC, id DESC
-                LIMIT 1
-                """,
-                (self.admin_user_id,),
-            )
-            will_row = cursor.fetchone()
+            try:
+                from will_engine import load_latest_will_state
+
+                will_row = load_latest_will_state(self.db, self.admin_user_id, cycle_id=cycle_id)
+            except Exception:
+                will_row = None
             if will_row:
                 _ingest_material(
                     (
                         f"[MATERIAL VOLITIVO DO CICLO {cycle_id}] "
-                        f"Dominante: {will_row['dominant_will'] or 'nao nomeada'}. "
-                        f"Constrita: {will_row['constrained_will'] or 'nao nomeada'}. "
-                        f"Conflito: {(will_row['will_conflict'] or '')[:220]}. "
-                        f"Leitura: {(will_row['daily_text'] or '')[:260]}"
+                        f"Dominante: {will_row.get('dominant_will') or 'nao nomeada'}. "
+                        f"Constrita: {will_row.get('constrained_will') or 'nao nomeada'}. "
+                        f"Conflito: {(will_row.get('will_conflict') or '')[:220]}. "
+                        f"Leitura: {(will_row.get('daily_text') or '')[:260]}. "
+                        f"Pressao atual: {(will_row.get('pressure_summary') or '')[:220]}. "
+                        f"Ultima catarse: {will_row.get('last_release_will') or 'nenhuma'} ({will_row.get('last_action_status') or 'sem status'})."
                     ),
                     0.72,
                     0.48,
@@ -1010,6 +1009,9 @@ class ConsciousnessLoopManager:
         result["metrics"]["saber_score"] = will_result.get("saber_score", 0.0)
         result["metrics"]["relacionar_score"] = will_result.get("relacionar_score", 0.0)
         result["metrics"]["expressar_score"] = will_result.get("expressar_score", 0.0)
+        result["metrics"]["saber_pressure"] = will_result.get("saber_pressure", 0.0)
+        result["metrics"]["relacionar_pressure"] = will_result.get("relacionar_pressure", 0.0)
+        result["metrics"]["expressar_pressure"] = will_result.get("expressar_pressure", 0.0)
 
         self._record_virtual_artifact(
             result,

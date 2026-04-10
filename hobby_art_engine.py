@@ -148,6 +148,9 @@ class HobbyArtEngine:
                 "constrained": (will_state or {}).get("constrained_will"),
                 "conflict": self._truncate((will_state or {}).get("will_conflict", ""), 220),
                 "daily_text": self._truncate((will_state or {}).get("daily_text", ""), 240),
+                "pressure_summary": self._truncate((will_state or {}).get("pressure_summary", ""), 220),
+                "dominant_pressure": (will_state or {}).get("dominant_pressure"),
+                "last_release_will": (will_state or {}).get("last_release_will"),
             },
             "conversations": conversations,
         }

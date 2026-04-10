@@ -239,6 +239,33 @@ def _row_to_will_state(row: Any) -> Dict[str, Any]:
     return data
 
 
+def _merge_pressure_state(base_state: Optional[Dict[str, Any]], pressure_state: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not base_state and not pressure_state:
+        return None
+    merged = dict(base_state or {})
+    if not pressure_state:
+        return merged
+    merged.update(
+        {
+            "saber_pressure": pressure_state.get("saber_pressure"),
+            "relacionar_pressure": pressure_state.get("relacionar_pressure"),
+            "expressar_pressure": pressure_state.get("expressar_pressure"),
+            "dominant_pressure": pressure_state.get("dominant_pressure"),
+            "pressure_threshold_crossed": pressure_state.get("threshold_crossed"),
+            "pressure_summary": pressure_state.get("pressure_summary"),
+            "refractory_until_saber": pressure_state.get("refractory_until_saber"),
+            "refractory_until_relacionar": pressure_state.get("refractory_until_relacionar"),
+            "refractory_until_expressar": pressure_state.get("refractory_until_expressar"),
+            "last_release_will": pressure_state.get("last_release_will"),
+            "last_release_at": pressure_state.get("last_release_at"),
+            "last_action_status": pressure_state.get("last_action_status"),
+            "last_action_summary": pressure_state.get("last_action_summary"),
+            "pressure_state": pressure_state,
+        }
+    )
+    return merged
+
+
 def load_latest_will_state_from_sqlite(
     user_id: str,
     cycle_id: Optional[str] = None,
@@ -266,7 +293,14 @@ def load_latest_will_state_from_sqlite(
         row = cursor.fetchone()
         state = _row_to_will_state(row) if row else None
         message_summary = _aggregate_message_signals(cursor, user_id=user_id, cycle_id=cycle_id, limit=10)
-        return _blend_state_with_message_signals(state, message_summary)
+        blended = _blend_state_with_message_signals(state, message_summary)
+        try:
+            from will_pressure import load_latest_pressure_state_from_sqlite
+
+            pressure_state = load_latest_pressure_state_from_sqlite(user_id=user_id, cycle_id=cycle_id, db_path=path)
+        except Exception:
+            pressure_state = None
+        return _merge_pressure_state(blended, pressure_state)
     except Exception as exc:
         logger.debug("WillEngine: falha ao ler estado de vontade no SQLite: %s", exc)
         return None
@@ -290,7 +324,14 @@ def load_latest_will_state(db_manager, user_id: str, cycle_id: Optional[str] = N
     row = cursor.fetchone()
     state = _row_to_will_state(row) if row else None
     message_summary = _aggregate_message_signals(cursor, user_id=user_id, cycle_id=cycle_id, limit=10)
-    return _blend_state_with_message_signals(state, message_summary)
+    blended = _blend_state_with_message_signals(state, message_summary)
+    try:
+        from will_pressure import load_latest_pressure_state
+
+        pressure_state = load_latest_pressure_state(db_manager, user_id=user_id, cycle_id=cycle_id)
+    except Exception:
+        pressure_state = None
+    return _merge_pressure_state(blended, pressure_state)
 
 
 class WillEngine:
@@ -444,6 +485,13 @@ class WillEngine:
         hobby = self._latest_hobby(user_id)
         world = self._latest_world_state(world_state)
         conversations = self._recent_conversations(user_id)
+        pressure_state = None
+        try:
+            from will_pressure import load_latest_pressure_state
+
+            pressure_state = load_latest_pressure_state(self.db, user_id=user_id, cycle_id=cycle_id)
+        except Exception as exc:
+            logger.debug("WillEngine: sem estado de pressao adicional: %s", exc)
         message_signal_summary = _aggregate_message_signals(
             self.db.conn.cursor(),
             user_id=user_id,
@@ -486,6 +534,7 @@ class WillEngine:
             },
             "meta_consciousness": meta,
             "hobby": hobby,
+            "pressure_state": pressure_state,
             "message_signal_summary": message_signal_summary,
             "recent_conversations": conversations,
             "source_summary": {
@@ -495,6 +544,7 @@ class WillEngine:
                 "has_world": 1 if world else 0,
                 "has_meta_consciousness": 1 if meta else 0,
                 "has_hobby": 1 if hobby else 0,
+                "has_pressure_state": 1 if pressure_state else 0,
                 "message_signal_count": message_signal_summary.get("count", 0),
             },
         }
