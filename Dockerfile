@@ -19,6 +19,7 @@ COPY *.py .
 
 # Copiar o diretório admin_web com templates e static
 COPY admin_web/ ./admin_web/
+COPY scripts/ ./scripts/
 
 # CRÍTICO: Copiar pasta migrations com os SQL files
 COPY migrations/ ./migrations/
