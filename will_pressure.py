@@ -143,11 +143,9 @@ class WillPressureEngine:
             """
             SELECT cycle_id
             FROM consciousness_loop_state
-            WHERE user_id = ?
             ORDER BY id DESC
             LIMIT 1
-            """,
-            (user_id,),
+            """
         )
         row = cursor.fetchone()
         if row and row["cycle_id"]:
