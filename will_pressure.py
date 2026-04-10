@@ -680,12 +680,24 @@ ESTADO QUALITATIVO:
         from world_consciousness import world_consciousness
 
         will_state = load_latest_will_state(self.db, user_id=user_id, cycle_id=cycle_id)
-        world_state = world_consciousness.get_world_state(force_refresh=True, will_state=will_state)
+        world_state = world_consciousness.get_world_state(
+            force_refresh=True,
+            will_state=will_state,
+            epistemic_trigger="saber_release",
+        )
         top_seed = (world_state.get("work_seeds") or world_state.get("hobby_seeds") or [])[:1]
+        knowledge_decision = world_state.get("knowledge_source_decision")
+        if knowledge_decision == "latent_sufficient":
+            decision_line = "A elaboracao do saber foi resolvida sobretudo por aprofundamento interno."
+        elif knowledge_decision == "already_integrated":
+            decision_line = "O saber apareceu mais como reintegracao do que ja vinha sendo metabolizado."
+        else:
+            decision_line = "A elaboracao do saber precisou de atualizacao externa do mundo."
         return {
             "success": True,
             "action_summary": self._truncate(
-                f"Aprofundamento do mundo concluido. {world_state.get('will_bias_summary') or ''} "
+                f"Aprofundamento do mundo concluido. {decision_line} "
+                f"{world_state.get('knowledge_findings') or world_state.get('will_bias_summary') or ''} "
                 f"Semente principal: {top_seed[0] if top_seed else 'sem seed destacada'}.",
                 240,
             ),

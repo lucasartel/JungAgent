@@ -531,6 +531,9 @@ class WillEngine:
                 "work_seeds": world.get("work_seeds", [])[:3],
                 "hobby_seeds": world.get("hobby_seeds", [])[:3],
                 "will_bias_summary": world.get("will_bias_summary"),
+                "knowledge_resolution_summary": world.get("knowledge_resolution_summary"),
+                "knowledge_findings": world.get("knowledge_findings"),
+                "knowledge_seed": world.get("knowledge_seed"),
             },
             "meta_consciousness": meta,
             "hobby": hobby,
@@ -601,7 +604,13 @@ class WillEngine:
         meta = payload.get("meta_consciousness") or {}
         texts.extend([meta.get("dominant_form", ""), meta.get("integration_note", "")])
         world = payload.get("world") or {}
-        texts.extend([world.get("atmosphere", ""), world.get("will_bias_summary", "")])
+        texts.extend([
+            world.get("atmosphere", ""),
+            world.get("will_bias_summary", ""),
+            world.get("knowledge_resolution_summary", ""),
+            world.get("knowledge_findings", ""),
+            world.get("knowledge_seed", ""),
+        ])
         hobby = payload.get("hobby") or {}
         texts.extend([hobby.get("summary", ""), hobby.get("critique_summary", "")])
         for insight in payload.get("rumination", []):

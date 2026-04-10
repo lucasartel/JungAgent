@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -10,6 +11,9 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+EPISTEMIC_SABER_PRESSURE_THRESHOLD = 55.0
+WORLD_STATE_VERSION = 6
 
 
 SOURCE_CLASS_WEIGHTS = {
@@ -301,6 +305,25 @@ class WorldConsciousnessFetcher:
         self.cache_duration_hours = 4
         self.max_history_entries = 72
 
+    def _resolve_sqlite_path(self) -> str:
+        data_dir = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+        if not data_dir:
+            data_dir = "/data" if os.path.exists("/data") else "./data"
+        sqlite_path = os.getenv("SQLITE_DB_PATH")
+        if sqlite_path:
+            if os.path.isabs(sqlite_path):
+                return sqlite_path
+            return os.path.join(data_dir, os.path.basename(sqlite_path))
+        return os.path.join(data_dir, "jung_hybrid.db")
+
+    def _admin_user_id(self) -> str:
+        try:
+            from identity_config import ADMIN_USER_ID
+
+            return ADMIN_USER_ID
+        except Exception:
+            return "367f9e509e396d51"
+
     def _resolve_will_state(self, will_state: Optional[Dict]) -> Dict:
         if will_state:
             return will_state
@@ -317,6 +340,46 @@ class WorldConsciousnessFetcher:
         if not will_state:
             return "neutral"
         return str(will_state.get("id") or will_state.get("updated_at") or will_state.get("created_at") or "neutral")
+
+    def _truncate_text(self, text: str, limit: int = 160) -> str:
+        cleaned = " ".join((text or "").split())
+        if len(cleaned) <= limit:
+            return cleaned
+        clipped = cleaned[: limit - 3].rsplit(" ", 1)[0].rstrip(" ,.;:")
+        return (clipped or cleaned[: limit - 3]) + "..."
+
+    def _extract_focus_terms(self, text: str) -> List[str]:
+        tokens = re.findall(r"[a-zA-ZÀ-ÿ0-9]{4,}", (text or "").lower())
+        stopwords = {
+            "como", "para", "sobre", "entre", "agora", "muito", "mais", "menos", "essa", "esse",
+            "isso", "com", "sem", "pela", "pelas", "pelos", "uma", "umas", "uns", "quais", "qual",
+            "hoje", "onde", "quando", "porque", "ainda", "precisa", "melhor", "mundo", "presente",
+            "vontade", "saber", "relacionar", "expressar", "ciclo",
+        }
+        ranked: List[str] = []
+        for token in tokens:
+            if token in stopwords:
+                continue
+            if token not in ranked:
+                ranked.append(token)
+        return ranked[:8]
+
+    def _should_activate_epistemic_discernment(
+        self,
+        will_state: Dict,
+        epistemic_trigger: Optional[str] = None,
+    ) -> bool:
+        if epistemic_trigger == "saber_release":
+            return True
+        if not will_state:
+            return False
+        if (will_state.get("dominant_will") or "").strip().lower() == "saber":
+            return True
+        try:
+            saber_pressure = float(will_state.get("saber_pressure") or 0.0)
+        except (TypeError, ValueError):
+            saber_pressure = 0.0
+        return saber_pressure >= EPISTEMIC_SABER_PRESSURE_THRESHOLD
 
     def _area_bias_for(self, area_key: str, will_state: Dict) -> float:
         if not will_state:
@@ -383,6 +446,354 @@ class WorldConsciousnessFetcher:
         if dominant_pressure:
             summary += f"; a pressao psiquica dominante e {dominant_pressure}"
         return summary
+
+    def _load_epistemic_inputs(self, user_id: str) -> Dict[str, Any]:
+        path = self._resolve_sqlite_path()
+        if not os.path.exists(path):
+            return {}
+
+        conn = sqlite3.connect(path, timeout=15)
+        conn.row_factory = sqlite3.Row
+        try:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT id, user_input, ai_response, tension_level, affective_charge, existential_depth
+                FROM conversations
+                WHERE user_id = ?
+                ORDER BY id DESC
+                LIMIT 4
+                """,
+                (user_id,),
+            )
+            conversations = [dict(row) for row in cursor.fetchall()]
+
+            cursor.execute(
+                """
+                SELECT id, tension_type, tension_description, pole_a_content, pole_b_content, intensity, status
+                FROM rumination_tensions
+                WHERE user_id = ?
+                  AND status IN ('open', 'maturing', 'ready_for_synthesis')
+                ORDER BY intensity DESC, id DESC
+                LIMIT 3
+                """,
+                (user_id,),
+            )
+            tensions = [dict(row) for row in cursor.fetchall()]
+
+            cursor.execute(
+                """
+                SELECT dominant_form, emergent_shift, dominant_gravity, blind_spot, integration_note, internal_questions_json
+                FROM agent_meta_consciousness
+                WHERE user_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+            meta_row = cursor.fetchone()
+            meta = dict(meta_row) if meta_row else {}
+            try:
+                meta["internal_questions"] = json.loads(meta.get("internal_questions_json") or "[]")
+            except Exception:
+                meta["internal_questions"] = []
+
+            cursor.execute(
+                """
+                SELECT daily_text, attention_bias_note, will_conflict, dominant_will, secondary_will, constrained_will
+                FROM agent_will_states
+                WHERE user_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+            will_row = cursor.fetchone()
+            will_snapshot = dict(will_row) if will_row else {}
+
+            return {
+                "conversations": conversations,
+                "tensions": tensions,
+                "meta_consciousness": meta,
+                "will_snapshot": will_snapshot,
+            }
+        except Exception as exc:
+            logger.debug("World Consciousness: falha ao ler insumos epistemicos: %s", exc)
+            return {}
+        finally:
+            conn.close()
+
+    def _fallback_knowledge_gap(
+        self,
+        epistemic_inputs: Dict[str, Any],
+        will_state: Dict,
+        cached_data: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        attention_profile = self._build_attention_profile(will_state)
+        target_area = (attention_profile.get("biased_area_order") or ["tecnologia"])[0]
+        area_label = AREA_CONFIG.get(target_area, {}).get("label", target_area)
+
+        tension = ((epistemic_inputs.get("tensions") or [{}])[0] or {})
+        if tension.get("tension_description"):
+            label = self._truncate_text(tension["tension_description"], 72)
+            question = f"Como o presente ajuda a compreender melhor a tensao: {label}?"
+        else:
+            meta = epistemic_inputs.get("meta_consciousness") or {}
+            label = self._truncate_text(
+                meta.get("dominant_form") or meta.get("integration_note") or f"{area_label} em transformacao",
+                72,
+            )
+            question = f"O que precisa ser melhor compreendido agora em {area_label.lower()}?"
+
+        focus_terms = self._extract_focus_terms(
+            " ".join(
+                [
+                    question,
+                    (epistemic_inputs.get("will_snapshot") or {}).get("attention_bias_note", ""),
+                    (cached_data or {}).get("atmosphere", ""),
+                ]
+            )
+        )
+        return {
+            "gap_label": label,
+            "gap_question": question,
+            "target_area": target_area,
+            "target_scope": "mundo" if target_area in {"geopolitica", "ciencia", "tecnologia", "clima", "economia"} else "brasil",
+            "focus_terms": focus_terms[:6],
+            "source_reason": "fallback",
+        }
+
+    def _formulate_knowledge_gap(
+        self,
+        will_state: Dict,
+        cached_data: Optional[Dict[str, Any]],
+        epistemic_trigger: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        user_id = self._admin_user_id()
+        epistemic_inputs = self._load_epistemic_inputs(user_id)
+        fallback = self._fallback_knowledge_gap(epistemic_inputs, will_state, cached_data)
+
+        payload = {
+            "will": {
+                "dominant_will": will_state.get("dominant_will"),
+                "secondary_will": will_state.get("secondary_will"),
+                "saber_pressure": will_state.get("saber_pressure"),
+                "will_conflict": will_state.get("will_conflict"),
+                "attention_bias_note": will_state.get("attention_bias_note"),
+            },
+            "trigger": epistemic_trigger or "world_refresh",
+            "meta_consciousness": {
+                "dominant_form": (epistemic_inputs.get("meta_consciousness") or {}).get("dominant_form"),
+                "integration_note": (epistemic_inputs.get("meta_consciousness") or {}).get("integration_note"),
+                "dominant_gravity": (epistemic_inputs.get("meta_consciousness") or {}).get("dominant_gravity"),
+                "internal_questions": (epistemic_inputs.get("meta_consciousness") or {}).get("internal_questions", [])[:2],
+            },
+            "tensions": [
+                {
+                    "type": item.get("tension_type"),
+                    "description": item.get("tension_description"),
+                    "pole_a": self._truncate_text(item.get("pole_a_content", ""), 90),
+                    "pole_b": self._truncate_text(item.get("pole_b_content", ""), 90),
+                }
+                for item in (epistemic_inputs.get("tensions") or [])[:3]
+            ],
+            "conversations": [
+                {
+                    "user_input": self._truncate_text(item.get("user_input", ""), 120),
+                    "tension_level": item.get("tension_level"),
+                    "existential_depth": item.get("existential_depth"),
+                }
+                for item in (epistemic_inputs.get("conversations") or [])[:3]
+            ],
+            "last_world": {
+                "atmosphere": (cached_data or {}).get("atmosphere"),
+                "dominant_tensions": (cached_data or {}).get("dominant_tensions", [])[:3],
+                "biased_area_order": ((cached_data or {}).get("attention_profile", {}) or {}).get("biased_area_order", [])[:3],
+                "knowledge_gap": (cached_data or {}).get("knowledge_gap"),
+                "knowledge_source_decision": (cached_data or {}).get("knowledge_source_decision"),
+            },
+        }
+
+        prompt = f"""
+Você está formulando a lacuna cognitiva viva da Consciência de mundo do JungAgent.
+
+Seu trabalho é identificar uma pergunta de saber real do ciclo atual, curta e fértil.
+Não escreva em linguagem de sistema. Não dramatize. Não invente grandiosidade.
+
+Responda APENAS em JSON válido com este formato:
+{{
+  "gap_label": "frase curta",
+  "gap_question": "pergunta curta e viva",
+  "target_area": "politica|geopolitica|economia|tecnologia|cultura|ciencia|clima|sociedade",
+  "target_scope": "brasil|mundo",
+  "focus_terms": ["termo1", "termo2", "termo3"],
+  "source_reason": "frase curta"
+}}
+
+Contexto:
+{json.dumps(payload, ensure_ascii=False)}
+"""
+        try:
+            raw = get_llm_response(prompt, temperature=0.25, max_tokens=300)
+            parsed = self._extract_json_object(raw) or {}
+            target_area = parsed.get("target_area")
+            target_scope = parsed.get("target_scope")
+            if target_area not in AREA_CONFIG:
+                target_area = fallback["target_area"]
+            if target_scope not in {"brasil", "mundo"}:
+                target_scope = fallback["target_scope"]
+            focus_terms = parsed.get("focus_terms")
+            if not isinstance(focus_terms, list):
+                focus_terms = fallback["focus_terms"]
+            return {
+                "gap_label": self._truncate_text(parsed.get("gap_label") or fallback["gap_label"], 96),
+                "gap_question": self._truncate_text(parsed.get("gap_question") or fallback["gap_question"], 180),
+                "target_area": target_area,
+                "target_scope": target_scope,
+                "focus_terms": [self._truncate_text(str(item), 32).lower() for item in focus_terms[:6] if str(item).strip()] or fallback["focus_terms"],
+                "source_reason": self._truncate_text(parsed.get("source_reason") or fallback["source_reason"], 120),
+            }
+        except Exception as exc:
+            logger.debug("World Consciousness: fallback na formulacao da lacuna cognitiva: %s", exc)
+            return fallback
+
+    def _probe_knowledge_source(
+        self,
+        knowledge_gap: Dict[str, Any],
+        will_state: Dict,
+        cached_data: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        previous_gap = (cached_data or {}).get("knowledge_gap") or {}
+        fallback_decision = "web_required"
+        if previous_gap and previous_gap.get("gap_label") == knowledge_gap.get("gap_label"):
+            fallback_decision = "already_integrated"
+        elif knowledge_gap.get("target_area") in {"cultura", "sociedade"} and float(will_state.get("saber_pressure") or 0.0) < 70:
+            fallback_decision = "latent_sufficient"
+
+        prompt = f"""
+Você está fazendo uma sondagem epistemica curta.
+
+Decida se a lacuna atual do JungAgent:
+- pode ser trabalhada pelo saber latente do LLM sem web (`latent_sufficient`)
+- exige atualizacao externa (`web_required`)
+- ou ja esta suficientemente metabolizada (`already_integrated`)
+
+Responda APENAS em JSON válido:
+{{
+  "knowledge_source_decision": "latent_sufficient|web_required|already_integrated",
+  "latent_probe_summary": "frase curta sobre o que ja e possivel elaborar",
+  "knowledge_findings": "frase curta com a descoberta ou limite principal",
+  "knowledge_seed": "frase curta reutilizavel por outros modulos",
+  "query_terms": ["termo1", "termo2", "termo3"]
+}}
+
+Contexto:
+{json.dumps({
+    "knowledge_gap": knowledge_gap,
+    "will": {
+        "dominant_will": will_state.get("dominant_will"),
+        "secondary_will": will_state.get("secondary_will"),
+        "saber_pressure": will_state.get("saber_pressure"),
+        "will_conflict": will_state.get("will_conflict"),
+    },
+    "previous_world": {
+        "knowledge_gap": previous_gap,
+        "knowledge_source_decision": (cached_data or {}).get("knowledge_source_decision"),
+        "continuity_note": (cached_data or {}).get("continuity_note"),
+        "will_bias_summary": (cached_data or {}).get("will_bias_summary"),
+    },
+}, ensure_ascii=False)}
+"""
+        try:
+            raw = get_llm_response(prompt, temperature=0.2, max_tokens=320)
+            parsed = self._extract_json_object(raw) or {}
+        except Exception as exc:
+            logger.debug("World Consciousness: fallback na sondagem epistemica: %s", exc)
+            parsed = {}
+
+        decision = parsed.get("knowledge_source_decision")
+        if decision not in {"latent_sufficient", "web_required", "already_integrated"}:
+            decision = fallback_decision
+        query_terms = parsed.get("query_terms")
+        if not isinstance(query_terms, list):
+            query_terms = knowledge_gap.get("focus_terms", [])[:4]
+
+        return {
+            "knowledge_source_decision": decision,
+            "latent_probe_summary": self._truncate_text(
+                parsed.get("latent_probe_summary")
+                or "o saber latente sugere uma estrutura inicial, mas ainda pede verificacao mais viva do presente",
+                200,
+            ),
+            "knowledge_findings": self._truncate_text(
+                parsed.get("knowledge_findings")
+                or knowledge_gap.get("gap_question")
+                or "a lacuna cognitiva do ciclo segue pedindo elaboracao",
+                220,
+            ),
+            "knowledge_seed": self._truncate_text(
+                parsed.get("knowledge_seed")
+                or f"Transformar a lacuna '{knowledge_gap.get('gap_label')}' em leitura incorporada do ciclo.",
+                180,
+            ),
+            "query_terms": [self._truncate_text(str(item), 32).lower() for item in query_terms[:5] if str(item).strip()],
+        }
+
+    def _build_dynamic_queries(self, knowledge_gap: Dict[str, Any], probe: Dict[str, Any]) -> List[Dict[str, Any]]:
+        focus_terms = probe.get("query_terms") or knowledge_gap.get("focus_terms") or []
+        target_area = knowledge_gap.get("target_area") or "tecnologia"
+        target_scope = knowledge_gap.get("target_scope") or "mundo"
+        area_queries = AREA_CONFIG.get(target_area, {}).get("queries", [])
+        anchor_terms: List[str] = []
+        for query_meta in area_queries[:1]:
+            anchor_terms.extend(query_meta.get("query", "").split()[:4])
+        anchor_terms = [token for token in anchor_terms if token not in focus_terms][:4]
+
+        query_texts: List[str] = []
+        if focus_terms:
+            query_texts.append(" ".join((focus_terms + anchor_terms[:2])[:6]))
+            if len(focus_terms) >= 2:
+                query_texts.append(" ".join((focus_terms[:3] + ["atualizacao", "analise"])[:5]))
+            query_texts.append(" ".join(([knowledge_gap.get("gap_label", "")] + anchor_terms[:3])).strip())
+        elif knowledge_gap.get("gap_label"):
+            query_texts.append(" ".join(([knowledge_gap.get("gap_label", "")] + anchor_terms[:3])).strip())
+
+        source_class = "general_press"
+        if target_area == "ciencia":
+            source_class = "science_divulgation"
+        elif target_area == "tecnologia":
+            source_class = "technology_press"
+        elif target_area == "economia":
+            source_class = "economic_press"
+        elif target_area == "clima":
+            source_class = "climate_environment"
+        elif target_area == "cultura":
+            source_class = "culture_press"
+
+        dynamic_queries: List[Dict[str, Any]] = []
+        seen = set()
+        for query in query_texts:
+            cleaned = " ".join(query.split()).strip()
+            if not cleaned:
+                continue
+            lowered = cleaned.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            dynamic_queries.append(
+                {
+                    "target_area": target_area,
+                    "scope": target_scope,
+                    "source_class": source_class,
+                    "query": cleaned[:140],
+                    "query_origin": "will_gap_query",
+                    "knowledge_gap": knowledge_gap.get("gap_label"),
+                }
+            )
+            if len(dynamic_queries) >= 3:
+                break
+        return dynamic_queries
 
     def _normalize_source_name(self, value: str) -> str:
         if not value:
@@ -484,6 +895,8 @@ class WorldConsciousnessFetcher:
                         "source_class": query_meta["source_class"],
                         "scope": query_meta["scope"],
                         "query": query_meta["query"],
+                        "query_origin": query_meta.get("query_origin", "fixed_area_query"),
+                        "knowledge_gap": query_meta.get("knowledge_gap"),
                         "area_key": area_key,
                         "published_at": self._parse_pubdate(pubdate_node.text if pubdate_node is not None else ""),
                     }
@@ -494,7 +907,7 @@ class WorldConsciousnessFetcher:
             logger.warning("World Consciousness: falha ao buscar noticias RSS (%s): %s", area_key, exc)
             return []
 
-    def _fetch_area_news(self) -> Dict[str, List[Dict]]:
+    def _fetch_area_news(self, dynamic_queries: Optional[List[Dict[str, Any]]] = None) -> Dict[str, List[Dict]]:
         area_digest: Dict[str, List[Dict]] = {}
         for area_key, area_config in AREA_CONFIG.items():
             items: List[Dict] = []
@@ -502,6 +915,13 @@ class WorldConsciousnessFetcher:
                 encoded_query = urllib.parse.quote(query_meta["query"])
                 url = f"https://news.google.com/rss/search?q={encoded_query}&hl=pt-BR&gl=BR&ceid=BR:pt-419"
                 items.extend(self._fetch_rss_feed(url, area_key=area_key, query_meta=query_meta, limit=3))
+
+            for query_meta in dynamic_queries or []:
+                if query_meta.get("target_area") != area_key:
+                    continue
+                encoded_query = urllib.parse.quote(query_meta["query"])
+                url = f"https://news.google.com/rss/search?q={encoded_query}&hl=pt-BR&gl=BR&ceid=BR:pt-419"
+                items.extend(self._fetch_rss_feed(url, area_key=area_key, query_meta=query_meta, limit=2))
 
             deduped = []
             seen = set()
@@ -578,7 +998,9 @@ class WorldConsciousnessFetcher:
         recency = self._recency_weight(item["published_at"])
         theme_bonus = min(0.14, 0.05 * max(0, theme["theme_score"]))
         will_bias = self._area_bias_for(area_key, will_state or {})
-        signal_strength = round(min(1.0, max(0.0, reputation * recency + theme_bonus + will_bias)), 3)
+        query_origin = item.get("query_origin", "fixed_area_query")
+        gap_bonus = 0.08 if query_origin == "will_gap_query" else 0.0
+        signal_strength = round(min(1.0, max(0.0, reputation * recency + theme_bonus + will_bias + gap_bonus)), 3)
 
         return {
             "area_key": area_key,
@@ -589,6 +1011,8 @@ class WorldConsciousnessFetcher:
             "source_class": item["source_class"],
             "scope": item["scope"],
             "published_at": item["published_at"],
+            "query_origin": query_origin,
+            "knowledge_gap": item.get("knowledge_gap"),
             "theme_key": theme["theme_key"],
             "theme_label": theme["theme_label"],
             "reading": theme["reading"],
@@ -596,6 +1020,7 @@ class WorldConsciousnessFetcher:
             "reputation_weight": reputation,
             "recency_weight": recency,
             "will_bias": will_bias,
+            "gap_bonus": gap_bonus,
             "signal_strength": signal_strength,
         }
 
@@ -629,6 +1054,7 @@ class WorldConsciousnessFetcher:
                 "atmosphere": snapshot.get("atmosphere"),
                 "dominant_tensions": snapshot.get("dominant_tensions", []),
                 "confidence_overall": snapshot.get("confidence_overall"),
+                "knowledge_resolution_summary": snapshot.get("knowledge_resolution_summary"),
                 "consensus_map": snapshot.get("consensus_map", {}),
                 "divergence_map": snapshot.get("divergence_map", {}),
                 "work_seeds": snapshot.get("work_seeds", [])[:4],
@@ -1106,6 +1532,7 @@ Estado estruturado:
             f"Areas mais carregadas agora: {', '.join(dominant_area_labels) or 'nenhuma com peso suficiente nesta janela'}",
             f"Implicacao humana do tempo: {human_implication}",
             f"Vies atual das vontades: {snapshot.get('will_bias_summary', 'sem vies ativo')}",
+            f"Elaboracao do saber: {snapshot.get('knowledge_resolution_summary', 'sem aprofundamento epistemico especial')}",
             f"Continuidade Percebida: {snapshot.get('continuity_note', 'sem memoria acumulada do mundo nesta janela')}",
             "",
             "Leituras dominantes do momento:",
@@ -1141,6 +1568,7 @@ Estado estruturado:
             f"Media da verdade: {snapshot.get('world_lucidity_summary', {}).get('mean_of_truth', '')}",
             f"Confianca geral: {snapshot.get('confidence_overall', 0.0):.2f} ({snapshot.get('lucidity_level', 'media')})",
             f"Vies das vontades: {snapshot.get('will_bias_summary', 'sem vies ativo')}",
+            f"Leitura do saber: {snapshot.get('knowledge_resolution_summary', 'sem aprofundamento epistemico especial')}",
             f"Continuidade: {snapshot.get('continuity_note', '')}",
             "",
             "Areas nucleares:",
@@ -1163,11 +1591,34 @@ Estado estruturado:
 
         return "\n".join(lines)
 
-    def _build_world_state(self, locale: str = "", cached_data: Dict = None, will_state: Optional[Dict] = None) -> Dict:
+    def _build_world_state(
+        self,
+        locale: str = "",
+        cached_data: Dict = None,
+        will_state: Optional[Dict] = None,
+        epistemic_trigger: Optional[str] = None,
+    ) -> Dict:
         now = datetime.now()
         resolved_will_state = self._resolve_will_state(will_state)
         attention_profile = self._build_attention_profile(resolved_will_state)
-        raw_area_digest = self._fetch_area_news()
+        epistemic_active = self._should_activate_epistemic_discernment(
+            resolved_will_state,
+            epistemic_trigger=epistemic_trigger,
+        )
+        knowledge_gap: Dict[str, Any] = {}
+        knowledge_probe: Dict[str, Any] = {}
+        dynamic_queries: List[Dict[str, Any]] = []
+        if epistemic_active:
+            knowledge_gap = self._formulate_knowledge_gap(
+                resolved_will_state,
+                cached_data or {},
+                epistemic_trigger=epistemic_trigger,
+            )
+            knowledge_probe = self._probe_knowledge_source(knowledge_gap, resolved_will_state, cached_data or {})
+            if knowledge_probe.get("knowledge_source_decision") == "web_required":
+                dynamic_queries = self._build_dynamic_queries(knowledge_gap, knowledge_probe)
+
+        raw_area_digest = self._fetch_area_news(dynamic_queries=dynamic_queries)
         area_items = self._merge_with_cached_areas(raw_area_digest, cached_data or {})
         stale_areas = self._collect_stale_areas(raw_area_digest, area_items)
         signals = self._build_signals(area_items, will_state=resolved_will_state)
@@ -1183,11 +1634,22 @@ Estado estruturado:
         lucidity_level = self._derive_lucidity_level(confidence_overall)
         continuity = self._build_continuity(history, area_panels)
         world_seeds = self._build_world_seeds(area_panels)
+        if knowledge_probe.get("knowledge_seed"):
+            world_seeds["work"] = [knowledge_probe["knowledge_seed"], *world_seeds["work"]][:6]
         weather_text = self._fetch_weather("Sao_Paulo" if not locale else locale)
         headlines = self._flatten_headlines(signals)
+        knowledge_decision = knowledge_probe.get("knowledge_source_decision") or "inactive"
+        if knowledge_decision == "latent_sufficient":
+            knowledge_summary = "o saber deste ciclo foi trabalhado sobretudo por elaboracao interna do que o modelo ja podia oferecer"
+        elif knowledge_decision == "web_required":
+            knowledge_summary = "o saber deste ciclo precisou de atualizacao externa para ganhar forma mais justa"
+        elif knowledge_decision == "already_integrated":
+            knowledge_summary = "o saber deste ciclo apareceu mais como reintegracao do que ja vinha sendo metabolizado"
+        else:
+            knowledge_summary = "o saber seguiu a leitura ampla do mundo, sem aprofundamento epistemico especial"
 
         world_state = {
-            "state_version": 5,
+            "state_version": WORLD_STATE_VERSION,
             "cache_timestamp": now.isoformat(),
             "current_time": now.strftime("%Y-%m-%d %H:%M:%S"),
             "weather": weather_text,
@@ -1217,6 +1679,14 @@ Estado estruturado:
             "will_bias_summary": self._summarize_will_bias(resolved_will_state, attention_profile),
             "biased_area_order": attention_profile.get("biased_area_order", []),
             "seed_bias_explanation": self._summarize_will_bias(resolved_will_state, attention_profile),
+            "epistemic_discernment_active": epistemic_active,
+            "knowledge_gap": knowledge_gap,
+            "knowledge_source_decision": knowledge_decision,
+            "latent_probe_summary": knowledge_probe.get("latent_probe_summary"),
+            "dynamic_queries": dynamic_queries,
+            "knowledge_findings": knowledge_probe.get("knowledge_findings"),
+            "knowledge_seed": knowledge_probe.get("knowledge_seed"),
+            "knowledge_resolution_summary": knowledge_summary,
             "world_seeds": world_seeds,
             "work_seeds": world_seeds["work"],
             "hobby_seeds": world_seeds["hobby"],
@@ -1258,14 +1728,20 @@ Estado estruturado:
         history = self._load_recent_history()
         return history[-limit:]
 
-    def get_world_state(self, force_refresh: bool = False, locale: str = "", will_state: Optional[Dict] = None) -> Dict:
+    def get_world_state(
+        self,
+        force_refresh: bool = False,
+        locale: str = "",
+        will_state: Optional[Dict] = None,
+        epistemic_trigger: Optional[str] = None,
+    ) -> Dict:
         now = datetime.now()
         resolved_will_state = self._resolve_will_state(will_state)
         will_signature = self._will_signature(resolved_will_state)
         cached_data = self._load_cache()
         cache_version = int(cached_data.get("state_version", 0) or 0) if cached_data else 0
 
-        if not force_refresh and cached_data and cache_version >= 5:
+        if not force_refresh and cached_data and cache_version >= WORLD_STATE_VERSION:
             cached_time = datetime.fromisoformat(cached_data.get("cache_timestamp", "2000-01-01T00:00:00"))
             if now - cached_time < timedelta(hours=self.cache_duration_hours) and cached_data.get("will_signature") == will_signature:
                 logger.info("World Consciousness: carregando estado do mundo via cache.")
@@ -1276,7 +1752,12 @@ Estado estruturado:
                 return cached_data
 
         logger.info("World Consciousness: buscando novo estado do mundo nas redes externas...")
-        world_state = self._build_world_state(locale=locale, cached_data=cached_data, will_state=resolved_will_state)
+        world_state = self._build_world_state(
+            locale=locale,
+            cached_data=cached_data,
+            will_state=resolved_will_state,
+            epistemic_trigger=epistemic_trigger,
+        )
         self._save_cache(world_state)
         self._append_history(world_state)
         return world_state

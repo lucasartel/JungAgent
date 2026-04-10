@@ -57,6 +57,18 @@
         </section>
     </section>
 
+    <section class="dashboard-columns-v2 dashboard-columns-v2--balanced">
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Discernimento do saber</h2>
+                    <p class="panel-subtitle-v2">Quando a vontade de saber se ativa, o mundo decide entre elaboracao interna, atualizacao externa ou reintegracao.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2 stack-v2" id="knowledgePanel"></div>
+        </section>
+    </section>
+
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
@@ -88,6 +100,7 @@ function renderState(state) {
         ["Confianca geral", state.confidence_overall ?? "-"],
         ["Atmosfera", state.atmosphere || "-"],
         ["Vies de atencao", state.will_bias_summary || "-"],
+        ["Elaboracao do saber", state.knowledge_resolution_summary || "-"],
         ["Continuidade", state.continuity?.summary || state.continuity_note || "-"],
         ["Tempo local", state.generated_at_local || state.generated_at || "-"],
         ["Areas em consenso", (state.consensus_map ? Object.keys(state.consensus_map).length : 0)],
@@ -125,6 +138,35 @@ function renderNarrative(state) {
         : '<span class="tag-v2">Sem seeds ativas</span>';
 }
 
+function renderKnowledge(state) {
+    const gap = state.knowledge_gap || {};
+    const dynamicQueries = state.dynamic_queries || [];
+    const decisionMap = {
+        latent_sufficient: "elaboracao interna",
+        web_required: "atualizacao externa",
+        already_integrated: "integracao do ja sabido",
+        inactive: "sem aprofundamento especial"
+    };
+
+    document.getElementById("knowledgePanel").innerHTML = `
+        <article class="data-card-v2">
+            <strong>Estado do saber neste ciclo</strong>
+            <div class="meta-line-v2">${escapeHtml(decisionMap[state.knowledge_source_decision] || state.knowledge_source_decision || "sem leitura")}</div>
+            <div class="mono-block-v2">${escapeHtml(state.knowledge_resolution_summary || "Sem aprofundamento epistemico especial nesta janela.")}</div>
+            ${gap.gap_question ? `<div class="mono-block-v2">Lacuna viva: ${escapeHtml(gap.gap_question)}</div>` : ""}
+            ${state.latent_probe_summary ? `<div class="mono-block-v2">Sondagem interna: ${escapeHtml(state.latent_probe_summary)}</div>` : ""}
+            ${state.knowledge_findings ? `<div class="mono-block-v2">Achado principal: ${escapeHtml(state.knowledge_findings)}</div>` : ""}
+            ${state.knowledge_seed ? `<div class="mono-block-v2">Seed conceitual: ${escapeHtml(state.knowledge_seed)}</div>` : ""}
+            <div class="tag-list-v2">
+                ${gap.target_area ? `<span class="tag-v2">Area: ${escapeHtml(gap.target_area)}</span>` : ""}
+                ${gap.target_scope ? `<span class="tag-v2">Escopo: ${escapeHtml(gap.target_scope)}</span>` : ""}
+                ${dynamicQueries.length ? `<span class="tag-v2">Queries dinamicas: ${escapeHtml(dynamicQueries.length)}</span>` : ""}
+            </div>
+            ${dynamicQueries.length ? `<div class="mono-block-v2">${escapeHtml(dynamicQueries.map((item) => item.query).join(" | "))}</div>` : ""}
+        </article>
+    `;
+}
+
 function renderAreas(state) {
     const panels = Object.entries(state.area_panels || {});
     document.getElementById("areaPanels").innerHTML = panels.length
@@ -132,10 +174,10 @@ function renderAreas(state) {
             <article class="data-card-v2">
                 <strong>${escapeHtml(panel.label || key)}</strong>
                 <div class="meta-line-v2">Confianca ${escapeHtml(panel.confidence ?? "-")} · sinais ${escapeHtml(panel.signal_count ?? 0)}</div>
-                <div class="mono-block-v2">${escapeHtml(panel.reading || panel.summary || "Sem leitura sintetica.")}</div>
+                <div class="mono-block-v2">${escapeHtml(panel.dominant_reading || panel.reading || panel.summary || "Sem leitura sintetica.")}</div>
                 <div class="tag-list-v2">
-                    ${(panel.consensus_signals || []).slice(0, 4).map((item) => `<span class="tag-v2">${escapeHtml(item)}</span>`).join("")}
-                    ${(panel.divergent_signals || []).slice(0, 3).map((item) => `<span class="tag-v2">${escapeHtml(item)}</span>`).join("")}
+                    ${(panel.consensus_signals || []).slice(0, 4).map((item) => `<span class="tag-v2">${escapeHtml(item.theme || item)}</span>`).join("")}
+                    ${(panel.divergent_signals || []).slice(0, 3).map((item) => `<span class="tag-v2">${escapeHtml(item.theme || item)}</span>`).join("")}
                 </div>
             </article>
         `).join("")
@@ -149,6 +191,7 @@ function renderHistory(history) {
                 <strong>${escapeHtml(item.generated_at_local || item.generated_at || "snapshot")}</strong>
                 <div class="meta-line-v2">${escapeHtml(item.lucidity_level || "-")} · confianca ${escapeHtml(item.confidence_overall ?? "-")}</div>
                 <div class="mono-block-v2">${escapeHtml(item.atmosphere || "")}</div>
+                ${item.knowledge_resolution_summary ? `<div class="mono-block-v2">${escapeHtml(item.knowledge_resolution_summary)}</div>` : ""}
                 <div class="mono-block-v2">${escapeHtml((item.dominant_tensions || []).join(" | "))}</div>
             </article>
         `).join("")
@@ -165,6 +208,7 @@ async function loadWorld() {
     const state = stateData.state || {};
     renderState(state);
     renderNarrative(state);
+    renderKnowledge(state);
     renderAreas(state);
     renderHistory(historyData.history || []);
 }
