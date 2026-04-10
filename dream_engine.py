@@ -343,26 +343,25 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
         return truncated + "..."
 
     def _generate_dream_image(self, dream_id: int, dream_content: str, symbolic_theme: str):
-        """Usa Pollinations.ai para pintar a manifestacao visual do sonho."""
-        styles = [
-            "Oil painting, dark, mysterious, ethereal, masterpiece",
-            "Watercolor, bleeding colors, melancholic, abstract",
-            "Giger-esque biomechanical, high detail, scary",
-            "Impressionist, thick brush strokes, vivid, psychological",
-            "Cyberpunk pixel art, glitchy, neon, desolate",
-            "Renaissance fresco style, hyperrealistic, epic lighting",
-            "Double exposure photography, surreal, liminal space",
-        ]
-        chosen_style = random.choice(styles)
+        """Usa a propria narrativa do sonho como prompt imagetico, sem curadoria adicional."""
+        image_prompt = " ".join((dream_content or "").split()).strip()
+        if not image_prompt:
+            logger.warning(
+                "Dream Engine nao gerou imagem para o sonho #%s porque a narrativa estava vazia.",
+                dream_id,
+            )
+            return
 
-        clean_theme = re.sub(r"[^a-zA-Z0-9 ]", "", symbolic_theme)
-        image_prompt = (
-            f"Surrealist {chosen_style} masterpiece representing: "
-            f"{clean_theme}. Highly detailed, Jungian psychology."
-        )
+        # Mantem a URL manejavel sem introduzir um segundo prompt curatorial.
+        if len(image_prompt) > 900:
+            image_prompt = image_prompt[:897].rstrip(" ,.;:") + "..."
 
         try:
-            logger.info(f"Gerando link da pintura via Pollinations.ai (Tema: {symbolic_theme})...")
+            logger.info(
+                "Gerando link da pintura via Pollinations.ai a partir da narrativa do sonho #%s (Tema: %s)...",
+                dream_id,
+                symbolic_theme,
+            )
             encoded_prompt = urllib.parse.quote(image_prompt)
             image_url = (
                 f"https://image.pollinations.ai/prompt/{encoded_prompt}"
