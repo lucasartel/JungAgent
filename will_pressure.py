@@ -376,13 +376,13 @@ class WillPressureEngine:
             """
             SELECT id
             FROM consciousness_loop_phase_results
-            WHERE user_id = ?
+            WHERE cycle_id = ?
               AND phase = 'world'
               AND status IN ('success', 'partial_success')
             ORDER BY id DESC
             LIMIT 1
             """,
-            (user_id,),
+            (cycle_id,),
         )
         row = cursor.fetchone()
         latest_world_result_id = int(row["id"]) if row else 0
