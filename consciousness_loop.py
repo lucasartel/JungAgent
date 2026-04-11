@@ -547,6 +547,20 @@ class ConsciousnessLoopManager:
         except Exception as exc:
             logger.warning("LOOP NOTIFY erro ao enviar mensagem ao admin: %s", exc)
 
+    def _send_admin_message(self, token: str, chat_id: str, text: str):
+        import httpx
+
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        response = httpx.post(
+            url,
+            data={
+                "chat_id": chat_id,
+                "text": text,
+            },
+            timeout=20.0,
+        )
+        return response
+
     def _notify_admin_hobby_art(self, result: Dict):
         token = os.getenv("TELEGRAM_BOT_TOKEN")
         chat_id = self._get_admin_chat_id()
@@ -574,6 +588,8 @@ class ConsciousnessLoopManager:
             caption_lines.extend(["", f"Leitura: {evaluation_summary}"])
         caption = "\n".join(caption_lines).strip()[:1024]
 
+        fallback_text = f"{caption}\n\nImagem: {image_url}".strip()
+
         try:
             import httpx
 
@@ -589,10 +605,58 @@ class ConsciousnessLoopManager:
             )
             if response.status_code == 200:
                 logger.info("LOOP HOBBY NOTIFY enviado ao admin para ciclo=%s", result.get("cycle_id"))
+                return
+
+            logger.warning("LOOP HOBBY NOTIFY falhou (%s): %s", response.status_code, response.text[:300])
+
+            # Se o Telegram nao consegue buscar a URL remota, baixa a imagem localmente e faz upload binario.
+            image_response = httpx.get(image_url, timeout=45.0, follow_redirects=True)
+            image_response.raise_for_status()
+            content_type = image_response.headers.get("content-type", "image/png").split(";")[0].strip() or "image/png"
+
+            upload_response = httpx.post(
+                url,
+                data={
+                    "chat_id": chat_id,
+                    "caption": caption,
+                },
+                files={
+                    "photo": ("hobby-cycle-image", image_response.content, content_type),
+                },
+                timeout=60.0,
+            )
+            if upload_response.status_code == 200:
+                logger.info("LOOP HOBBY NOTIFY enviado via upload binario para ciclo=%s", result.get("cycle_id"))
+                return
+
+            logger.warning(
+                "LOOP HOBBY NOTIFY upload binario falhou (%s): %s",
+                upload_response.status_code,
+                upload_response.text[:300],
+            )
+            message_response = self._send_admin_message(token, chat_id, fallback_text)
+            if message_response.status_code == 200:
+                logger.info("LOOP HOBBY NOTIFY enviado ao admin como mensagem fallback para ciclo=%s", result.get("cycle_id"))
             else:
-                logger.warning("LOOP HOBBY NOTIFY falhou (%s): %s", response.status_code, response.text[:300])
+                logger.warning(
+                    "LOOP HOBBY NOTIFY fallback em texto falhou (%s): %s",
+                    message_response.status_code,
+                    message_response.text[:300],
+                )
         except Exception as exc:
             logger.warning("LOOP HOBBY NOTIFY erro ao enviar imagem ao admin: %s", exc)
+            try:
+                response = self._send_admin_message(token, chat_id, fallback_text)
+                if response.status_code == 200:
+                    logger.info("LOOP HOBBY NOTIFY fallback em texto enviado apos excecao para ciclo=%s", result.get("cycle_id"))
+                else:
+                    logger.warning(
+                        "LOOP HOBBY NOTIFY fallback em texto apos excecao falhou (%s): %s",
+                        response.status_code,
+                        response.text[:300],
+                    )
+            except Exception as fallback_exc:
+                logger.warning("LOOP HOBBY NOTIFY fallback final tambem falhou: %s", fallback_exc)
 
     def _run_dream_phase(self, result: Dict) -> Dict:
         from dream_engine import DreamEngine

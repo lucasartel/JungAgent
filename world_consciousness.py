@@ -297,13 +297,21 @@ class WorldConsciousnessFetcher:
     observability and downstream loop seeds.
     """
 
-    def __init__(self, cache_dir: str = "./data"):
-        self.cache_dir = cache_dir
+    def __init__(self, cache_dir: Optional[str] = None):
+        self.cache_dir = cache_dir or self._resolve_cache_dir()
         os.makedirs(self.cache_dir, exist_ok=True)
         self.cache_file = os.path.join(self.cache_dir, "world_state_cache.json")
         self.history_file = os.path.join(self.cache_dir, "world_state_history.jsonl")
         self.cache_duration_hours = 4
         self.max_history_entries = 72
+
+    def _resolve_cache_dir(self) -> str:
+        volume_dir = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+        if volume_dir:
+            return volume_dir
+        if os.path.exists("/data"):
+            return "/data"
+        return "./data"
 
     def _resolve_sqlite_path(self) -> str:
         data_dir = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")

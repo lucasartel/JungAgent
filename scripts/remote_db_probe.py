@@ -21,6 +21,23 @@ def resolve_default_db_path() -> str:
     return os.path.join(data_dir, "jung_hybrid.db")
 
 
+def resolve_default_world_cache_path() -> str:
+    candidates = []
+    volume_dir = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+    if volume_dir:
+        candidates.append(os.path.join(volume_dir, "world_state_cache.json"))
+    candidates.extend(
+        [
+            "/data/world_state_cache.json",
+            "./data/world_state_cache.json",
+        ]
+    )
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return candidates[0]
+
+
 def connect_read_only(db_path: str) -> sqlite3.Connection:
     uri = f"file:{Path(db_path).as_posix()}?mode=ro"
     connection = sqlite3.connect(uri, uri=True)
@@ -297,7 +314,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Read-only probe for JungAgent production diagnostics.")
     parser.add_argument("probe", choices=sorted(PROBES.keys()))
     parser.add_argument("--db-path", default=resolve_default_db_path())
-    parser.add_argument("--world-cache-path", default="/data/world_state_cache.json")
+    parser.add_argument("--world-cache-path", default=resolve_default_world_cache_path())
     parser.add_argument("--user-id", default=os.getenv("ADMIN_USER_ID", DEFAULT_ADMIN_USER_ID))
     parser.add_argument("--limit", type=int, default=5)
     parser.add_argument("--pretty", action="store_true")
