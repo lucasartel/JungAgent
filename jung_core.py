@@ -6179,11 +6179,14 @@ class JungianEngine:
         final_response = self._call_conversation_llm(prompt, max_tokens=2000, temperature=0.7)
         clean_response = self._strip_admin_thought_block(final_response)
         display_response = clean_response
-        if str(user_id) == self._get_admin_user_id():
-            display_response = clean_response + self._build_admin_thought_block(
-                prompt,
-                self._format_active_consciousness_debug(debug_meta),
-            )
+        # DEBUG DO PROMPT PARA ADMIN TEMPORARIAMENTE DESABILITADO.
+        # Mantemos o bloco abaixo comentado para reativacao futura, se necessario.
+        #
+        # if str(user_id) == self._get_admin_user_id():
+        #     display_response = clean_response + self._build_admin_thought_block(
+        #         prompt,
+        #         self._format_active_consciousness_debug(debug_meta),
+        #     )
         return {
             "prompt": prompt,
             "clean_response": clean_response,
@@ -6334,10 +6337,14 @@ class JungianEngine:
             timings_ms["total_ms"] = int((time.perf_counter() - total_start) * 1000)
             debug_meta["timings_ms"] = timings_ms
             clean_response = thesis_bundle["text"]
-            display_response = clean_response + self._build_admin_thought_block(
-                thesis_bundle["prompt"],
-                self._format_active_consciousness_debug(debug_meta),
-            )
+            display_response = clean_response
+            # DEBUG DO PROMPT PARA ADMIN TEMPORARIAMENTE DESABILITADO.
+            # Mantemos o bloco abaixo comentado para reativacao futura, se necessario.
+            #
+            # display_response = clean_response + self._build_admin_thought_block(
+            #     thesis_bundle["prompt"],
+            #     self._format_active_consciousness_debug(debug_meta),
+            # )
             return {
                 "clean_response": clean_response,
                 "display_response": display_response,
@@ -6617,8 +6624,11 @@ class JungianEngine:
             display_response = clean_response
 
             # Para o ADMIN: Anexar o prompt completo apenas na exibição, nunca na persistência
-            if is_admin:
-                display_response = clean_response + self._build_admin_thought_block(prompt)
+            # DEBUG DO PROMPT PARA ADMIN TEMPORARIAMENTE DESABILITADO.
+            # Mantemos o bloco abaixo comentado para reativacao futura, se necessario.
+            #
+            # if is_admin:
+            #     display_response = clean_response + self._build_admin_thought_block(prompt)
 
             return {
                 "clean_response": clean_response,
