@@ -76,6 +76,68 @@ async def setup_bot_commands(telegram_app):
     await telegram_app.bot.set_my_commands(commands)
     logger.info(f"✅ Comandos do bot configurados: {[cmd.command for cmd in commands]}")
 
+def _truncate_telegram_text(text: str, limit: int) -> str:
+    cleaned = " ".join((text or "").split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3].rstrip(" ,.;:") + "..."
+
+
+def _chunk_telegram_text(text: str, limit: int = 4000) -> list[str]:
+    raw = (text or "").strip()
+    if not raw:
+        return []
+    if len(raw) <= limit:
+        return [raw]
+
+    chunks: list[str] = []
+    remaining = raw
+    while len(remaining) > limit:
+        split_at = remaining.rfind("\n", 0, limit)
+        if split_at < int(limit * 0.5):
+            split_at = remaining.rfind(" ", 0, limit)
+        if split_at < int(limit * 0.5):
+            split_at = limit
+        chunks.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+def _describe_will_delivery(delivery: Dict, winner: str | None = None) -> str:
+    delivery_type = (delivery or {}).get("delivery_type") or ""
+    if delivery_type in {"pressure_relational", "relational_message"} or winner == "relacionar":
+        return "proatividade relacional"
+    if delivery_type == "saber_world_text" or winner == "saber":
+        return "entrega de saber"
+    if delivery_type == "expressar_art_text" or winner == "expressar":
+        return "entrega de expressao"
+    return "entrega do Will"
+
+
+async def _send_will_delivery_via_telegram(bot, delivery: Dict) -> None:
+    chat_id = int(delivery["platform_id"])
+    text = (delivery.get("text") or "").strip()
+    image_url = delivery.get("image_url")
+
+    if image_url:
+        caption = _truncate_telegram_text(text, 900) if text else None
+        await bot.send_photo(
+            chat_id=chat_id,
+            photo=image_url,
+            caption=caption,
+        )
+        if text and caption and caption != text:
+            remaining = text[len(caption):].lstrip()
+            for chunk in _chunk_telegram_text(remaining):
+                await bot.send_message(chat_id=chat_id, text=chunk)
+        return
+
+    for chunk in _chunk_telegram_text(text):
+        await bot.send_message(chat_id=chat_id, text=chunk)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Gerencia o ciclo de vida da aplicação (Bot + API)"""
@@ -193,18 +255,9 @@ async def lifespan(app: FastAPI):
                     delivery = pulse["pending_delivery"]
                     user = bot_state.db.get_user(ADMIN_USER_ID) or {}
                     user_name = user.get("user_name", "Admin")
+                    delivery_label = _describe_will_delivery(delivery, pulse.get("winner"))
                     try:
-                        if delivery.get("image_url"):
-                            await telegram_app.bot.send_photo(
-                                chat_id=int(delivery["platform_id"]),
-                                photo=delivery["image_url"],
-                                caption=delivery["text"],
-                            )
-                        else:
-                            await telegram_app.bot.send_message(
-                                chat_id=int(delivery["platform_id"]),
-                                text=delivery["text"],
-                            )
+                        await _send_will_delivery_via_telegram(telegram_app.bot, delivery)
                         if delivery.get("delivery_type") in {"pressure_relational", "relational_message"}:
                             await asyncio.to_thread(
                                 bot_state.proactive.record_pressure_based_message,
@@ -221,8 +274,9 @@ async def lifespan(app: FastAPI):
                             True,
                             delivery.get("text"),
                         )
-                        logger.info("✅ [WILL PULSE] Proatividade relacional enviada ao admin.")
+                        logger.info("✅ [WILL PULSE] %s enviada ao admin.", delivery_label)
                     except Exception as send_exc:
+                        failure_summary = f"Falha ao enviar {delivery_label}: {send_exc}"
                         await asyncio.to_thread(
                             engine.finalize_pending_delivery,
                             pulse["event_id"],
@@ -230,9 +284,9 @@ async def lifespan(app: FastAPI):
                             delivery.get("cycle_id"),
                             pulse.get("winner"),
                             False,
-                            f"Falha ao enviar proatividade relacional: {send_exc}",
+                            failure_summary,
                         )
-                        logger.error(f"❌ [WILL PULSE] Falha ao enviar proatividade relacional: {send_exc}")
+                        logger.error("❌ [WILL PULSE] %s", failure_summary)
                 elif pulse.get("winner") == "relacionar" and not proactive_messages_enabled():
                     logger.info("⏸️ [WILL PULSE] Pressão relacional medida, mas envio externo bloqueado por PROACTIVE_ENABLED=false.")
             except Exception as e:
