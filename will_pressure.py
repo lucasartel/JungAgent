@@ -18,7 +18,7 @@ from rumination_config import ADMIN_USER_ID
 
 logger = logging.getLogger(__name__)
 
-PRESSURE_THRESHOLD = 80.0
+PRESSURE_THRESHOLD = 51.0
 PULSE_INTERVAL_HOURS = 3
 REFRACTORY_HOURS = 6
 PRESSURE_ORDER = ("saber", "relacionar", "expressar")
@@ -134,6 +134,36 @@ class WillPressureEngine:
         if len(cleaned) <= limit:
             return cleaned
         return cleaned[: limit - 3].rstrip(" ,.;:") + "..."
+
+    def _build_admin_delivery(
+        self,
+        user_id: str,
+        cycle_id: str,
+        text: str,
+        *,
+        delivery_type: str,
+        topic: Optional[str] = None,
+        image_url: Optional[str] = None,
+        caption_limit: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        user = self.db.get_user(user_id) or {}
+        platform_id = user.get("platform_id")
+        cleaned_text = (text or "").strip()
+        if not platform_id or not cleaned_text:
+            return None
+        if caption_limit:
+            cleaned_text = self._truncate(cleaned_text, caption_limit)
+        payload: Dict[str, Any] = {
+            "platform_id": platform_id,
+            "cycle_id": cycle_id,
+            "text": cleaned_text,
+            "delivery_type": delivery_type,
+        }
+        if topic:
+            payload["topic"] = topic
+        if image_url:
+            payload["image_url"] = image_url
+        return payload
 
     def _ensure_cycle_id(self, user_id: str, cycle_id: Optional[str] = None) -> str:
         if cycle_id:
@@ -691,14 +721,33 @@ ESTADO QUALITATIVO:
             decision_line = "O saber apareceu mais como reintegracao do que ja vinha sendo metabolizado."
         else:
             decision_line = "A elaboracao do saber precisou de atualizacao externa do mundo."
+        admin_text = (
+            "Transbordo de saber.\n\n"
+            f"{(world_state.get('formatted_admin_summary') or '').strip()}\n\n"
+            f"Leitura de fundo: {decision_line}"
+        ).strip()
+        pending_delivery = self._build_admin_delivery(
+            user_id=user_id,
+            cycle_id=cycle_id,
+            text=admin_text,
+            delivery_type="saber_world_text",
+            topic="aprofundamento do saber",
+        )
         return {
-            "success": True,
+            "success": bool(pending_delivery),
             "action_summary": self._truncate(
                 f"Aprofundamento do mundo concluido. {decision_line} "
                 f"{world_state.get('knowledge_findings') or world_state.get('will_bias_summary') or ''} "
                 f"Semente principal: {top_seed[0] if top_seed else 'sem seed destacada'}.",
                 240,
             ),
+            "pending_delivery": pending_delivery,
+            "payload": {
+                "world_state_snapshot": {
+                    "knowledge_source_decision": knowledge_decision,
+                    "formatted_admin_summary": world_state.get("formatted_admin_summary"),
+                }
+            },
         }
 
     def _execute_expressar_release(self, user_id: str, cycle_id: str) -> Dict[str, Any]:
@@ -711,8 +760,24 @@ ESTADO QUALITATIVO:
         art_engine = HobbyArtEngine(self.db)
         art_result = art_engine.generate_cycle_art(user_id=user_id, cycle_id=cycle_id, world_state=world_state)
         success = bool(art_result.get("success") and art_result.get("artifact_id"))
+        delivery_text = (
+            "Transbordo de expressao.\n\n"
+            f"{art_result.get('title') or 'Peca sem titulo'}\n"
+            f"{art_result.get('summary') or 'Sem sintese textual.'}"
+        )
+        if art_result.get("evaluation_summary"):
+            delivery_text += f"\n\nLeitura da imagem: {art_result['evaluation_summary']}"
+        pending_delivery = self._build_admin_delivery(
+            user_id=user_id,
+            cycle_id=cycle_id,
+            text=delivery_text,
+            delivery_type="expressar_art_text",
+            topic=art_result.get("title") or "catarse expressiva",
+            image_url=art_result.get("image_url"),
+            caption_limit=900,
+        ) if success else None
         return {
-            "success": success,
+            "success": bool(success and pending_delivery),
             "action_summary": self._truncate(
                 f"Catarse expressiva em {art_result.get('provider') or 'provider desconhecido'} "
                 f"com titulo '{art_result.get('title') or 'sem titulo'}'.",
@@ -721,6 +786,7 @@ ESTADO QUALITATIVO:
                 f"Catarse expressiva falhou: {art_result.get('status') or 'sem status'}",
                 240,
             ),
+            "pending_delivery": pending_delivery,
             "payload": art_result,
         }
 
@@ -753,6 +819,7 @@ ESTADO QUALITATIVO:
             }
         payload["platform_id"] = platform_id
         payload["cycle_id"] = cycle_id
+        payload["delivery_type"] = payload.get("message_type") or "pressure_relational"
         return {
             "success": True,
             "action_summary": self._truncate(payload.get("text") or "Mensagem relacional preparada.", 220),
@@ -879,6 +946,7 @@ ESTADO QUALITATIVO:
         executor = self._execute_saber_release if winner == "saber" else self._execute_expressar_release
         execution = executor(user_id=user_id, cycle_id=cycle_id)
         success = bool(execution.get("success"))
+        pending_delivery = execution.get("pending_delivery")
         event_id = self._register_event(
             user_id=user_id,
             cycle_id=cycle_id,
@@ -888,18 +956,33 @@ ESTADO QUALITATIVO:
             decision_reason=decision_reason,
             action_attempted=f"{winner}_release",
             action_summary=execution.get("action_summary") or "",
-            status="completed" if success else "failed",
+            status="triggered" if success and pending_delivery else "failed",
         )
-        refreshed = (
-            self._apply_success_release(pressure_state, winner, execution.get("action_summary") or f"catarse de {winner} concluida")
-            if success
-            else self._apply_failed_release(pressure_state, winner, execution.get("action_summary") or f"catarse de {winner} falhou")
-        )
+        if not success or not pending_delivery:
+            refreshed = self._apply_failed_release(
+                pressure_state,
+                winner,
+                execution.get("action_summary") or f"catarse de {winner} falhou",
+            )
+            self._update_event(
+                event_id,
+                status="failed",
+                action_summary=execution.get("action_summary") or f"catarse de {winner} falhou",
+            )
+            return {
+                "status": "failed",
+                "event_id": event_id,
+                "winner": winner,
+                "pressure_state": refreshed,
+                "action_summary": execution.get("action_summary"),
+                "payload": execution.get("payload"),
+            }
         return {
-            "status": "completed" if success else "failed",
+            "status": "triggered",
             "event_id": event_id,
             "winner": winner,
-            "pressure_state": refreshed,
+            "pressure_state": pressure_state,
             "action_summary": execution.get("action_summary"),
             "payload": execution.get("payload"),
+            "pending_delivery": pending_delivery,
         }

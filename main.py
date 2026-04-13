@@ -194,16 +194,24 @@ async def lifespan(app: FastAPI):
                     user = bot_state.db.get_user(ADMIN_USER_ID) or {}
                     user_name = user.get("user_name", "Admin")
                     try:
-                        await telegram_app.bot.send_message(
-                            chat_id=int(delivery["platform_id"]),
-                            text=delivery["text"],
-                        )
-                        await asyncio.to_thread(
-                            bot_state.proactive.record_pressure_based_message,
-                            ADMIN_USER_ID,
-                            user_name,
-                            delivery,
-                        )
+                        if delivery.get("image_url"):
+                            await telegram_app.bot.send_photo(
+                                chat_id=int(delivery["platform_id"]),
+                                photo=delivery["image_url"],
+                                caption=delivery["text"],
+                            )
+                        else:
+                            await telegram_app.bot.send_message(
+                                chat_id=int(delivery["platform_id"]),
+                                text=delivery["text"],
+                            )
+                        if delivery.get("delivery_type") in {"pressure_relational", "relational_message"}:
+                            await asyncio.to_thread(
+                                bot_state.proactive.record_pressure_based_message,
+                                ADMIN_USER_ID,
+                                user_name,
+                                delivery,
+                            )
                         await asyncio.to_thread(
                             engine.finalize_pending_delivery,
                             pulse["event_id"],

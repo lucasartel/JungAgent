@@ -2219,7 +2219,7 @@ async def research_dashboard(
         "completed_actions": 0,
         "failed_actions": 0,
         "refractory_blocks": 0,
-        "threshold": 80,
+        "threshold": 51,
         "next_pulse_at": None,
     }
     pulse_events = []
