@@ -8,15 +8,15 @@
 
 ## 📋 Checklist Pré-Deploy
 
-- [x] Schema multi-tenant criado ([admin_web/database/multi_tenant_schema.py](admin_web/database/multi_tenant_schema.py))
-- [x] Script SQL de migração criado ([migrations/multi_tenant_migration.sql](migrations/multi_tenant_migration.sql))
+- [x] Schema multi-tenant criado ([admin_web/database/multi_tenant_schema.py](../../admin_web/database/multi_tenant_schema.py))
+- [x] Script SQL de migração criado ([migrations/multi_tenant_migration.sql](../../migrations/multi_tenant_migration.sql))
 - [x] Sistema de autenticação implementado (AuthManager, SessionManager, PermissionManager)
-- [x] Middleware de autorização criado ([admin_web/auth/middleware.py](admin_web/auth/middleware.py))
-- [x] Template de login criado ([admin_web/templates/auth/login.html](admin_web/templates/auth/login.html))
-- [x] Rotas de autenticação criadas ([admin_web/routes/auth_routes.py](admin_web/routes/auth_routes.py))
-- [x] Sistema de migração web criado ([migrations/run_migration_web.py](migrations/run_migration_web.py))
-- [x] Rota temporária de migração criada ([admin_web/routes/migration_route.py](admin_web/routes/migration_route.py))
-- [x] Rota de migração integrada em [main.py](main.py)
+- [x] Middleware de autorização criado ([admin_web/auth/middleware.py](../../admin_web/auth/middleware.py))
+- [x] Template de login criado ([admin_web/templates/auth/login.html](../../admin_web/templates/auth/login.html))
+- [x] Rotas de autenticação criadas ([admin_web/routes/auth_routes.py](../../admin_web/routes/auth_routes.py))
+- [x] Sistema de migração web criado ([migrations/run_migration_web.py](../../migrations/run_migration_web.py))
+- [x] Rota temporária de migração criada ([admin_web/routes/migration_route.py](../../admin_web/routes/migration_route.py))
+- [x] Rota de migração integrada em [main.py](../../main.py)
 - [x] Código commitado e enviado ao GitHub
 - [x] Deploy automático ativado no Railway
 
@@ -131,7 +131,7 @@ SESSION_COOKIE_SECURE=true
 
 ⚠️ **MUITO IMPORTANTE:** A rota de migração é um **risco de segurança grave**. Ela permite que qualquer pessoa execute a migração novamente e crie usuários master!
 
-11. **Editar [main.py](main.py:1072-1079)**
+11. **Editar [main.py](../../main.py)**
     - Remover ou comentar estas linhas:
     ```python
     # ⚠️ TEMPORÁRIO: Rota de migração multi-tenant (REMOVER APÓS MIGRAÇÃO!)
@@ -215,14 +215,14 @@ Após validar que o sistema multi-tenant está funcionando:
 
 ### **Fase 2: Dashboards**
 
-1. **Master Dashboard** ([admin_web/routes/master_routes.py](admin_web/routes/master_routes.py))
+1. **Master Dashboard** ([admin_web/routes/master_routes.py](../../admin_web/routes/master_routes.py))
    - Listar todas as organizações
    - Criar/editar/deletar organizações
    - Listar todos os admins
    - Criar org admins para organizações
    - Ver estatísticas globais
 
-2. **Org Admin Dashboard** ([admin_web/routes/org_routes.py](admin_web/routes/org_routes.py))
+2. **Org Admin Dashboard** ([admin_web/routes/org_routes.py](../../admin_web/routes/org_routes.py))
    - Ver usuários da organização
    - Ver estatísticas de conversas
    - Exportar relatórios
@@ -254,7 +254,7 @@ Após validar que o sistema multi-tenant está funcionando:
 ✅ Rota de migração multi-tenant carregada
 ```
 
-Se não aparecer, verificar se o arquivo [migrations/run_migration_web.py](migrations/run_migration_web.py) foi enviado ao Railway.
+Se não aparecer, verificar se o arquivo [migrations/run_migration_web.py](../../migrations/run_migration_web.py) foi enviado ao Railway.
 
 ---
 
@@ -313,7 +313,7 @@ Depois rode a migração novamente.
 ### **Problema: Erro "bcrypt module not found"**
 
 **Causa:** Biblioteca bcrypt não está instalada
-**Solução:** Verificar se `bcrypt>=4.0.0` está em [requirements.txt](requirements.txt)
+**Solução:** Verificar se `bcrypt>=4.0.0` está em [requirements.txt](../../requirements.txt)
 
 Se não estiver, adicione:
 ```
@@ -412,7 +412,7 @@ timestamp DATETIME                    -- Quando aconteceu
 ## 📚 Documentação Completa
 
 Para entender toda a arquitetura, leia:
-- [docs/MULTI_TENANT_IMPLEMENTATION.md](docs/MULTI_TENANT_IMPLEMENTATION.md) - Documentação técnica completa
+- [docs/MULTI_TENANT_IMPLEMENTATION.md](../MULTI_TENANT_IMPLEMENTATION.md) - Documentação técnica completa
 
 ---
 

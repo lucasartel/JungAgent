@@ -3,11 +3,17 @@ Script de diagnóstico para verificar status da ruminação
 """
 import sqlite3
 import json
+import sys
 from datetime import datetime
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT_DIR))
+
 from rumination_config import *
 
 # Conectar ao banco
-conn = sqlite3.connect("data/jung_hybrid.db")
+conn = sqlite3.connect(ROOT_DIR / "data" / "jung_hybrid.db")
 conn.row_factory = sqlite3.Row
 cursor = conn.cursor()
 

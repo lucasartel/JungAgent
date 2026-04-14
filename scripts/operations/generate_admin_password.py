@@ -17,10 +17,11 @@ Data: 2025-11-29
 """
 
 import sys
-import os
+from pathlib import Path
 
 # Adicionar diretório atual ao path para importar auth
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ROOT_DIR = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT_DIR))
 
 from admin_web.auth import generate_password_hash, verify_password_hash
 

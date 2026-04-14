@@ -4,7 +4,10 @@ Verifica se há dados para processar
 """
 
 import sys
-sys.path.insert(0, '.')
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT_DIR))
 
 from jung_core import HybridDatabaseManager
 from rumination_config import ADMIN_USER_ID

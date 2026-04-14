@@ -9,7 +9,8 @@ import sys
 from pathlib import Path
 
 # Caminho do banco de dados (ajuste se necessário)
-DB_PATH = Path(__file__).parent / "jung_hybrid.db"
+ROOT_DIR = Path(__file__).resolve().parents[2]
+DB_PATH = ROOT_DIR / "data" / "jung_hybrid.db"
 
 # Se estiver rodando no Railway, use o caminho do Railway
 if not DB_PATH.exists():
@@ -18,7 +19,7 @@ if not DB_PATH.exists():
 if not DB_PATH.exists():
     print(f"❌ Banco de dados não encontrado em: {DB_PATH}")
     print("   Tentando caminho alternativo...")
-    DB_PATH = Path("data/jung_hybrid.db")
+    DB_PATH = ROOT_DIR / "data" / "jung_hybrid.db"
 
 if not DB_PATH.exists():
     print(f"❌ Banco de dados não encontrado!")

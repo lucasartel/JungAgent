@@ -4,35 +4,29 @@ Análise dos dados baixados do Railway
 import json
 from datetime import datetime
 from collections import Counter
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+EXPORT_DIR = ROOT_DIR / "docs" / "diagnostics" / "railway_exports"
+
+
+def _load_export(filename, key):
+    path = EXPORT_DIR / filename
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f).get(key, [])
+    except FileNotFoundError:
+        print(f"❌ Arquivo {filename} não encontrado em {path}")
+        return []
 
 print("="*80)
 print("🔬 ANÁLISE DE DADOS DO JUNG LAB (RAILWAY)")
 print("="*80)
 
 # Carregar dados
-try:
-    with open("railway_fragments.json", "r", encoding="utf-8") as f:
-        fragments_data = json.load(f)
-        fragments = fragments_data.get("fragments", [])
-except FileNotFoundError:
-    print("❌ Arquivo railway_fragments.json não encontrado")
-    fragments = []
-
-try:
-    with open("railway_tensions.json", "r", encoding="utf-8") as f:
-        tensions_data = json.load(f)
-        tensions = tensions_data.get("tensions", [])
-except FileNotFoundError:
-    print("❌ Arquivo railway_tensions.json não encontrado")
-    tensions = []
-
-try:
-    with open("railway_insights.json", "r", encoding="utf-8") as f:
-        insights_data = json.load(f)
-        insights = insights_data.get("insights", [])
-except FileNotFoundError:
-    print("❌ Arquivo railway_insights.json não encontrado")
-    insights = []
+fragments = _load_export("railway_fragments.json", "fragments")
+tensions = _load_export("railway_tensions.json", "tensions")
+insights = _load_export("railway_insights.json", "insights")
 
 # ============================================================================
 # ANÁLISE DE FRAGMENTOS

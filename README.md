@@ -151,6 +151,17 @@ The admin area exposes the inner life of the system through modules such as:
 - will
 - visual map
 
+## Repository layout
+
+The repository root is intentionally kept focused on runtime code and deployment entrypoints.
+
+- `admin_web/`: FastAPI admin interface, dashboards, auth, and templates
+- `docs/`: architecture notes, deployment guides, and diagnostic references
+- `scripts/diagnostics/`: offline inspection helpers for memory, rumination, and Railway exports
+- `scripts/operations/`: operational utilities such as exports and admin setup helpers
+- `archive/`: old versions, backups, and historical material kept out of the active runtime path
+- `main.py`, `telegram_bot.py`, `jung_core.py`, `*_engine.py`: active runtime and orchestration
+
 ## Technologies
 
 - **Language:** Python

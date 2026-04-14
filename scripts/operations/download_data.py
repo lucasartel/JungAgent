@@ -4,6 +4,15 @@ Script para baixar dados do Railway para analise local
 import requests
 import json
 import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+EXPORT_DIR = ROOT_DIR / "docs" / "diagnostics" / "railway_exports"
+EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def export_path(filename):
+    return EXPORT_DIR / filename
 
 # URL do Railway
 RAILWAY_URL = "https://jungclaude-production.up.railway.app"
@@ -27,10 +36,11 @@ try:
     response.raise_for_status()
     fragments_data = response.json()
 
-    with open("railway_fragments.json", "w", encoding="utf-8") as f:
+    fragments_file = export_path("railway_fragments.json")
+    with fragments_file.open("w", encoding="utf-8") as f:
         json.dump(fragments_data, f, indent=2, ensure_ascii=False)
 
-    print(f"   OK - {fragments_data['total']} fragmentos baixados -> railway_fragments.json")
+    print(f"   OK - {fragments_data['total']} fragmentos baixados -> {fragments_file}")
 except Exception as e:
     print(f"   ERRO ao baixar fragmentos: {e}")
 
@@ -41,10 +51,11 @@ try:
     response.raise_for_status()
     tensions_data = response.json()
 
-    with open("railway_tensions.json", "w", encoding="utf-8") as f:
+    tensions_file = export_path("railway_tensions.json")
+    with tensions_file.open("w", encoding="utf-8") as f:
         json.dump(tensions_data, f, indent=2, ensure_ascii=False)
 
-    print(f"   OK - {tensions_data['total']} tensoes baixadas -> railway_tensions.json")
+    print(f"   OK - {tensions_data['total']} tensoes baixadas -> {tensions_file}")
 except Exception as e:
     print(f"   ERRO ao baixar tensoes: {e}")
 
@@ -55,10 +66,11 @@ try:
     response.raise_for_status()
     insights_data = response.json()
 
-    with open("railway_insights.json", "w", encoding="utf-8") as f:
+    insights_file = export_path("railway_insights.json")
+    with insights_file.open("w", encoding="utf-8") as f:
         json.dump(insights_data, f, indent=2, ensure_ascii=False)
 
-    print(f"   OK - {insights_data['total']} insights baixados -> railway_insights.json")
+    print(f"   OK - {insights_data['total']} insights baixados -> {insights_file}")
 except Exception as e:
     print(f"   ERRO ao baixar insights: {e}")
 
@@ -69,10 +81,11 @@ try:
     response.raise_for_status()
     diagnosis_data = response.json()
 
-    with open("railway_diagnosis.json", "w", encoding="utf-8") as f:
+    diagnosis_file = export_path("railway_diagnosis.json")
+    with diagnosis_file.open("w", encoding="utf-8") as f:
         json.dump(diagnosis_data, f, indent=2, ensure_ascii=False)
 
-    print(f"   OK - Diagnostico baixado -> railway_diagnosis.json")
+    print(f"   OK - Diagnostico baixado -> {diagnosis_file}")
 
     # Mostrar resumo do diagnóstico
     print("\n" + "="*80)
@@ -103,7 +116,7 @@ except Exception as e:
     print(f"   ERRO ao baixar diagnostico: {e}")
 
 print("\nDownload concluido!")
-print("\nArquivos gerados:")
+print(f"\nArquivos gerados em: {EXPORT_DIR}")
 print("  - railway_fragments.json")
 print("  - railway_tensions.json")
 print("  - railway_insights.json")
