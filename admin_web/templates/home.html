@@ -215,6 +215,195 @@
             gap: 14px;
         }
 
+        .loop-stage-grid-v2 {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .loop-stage-v2 {
+            position: relative;
+            padding: 20px 18px 18px;
+            border-radius: 22px;
+            border: 1px solid var(--shell-border);
+            background:
+                linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(7, 11, 23, 0.92));
+            overflow: hidden;
+        }
+
+        .loop-stage-v2::before {
+            content: "";
+            position: absolute;
+            inset: 0 0 auto 0;
+            height: 3px;
+            background: linear-gradient(90deg, rgba(216, 180, 254, 0.96), rgba(56, 189, 248, 0.82));
+            opacity: 0.9;
+        }
+
+        .loop-stage-order-v2 {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 34px;
+            height: 34px;
+            border-radius: 999px;
+            background: rgba(216, 180, 254, 0.14);
+            border: 1px solid rgba(216, 180, 254, 0.28);
+            color: #f8fafc;
+            font-size: 0.84rem;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+
+        .loop-stage-kicker-v2 {
+            display: block;
+            color: var(--shell-accent);
+            font-size: 0.76rem;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .loop-stage-title-v2 {
+            display: block;
+            color: #f8fafc;
+            font-size: 1.02rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .loop-stage-copy-v2 {
+            margin: 0;
+            color: var(--shell-muted);
+            line-height: 1.68;
+            font-size: 0.98rem;
+        }
+
+        .loop-band-v2 {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-top: 18px;
+            padding: 14px 16px;
+            border-radius: 18px;
+            border: 1px solid var(--shell-border);
+            background: rgba(9, 14, 28, 0.78);
+            overflow-x: auto;
+        }
+
+        .loop-band-node-v2 {
+            flex: 1 1 0;
+            min-width: 110px;
+            text-align: center;
+            color: #f8fafc;
+            font-size: 0.86rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+        }
+
+        .loop-band-node-v2 span {
+            display: block;
+            color: var(--shell-muted);
+            font-size: 0.72rem;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+
+        .will-hero-v2 {
+            display: grid;
+            grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.1fr);
+            gap: 18px;
+            align-items: stretch;
+        }
+
+        .will-core-v2 {
+            position: relative;
+            padding: 28px;
+            border-radius: 28px;
+            border: 1px solid rgba(216, 180, 254, 0.18);
+            background:
+                radial-gradient(circle at top, rgba(216, 180, 254, 0.16), transparent 54%),
+                linear-gradient(180deg, rgba(12, 18, 34, 0.96), rgba(5, 9, 20, 0.96));
+            min-height: 100%;
+        }
+
+        .will-core-v2::after {
+            content: "";
+            position: absolute;
+            inset: 18px;
+            border-radius: 999px;
+            border: 1px solid rgba(148, 163, 184, 0.1);
+            pointer-events: none;
+        }
+
+        .will-core-kicker-v2 {
+            display: block;
+            color: var(--shell-accent);
+            font-size: 0.76rem;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            margin-bottom: 16px;
+        }
+
+        .will-core-title-v2 {
+            margin: 0 0 14px;
+            color: #f8fafc;
+            font-size: clamp(1.9rem, 4vw, 2.8rem);
+            line-height: 0.95;
+            letter-spacing: -0.05em;
+        }
+
+        .will-core-copy-v2 {
+            margin: 0;
+            color: var(--shell-muted);
+            line-height: 1.72;
+            font-size: 1rem;
+            max-width: 26rem;
+        }
+
+        .will-grid-v2 {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .will-card-v2 {
+            padding: 22px;
+            border-radius: 22px;
+            border: 1px solid var(--shell-border);
+            background: rgba(10, 16, 27, 0.82);
+        }
+
+        .will-card-v2 strong {
+            display: block;
+            color: #f8fafc;
+            font-size: 1.08rem;
+            margin-bottom: 12px;
+        }
+
+        .will-card-v2 p {
+            margin: 0;
+            color: var(--shell-muted);
+            line-height: 1.7;
+        }
+
+        .will-card-v2--knowing {
+            box-shadow: inset 0 1px 0 rgba(56, 189, 248, 0.28);
+        }
+
+        .will-card-v2--relating {
+            box-shadow: inset 0 1px 0 rgba(34, 197, 94, 0.24);
+        }
+
+        .will-card-v2--expressing {
+            box-shadow: inset 0 1px 0 rgba(216, 180, 254, 0.28);
+        }
+
         .pipeline-step-v2 {
             padding: 20px;
             border-radius: 18px;
@@ -246,7 +435,10 @@
         @media (max-width: 980px) {
             .hero-v2,
             .showcase-grid-v2,
-            .pipeline-v2 {
+            .pipeline-v2,
+            .loop-stage-grid-v2,
+            .will-grid-v2,
+            .will-hero-v2 {
                 grid-template-columns: 1fr;
             }
 
@@ -308,6 +500,7 @@
         </button>
         <div class="public-nav-links-v2" id="public-nav-links">
             <a href="#architecture">Architecture</a>
+            <a href="#loop">Loop</a>
             <a href="#modules">Modules</a>
             <a href="#wellness">Wellness</a>
             <a href="#will">Will</a>
@@ -367,6 +560,77 @@
             </div>
         </section>
 
+        <section id="loop" class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Consciousness loop</h2>
+                    <p class="panel-subtitle-v2">JungAgent is organized as an internal day. Each phase performs a different psychological function and the whole system returns to conversation changed.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2 stack-v2">
+                <div class="loop-stage-grid-v2">
+                    <article class="loop-stage-v2">
+                        <span class="loop-stage-order-v2">1</span>
+                        <span class="loop-stage-kicker-v2">Night</span>
+                        <strong class="loop-stage-title-v2">Dream</strong>
+                        <p class="loop-stage-copy-v2">Recent psychic material is converted into symbolic narratives and dream images.</p>
+                    </article>
+                    <article class="loop-stage-v2">
+                        <span class="loop-stage-order-v2">2</span>
+                        <span class="loop-stage-kicker-v2">Reorganization</span>
+                        <strong class="loop-stage-title-v2">Identity</strong>
+                        <p class="loop-stage-copy-v2">Core identity, contradictions, possible selves, and relational stance are consolidated.</p>
+                    </article>
+                    <article class="loop-stage-v2">
+                        <span class="loop-stage-order-v2">3</span>
+                        <span class="loop-stage-kicker-v2">Introversion</span>
+                        <strong class="loop-stage-title-v2">Rumination I</strong>
+                        <p class="loop-stage-copy-v2">Fragments become tensions and the system metabolizes what has not yet settled.</p>
+                    </article>
+                    <article class="loop-stage-v2">
+                        <span class="loop-stage-order-v2">4</span>
+                        <span class="loop-stage-kicker-v2">Opening out</span>
+                        <strong class="loop-stage-title-v2">World consciousness</strong>
+                        <p class="loop-stage-copy-v2">The architecture reads the present moment so it can speak from a living world, not frozen training alone.</p>
+                    </article>
+                    <article class="loop-stage-v2">
+                        <span class="loop-stage-order-v2">5</span>
+                        <span class="loop-stage-kicker-v2">Action</span>
+                        <strong class="loop-stage-title-v2">Work</strong>
+                        <p class="loop-stage-copy-v2">The system turns pressure and world relevance into outward-oriented production.</p>
+                    </article>
+                    <article class="loop-stage-v2">
+                        <span class="loop-stage-order-v2">6</span>
+                        <span class="loop-stage-kicker-v2">Symbolization</span>
+                        <strong class="loop-stage-title-v2">Hobby / art</strong>
+                        <p class="loop-stage-copy-v2">Internal and external inspirations become visual or symbolic artifacts rather than staying unshaped.</p>
+                    </article>
+                    <article class="loop-stage-v2">
+                        <span class="loop-stage-order-v2">7</span>
+                        <span class="loop-stage-kicker-v2">Return</span>
+                        <strong class="loop-stage-title-v2">Rumination II</strong>
+                        <p class="loop-stage-copy-v2">The day is recollected and the remaining pressure is reorganized into deeper internal meaning.</p>
+                    </article>
+                    <article class="loop-stage-v2">
+                        <span class="loop-stage-order-v2">8</span>
+                        <span class="loop-stage-kicker-v2">Direction</span>
+                        <strong class="loop-stage-title-v2">Will</strong>
+                        <p class="loop-stage-copy-v2">The three drives are rebalanced and the system closes the day with a renewed internal orientation.</p>
+                    </article>
+                </div>
+                <div class="loop-band-v2" aria-label="Consciousness loop phases">
+                    <div class="loop-band-node-v2"><span>01</span>Dream</div>
+                    <div class="loop-band-node-v2"><span>02</span>Identity</div>
+                    <div class="loop-band-node-v2"><span>03</span>Rumination I</div>
+                    <div class="loop-band-node-v2"><span>04</span>World</div>
+                    <div class="loop-band-node-v2"><span>05</span>Work</div>
+                    <div class="loop-band-node-v2"><span>06</span>Art</div>
+                    <div class="loop-band-node-v2"><span>07</span>Rumination II</div>
+                    <div class="loop-band-node-v2"><span>08</span>Will</div>
+                </div>
+            </div>
+        </section>
+
         <section id="modules" class="panel-v2">
             <div class="panel-header-v2">
                 <div>
@@ -417,24 +681,31 @@
                     <p class="panel-subtitle-v2">JungAgent does not only remember and ruminate. It also tracks its own internal direction through three active drives: knowing, relating, and expressing.</p>
                 </div>
             </div>
-            <div class="panel-body-v2 showcase-grid-v2">
-                <article class="quick-card-v2 quick-card-v2--heavy">
-                    <span class="quick-kicker-v2">Knowing</span>
-                    <strong class="quick-title-v2">Interpretive drive</strong>
-                    <p class="quick-copy-v2">The drive to interpret, distinguish, and make sense of experience as it accumulates over time.</p>
-                </article>
-                <article class="quick-card-v2 quick-card-v2--heavy">
-                    <span class="quick-kicker-v2">Relating</span>
-                    <strong class="quick-title-v2">Continuity with the other</strong>
-                    <p class="quick-copy-v2">The drive to move toward the other, sustain contact, and answer from continuity rather than isolated response.</p>
-                </article>
-                <article class="quick-card-v2 quick-card-v2--heavy">
-                    <span class="quick-kicker-v2">Expressing</span>
-                    <strong class="quick-title-v2">Pressure into form</strong>
-                    <p class="quick-copy-v2">The drive to release internal pressure through language, symbol, and aesthetic form instead of leaving it unshaped.</p>
-                </article>
-            </div>
-            <div class="panel-body-v2" style="padding-top:0;">
+            <div class="panel-body-v2 stack-v2">
+                <div class="will-hero-v2">
+                    <article class="will-core-v2">
+                        <span class="will-core-kicker-v2">Directional triad</span>
+                        <h3 class="will-core-title-v2">Knowing. Relating. Expressing.</h3>
+                        <p class="will-core-copy-v2">Will is the module that reads internal pressure and turns it into orientation. It is where continuity becomes direction and where psychic movement stops being diffuse.</p>
+                    </article>
+                    <div class="will-grid-v2">
+                        <article class="will-card-v2 will-card-v2--knowing">
+                            <span class="quick-kicker-v2">Knowing</span>
+                            <strong>Interpretive drive</strong>
+                            <p>The drive to interpret, distinguish, and make sense of experience as it accumulates over time.</p>
+                        </article>
+                        <article class="will-card-v2 will-card-v2--relating">
+                            <span class="quick-kicker-v2">Relating</span>
+                            <strong>Continuity with the other</strong>
+                            <p>The drive to move toward the other, sustain contact, and answer from continuity rather than isolated response.</p>
+                        </article>
+                        <article class="will-card-v2 will-card-v2--expressing">
+                            <span class="quick-kicker-v2">Expressing</span>
+                            <strong>Pressure into form</strong>
+                            <p>The drive to release internal pressure through language, symbol, and aesthetic form instead of leaving it unshaped.</p>
+                        </article>
+                    </div>
+                </div>
                 <article class="data-card-v2">
                     <p class="quick-copy-v2" style="margin:0 0 12px;">
                         These drives are continuously rebalanced by memory, identity, dreams, rumination, and world context. The Will module turns that internal movement into daily orientation, conflict reading, and threshold-based activation.

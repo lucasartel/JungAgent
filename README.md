@@ -2,6 +2,8 @@
 
 JungAgent is a persistent cognitive architecture built with Large Language Models.
 
+Website: [jungagent.org](https://jungagent.org)
+
 It is not designed as a stateless assistant. It is designed as a living system with long-term memory, daily inner loops, rumination, dreams, world awareness, symbolic production, and internal direction.
 
 The project explores a simple but demanding question:
