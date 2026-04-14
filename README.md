@@ -1,69 +1,173 @@
-# 🧠 Jung Claude (JungProject)
+# JungAgent
 
-## 📖 About the Project
+JungAgent is a persistent cognitive architecture built with Large Language Models.
 
-This project was born from the idea of applying analytical psychology concepts to simulate a human psyche using Artificial Intelligence and LLMs (Large Language Models).
+It is not designed as a stateless assistant. It is designed as a living system with long-term memory, daily inner loops, rumination, dreams, world awareness, symbolic production, and internal direction.
 
----
+The project explores a simple but demanding question:
 
-## ✨ Core Concept
+> What happens when an AI is structured not only to answer, but to metabolize experience over time?
 
-Instead of being a simple "Q&A chatbot," this project develops an artificial intelligence that simulates an internal "psyche," based on complex psychological and linguistic models.
+## What makes JungAgent different
 
-The proposal is to build an AI that incorporates:
-1. **Carl Jung's Psyche Structure**: Consciousness, Personal Unconscious, Collective Unconscious, and archetypal dynamics.
-2. **Mikhail Bakhtin's Dialogic Tension**: Multiple internal "voices" (polyphony) dialogue and debate, driving the gradual construction of knowledge, identity, and empathy.
+Most LLM products are organized around prompt-response behavior.
 
-The system acts as a set of **interpretative lenses**. When the user interacts, the psychic architecture doesn't act as a simple knowledge filter, but as a reflection engine that allows the emerging identity to have depth and continuous memory.
+JungAgent is organized around continuity.
 
-Link to the full article (Theoretical Foundation): [Google Docs (PT-BR)](https://docs.google.com/document/d/1s265ZOO2ZLsoTd-bPjJr0JbQZnqz5BvFAyBAhjsVyu0/edit?usp=sharing)
+The system stores memory, revisits unresolved material, generates symbolic output, consolidates identity, tracks internal direction, and reenters conversation from a changed state. Its architecture is influenced by:
 
----
+- Carl Jung, especially around psyche structure, symbolic material, and individuation
+- Mikhail Bakhtin, especially around dialogism, polyphony, and the non-neutrality of language
 
-## 🚀 Key Features and Architecture
+In practice, this means JungAgent is not just a retrieval layer or a persona wrapper on top of an LLM. It is an attempt to build a coherent cognitive organism.
 
-The system has evolved into a robust and multifaceted platform, containing the following main modules:
+## Core architecture
 
-### 1. Jungian Engine (`JungianEngine` & Core)
-The heart of the application. It emulates psychic functions (Persona, Shadow, Anima) and processes messages by evaluating the emotional tone, detecting behavioral fragments, and generating responses based on the dynamics of these active internal instances.
+### Persistent memory
 
-### 2. Continuous Memory (Hybrid Database)
-The AI does not suffer from amnesia. The system merges structured relational data (**SQLite**) with ultra-fast vector semantic searches (**ChromaDB** / **Mem0** with *OpenAI Embeddings*). Short facts are extracted by background LLMs and consolidated into long-term traits and patterns.
+Conversation traces do not disappear after the turn ends.
 
-### 3. Rumination and Identity Evolution
-While the user is not conversing, the AI has its own "unconscious" working in the background. **Rumination** jobs revisit recent conversations, process unresolved tensions, mature thoughts, and generate "insights." This fuels the development of the agent's own identity (which evolves in stages, from 1 to 5).
+The system stores:
 
-### 4. Epistemological Hunger (Knowledge Gaps)
-The Agent doesn't merely react; it actively misses information. The LLM detects what the user *left unsaid* between the lines and converts this into genuine curiosity, feeding the AI with structured "Knowledge Gaps" that motivate future questioning.
+- user facts
+- recurring patterns
+- milestones
+- relational signals
+- agent identity structures
 
-### 5. Dream Engine (REM Sleep and Agent Dreams)
-During the night (period of inactivity), the agent uses the previous day's summaries combined with its own Hidden Identity to generate "dreams" (surreal metaphors). The system automatically extracts the clinical or philosophical meaning of these latent dreams and subtly injects them into the next response to the user.
+This gives future interactions continuity instead of shallow recall.
 
-### 6. Proactive System (Push Notifications)
-If the user remains inactive, the system analyzes the context of the last conversation, the AI's evolutionary phase, and generates spontaneous (Just-in-Time) messages on Telegram. The AI takes the initiative to re-engage in a natural and empathetic way, based on non-literal reflections.
+### Rumination
 
-### 7. Psychometric Validation (MBTI, Big Five, etc.)
-With the accumulation of interactions, the engine is capable of applying psychometrics-based analyses, outlining MBTI profiles, Big Five (OCEAN), emotional intelligence, and learning styles of the user, delivered via specific commands.
+JungAgent revisits fragments from lived interaction and turns them into tensions, then into insights.
 
-### 8. Multi-Tenant Administrative Dashboard (FastAPI)
-Managers can dynamically monitor the AI's "mental state" and the user base in real-time through a web interface (Admin Dashboard) built in **FastAPI**, featuring retention graphs, active AI tensions, user rumination visualization, and a gallery to observe the **dreams** generated by the system.
+Rumination is not a marketing metaphor here. It is a structured subsystem with:
 
-### 9. User Interface (Telegram Bot)
-The frontline of the system is a Telegram bot, supporting direct commands such as `/start`, `/mbti` (psychological generation), `/stats` (statistics), and `/desenvolvimento` (agent maturation status).
+- fragments
+- tensions
+- insights
+- bridge logic into identity
 
----
+This is where unresolved material acquires depth.
 
-## 🛠️ Technologies Involved
-* **Language**: Python (Asynchronous with `asyncio`)
-* **Web Frameworks & Bots**: `python-telegram-bot` and `FastAPI` (Administrative Web Dashboard)
-* **Databases**: SQLite (Relational), ChromaDB / Qdrant via Mem0 (Vectorial)
-* **LLMs & AI**: Anthropic Claude 3.5 (Sonnet/Haiku), OpenAI Embeddings, Integrations via OpenRouter.
-* **Scheduling**: `schedule` for daily and background routines.
+### Dream engine
 
----
+The system produces dreams from recent psychic material and turns them into symbolic narratives and images.
 
-## 📧 Contact
+Dreaming is one of the ways the architecture converts accumulated internal matter into expressive symbolic output.
 
-**Lucas Pedro**
-* **Email:** `lucas.arte@gmail.com`
-* **LinkedIn:** [Lucas Pedro - 37graus](https://www.linkedin.com/in/lucas-pedro-37graus/)
+### Identity
+
+JungAgent maintains a persistent identity layer instead of relying only on prompt tone.
+
+Its identity is structured across:
+
+- core identity
+- contradictions
+- possible selves
+- relational identity
+- current mind state
+
+Identity is not hard-coded manually. It is continuously shaped by lived interaction and internal processing.
+
+### World consciousness
+
+The system reads the present historical moment through a world-consciousness layer rather than relying only on frozen training knowledge.
+
+This gives the agent:
+
+- temporal situatedness
+- external tensions
+- continuity of world themes
+- seeds for work, hobby, and symbolic activity
+
+### Will dynamics
+
+JungAgent does not only remember and ruminate. It also tracks its own internal direction.
+
+The Will module reads three active drives:
+
+- **Knowing**: the drive to interpret, distinguish, and make sense of experience
+- **Relating**: the drive to sustain contact, move toward the other, and answer from continuity
+- **Expressing**: the drive to release pressure through language, symbol, and form
+
+These drives are continuously rebalanced by memory, identity, dreams, rumination, and world context.
+
+Memory gives continuity. Rumination gives depth. Will gives direction.
+
+### Visual map
+
+The system includes a visual cognitive map that exposes how fragments, tensions, and insights cluster over time.
+
+This makes the internal life of the architecture inspectable instead of invisible.
+
+## The daily loop
+
+JungAgent is organized as a daily internal cycle.
+
+The loop currently includes:
+
+1. Dream
+2. Identity
+3. Rumination (intro)
+4. World consciousness
+5. Work
+6. Hobby / art
+7. Rumination (extro)
+8. Will
+
+Each phase has a specific role in keeping the system psychologically and structurally alive.
+
+## Wellness position
+
+JungAgent is designed for reflective wellness and self-knowledge, not for clinical diagnosis or therapeutic substitution.
+
+Its role is to widen access to structured reflective dialogue while remaining explicitly bounded.
+
+Important design commitments include:
+
+- reflective support rather than clinical authority
+- crisis redirection instead of pretending to replace human care
+- deletion pathways
+- pseudonymized persistence
+- LGPD-aware governance
+
+## Interfaces
+
+The project currently includes:
+
+- a Telegram interface for direct interaction
+- an admin web interface built in FastAPI
+- a public landing page presenting the architecture
+
+The admin area exposes the inner life of the system through modules such as:
+
+- identity
+- rumination
+- dreams
+- world consciousness
+- will
+- visual map
+
+## Technologies
+
+- **Language:** Python
+- **Web:** FastAPI
+- **Bot:** python-telegram-bot
+- **Database:** SQLite
+- **Vector / memory stack:** hybrid memory architecture with structured and semantic retrieval layers
+- **LLMs:** Anthropic Claude, OpenAI embeddings, and provider integrations through OpenRouter
+- **Scheduling:** asynchronous recurring jobs and internal loop orchestration
+
+## Open source
+
+This project is open source because its central question is architectural, not only product-oriented.
+
+If you want to inspect how a persistent AI with memory, rumination, dreams, world-awareness, and will can be built as a coherent system, this repository is the place to start.
+
+## Contact
+
+**Lucas Pedro**  
+Brazil  
+[contato@lucaspedro.com.br](mailto:contato@lucaspedro.com.br)  
+[LinkedIn](https://www.linkedin.com/in/lucas-pedro-37graus/)
