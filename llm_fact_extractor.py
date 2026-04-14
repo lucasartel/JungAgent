@@ -226,7 +226,10 @@ Retorne APENAS o JSON no formato especificado, sem texto adicional."""
         Returns:
             Tupla (fatos_novos, correções_detectadas, knowledge_gaps)
         """
-        logger.info(f"🤖 [LLM EXTRACTOR] Analisando: {user_input[:100]}...")
+        logger.info(
+            "🤖 [LLM EXTRACTOR] Analisando mensagem (%s chars)",
+            len(user_input or ""),
+        )
 
         # ETAPA 1: Detectar correções primeiro
         corrections = []
@@ -290,8 +293,8 @@ Retorne APENAS o JSON no formato especificado, sem texto adicional."""
                         raise
                 else:
                     # Se não encontrou JSON com "fatos", pode ser resposta vazia ou sem formato
-                    logger.warning(f"      ⚠️ Não encontrei JSON válido na resposta do LLM")
-                    logger.warning(f"      Resposta (primeiros 500 chars): {cleaned_text[:500]}")
+                    logger.warning("      ⚠️ Não encontrei JSON válido na resposta do LLM")
+                    logger.warning("      Resposta inválida do LLM (len=%s)", len(cleaned_text))
                     # Retornar estrutura vazia em vez de falhar
                     data = {"fatos": []}
 
@@ -338,21 +341,22 @@ Retorne APENAS o JSON no formato especificado, sem texto adicional."""
 
         except json.JSONDecodeError as e:
             logger.error(f"      ❌ Erro ao parsear JSON do LLM: {e}")
-            logger.error(f"      Resposta completa recebida:")
-            logger.error(f"      {response_text}")
-            logger.error(f"      Cleaned text tentado:")
-            logger.error(f"      {cleaned_text[:500]}")
+            logger.error(
+                "      Payload do LLM inválido (response_len=%s cleaned_len=%s)",
+                len(response_text) if 'response_text' in locals() else 0,
+                len(cleaned_text) if 'cleaned_text' in locals() else 0,
+            )
             return [], []
         except KeyError as e:
             # Caso o JSON seja válido mas não tenha a chave "fatos"
             logger.warning(f"      ⚠️ JSON válido mas sem chave 'fatos': {e}")
             if 'response_text' in locals():
-                logger.info(f"      Resposta do Claude: {response_text[:500]}")
+                logger.info("      Resposta do Claude sem chave 'fatos' (len=%s)", len(response_text))
             return [], []
         except Exception as e:
             logger.error(f"      ❌ Erro inesperado no LLM: {type(e).__name__} - {e}")
             if 'response_text' in locals():
-                logger.error(f"      Resposta do LLM: {response_text[:500]}")
+                logger.error("      Resposta do LLM falhou (len=%s)", len(response_text))
             # Log do traceback completo para debug
             import traceback
             logger.error(f"      Traceback: {traceback.format_exc()}")

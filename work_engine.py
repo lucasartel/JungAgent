@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 import unicodedata
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -48,6 +50,8 @@ DEFAULT_PROVIDER_SPECS = {
 }
 
 APP_BASE_URL = os.getenv("APP_BASE_URL", "").rstrip("/")
+ALLOW_PRIVATE_WORK_DESTINATIONS = os.getenv("ALLOW_PRIVATE_WORK_DESTINATIONS", "").strip().lower() in {"1", "true", "yes", "on"}
+ALLOW_HTTP_WORK_DESTINATIONS = os.getenv("ALLOW_HTTP_WORK_DESTINATIONS", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _now_iso() -> str:
@@ -88,6 +92,57 @@ def _truncate(text: str, limit: int = 180) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip(" ,.;:") + "..."
+
+
+def _host_is_private_or_local(hostname: str) -> bool:
+    normalized = (hostname or "").strip().strip("[]").lower()
+    if not normalized:
+        return True
+
+    if normalized in {"localhost"} or normalized.endswith(".local"):
+        return True
+
+    candidates: list[str] = []
+    try:
+        candidates.append(str(ipaddress.ip_address(normalized)))
+    except ValueError:
+        try:
+            for info in socket.getaddrinfo(normalized, None):
+                address = info[4][0]
+                if address not in candidates:
+                    candidates.append(address)
+        except socket.gaierror:
+            return False
+
+    for candidate in candidates:
+        ip = ipaddress.ip_address(candidate)
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return True
+
+    return False
+
+
+def _validate_destination_url(raw_url: str) -> None:
+    parsed = urlsplit((raw_url or "").strip())
+
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("A URL do destino deve usar http:// ou https://")
+
+    if parsed.scheme != "https" and not ALLOW_HTTP_WORK_DESTINATIONS:
+        raise ValueError("Destinos WordPress devem usar HTTPS")
+
+    if parsed.username or parsed.password:
+        raise ValueError("Nao inclua credenciais na URL do destino")
+
+    if _host_is_private_or_local(parsed.hostname or "") and not ALLOW_PRIVATE_WORK_DESTINATIONS:
+        raise ValueError("Destinos locais ou privados nao sao permitidos")
 
 
 class BaseSkillProvider:
@@ -468,6 +523,7 @@ class WorkEngine:
         return manager.decrypt(destination["secret_ciphertext"])
 
     def test_wordpress_connection(self, base_url: str, username: str, application_password: str) -> Dict[str, Any]:
+        _validate_destination_url(base_url)
         destination = {
             "label": "temp",
             "base_url": base_url.strip(),
@@ -493,6 +549,7 @@ class WorkEngine:
         application_password = (application_password or "").strip()
         if not label or not base_url or not username or not application_password:
             raise ValueError("Campos obrigatorios ausentes para destino WordPress")
+        _validate_destination_url(base_url)
 
         test_result = self.test_wordpress_connection(base_url, username, application_password)
         if not test_result.get("success"):

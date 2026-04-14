@@ -588,6 +588,7 @@ async def analyze_user_mbti(request: Request, user_id: str, admin: Dict = Depend
     import json
 
     db = get_db()
+    verify_user_access(admin, user_id, db)
 
     # Verificar chave de LLM disponível (OpenRouter primário, Anthropic fallback)
     openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
@@ -837,6 +838,7 @@ async def user_psychometrics_page(request: Request, user_id: str, admin: Dict = 
 async def regenerate_psychometrics(user_id: str, admin: Dict = Depends(require_org_admin)):
     """Força regeneração das análises psicométricas (cria nova versão) - acessível para org_admin"""
     db = get_db()
+    verify_user_access(admin, user_id, db)
 
     try:
         logger.info(f"🔄 Regenerando análises psicométricas para {user_id}...")
@@ -873,6 +875,7 @@ async def generate_personal_report(user_id: str, admin: Dict = Depends(require_o
     import json as json_lib
 
     db = get_db()
+    verify_user_access(admin, user_id, db)
 
     try:
         logger.info(f"🔍 [PERSONAL REPORT] Iniciando geração para user_id: {user_id}")
@@ -1079,6 +1082,7 @@ async def generate_hr_report(user_id: str, admin: Dict = Depends(require_org_adm
     import json as json_lib
 
     db = get_db()
+    verify_user_access(admin, user_id, db)
 
     try:
         # Buscar dados psicométricos
@@ -1262,6 +1266,7 @@ async def download_psychometrics_pdf(user_id: str, admin: Dict = Depends(require
     import json as json_lib
 
     db = get_db()
+    verify_user_access(admin, user_id, db)
 
     try:
         # Buscar usuário

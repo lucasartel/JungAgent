@@ -64,6 +64,9 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("watchfiles.main").setLevel(logging.WARNING)
 
 # ============================================================
 # DATACLASSES
@@ -3041,7 +3044,7 @@ Resposta: {ai_response}
         for i, mem in enumerate(reranked[:3], 1):
             logger.info(f"   {i}. base={mem['base_score']:.3f}, similarity={mem['similarity_score']:.3f}, final={mem['final_score']:.3f}")
             logger.info(f"      Boosts: {mem['boosts']}")
-            logger.info(f"      Input: {mem['user_input'][:60]}...")
+            logger.info("      Input length: %s", len(mem.get('user_input') or ""))
 
         return reranked
 
@@ -3540,7 +3543,7 @@ Resposta: {ai_response}
                 extracted.append({'category': 'RELACIONAMENTO', 'key': 'pessoa', 'value': pattern})
         
         if extracted:
-            logger.info(f"✅ Extraídos {len(extracted)} fatos de: {user_input[:50]}...")
+            logger.info("✅ Extraídos %s fatos para user_id=%s", len(extracted), user_id)
         
         return extracted
     
@@ -3863,7 +3866,12 @@ Resposta: {ai_response}
         - Metadados de confiança e método
         """
 
-        logger.info(f"📝 [FACTS V2] Salvando: {category}.{fact_type}.{attribute} = {value}")
+        logger.info(
+            "📝 [FACTS V2] Salvando categoria=%s tipo=%s atributo=%s",
+            category,
+            fact_type,
+            attribute,
+        )
 
         with self._lock:
             cursor = self.conn.cursor()

@@ -39,12 +39,16 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("watchfiles.main").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 UNSAFE_ADMIN_ENDPOINTS_ENABLED = unsafe_admin_endpoints_enabled()
 UNSAFE_ROUTE_PATHS = {
     "/test/proactive",
     "/test/consent",
     "/admin/migrate/consent",
+    "/admin/migrate/evidence",
     "/admin/migrate/facts-v2",
     "/admin/facts-v2/status",
     "/admin/facts-v2/list",
@@ -750,7 +754,7 @@ async def migrate_consent(admin: Dict = Depends(require_master)):
         }
 
 @app.api_route("/admin/migrate/evidence", methods=["GET", "POST"])
-async def migrate_evidence():
+async def migrate_evidence(admin: Dict = Depends(require_master)):
     """
     ENDPOINT PARA EXECUTAR A MIGRAÇÃO DO SISTEMA DE EVIDÊNCIAS 2.0
 
@@ -1273,7 +1277,11 @@ async def test_consolidation(user_id: str = None, admin: Dict = Depends(require_
 
 
 @app.api_route("/admin/api/memory-metrics", methods=["GET", "POST"])
-async def memory_metrics(user_id: str = None, format: str = "json"):
+async def memory_metrics(
+    user_id: str = None,
+    format: str = "json",
+    admin: Dict = Depends(require_master),
+):
     """
     ENDPOINT DE MÉTRICAS: Monitoramento de Qualidade de Memória (Fase 6)
 

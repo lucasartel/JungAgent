@@ -1,19 +1,14 @@
 """
-Rotas de Autenticação - Login/Logout
-
-Rotas:
-    - GET  /admin/login  - Página de login
-    - POST /admin/login  - Processar login
-    - POST /admin/logout - Logout
-
-Autor: Sistema Multi-Tenant JungAgent
-Data: 2025-12-29
+Rotas de autenticacao - login/logout.
 """
 
-from fastapi import APIRouter, Request, Form, Response
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
+from datetime import datetime, timedelta
 import logging
+
+from fastapi import APIRouter, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+
 from security_config import should_use_secure_cookie
 
 # Managers (inicializados em main.py)
@@ -22,11 +17,13 @@ session_manager = None
 
 logger = logging.getLogger(__name__)
 
-# Router
 router = APIRouter(prefix="/admin", tags=["auth"])
-
-# Templates
 templates = Jinja2Templates(directory="admin_web/templates")
+
+MAX_FAILED_LOGIN_ATTEMPTS = 5
+FAILED_LOGIN_WINDOW = timedelta(minutes=15)
+LOCKOUT_DURATION = timedelta(minutes=15)
+_failed_login_attempts: dict[str, dict[str, object]] = {}
 
 
 def _is_safe_next_path(next_url: str | None) -> bool:
@@ -35,14 +32,61 @@ def _is_safe_next_path(next_url: str | None) -> bool:
     return next_url.startswith("/admin") and not next_url.startswith("//")
 
 
+def _login_attempt_key(email: str, ip_address: str) -> str:
+    return f"{(email or '').strip().lower()}|{ip_address or 'unknown'}"
+
+
+def _prune_failed_login_attempts(now: datetime) -> None:
+    expired_keys = []
+    for key, state in _failed_login_attempts.items():
+        locked_until = state.get("locked_until")
+        last_attempt_at = state.get("last_attempt_at")
+        if locked_until and locked_until > now:
+            continue
+        if last_attempt_at and now - last_attempt_at <= FAILED_LOGIN_WINDOW:
+            continue
+        expired_keys.append(key)
+
+    for key in expired_keys:
+        _failed_login_attempts.pop(key, None)
+
+
+def _current_lockout_message(attempt_key: str, now: datetime) -> str | None:
+    _prune_failed_login_attempts(now)
+    state = _failed_login_attempts.get(attempt_key)
+    if not state:
+        return None
+
+    locked_until = state.get("locked_until")
+    if not locked_until or locked_until <= now:
+        return None
+
+    remaining = max(1, int((locked_until - now).total_seconds() // 60) + 1)
+    return f"Muitas tentativas de login. Aguarde cerca de {remaining} minuto(s) e tente novamente."
+
+
+def _register_failed_login(attempt_key: str, now: datetime) -> str | None:
+    state = _failed_login_attempts.get(attempt_key)
+    if not state or now - state.get("last_attempt_at", now) > FAILED_LOGIN_WINDOW:
+        state = {"count": 0}
+
+    state["count"] = int(state.get("count", 0)) + 1
+    state["last_attempt_at"] = now
+
+    if state["count"] >= MAX_FAILED_LOGIN_ATTEMPTS:
+        state["locked_until"] = now + LOCKOUT_DURATION
+
+    _failed_login_attempts[attempt_key] = state
+    return _current_lockout_message(attempt_key, now)
+
+
+def _clear_failed_login(attempt_key: str) -> None:
+    _failed_login_attempts.pop(attempt_key, None)
+
+
 def init_auth_routes(db_manager):
     """
     Inicializa managers para as rotas de auth.
-
-    Deve ser chamado em main.py no startup.
-
-    Args:
-        db_manager: DatabaseManager do jung_core
     """
     global auth_manager, session_manager
 
@@ -52,24 +96,20 @@ def init_auth_routes(db_manager):
     auth_manager = AuthManager(db_manager)
     session_manager = SessionManager(db_manager)
 
-    logger.info("✅ Rotas de autenticação inicializadas")
+    logger.info("Rotas de autenticacao inicializadas")
 
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = None, info: str = None, next: str = None):
-    """
-    Página de login.
-
-    Args:
-        error: Mensagem de erro (query param)
-        info: Mensagem informativa (query param)
-    """
-    return templates.TemplateResponse("auth/login.html", {
-        "request": request,
-        "error": error,
-        "info": info,
-        "next": next if _is_safe_next_path(next) else None
-    })
+    return templates.TemplateResponse(
+        "auth/login.html",
+        {
+            "request": request,
+            "error": error,
+            "info": info,
+            "next": next if _is_safe_next_path(next) else None,
+        },
+    )
 
 
 @router.post("/login")
@@ -77,133 +117,114 @@ async def login(
     request: Request,
     email: str = Form(...),
     password: str = Form(...),
-    next: str = Form(None)
+    next: str = Form(None),
 ):
-    """
-    Processar login.
-
-    Args:
-        email: Email do admin
-        password: Senha
-
-    Returns:
-        Redirect para dashboard se sucesso, ou volta para login com erro
-    """
     if auth_manager is None or session_manager is None:
-        logger.error("❌ Auth managers não inicializados!")
-        return templates.TemplateResponse("auth/login.html", {
-            "request": request,
-            "error": "Sistema de autenticação não disponível. Contate o administrador."
-        })
+        logger.error("Auth managers nao inicializados")
+        return templates.TemplateResponse(
+            "auth/login.html",
+            {
+                "request": request,
+                "error": "Sistema de autenticacao nao disponivel. Contate o administrador.",
+            },
+            status_code=503,
+        )
 
-    # Obter IP do cliente
-    ip_address = request.client.host
+    ip_address = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "unknown")
+    now = datetime.utcnow()
+    attempt_key = _login_attempt_key(email, ip_address)
+    lockout_message = _current_lockout_message(attempt_key, now)
 
-    # Obter User-Agent
-    user_agent = request.headers.get('user-agent', 'unknown')
+    if lockout_message:
+        logger.warning("Login bloqueado temporariamente para %s (IP: %s)", email.lower(), ip_address)
+        return templates.TemplateResponse(
+            "auth/login.html",
+            {
+                "request": request,
+                "error": lockout_message,
+            },
+            status_code=429,
+        )
 
-    # Tentar autenticar
     try:
         is_valid, admin = auth_manager.authenticate(email, password, ip_address)
 
         if not is_valid:
-            # Credenciais inválidas
-            logger.warning(f"⚠️  Login falhou: {email} (IP: {ip_address})")
+            logger.warning("Login falhou: %s (IP: %s)", email.lower(), ip_address)
+            lockout_message = _register_failed_login(attempt_key, now)
+            return templates.TemplateResponse(
+                "auth/login.html",
+                {
+                    "request": request,
+                    "error": lockout_message or "Email ou senha incorretos.",
+                },
+                status_code=429 if lockout_message else 401,
+            )
 
-            return templates.TemplateResponse("auth/login.html", {
-                "request": request,
-                "error": "Email ou senha incorretos."
-            })
+        _clear_failed_login(attempt_key)
+        logger.info("Login bem-sucedido: %s (role=%s)", email.lower(), admin["role"])
 
-        # Login bem-sucedido!
-        logger.info(f"✅ Login bem-sucedido: {email} (role={admin['role']})")
-
-        # Criar sessão
         session_id = session_manager.create(
-            admin['admin_id'],
+            admin["admin_id"],
             ip_address,
             user_agent,
-            expiry_hours=24
+            expiry_hours=24,
         )
 
-        # Redirecionar para dashboard
-        # Master vai para /admin/master/dashboard
-        # Org Admin vai para /admin/org/users (lista de usuários da org)
         if _is_safe_next_path(next):
             redirect_url = next
-        elif admin['role'] == 'master':
+        elif admin["role"] == "master":
             redirect_url = "/admin/master/dashboard"
         else:
             redirect_url = "/admin/org/users"
 
-        # Criar response com cookie
-        response = RedirectResponse(
-            url=redirect_url,
-            status_code=302
-        )
-
-        # Definir cookie de sessão
+        response = RedirectResponse(url=redirect_url, status_code=302)
         response.set_cookie(
             key="session_id",
             value=session_id,
             httponly=True,
             secure=should_use_secure_cookie(request),
-            samesite='lax',
-            max_age=24*60*60,
-            path='/'
+            samesite="lax",
+            max_age=24 * 60 * 60,
+            path="/",
         )
-
         return response
 
-    except Exception as e:
-        logger.error(f"❌ Erro no login: {e}", exc_info=True)
-
-        return templates.TemplateResponse("auth/login.html", {
-            "request": request,
-            "error": "Erro ao processar login. Tente novamente."
-        })
+    except Exception as exc:
+        logger.error("Erro no login: %s", exc, exc_info=True)
+        return templates.TemplateResponse(
+            "auth/login.html",
+            {
+                "request": request,
+                "error": "Erro ao processar login. Tente novamente.",
+            },
+            status_code=500,
+        )
 
 
 @router.post("/logout")
 async def logout(request: Request):
-    """
-    Logout - invalida sessão.
-
-    Returns:
-        Redirect para página de login
-    """
     if session_manager is None:
-        logger.error("❌ SessionManager não inicializado!")
+        logger.error("SessionManager nao inicializado")
         return RedirectResponse("/admin/login", status_code=302)
 
-    # Obter session_id do cookie
-    session_id = request.cookies.get('session_id')
+    session_id = request.cookies.get("session_id")
 
     if session_id:
-        # Invalidar sessão
         session_manager.invalidate(session_id)
-        logger.info(f"✅ Logout: sessão {session_id[:8]}... invalidada")
+        logger.info("Logout: sessao %s... invalidada", session_id[:8])
 
-    # Redirecionar para login
     response = RedirectResponse(
         url="/admin/login?info=Logout realizado com sucesso",
-        status_code=302
+        status_code=302,
     )
-
-    # Deletar cookie
-    response.delete_cookie('session_id', path='/')
-
+    response.delete_cookie("session_id", path="/")
     return response
 
 
 @router.get("/logout")
 async def logout_get(request: Request):
-    """
-    Logout via GET (para links de logout).
-
-    Apenas redireciona para POST /logout via form auto-submit.
-    """
-    # Retornar página simples com form que auto-submete via POST
     html = """
     <!DOCTYPE html>
     <html>
@@ -221,30 +242,3 @@ async def logout_get(request: Request):
     </html>
     """
     return HTMLResponse(content=html)
-
-
-# ============================================
-# EXEMPLO DE INTEGRAÇÃO EM MAIN.PY
-# ============================================
-
-"""
-# Em main.py:
-
-from admin_web.routes.auth_routes import router as auth_router, init_auth_routes
-from admin_web.auth.middleware import init_middleware
-
-# Incluir router
-app.include_router(auth_router)
-
-# No startup
-@app.on_event("startup")
-async def startup():
-    # Criar DatabaseManager
-    db_manager = DatabaseManager()
-
-    # Inicializar sistemas de auth
-    init_middleware(db_manager)
-    init_auth_routes(db_manager)
-
-    logger.info("✅ Sistema multi-tenant inicializado")
-"""

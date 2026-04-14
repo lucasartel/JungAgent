@@ -60,6 +60,9 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("watchfiles.main").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +146,12 @@ def ensure_user_in_database(telegram_user, org_slug=None) -> str:
     user_id = create_user_hash(username)
 
     # DEBUG: Log detalhes do usuário
-    logger.info(f"🔍 ensure_user_in_database - Telegram ID: {telegram_id}, Username: {username}, Nome: {full_name}, Org: {org_slug or 'None'}")
+    logger.info(
+        "🔍 ensure_user_in_database - user_id=%s username=%s org=%s",
+        user_id[:8],
+        username,
+        org_slug or "None",
+    )
 
     # Checar se já existe
     existing_user = bot_state.db.get_user(user_id)
@@ -1239,7 +1247,12 @@ O que você decide?
         if result.get('conflicts'):
             conflict_info = f" | Conflitos: {len(result['conflicts'])}"
 
-        logger.info(f"✅ Mensagem processada (JIT): {message_text[:50]}...{conflict_info}")
+        logger.info(
+            "✅ Mensagem processada (JIT): user_id=%s message_length=%s%s",
+            user_id[:8],
+            len(message_text or ""),
+            conflict_info,
+        )
 
     except Exception as e:
         logger.error(f"❌ Erro ao processar mensagem: {e}", exc_info=True)
