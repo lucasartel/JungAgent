@@ -165,14 +165,14 @@ class AuthManager:
         row = cursor.fetchone()
 
         if not row:
-            logger.warning(f"⚠️  Login falhou: email não encontrado - {email}")
+            logger.warning("⚠️  Login falhou para uma conta administrativa")
             return (False, None)
 
         admin_id, password_hash, full_name, role, org_id, is_active = row
 
         # Verificar se admin está ativo
         if not is_active:
-            logger.warning(f"⚠️  Login falhou: admin inativo - {email}")
+            logger.warning("⚠️  Login falhou para uma conta administrativa")
             return (False, None)
 
         # Verificar senha com bcrypt
@@ -182,7 +182,7 @@ class AuthManager:
         )
 
         if not password_valid:
-            logger.warning(f"⚠️  Login falhou: senha incorreta - {email}")
+            logger.warning("⚠️  Login falhou para uma conta administrativa")
             return (False, None)
 
         # Autenticação bem-sucedida!

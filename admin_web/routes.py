@@ -48,6 +48,11 @@ def get_db():
     return _db_manager
 
 
+def internal_error_response(message: str = "Erro interno do servidor", status_code: int = 500) -> JSONResponse:
+    """Retorna uma resposta de erro genérica sem expor detalhes internos."""
+    return JSONResponse({"error": message}, status_code=status_code)
+
+
 def verify_user_access(admin: Dict, user_id: str, db_manager) -> bool:
     """
     Verifica se o admin pode acessar dados de um usuário específico.
@@ -861,7 +866,7 @@ async def regenerate_psychometrics(user_id: str, admin: Dict = Depends(require_o
 
     except Exception as e:
         logger.error(f"❌ Erro ao regenerar psicometria: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error_response("Erro ao regenerar psicometria")
 
 
 @router.post("/api/user/{user_id}/generate-personal-report")
@@ -878,31 +883,21 @@ async def generate_personal_report(user_id: str, admin: Dict = Depends(require_o
     verify_user_access(admin, user_id, db)
 
     try:
-        logger.info(f"🔍 [PERSONAL REPORT] Iniciando geração para user_id: {user_id}")
+        logger.info(f"🔍 [PERSONAL REPORT] Iniciando geração para user_id={user_id[:8]}")
 
         # Buscar dados psicométricos
         psychometrics = db.get_psychometrics(user_id)
         if not psychometrics:
             return JSONResponse({"error": "Análises psicométricas não encontradas"}, status_code=404)
 
-        logger.info(f"🔍 [PERSONAL REPORT] psychometrics type ANTES conversão: {type(psychometrics)}")
-
         # Converter Row para dict
         psychometrics = dict(psychometrics)
 
-        logger.info(f"🔍 [PERSONAL REPORT] psychometrics type APÓS conversão: {type(psychometrics)}")
-        logger.info(f"🔍 [PERSONAL REPORT] psychometrics keys: {list(psychometrics.keys())}")
-
         user = db.get_user(user_id)
-        logger.info(f"🔍 [PERSONAL REPORT] user type ANTES conversão: {type(user)}")
-
         if user:
             user = dict(user)  # Converter Row para dict
         else:
             user = {}
-
-        logger.info(f"🔍 [PERSONAL REPORT] user type APÓS conversão: {type(user)}")
-        logger.info(f"🔍 [PERSONAL REPORT] user keys: {list(user.keys())}")
 
         # Parse JSON fields
         schwartz_values = {}
@@ -911,27 +906,21 @@ async def generate_personal_report(user_id: str, admin: Dict = Depends(require_o
 
         try:
             schwartz_str = psychometrics.get('schwartz_values', '{}')
-            logger.info(f"🔍 [PERSONAL REPORT] schwartz_str: {type(schwartz_str)} = {schwartz_str[:100] if schwartz_str else 'None'}")
             schwartz_values = json_lib.loads(schwartz_str) if schwartz_str else {}
-            logger.info(f"🔍 [PERSONAL REPORT] schwartz_values parsed: {type(schwartz_values)}")
         except Exception as e:
             logger.error(f"❌ [PERSONAL REPORT] Erro ao parsear schwartz_values: {e}")
             pass
 
         try:
             eq_str = psychometrics.get('eq_details', '{}')
-            logger.info(f"🔍 [PERSONAL REPORT] eq_str: {type(eq_str)}")
             eq_details = json_lib.loads(eq_str) if eq_str else {}
-            logger.info(f"🔍 [PERSONAL REPORT] eq_details parsed: {type(eq_details)}")
         except Exception as e:
             logger.error(f"❌ [PERSONAL REPORT] Erro ao parsear eq_details: {e}")
             pass
 
         try:
             summary_str = psychometrics.get('executive_summary', '[]')
-            logger.info(f"🔍 [PERSONAL REPORT] summary_str: {type(summary_str)}")
             executive_summary = json_lib.loads(summary_str) if summary_str else []
-            logger.info(f"🔍 [PERSONAL REPORT] executive_summary parsed: {type(executive_summary)} = {executive_summary}")
 
             # Se for dict, converter para lista de valores
             if isinstance(executive_summary, dict):
@@ -947,7 +936,7 @@ async def generate_personal_report(user_id: str, admin: Dict = Depends(require_o
             logger.error(f"❌ [PERSONAL REPORT] Erro ao parsear executive_summary: {e}")
             executive_summary = []
 
-        logger.info("🔍 [PERSONAL REPORT] Iniciando construção do contexto f-string...")
+        logger.info("🔍 [PERSONAL REPORT] Construindo contexto do laudo")
 
         # Construir seções seguras
         try:
@@ -1017,13 +1006,12 @@ RESUMO EXECUTIVO:
 {executive_items}
 """
 
-        logger.info("✅ [PERSONAL REPORT] Contexto f-string construído com sucesso!")
-        logger.info(f"🔍 [PERSONAL REPORT] Tamanho do contexto: {len(context)} caracteres")
+        logger.info(f"✅ [PERSONAL REPORT] Contexto pronto ({len(context)} chars)")
 
         # Gerar laudo com Claude
-        logger.info("🔍 [PERSONAL REPORT] Criando provider LLM...")
+        logger.info("🔍 [PERSONAL REPORT] Preparando provider LLM")
         llm = create_llm_provider("claude")
-        logger.info("✅ [PERSONAL REPORT] Provider LLM criado!")
+        logger.info("✅ [PERSONAL REPORT] Provider LLM pronto")
 
         prompt = f"""Você é um psicólogo organizacional especializado em análises psicométricas.
 
@@ -1068,7 +1056,7 @@ Gere o laudo:"""
         logger.error(f"❌ Erro ao gerar laudo pessoal: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error_response("Erro ao gerar laudo pessoal")
 
 
 @router.post("/api/user/{user_id}/generate-hr-report")
@@ -1247,7 +1235,7 @@ Gere o laudo:"""
         logger.error(f"❌ Erro ao gerar laudo RH: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error_response("Erro ao gerar laudo de RH")
 
 
 @router.get("/user/{user_id}/psychometrics/download-pdf")
@@ -1324,7 +1312,7 @@ async def download_psychometrics_pdf(user_id: str, admin: Dict = Depends(require
         raise
     except Exception as e:
         logger.error(f"❌ Erro ao gerar PDF: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Erro ao gerar PDF: {str(e)}")
+        raise HTTPException(status_code=500, detail="Erro ao gerar PDF")
 
 # ============================================================================
 # 🔍 DIAGNÓSTICO DE VAZAMENTO DE MEMÓRIA
@@ -1336,6 +1324,9 @@ async def diagnose_facts(admin: Dict = Depends(require_master)):
     API para diagnosticar vazamento de memória entre usuários.
     Retorna todos os fatos de todos os usuários para análise.
     """
+    if not UNSAFE_ADMIN_ENDPOINTS_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+
     try:
         db = get_db()
         cursor = db.conn.cursor()
@@ -1425,7 +1416,7 @@ async def diagnose_facts(admin: Dict = Depends(require_master)):
         logger.error(f"❌ Erro ao diagnosticar fatos: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error_response("Erro ao diagnosticar fatos")
 
 
 @router.get("/api/diagnose-chromadb")
@@ -1434,6 +1425,9 @@ async def diagnose_chromadb(admin: Dict = Depends(require_master)):
     API para diagnosticar vazamento de memória no ChromaDB.
     Retorna todas as conversas salvas no ChromaDB com seus metadados.
     """
+    if not UNSAFE_ADMIN_ENDPOINTS_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+
     try:
         db = get_db()
 
@@ -1514,13 +1508,13 @@ async def diagnose_chromadb(admin: Dict = Depends(require_master)):
             logger.error(f"❌ Erro ao acessar ChromaDB: {e}")
             import traceback
             logger.error(traceback.format_exc())
-            return JSONResponse({"error": f"Erro ao acessar ChromaDB: {str(e)}"}, status_code=500)
+            return internal_error_response("Erro ao acessar ChromaDB")
 
     except Exception as e:
         logger.error(f"❌ Erro ao diagnosticar ChromaDB: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error_response("Erro ao diagnosticar ChromaDB")
 
 
 @router.get("/api/conversation/{conversation_id}")
@@ -1528,6 +1522,9 @@ async def get_conversation_detail(conversation_id: int, admin: Dict = Depends(re
     """
     Retorna detalhes completos de uma conversa específica.
     """
+    if not UNSAFE_ADMIN_ENDPOINTS_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+
     try:
         db = get_db()
         cursor = db.conn.cursor()
@@ -1562,7 +1559,7 @@ async def get_conversation_detail(conversation_id: int, admin: Dict = Depends(re
         logger.error(f"❌ Erro ao buscar conversa: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error_response("Erro ao buscar conversa")
 
 # ============================================================================
 # 🔍 SISTEMA DE EVIDÊNCIAS (Evidence System 2.0)
@@ -1680,7 +1677,7 @@ async def get_dimension_evidence(
         raise
     except Exception as e:
         logger.error(f"❌ Erro ao buscar evidências: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error_response("Erro ao buscar evidências")
 
 
 @router.post("/user/{user_id}/psychometrics/extract-evidence")
@@ -1777,7 +1774,7 @@ async def extract_all_evidence(
         raise
     except Exception as e:
         logger.error(f"❌ Erro ao extrair evidências: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error_response("Erro ao extrair evidências")
 
 
 # ============================================================
@@ -2443,6 +2440,7 @@ async def jung_lab_dashboard(
             "fragments": fragments,
             "tensions": tensions,
             "insights": insights,
+            "unsafe_admin_endpoints_enabled": UNSAFE_ADMIN_ENDPOINTS_ENABLED,
             "scheduler_running": scheduler_running,
             "scheduler_pid": scheduler_pid
         }
@@ -2480,7 +2478,7 @@ async def run_manual_digest(
 
     except Exception as e:
         logger.error(f"❌ Erro na digestão manual: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error_response("Erro ao executar digestão manual")
 
 
 @router.post("/api/jung-lab/scheduler/{action}")
@@ -2560,7 +2558,7 @@ async def control_scheduler(
 
     except Exception as e:
         logger.error(f"❌ Erro ao controlar scheduler: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error_response("Erro ao controlar scheduler")
 
 
 @router.get("/api/jung-lab/diagnose")
@@ -2821,7 +2819,7 @@ async def fix_platform_issue(
         logger.error(f"❌ Erro no fix de platform: {e}", exc_info=True)
         return JSONResponse({
             "success": False,
-            "error": str(e)
+            "error": "Erro ao corrigir plataforma das conversas"
         }, status_code=500)
 
 
@@ -2833,6 +2831,9 @@ async def debug_rumination_full(
     Debug completo do sistema de ruminação
     Executa todos os testes para identificar problemas
     """
+    if not UNSAFE_ADMIN_ENDPOINTS_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+
     from rumination_config import ADMIN_USER_ID, MIN_TENSION_LEVEL
     import inspect
 
@@ -3238,7 +3239,7 @@ async def export_fragments(
 
     except Exception as e:
         logger.error(f"❌ Erro ao exportar fragmentos: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error_response("Erro ao exportar fragmentos")
 
 
 @router.get("/api/jung-lab/export-tensions")
@@ -3274,7 +3275,7 @@ async def export_tensions(
 
     except Exception as e:
         logger.error(f"❌ Erro ao exportar tensões: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error_response("Erro ao exportar tensões")
 
 
 @router.get("/api/jung-lab/export-insights")
@@ -3309,7 +3310,7 @@ async def export_insights(
 
     except Exception as e:
         logger.error(f"❌ Erro ao exportar insights: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return internal_error_response("Erro ao exportar insights")
 
 # ============================================================================
 # JUNG MIND - MAPA MENTAL DO SISTEMA DE RUMINAÇÃO
@@ -3635,8 +3636,4 @@ async def jung_mind_data(admin: Dict = Depends(require_master)):
 
     except Exception as e:
         logger.error(f"❌ Erro ao gerar dados do jung-mind: {e}", exc_info=True)
-        import traceback
-        return JSONResponse({
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }, status_code=500)
+        return internal_error_response("Erro ao gerar dados do mapa mental")
