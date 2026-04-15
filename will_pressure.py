@@ -482,7 +482,9 @@ class WillPressureEngine:
                 silence_hours = max(0.0, (now - datetime.fromisoformat(str(last_seen_raw))).total_seconds() / 3600.0)
             except Exception:
                 silence_hours = 0.0
-        silence_bucket = int(silence_hours // 12)
+        # A vontade de relacionar precisa sentir o silencio em blocos menores
+        # para que a aproximacao proativa nao demore dias demais para emergir.
+        silence_bucket = int(silence_hours // 6)
         previous_bucket = int(markers.get("last_silence_bucket") or 0)
         if silence_bucket > previous_bucket:
             gains["relacionar"] += float((silence_bucket - previous_bucket) * 10)

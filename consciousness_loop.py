@@ -561,6 +561,125 @@ class ConsciousnessLoopManager:
         )
         return response
 
+    def _chunk_admin_text(self, text: str, limit: int = 3900) -> List[str]:
+        raw = (text or "").strip()
+        if not raw:
+            return []
+        if len(raw) <= limit:
+            return [raw]
+
+        chunks: List[str] = []
+        remaining = raw
+        while len(remaining) > limit:
+            split_at = remaining.rfind("\n", 0, limit)
+            if split_at < int(limit * 0.5):
+                split_at = remaining.rfind(" ", 0, limit)
+            if split_at < int(limit * 0.5):
+                split_at = limit
+            chunks.append(remaining[:split_at].rstrip())
+            remaining = remaining[split_at:].lstrip()
+        if remaining:
+            chunks.append(remaining)
+        return chunks
+
+    def _notify_admin_dream(self, dream_row: Dict) -> bool:
+        token = os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = self._get_admin_chat_id()
+
+        if not token or not chat_id:
+            logger.warning("LOOP DREAM NOTIFY skipped: token ou chat_id do admin indisponivel")
+            return False
+
+        dream_id = dream_row.get("id")
+        theme = (dream_row.get("symbolic_theme") or "Tema onirico nao nomeado").strip()
+        residue = (dream_row.get("extracted_insight") or "").strip()
+        narrative = (dream_row.get("dream_content") or "").strip()
+        image_url = (dream_row.get("image_url") or "").strip()
+
+        header = [
+            "Dream",
+            f"Ciclo: {dream_row.get('cycle_id') or 'sem ciclo'}",
+            f"Tema: {theme}",
+        ]
+        if residue:
+            header.extend(["", f"Residuo: {residue}"])
+
+        summary_text = "\n".join(header).strip()
+        full_text = summary_text
+        if narrative:
+            full_text = f"{summary_text}\n\nNarrativa:\n{narrative}".strip()
+
+        try:
+            import httpx
+
+            if image_url:
+                caption = summary_text[:1024]
+                url = f"https://api.telegram.org/bot{token}/sendPhoto"
+                response = httpx.post(
+                    url,
+                    data={
+                        "chat_id": chat_id,
+                        "photo": image_url,
+                        "caption": caption,
+                    },
+                    timeout=30.0,
+                )
+                if response.status_code == 200:
+                    logger.info("LOOP DREAM NOTIFY imagem enviada ao admin para sonho=%s", dream_id)
+                    remaining_parts = self._chunk_admin_text(narrative)
+                    for part in remaining_parts:
+                        message_response = self._send_admin_message(token, chat_id, part)
+                        if message_response.status_code != 200:
+                            logger.warning(
+                                "LOOP DREAM NOTIFY complemento textual falhou (%s): %s",
+                                message_response.status_code,
+                                message_response.text[:300],
+                            )
+                            return False
+                    return True
+
+                logger.warning("LOOP DREAM NOTIFY sendPhoto falhou (%s): %s", response.status_code, response.text[:300])
+
+            for part in self._chunk_admin_text(full_text):
+                response = self._send_admin_message(token, chat_id, part)
+                if response.status_code != 200:
+                    logger.warning("LOOP DREAM NOTIFY sendMessage falhou (%s): %s", response.status_code, response.text[:300])
+                    return False
+
+            logger.info("LOOP DREAM NOTIFY texto enviado ao admin para sonho=%s", dream_id)
+            return True
+        except Exception as exc:
+            logger.warning("LOOP DREAM NOTIFY erro ao enviar sonho ao admin: %s", exc)
+            return False
+
+    def _deliver_pending_dreams(self, result: Dict, limit: int = 3) -> List[int]:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, dream_content, symbolic_theme, extracted_insight, image_url, status, created_at
+            FROM agent_dreams
+            WHERE user_id = ?
+              AND extracted_insight IS NOT NULL
+              AND COALESCE(status, 'pending') != 'delivered'
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (self.admin_user_id, limit),
+        )
+        rows = cursor.fetchall()
+
+        delivered_ids: List[int] = []
+        for row in rows:
+            dream_payload = dict(row)
+            dream_payload["cycle_id"] = result.get("cycle_id")
+            if self._notify_admin_dream(dream_payload):
+                if self.db.mark_dream_delivered(int(dream_payload["id"])):
+                    delivered_ids.append(int(dream_payload["id"]))
+            else:
+                break
+
+        return delivered_ids
+
     def _notify_admin_hobby_art(self, result: Dict):
         token = os.getenv("TELEGRAM_BOT_TOKEN")
         chat_id = self._get_admin_chat_id()
@@ -673,7 +792,7 @@ class ConsciousnessLoopManager:
             cursor = self.db.conn.cursor()
             cursor.execute(
                 """
-                SELECT id, symbolic_theme, extracted_insight, status, created_at
+                SELECT id, dream_content, symbolic_theme, extracted_insight, image_url, status, created_at
                 FROM agent_dreams
                 WHERE user_id = ?
                 ORDER BY id DESC
@@ -692,12 +811,28 @@ class ConsciousnessLoopManager:
                 )
                 result["raw_result"]["latest_dream"] = {
                     "dream_id": row["id"],
+                    "dream_content": row["dream_content"],
                     "symbolic_theme": row["symbolic_theme"],
                     "extracted_insight": row["extracted_insight"],
+                    "image_url": row["image_url"],
                     "status": row["status"],
                     "created_at": row["created_at"],
                 }
-            result["output_summary"] = "Dream Engine executado com sucesso e ultimo sonho registrado no ciclo."
+            delivered_ids = self._deliver_pending_dreams(result)
+            result["raw_result"]["delivered_dream_ids"] = delivered_ids
+            result["metrics"]["dream_deliveries"] = len(delivered_ids)
+            latest_dream = (result.get("raw_result") or {}).get("latest_dream") or {}
+            if latest_dream.get("dream_id") in delivered_ids:
+                latest_dream["status"] = "delivered"
+            if delivered_ids:
+                result["output_summary"] = (
+                    "Dream Engine executado com sucesso, sonho registrado e entregue ao admin no proprio loop."
+                )
+            else:
+                result["warnings"].append("dream_delivery_pending")
+                result["output_summary"] = (
+                    "Dream Engine executado com sucesso e ultimo sonho registrado, mas a entrega ao admin ficou pendente."
+                )
         else:
             result["status"] = "partial_success"
             result["warnings"].append("dream_not_generated")
