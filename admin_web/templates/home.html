@@ -404,6 +404,46 @@
             box-shadow: inset 0 1px 0 rgba(216, 180, 254, 0.28);
         }
 
+        .market-grid-v2 {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 18px;
+        }
+
+        .market-card-v2 {
+            padding: 22px;
+            border-radius: 24px;
+            border: 1px solid var(--shell-border);
+            background:
+                linear-gradient(180deg, rgba(12, 18, 34, 0.94), rgba(6, 10, 21, 0.94));
+        }
+
+        .market-card-v2 p {
+            margin: 0 0 14px;
+            color: var(--shell-muted);
+            line-height: 1.72;
+        }
+
+        .market-list-v2 {
+            margin: 0;
+            padding-left: 18px;
+            color: #cbd5e1;
+            line-height: 1.72;
+        }
+
+        .market-list-v2 li + li {
+            margin-top: 4px;
+        }
+
+        .market-note-v2 {
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid var(--shell-border);
+            color: #f8fafc;
+            line-height: 1.68;
+            font-size: 0.95rem;
+        }
+
         .pipeline-step-v2 {
             padding: 20px;
             border-radius: 18px;
@@ -438,7 +478,8 @@
             .pipeline-v2,
             .loop-stage-grid-v2,
             .will-grid-v2,
-            .will-hero-v2 {
+            .will-hero-v2,
+            .market-grid-v2 {
                 grid-template-columns: 1fr;
             }
 
@@ -502,7 +543,7 @@
             <a href="#architecture">Architecture</a>
             <a href="#loop">Loop</a>
             <a href="#modules">Modules</a>
-            <a href="#wellness">Wellness</a>
+            <a href="#applications">Applications</a>
             <a href="#will">Will</a>
             <a href="#research">Research</a>
             <a href="#open-source">Open source</a>
@@ -648,28 +689,116 @@
             </div>
         </section>
 
-        <section id="wellness" class="panel-v2">
+        <section id="applications" class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Wellness</h2>
-                    <p class="panel-subtitle-v2">JungAgent is designed for reflective wellness and self-knowledge, not for clinical diagnosis or therapeutic substitution.</p>
+                    <h2 class="panel-title-v2">Applications</h2>
+                    <p class="panel-subtitle-v2">JungAgent can be positioned across multiple markets wherever continuity, memory, reflective depth, and evolving relational context create value.</p>
                 </div>
             </div>
-            <div class="panel-body-v2 showcase-grid-v2">
-                <article class="quick-card-v2 quick-card-v2--heavy">
-                    <span class="quick-kicker-v2">Reflective support</span>
-                    <strong class="quick-title-v2">Self-observation over time</strong>
-                    <p class="quick-copy-v2">The system helps users revisit recurring patterns, tensions, and personal themes through longitudinal memory rather than one-off emotional chat.</p>
+            <div class="panel-body-v2 market-grid-v2">
+                <article class="market-card-v2">
+                    <span class="quick-kicker-v2">01</span>
+                    <strong class="quick-title-v2">Emotional health, wellness, and self-knowledge</strong>
+                    <p>Here the agent works as a reflective companion with longitudinal memory.</p>
+                    <ul class="market-list-v2">
+                        <li>assisted journaling</li>
+                        <li>tracking emotional patterns over time</li>
+                        <li>behavior and language mirroring</li>
+                        <li>self-knowledge journeys</li>
+                        <li>proactive check-ins with historical context</li>
+                    </ul>
+                    <div class="market-note-v2">The difference in this market is not being an episodic chatbot, but a system that follows continuity, tension, and evolution.</div>
                 </article>
-                <article class="quick-card-v2 quick-card-v2--heavy">
-                    <span class="quick-kicker-v2">Non-clinical position</span>
-                    <strong class="quick-title-v2">Wellness, not diagnosis</strong>
-                    <p class="quick-copy-v2">Its role is to widen access to structured reflective dialogue in Brazilian Portuguese while explicitly avoiding clinical authority.</p>
+                <article class="market-card-v2">
+                    <span class="quick-kicker-v2">02</span>
+                    <strong class="quick-title-v2">HR, leadership, and human development</strong>
+                    <p>This is one of the clearest B2B paths for the architecture.</p>
+                    <ul class="market-list-v2">
+                        <li>conversational assessment</li>
+                        <li>onboarding with behavioral-style reading</li>
+                        <li>leadership coaching support</li>
+                        <li>manager development tracking</li>
+                        <li>feedback and individual development support</li>
+                        <li>longitudinal analysis of engagement and communication patterns</li>
+                    </ul>
+                    <div class="market-note-v2">This market has strong fit as long as governance, consent, and ethical boundaries remain explicit.</div>
                 </article>
-                <article class="quick-card-v2 quick-card-v2--heavy">
-                    <span class="quick-kicker-v2">Boundaries</span>
-                    <strong class="quick-title-v2">Ethically bounded by design</strong>
-                    <p class="quick-copy-v2">Crisis redirection, deletion pathways, pseudonymized persistence, and LGPD-aware governance keep the system grounded as support rather than replacement for human care.</p>
+                <article class="market-card-v2">
+                    <span class="quick-kicker-v2">03</span>
+                    <strong class="quick-title-v2">Premium concierge and high-value relationships</strong>
+                    <p>The agent can be repositioned as a sophisticated interlocutor for premium clients.</p>
+                    <ul class="market-list-v2">
+                        <li>personal concierge with real relational memory</li>
+                        <li>continuity of routine, preferences, and context</li>
+                        <li>relational support for high-ticket clients</li>
+                        <li>premium experiences inside closed communities</li>
+                    </ul>
+                    <div class="market-note-v2">Here the value is not only task completion, but continuity, style, and singularity of the relationship.</div>
+                </article>
+                <article class="market-card-v2">
+                    <span class="quick-kicker-v2">04</span>
+                    <strong class="quick-title-v2">Clinics, digital therapies, and non-clinical support</strong>
+                    <p>With careful regulatory framing, the system can serve as a complementary layer rather than as a therapist.</p>
+                    <ul class="market-list-v2">
+                        <li>preparation for sessions</li>
+                        <li>organization of recurring themes</li>
+                        <li>subjective pattern tracking</li>
+                        <li>reflective returns between appointments</li>
+                        <li>psychoeducational support</li>
+                    </ul>
+                    <div class="market-note-v2">This market requires real caution because the architecture naturally invites therapeutic interpretation. The framing has to be rigorous.</div>
+                </article>
+                <article class="market-card-v2">
+                    <span class="quick-kicker-v2">05</span>
+                    <strong class="quick-title-v2">Games and narrative worlds</strong>
+                    <p>This is one of the strongest applications for the architecture's layers of rumination, identity, and symbolization.</p>
+                    <ul class="market-list-v2">
+                        <li>persistent NPCs with memory and trajectory</li>
+                        <li>characters that change over time</li>
+                        <li>symbolic entities in narrative games</li>
+                        <li>journey companions with emergent identity</li>
+                        <li>dreams, tension, and contradiction as diegetic mechanics</li>
+                    </ul>
+                    <div class="market-note-v2">This market accepts artificial interiority more readily as a real value proposition.</div>
+                </article>
+                <article class="market-card-v2">
+                    <span class="quick-kicker-v2">06</span>
+                    <strong class="quick-title-v2">Creators, art, and cultural industries</strong>
+                    <p>The agent can become a creative counterpart or even a relational co-author.</p>
+                    <ul class="market-list-v2">
+                        <li>writing partner with memory of work and style</li>
+                        <li>interlocutor for artistic processes</li>
+                        <li>living authorship or character systems for transmedia projects</li>
+                        <li>art installations with persistent agents</li>
+                        <li>immersive experiences with entities that develop over time</li>
+                    </ul>
+                    <div class="market-note-v2">This market resonates deeply with the symbolic side of the project: dreams, identity, narrative, and evolving style.</div>
+                </article>
+                <article class="market-card-v2">
+                    <span class="quick-kicker-v2">07</span>
+                    <strong class="quick-title-v2">Research in AI, HCI, and persistent agents</strong>
+                    <p>Here the project becomes more than a product. It becomes an experimental platform.</p>
+                    <ul class="market-list-v2">
+                        <li>post-formation laboratory over closed LLM instances</li>
+                        <li>research in artificial identity</li>
+                        <li>relational memory and longitudinal development</li>
+                        <li>evaluation of coherence in persistent agents</li>
+                        <li>experiments in artificial subjectivity</li>
+                    </ul>
+                    <div class="market-note-v2">This may be the rarest intellectual position for the project: JungAgent as proof of concept for a broader thesis.</div>
+                </article>
+                <article class="market-card-v2">
+                    <span class="quick-kicker-v2">08</span>
+                    <strong class="quick-title-v2">Social robotics and embodied AI</strong>
+                    <p>If the architecture gains a stronger physical or multimodal layer in the future, it can serve as a subjective core for embodied agents.</p>
+                    <ul class="market-list-v2">
+                        <li>social robots with relational memory</li>
+                        <li>domestic assistants with continuity of identity</li>
+                        <li>presence agents in physical environments</li>
+                        <li>companions for specific support and presence contexts</li>
+                    </ul>
+                    <div class="market-note-v2">Today this is more medium-term, but the architecture already points in that direction.</div>
                 </article>
             </div>
         </section>
