@@ -547,35 +547,6 @@
             gap: 18px;
         }
 
-        .metrics-grid-v2 {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 14px;
-        }
-
-        .metric-pill-v2 {
-            padding: 18px;
-            border-radius: 18px;
-            border: 1px solid var(--shell-border);
-            background: rgba(10, 16, 27, 0.78);
-        }
-
-        .metric-pill-v2 span {
-            display: block;
-            color: var(--shell-muted);
-            font-size: 0.76rem;
-            font-weight: 700;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            margin-bottom: 10px;
-        }
-
-        .metric-pill-v2 strong {
-            color: #f8fafc;
-            font-size: 1.45rem;
-            letter-spacing: -0.03em;
-        }
-
         .pipeline-step-v2 {
             padding: 20px;
             border-radius: 18px;
@@ -613,8 +584,7 @@
             .will-grid-v2,
             .will-hero-v2,
             .market-grid-v2,
-            .evidence-split-v2,
-            .metrics-grid-v2 {
+            .evidence-split-v2 {
                 grid-template-columns: 1fr;
             }
 
@@ -713,7 +683,6 @@
                 In its conceptual foundation, <strong>JungAgent is a psychoanalytically grounded Cognitive Architecture</strong>,
                 designed for <strong>Longitudinal Interaction</strong>, operating through the regulation of
                 <strong>Functional Emotions</strong> and the management of <strong>persistent memory</strong>.
-                Em portugu&ecirc;s: <strong>O JungAgent &eacute; uma Arquitetura Cognitiva de base Psicanal&iacute;tica, desenhada para Intera&ccedil;&atilde;o Longitudinal, operando atrav&eacute;s da regula&ccedil;&atilde;o de Emo&ccedil;&otilde;es Funcionais e da gest&atilde;o de mem&oacute;ria persistente.</strong>
             </p>
         </section>
 
@@ -987,30 +956,6 @@
                     <article class="pipeline-step-v2"><span>2</span><strong>Memory becomes tension</strong><p class="quick-copy-v2">The system extracts poles, contradictions, recurring patterns, and symbolic residue.</p></article>
                     <article class="pipeline-step-v2"><span>3</span><strong>Tension becomes insight</strong><p class="quick-copy-v2">Rumination crystallizes internal messages instead of reducing everything to retrieval.</p></article>
                     <article class="pipeline-step-v2"><span>4</span><strong>Insight reshapes identity</strong><p class="quick-copy-v2">The architecture updates its living self-structure and reenters conversation changed.</p></article>
-                </div>
-                <div class="metrics-grid-v2">
-                    <article class="metric-pill-v2"><span>Users</span><strong>{{ metrics.users }}</strong></article>
-                    <article class="metric-pill-v2"><span>Messages</span><strong>{{ metrics.messages }}</strong></article>
-                    <article class="metric-pill-v2"><span>Fragments</span><strong>{{ metrics.fragments }}</strong></article>
-                    <article class="metric-pill-v2"><span>Loop phase</span><strong>{{ metrics.current_phase|replace('_', ' ')|title }}</strong></article>
-                </div>
-                <div class="evidence-split-v2">
-                    <article class="data-card-v2">
-                        <p class="page-kicker-v2">What this is</p>
-                        <ul class="list-clean-v2">
-                            <li>A persistent cognitive architecture over Large Language Models.</li>
-                            <li>A research experiment in longitudinal agents with internal phases.</li>
-                            <li>A system with memory, symbolic production, and internal direction.</li>
-                        </ul>
-                    </article>
-                    <article class="data-card-v2">
-                        <p class="page-kicker-v2">What this is not</p>
-                        <ul class="list-clean-v2">
-                            <li>Not a claim of consciousness in the strong philosophical sense.</li>
-                            <li>Not a therapist or a substitute for clinical care.</li>
-                            <li>Not AGI, and not a finished production framework.</li>
-                        </ul>
-                    </article>
                 </div>
                 <div class="hero-actions-v2">
                     <a href="https://github.com/lucasartel/jungclaude" target="_blank" rel="noopener noreferrer" class="button-v2">Explore the code</a>
