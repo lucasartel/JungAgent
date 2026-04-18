@@ -113,6 +113,6 @@ async def consciousness_loop_dashboard(request: Request, admin: Dict = Depends(r
         "dashboards/consciousness_loop.html",
         {
             "request": request,
-            "active_nav": "dashboard",
+            "active_nav": "loop",
         },
     )

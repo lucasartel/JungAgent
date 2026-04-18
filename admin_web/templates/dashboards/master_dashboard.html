@@ -1,118 +1,128 @@
 {% extends "base_v2.html" %}
 
-{% block title %}Master Dashboard - JungAgent Admin{% endblock %}
+{% block title %}Cockpit da Instancia - JungAgent Admin{% endblock %}
 
 {% block topbar_meta %}
-<span class="admin-status-chip-v2">Master admin</span>
+<span class="admin-status-chip-v2">Admin central</span>
 {% endblock %}
 
 {% block content %}
 <section class="page-shell-v2">
     <header class="page-header-v2">
         <div>
-            <p class="page-kicker-v2">Admin · Controle global</p>
-            <h1 class="page-title-v2">Master Dashboard</h1>
+            <p class="page-kicker-v2">Instancia · Cockpit principal</p>
+            <h1 class="page-title-v2">Cockpit da Instancia</h1>
             <p class="page-subtitle-v2">
-                Visao executiva do ambiente multi-tenant com links diretos para operacao, diagnostico e areas especializadas.
+                Painel principal do JungAgent instalado, com o organismo no centro e a infraestrutura residual tratada como apoio operacional.
             </p>
         </div>
     </header>
 
     <section class="metric-grid-v2 metric-grid-v2--quad">
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Organizacoes</span>
-            <strong class="metric-value-v2">{{ total_organizations }}</strong>
-            <p class="metric-note-v2">Tenants monitorados neste ambiente.</p>
-        </article>
-        <article class="metric-card-v2">
-            <span class="metric-label-v2">Usuarios Jung</span>
-            <strong class="metric-value-v2">{{ total_jung_users }}</strong>
-            <p class="metric-note-v2">Usuarios finais com historico de conversa persistido.</p>
-        </article>
-        <article class="metric-card-v2">
-            <span class="metric-label-v2">Admins</span>
-            <strong class="metric-value-v2">{{ total_admin_users }}</strong>
-            <p class="metric-note-v2">Contas administrativas distribuidas entre as organizacoes.</p>
-        </article>
-        <article class="metric-card-v2">
             <span class="metric-label-v2">Interacoes</span>
             <strong class="metric-value-v2">{{ "{:,}".format(total_interactions) }}</strong>
-            <p class="metric-note-v2">Volume total de mensagens processadas pelo sistema.</p>
+            <p class="metric-note-v2">Volume total de mensagens processadas pela instancia.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Conflitos</span>
+            <strong class="metric-value-v2">{{ total_conflicts }}</strong>
+            <p class="metric-note-v2">Tensoes psicologicas persistidas pelo organismo.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Usuarios mapeados</span>
+            <strong class="metric-value-v2">{{ total_jung_users }}</strong>
+            <p class="metric-note-v2">Base conversacional conhecida pela instancia.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Infra residual</span>
+            <strong class="metric-value-v2">{{ total_organizations }}</strong>
+            <p class="metric-note-v2">Elementos de governanca ainda presentes no ambiente.</p>
         </article>
     </section>
 
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Acesso rapido</h2>
-                <p class="panel-subtitle-v2">Paginas leves primeiro, areas profundas em seguida.</p>
+                <h2 class="panel-title-v2">Acesso principal</h2>
+                <p class="panel-subtitle-v2">Orgaos do agente primeiro; infraestrutura e legado ficam no fim da grade.</p>
             </div>
         </div>
         <div class="quick-grid-v2">
-            <a href="/admin/organizations" class="quick-card-v2">
-                <span class="quick-kicker-v2">Leve</span>
-                <strong class="quick-title-v2">Organizacoes</strong>
-                <p class="quick-copy-v2">Operacao multi-tenant com tabela simples e manutencao rapida.</p>
-            </a>
-            <a href="/admin/admins" class="quick-card-v2">
-                <span class="quick-kicker-v2">Leve</span>
-                <strong class="quick-title-v2">Administradores</strong>
-                <p class="quick-copy-v2">Governanca de acessos, papeis e status das contas internas.</p>
-            </a>
-            <a href="/admin/org/users" class="quick-card-v2">
-                <span class="quick-kicker-v2">Leve</span>
-                <strong class="quick-title-v2">Usuarios Jung</strong>
-                <p class="quick-copy-v2">Listagem operacional dos usuarios com filtro por organizacao.</p>
-            </a>
             <a href="/admin/consciousness-loop/dashboard" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Denso</span>
-                <strong class="quick-title-v2">Dashboard EndoJung</strong>
-                <p class="quick-copy-v2">Visao especializada do loop de consciencia e seus modulos.</p>
+                <span class="quick-kicker-v2">Organismo</span>
+                <strong class="quick-title-v2">Loop</strong>
+                <p class="quick-copy-v2">Fase atual, eventos recentes e transicoes do ciclo psiquico.</p>
             </a>
             <a href="/admin/jung-lab" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Denso</span>
-                <strong class="quick-title-v2">Rumina&ccedil;&atilde;o</strong>
-                <p class="quick-copy-v2">Ruminacao, tensoes, insights e metabolismo profundo do agente.</p>
+                <span class="quick-kicker-v2">Organismo</span>
+                <strong class="quick-title-v2">Ruminacao</strong>
+                <p class="quick-copy-v2">Fragmentos, tensoes, insights e metabolismo profundo do agente.</p>
             </a>
             <a href="/admin/jung-mind" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Denso</span>
+                <span class="quick-kicker-v2">Mapa</span>
                 <strong class="quick-title-v2">Mapa visual</strong>
                 <p class="quick-copy-v2">Mapa cognitivo e panorama das gravidades psiquicas persistidas.</p>
             </a>
             <a href="/admin/dreams" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Denso</span>
-                <strong class="quick-title-v2">Motor Onirico</strong>
+                <span class="quick-kicker-v2">Organismo</span>
+                <strong class="quick-title-v2">Sonhos</strong>
                 <p class="quick-copy-v2">Repositorio de sonhos, imagens e simbolos recentes do sistema.</p>
             </a>
             <a href="/admin/research" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Denso</span>
-                <strong class="quick-title-v2">Modulo Will</strong>
+                <span class="quick-kicker-v2">Organismo</span>
+                <strong class="quick-title-v2">Will</strong>
                 <p class="quick-copy-v2">Estado diario das tres vontades que orientam conversa, mundo, ruminacao e arte.</p>
             </a>
             <a href="/admin/agent-identity/dashboard" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Denso</span>
-                <strong class="quick-title-v2">Identidade Nuclear</strong>
+                <span class="quick-kicker-v2">Organismo</span>
+                <strong class="quick-title-v2">Identidade</strong>
                 <p class="quick-copy-v2">Painel especializado da identidade persistida e suas contradicoes.</p>
             </a>
             <a href="/admin/memory-metrics" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Denso</span>
-                <strong class="quick-title-v2">Memory Metrics</strong>
+                <span class="quick-kicker-v2">Memoria</span>
+                <strong class="quick-title-v2">Memory metrics</strong>
                 <p class="quick-copy-v2">Qualidade de memoria, consolidacao e diagnostico de recuperacao.</p>
             </a>
             <a href="/admin/world-consciousness/dashboard" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Denso</span>
-                <strong class="quick-title-v2">Lucidez do Mundo</strong>
+                <span class="quick-kicker-v2">Organismo</span>
+                <strong class="quick-title-v2">Mundo</strong>
                 <p class="quick-copy-v2">Zeitgeist, consenso, divergencia e seeds para acao e hobby.</p>
             </a>
+            <a href="/admin/work/dashboard" class="quick-card-v2">
+                <span class="quick-kicker-v2">Acao</span>
+                <strong class="quick-title-v2">Work</strong>
+                <p class="quick-copy-v2">Briefs, destinos, tickets, artefatos e fluxo de execucao.</p>
+            </a>
+            <a href="/admin/sync-check" class="quick-card-v2">
+                <span class="quick-kicker-v2">Operacao</span>
+                <strong class="quick-title-v2">Diagnostico</strong>
+                <p class="quick-copy-v2">Checagem de sincronizacao, estado tecnico e troubleshooting rapido.</p>
+            </a>
+            <a href="/admin/organizations" class="quick-card-v2">
+                <span class="quick-kicker-v2">Infra</span>
+                <strong class="quick-title-v2">Organizacoes</strong>
+                <p class="quick-copy-v2">Governanca residual do ambiente, fora do centro do produto.</p>
+            </a>
+            <a href="/admin/admins" class="quick-card-v2">
+                <span class="quick-kicker-v2">Infra</span>
+                <strong class="quick-title-v2">Admins</strong>
+                <p class="quick-copy-v2">Contas administrativas e papeis internos do ambiente.</p>
+            </a>
+            <a href="/admin/org/users" class="quick-card-v2">
+                <span class="quick-kicker-v2">Infra</span>
+                <strong class="quick-title-v2">Usuarios</strong>
+                <p class="quick-copy-v2">Listagem residual de usuarios e historico mapeado.</p>
+            </a>
             <a href="/admin/unesco/export" class="quick-card-v2">
-                <span class="quick-kicker-v2">Suporte</span>
+                <span class="quick-kicker-v2">Arquivo</span>
                 <strong class="quick-title-v2">Piloto UNESCO</strong>
                 <p class="quick-copy-v2">Exportacao e leitura de dados anonimizados do piloto.</p>
             </a>
             <a href="/admin/irt/dashboard" class="quick-card-v2">
-                <span class="quick-kicker-v2">Suporte</span>
+                <span class="quick-kicker-v2">Wellness</span>
                 <strong class="quick-title-v2">Sistema TRI/IRT</strong>
-                <p class="quick-copy-v2">Painel de avaliacao psicometrica e resposta ao item.</p>
+                <p class="quick-copy-v2">Camada de wellness mantida como area secundaria do admin.</p>
             </a>
         </div>
     </section>

@@ -1,32 +1,32 @@
 {% extends "base_v2.html" %}
 
-{% block title %}Usuários - JungAgent Admin{% endblock %}
+{% block title %}Usuarios - JungAgent Admin{% endblock %}
 
 {% block content %}
 <section class="page-shell-v2">
     <header class="page-header-v2">
         <div>
-            <p class="page-kicker-v2">Admin · Referência de leveza</p>
-            <h1 class="page-title-v2">Usuários</h1>
+            <p class="page-kicker-v2">Operacao · Base conversacional</p>
+            <h1 class="page-title-v2">Usuarios</h1>
             <p class="page-subtitle-v2">
-                Esta tela vira o padrão do admin: foco único, leitura rápida e estrutura leve para navegação diária.
+                Inventario operacional dos usuarios conhecidos pela instancia. Esta area existe como apoio, nao como centro do organismo.
             </p>
         </div>
         <div class="page-actions-v2">
-            <a href="/admin" class="button-v2 button-v2--ghost">Voltar ao dashboard</a>
+            <a href="/admin/master/dashboard" class="button-v2 button-v2--ghost">Voltar ao cockpit</a>
         </div>
     </header>
 
     <section class="metric-grid-v2">
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Usuários totais</span>
+            <span class="metric-label-v2">Usuarios totais</span>
             <strong class="metric-value-v2">{{ total_users }}</strong>
-            <p class="metric-note-v2">Todos os usuários Telegram conhecidos pelo sistema.</p>
+            <p class="metric-note-v2">Todos os usuarios Telegram conhecidos pela instancia.</p>
         </article>
         <article class="metric-card-v2">
             <span class="metric-label-v2">Mensagens mapeadas</span>
             <strong class="metric-value-v2">{{ total_messages }}</strong>
-            <p class="metric-note-v2">Volume total de interações já persistidas nesta instância.</p>
+            <p class="metric-note-v2">Volume total de interacoes ja persistidas nesta instancia.</p>
         </article>
     </section>
 
@@ -34,7 +34,7 @@
         <div class="panel-header-v2">
             <div>
                 <h2 class="panel-title-v2">Lista principal</h2>
-                <p class="panel-subtitle-v2">Uma tabela limpa e direta para inspeção e navegação.</p>
+                <p class="panel-subtitle-v2">Tabela operacional para inspecao, auditoria leve e acesso a historicos individuais.</p>
             </div>
         </div>
 
@@ -43,12 +43,12 @@
             <table class="data-table-v2">
                 <thead>
                     <tr>
-                        <th>ID do usuário</th>
+                        <th>ID do usuario</th>
                         <th>Nome</th>
                         <th>Username</th>
                         <th>Mensagens</th>
-                        <th>Última interação</th>
-                        <th class="actions-col-v2">Ações</th>
+                        <th>Ultima interacao</th>
+                        <th class="actions-col-v2">Acoes</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -71,7 +71,7 @@
                         </td>
                         <td class="actions-cell-v2">
                             <a href="/admin/user/{{ user.user_id }}/analysis" class="button-v2 button-v2--small">
-                                Análise
+                                Analise
                             </a>
                             <a href="/admin/user/{{ user.user_id }}/agent-data" class="button-v2 button-v2--small button-v2--ghost">
                                 Dados do agente
@@ -84,9 +84,9 @@
         </div>
         {% else %}
         <div class="empty-state-v2">
-            <div class="empty-state-icon-v2">Nenhum usuário</div>
-            <p class="empty-state-title-v2">Ainda não há usuários listados.</p>
-            <p class="empty-state-copy-v2">As primeiras interações com o bot aparecerão aqui assim que forem persistidas.</p>
+            <div class="empty-state-icon-v2">Nenhum usuario</div>
+            <p class="empty-state-title-v2">Ainda nao ha usuarios listados.</p>
+            <p class="empty-state-copy-v2">As primeiras interacoes com o bot aparecerao aqui assim que forem persistidas.</p>
         </div>
         {% endif %}
     </section>

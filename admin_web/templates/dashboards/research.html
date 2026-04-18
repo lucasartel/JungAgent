@@ -12,17 +12,7 @@
         </div>
     </header>
 
-    <nav class="subnav-v2">
-        <a href="/admin/consciousness-loop/dashboard" class="subnav-link-v2">Loop</a>
-        <a href="/admin/world-consciousness/dashboard" class="subnav-link-v2">Lucidez do mundo</a>
-        <a href="/admin/agent-identity/dashboard" class="subnav-link-v2">Identidade nuclear</a>
-        <a href="/admin/work/dashboard" class="subnav-link-v2">Work</a>
-        <a href="/admin/dreams" class="subnav-link-v2">Sonhos</a>
-        <a href="/admin/jung-lab" class="subnav-link-v2">Ruminação</a>
-        <a href="/admin/research" class="subnav-link-v2 is-active">Will</a>
-        <a href="/admin/jung-mind" class="subnav-link-v2">Mapa visual</a>
-        <a href="/admin/memory-metrics" class="subnav-link-v2">Memory metrics</a>
-    </nav>
+    {% include "partials/admin_agent_subnav.html" %}
 
     <section class="metric-grid-v2 metric-grid-v2--quad">
         <article class="metric-card-v2">

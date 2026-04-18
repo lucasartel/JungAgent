@@ -57,6 +57,6 @@ async def world_dashboard(request: Request, admin: Dict = Depends(require_master
         "dashboards/world_consciousness.html",
         {
             "request": request,
-            "active_nav": "dashboard",
+            "active_nav": "world",
         },
     )

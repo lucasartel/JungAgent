@@ -6,10 +6,10 @@
 <section class="page-shell-v2">
     <header class="page-header-v2">
         <div>
-            <p class="page-kicker-v2">Admin · Multi-tenant</p>
+            <p class="page-kicker-v2">Operacao · Infraestrutura residual</p>
             <h1 class="page-title-v2">Organizacoes</h1>
             <p class="page-subtitle-v2">
-                Gestao enxuta das organizacoes do sistema, mantendo foco em leitura, status e acoes administrativas diretas.
+                Esta area preserva a camada de organizacoes como infraestrutura residual do ambiente, nao como direcao principal do produto.
             </p>
         </div>
         <div class="page-actions-v2">
@@ -28,7 +28,7 @@
         <article class="metric-card-v2">
             <span class="metric-label-v2">Organizacoes</span>
             <strong class="metric-value-v2">{{ total_organizations }}</strong>
-            <p class="metric-note-v2">Total de tenants atualmente persistidos.</p>
+            <p class="metric-note-v2">Total de estruturas organizacionais persistidas no ambiente.</p>
         </article>
         <article class="metric-card-v2">
             <span class="metric-label-v2">Usuarios vinculados</span>
@@ -38,7 +38,7 @@
         <article class="metric-card-v2">
             <span class="metric-label-v2">Admins ativos</span>
             <strong class="metric-value-v2">{{ total_org_admins }}</strong>
-            <p class="metric-note-v2">Administradores ativos distribuidos entre os tenants.</p>
+            <p class="metric-note-v2">Administradores ativos distribuidos entre essas estruturas.</p>
         </article>
     </section>
 
@@ -46,7 +46,7 @@
         <div class="panel-header-v2">
             <div>
                 <h2 class="panel-title-v2">Lista principal</h2>
-                <p class="panel-subtitle-v2">Tabela central com status, escala e links de continuidade.</p>
+                <p class="panel-subtitle-v2">Tabela central com status, escala e continuidade da camada de infraestrutura.</p>
             </div>
         </div>
 
@@ -103,9 +103,9 @@
         </div>
         {% else %}
         <div class="empty-state-v2">
-            <div class="empty-state-icon-v2">Sem tenants</div>
+            <div class="empty-state-icon-v2">Sem estruturas</div>
             <p class="empty-state-title-v2">Nenhuma organizacao encontrada.</p>
-            <p class="empty-state-copy-v2">Crie a primeira organizacao para iniciar a camada multi-tenant do sistema.</p>
+            <p class="empty-state-copy-v2">Crie uma organizacao apenas se precisar manter essa camada de infraestrutura no ambiente.</p>
         </div>
         {% endif %}
     </section>

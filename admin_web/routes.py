@@ -153,7 +153,7 @@ async def dashboard(request: Request, admin: Dict = Depends(require_master)):
             "dependencies": deps_status,
             "error_message": "jung_core não pôde ser carregado.",
             "error_traceback": None,
-            "active_nav": "dashboard",
+            "active_nav": "cockpit",
         })
     
     # Modo normal com jung_core disponível
@@ -176,7 +176,7 @@ async def dashboard(request: Request, admin: Dict = Depends(require_master)):
         "total_conflicts": total_conflicts,
         "users": sqlite_users[:5],  # Top 5 recentes
         "diagnostic_mode": False,
-        "active_nav": "dashboard",
+        "active_nav": "cockpit",
     })
 
 @router.get("/users", response_class=HTMLResponse)
@@ -192,7 +192,7 @@ async def users_list(request: Request, admin: Dict = Depends(require_master)):
             "users": users,
             "total_users": len(users),
             "total_messages": total_messages,
-            "active_nav": "users",
+            "active_nav": "operation",
         },
     )
 
@@ -310,7 +310,7 @@ async def export_unesco_csv(admin: Dict = Depends(require_master)):
 @router.get("/sync-check", response_class=HTMLResponse)
 async def sync_check_page(request: Request, admin: Dict = Depends(require_master)):
     """Página de diagnóstico de sincronização"""
-    return templates.TemplateResponse("sync_check.html", {"request": request})
+    return templates.TemplateResponse("sync_check.html", {"request": request, "active_nav": "operation"})
 
 @router.get("/user/{user_id}/analysis", response_class=HTMLResponse)
 async def user_analysis_page(request: Request, user_id: str, admin: Dict = Depends(require_org_admin)):
@@ -2114,7 +2114,7 @@ async def memory_metrics_dashboard(
         "request": request,
         "unsafe_admin_endpoints_enabled": UNSAFE_ADMIN_ENDPOINTS_ENABLED,
         "initial_data_json": json.dumps(initial_data, ensure_ascii=False),
-        "active_nav": "dashboard",
+        "active_nav": "memory",
     })
 
 
@@ -2146,7 +2146,7 @@ async def dreams_dashboard(
     return templates.TemplateResponse("dashboards/dreams.html", {
         "request": request,
         "dreams": dreams,
-        "active_nav": "dashboard",
+        "active_nav": "dreams",
     })
 
 # ============================================================
@@ -2361,7 +2361,7 @@ async def research_dashboard(
         "archived_researches": archived_researches,
         "scholar_archive_runs": scholar_archive_runs,
         "archive_stats": archive_stats,
-        "active_nav": "dashboard",
+        "active_nav": "will",
     })
 
 # ============================================================
@@ -2442,7 +2442,8 @@ async def jung_lab_dashboard(
             "insights": insights,
             "unsafe_admin_endpoints_enabled": UNSAFE_ADMIN_ENDPOINTS_ENABLED,
             "scheduler_running": scheduler_running,
-            "scheduler_pid": scheduler_pid
+            "scheduler_pid": scheduler_pid,
+            "active_nav": "rumination",
         }
     )
 
@@ -3324,7 +3325,8 @@ async def jung_mind_page(request: Request, admin: Dict = Depends(require_master)
     Com sinapses (conexões laterais) entre elementos com símbolos/temas comuns
     """
     return templates.TemplateResponse("jung_mind.html", {
-        "request": request
+        "request": request,
+        "active_nav": "rumination",
     })
 
 @router.get("/api/jung-mind-data")

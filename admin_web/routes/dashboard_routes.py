@@ -129,7 +129,7 @@ async def master_dashboard(
             "total_interactions": total_interactions,
             "total_conflicts": total_conflicts,
             "proactive_enabled": proactive_messages_enabled(),
-            "active_nav": "dashboard",
+            "active_nav": "cockpit",
         })
 
     except Exception as e:

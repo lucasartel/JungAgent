@@ -182,6 +182,6 @@ async def work_dashboard(request: Request, admin: Dict = Depends(require_master)
         "dashboards/work_dashboard.html",
         {
             "request": request,
-            "active_nav": "dashboard",
+            "active_nav": "work",
         },
     )

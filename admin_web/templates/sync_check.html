@@ -1,75 +1,81 @@
-{% extends "base.html" %}
+{% extends "base_v2.html" %}
+
+{% block title %}Operacao - Diagnostico de Sincronizacao{% endblock %}
+{% block head_extra %}<script src="https://unpkg.com/htmx.org@1.9.10"></script>{% endblock %}
 
 {% block content %}
-<div class="space-y-6" style="padding: 0 1rem;">
-    <!-- Header -->
-    <div style="background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); padding: 2rem; border-radius: 1rem; border: 1px solid rgba(139, 92, 246, 0.2); box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);">
-        <h1 class="text-3xl font-bold text-gray-900" style="font-size: 2.5rem; font-weight: 700; display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;">
-            <span style="font-size: 3rem;">🔍</span>
-            Diagnóstico de Sincronização
-        </h1>
-        <p class="mt-1 text-sm text-gray-500" style="margin-top: 0.5rem; font-size: 1rem; color: #94a3b8;">
-            Verifique a consistência entre o banco relacional (SQLite) e o banco vetorial (ChromaDB)
-        </p>
-    </div>
+<section class="page-shell-v2">
+    <header class="page-header-v2">
+        <div>
+            <p class="page-kicker-v2">Operacao · Integridade da instancia</p>
+            <h1 class="page-title-v2">Diagnostico de Sincronizacao</h1>
+            <p class="page-subtitle-v2">
+                Verifique a consistencia entre o banco relacional da instancia e o banco vetorial usado para memoria semantica.
+            </p>
+        </div>
+        <div class="page-actions-v2">
+            <a href="/admin/master/dashboard" class="button-v2 button-v2--ghost">Voltar ao cockpit</a>
+        </div>
+    </header>
 
-    <!-- Main Diagnostic Card -->
-    <div class="bg-white shadow sm:rounded-lg" style="background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); padding: 2.5rem; border-radius: 1rem; border: 1px solid rgba(148, 163, 184, 0.1); box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);">
-        <div class="px-4 py-5 sm:p-6">
-            <h3 class="text-lg leading-6 font-medium text-gray-900" style="font-size: 1.5rem; font-weight: 700; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.75rem;">
-                <span style="font-size: 2rem;">⚙️</span>
-                Executar Diagnóstico
-            </h3>
-            <div class="mt-2 max-w-xl text-sm text-gray-500" style="margin-top: 1rem; font-size: 1rem; color: #94a3b8; line-height: 1.6;">
-                <p>Esta operação irá contar os registros em ambos os bancos e verificar se há discrepâncias.</p>
-                <p style="margin-top: 0.75rem; padding: 1rem; background: rgba(139, 92, 246, 0.1); border-radius: 0.5rem; border-left: 4px solid #8b5cf6;">
-                    <strong style="color: #c4b5fd;">💡 Informação:</strong> O diagnóstico verifica a integridade dos dados entre SQLite e ChromaDB, identificando registros perdidos ou inconsistentes.
-                </p>
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Executar verificacao</h2>
+                <p class="panel-subtitle-v2">Conta registros nas camadas de memoria e aponta discrepancias de sincronizacao.</p>
             </div>
-            <div class="mt-5" style="margin-top: 2rem;">
-                <button hx-get="/admin/api/diagnose" hx-target="#diagnosis-result" hx-indicator="#spinner"
-                    class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500" style="padding: 1rem 2.5rem; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); border: none; border-radius: 0.75rem; box-shadow: 0 4px 6px rgba(139, 92, 246, 0.4); transition: all 0.3s ease; cursor: pointer; font-weight: 600; font-size: 1.1rem; color: white; display: inline-flex; align-items: center; gap: 0.75rem;">
-                    <span style="font-size: 1.5rem;">🚀</span>
-                    Rodar Verificação
-                    <svg id="spinner" class="htmx-indicator ml-2 -mr-1 h-5 w-5 text-white animate-spin"
-                        xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4">
-                        </circle>
-                        <path class="opacity-75" fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
-                        </path>
-                    </svg>
+        </div>
+        <div class="panel-body-v2 stack-v2">
+            <div class="notice-v2">
+                <strong>Leitura operacional</strong>
+                <p>Este diagnostico ajuda a localizar perda de registros, divergencia entre SQLite e ChromaDB e inconsistencias no pipeline de memoria.</p>
+            </div>
+            <div>
+                <button
+                    hx-get="/admin/api/diagnose"
+                    hx-target="#diagnosis-result"
+                    hx-indicator="#spinner"
+                    class="button-v2"
+                >
+                    Rodar verificacao
+                    <span id="spinner" class="htmx-indicator" style="margin-left: 0.5rem;">...</span>
                 </button>
             </div>
         </div>
-    </div>
+    </section>
 
-    <!-- Results Container -->
-    <div id="diagnosis-result" style="margin-top: 2rem;">
-        <!-- Resultado será injetado aqui via HTMX -->
-    </div>
-
-    <!-- Quick Access Links -->
-    <div style="margin-top: 2rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem;">
-        <a href="/admin" class="bg-white shadow sm:rounded-lg" style="background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); padding: 1.5rem; border-radius: 1rem; border: 1px solid rgba(148, 163, 184, 0.1); box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); text-decoration: none; color: inherit; cursor: pointer; transition: all 0.3s ease; display: block;">
-            <div style="display: flex; align-items: center; gap: 1rem;">
-                <div style="font-size: 2.5rem;">🏠</div>
-                <div>
-                    <div style="font-weight: 700; font-size: 1.1rem; color: #f1f5f9;">Dashboard</div>
-                    <div style="color: #94a3b8; font-size: 0.875rem; margin-top: 0.25rem;">Voltar ao painel principal</div>
-                </div>
+    <section class="panel-v2" id="diagnosis-result">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Resultado</h2>
+                <p class="panel-subtitle-v2">O retorno do diagnostico aparece aqui.</p>
             </div>
-        </a>
-
-        <a href="/admin/jung-lab" class="bg-white shadow sm:rounded-lg" style="background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); padding: 1.5rem; border-radius: 1rem; border: 1px solid rgba(148, 163, 184, 0.1); box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); text-decoration: none; color: inherit; cursor: pointer; transition: all 0.3s ease; display: block;">
-            <div style="display: flex; align-items: center; gap: 1rem;">
-                <div style="font-size: 2.5rem;">🧠</div>
-                <div>
-                    <div style="font-weight: 700; font-size: 1.1rem; color: #f1f5f9;">Rumina&ccedil;&atilde;o</div>
-                    <div style="color: #94a3b8; font-size: 0.875rem; margin-top: 0.25rem;">Sistema de ruminação cognitiva</div>
-                </div>
+        </div>
+        <div class="panel-body-v2">
+            <div class="empty-state-v2">
+                <div class="empty-state-icon-v2">Sem leitura</div>
+                <p class="empty-state-title-v2">Nenhum diagnostico executado ainda.</p>
+                <p class="empty-state-copy-v2">Use o botao acima para inspecionar o estado de sincronizacao da instancia.</p>
             </div>
+        </div>
+    </section>
+
+    <section class="quick-grid-v2">
+        <a href="/admin/master/dashboard" class="quick-card-v2">
+            <span class="quick-kicker-v2">Cockpit</span>
+            <strong class="quick-title-v2">Instancia</strong>
+            <p class="quick-copy-v2">Voltar ao painel principal do organismo.</p>
         </a>
-    </div>
-</div>
+        <a href="/admin/memory-metrics" class="quick-card-v2">
+            <span class="quick-kicker-v2">Memoria</span>
+            <strong class="quick-title-v2">Memory metrics</strong>
+            <p class="quick-copy-v2">Cruzar o diagnostico com consolidacao, recuperacao e qualidade das camadas.</p>
+        </a>
+        <a href="/admin/jung-lab" class="quick-card-v2">
+            <span class="quick-kicker-v2">Ruminacao</span>
+            <strong class="quick-title-v2">Jung Lab</strong>
+            <p class="quick-copy-v2">Acessar a leitura profunda do metabolismo interno depois da checagem tecnica.</p>
+        </a>
+    </section>
+</section>
 {% endblock %}

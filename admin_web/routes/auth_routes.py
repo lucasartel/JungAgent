@@ -177,7 +177,7 @@ async def login(
         elif admin["role"] == "master":
             redirect_url = "/admin/master/dashboard"
         else:
-            redirect_url = "/admin/org/users"
+            redirect_url = "/admin/org/dashboard"
 
         response = RedirectResponse(url=redirect_url, status_code=302)
         response.set_cookie(

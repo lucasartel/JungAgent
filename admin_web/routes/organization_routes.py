@@ -120,7 +120,7 @@ async def list_organizations(
             "total_organizations": len(organizations),
             "total_org_users": sum(org["user_count"] for org in organizations),
             "total_org_admins": sum(org["admin_count"] for org in organizations),
-            "active_nav": "organizations",
+            "active_nav": "operation",
         })
 
     except Exception as e:

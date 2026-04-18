@@ -700,7 +700,7 @@ async def agent_identity_dashboard(
         "dashboards/agent_identity.html",
         {
             "request": request,
-            "active_nav": "dashboard",
+            "active_nav": "identity",
         },
     )
 
