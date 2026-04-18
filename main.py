@@ -3,7 +3,7 @@ import uvicorn
 from urllib.parse import urlencode
 from fastapi import Depends, FastAPI, Request
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -12,6 +12,7 @@ import os
 import sys
 import sqlite3
 import logging
+from datetime import date
 from typing import Dict
 from dotenv import load_dotenv
 from admin_web.auth.middleware import require_master
@@ -43,6 +44,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("watchfiles.main").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
+PUBLIC_SITE_URL = os.getenv("PUBLIC_SITE_URL", "https://jungagent.org").rstrip("/")
 UNSAFE_ADMIN_ENDPOINTS_ENABLED = unsafe_admin_endpoints_enabled()
 UNSAFE_ROUTE_PATHS = {
     "/test/proactive",
@@ -428,6 +430,35 @@ async def root(request: Request):
             "metrics": metrics,
         }
     )
+
+
+@app.get("/robots.txt")
+async def robots_txt():
+    body = "\n".join([
+        "User-agent: *",
+        "Allow: /",
+        "Disallow: /admin",
+        "Disallow: /test",
+        f"Sitemap: {PUBLIC_SITE_URL}/sitemap.xml",
+        "",
+    ])
+    return Response(content=body, media_type="text/plain; charset=utf-8")
+
+
+@app.get("/sitemap.xml")
+async def sitemap_xml():
+    today = date.today().isoformat()
+    body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>{PUBLIC_SITE_URL}/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <lastmod>{today}</lastmod>
+  </url>
+</urlset>
+"""
+    return Response(content=body, media_type="application/xml; charset=utf-8")
 
 @app.get("/health")
 async def health_check():

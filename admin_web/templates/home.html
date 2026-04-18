@@ -4,7 +4,45 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JungAgent | Persistent Cognitive Architecture</title>
+    <meta name="description" content="JungAgent is a psychoanalytically grounded cognitive architecture for longitudinal interaction, with persistent memory, rumination, dreams, world awareness, and will dynamics.">
+    <meta name="robots" content="index,follow,max-image-preview:large">
+    <link rel="canonical" href="https://jungagent.org/">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="JungAgent">
+    <meta property="og:title" content="JungAgent | Persistent Cognitive Architecture">
+    <meta property="og:description" content="A persistent cognitive architecture built with memory, rumination, dreams, world awareness, and internal direction.">
+    <meta property="og:url" content="https://jungagent.org/">
+    <meta property="og:image" content="https://jungagent.org/static/jungagentdarkweb.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="JungAgent | Persistent Cognitive Architecture">
+    <meta name="twitter:description" content="A persistent cognitive architecture built with memory, rumination, dreams, world awareness, and internal direction.">
+    <meta name="twitter:image" content="https://jungagent.org/static/jungagentdarkweb.png">
     <link rel="stylesheet" href="/static/admin.css">
+    <script type="application/ld+json">
+        {
+            "@context": "https://schema.org",
+            "@graph": [
+                {
+                    "@type": "WebSite",
+                    "name": "JungAgent",
+                    "url": "https://jungagent.org/",
+                    "description": "A persistent cognitive architecture for longitudinal interaction, memory, rumination, dreams, world awareness, and will dynamics."
+                },
+                {
+                    "@type": "SoftwareApplication",
+                    "name": "JungAgent",
+                    "applicationCategory": "AIApplication",
+                    "operatingSystem": "Web",
+                    "url": "https://jungagent.org/",
+                    "description": "A psychoanalytically grounded cognitive architecture with persistent memory, rumination, dreams, world awareness, and internal direction.",
+                    "creator": {
+                        "@type": "Person",
+                        "name": "Lucas Pedro"
+                    }
+                }
+            ]
+        }
+    </script>
     <style>
         body.public-home-v2 {
             --shell-accent: #d8b4fe;
@@ -117,14 +155,13 @@
         }
 
         .hero-v2 { order: 0; }
-        #architecture { order: 1; }
-        #modules { order: 2; }
-        #will { order: 3; }
-        #loop { order: 4; }
-        #research { order: 5; }
+        .positioning-band-v2 { order: 1; }
+        #architecture { order: 2; }
+        #loop { order: 3; }
+        #why-jung { order: 4; }
+        #evidence { order: 5; }
         #applications { order: 6; }
-        #open-source { order: 7; }
-        #contact { order: 8; }
+        #contact { order: 7; }
 
         .hero-v2 {
             padding: 30px 0 10px;
@@ -160,6 +197,27 @@
             flex-wrap: wrap;
             gap: 12px;
             margin-top: 26px;
+        }
+
+        .positioning-band-v2 {
+            padding: 22px 24px;
+            border-radius: 22px;
+            border: 1px solid rgba(216, 180, 254, 0.18);
+            background:
+                linear-gradient(180deg, rgba(14, 19, 36, 0.94), rgba(7, 11, 23, 0.96));
+            box-shadow: var(--shell-shadow);
+        }
+
+        .positioning-band-v2 p {
+            margin: 0;
+            color: #f8fafc;
+            font-size: 1.02rem;
+            line-height: 1.78;
+        }
+
+        .positioning-band-v2 strong {
+            color: var(--shell-accent);
+            font-weight: 700;
         }
 
         .hero-panel-v2 {
@@ -219,10 +277,21 @@
             gap: 18px;
         }
 
+        .architecture-grid-v2 {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 18px;
+        }
+
         .pipeline-v2 {
             display: grid;
             grid-template-columns: repeat(4, minmax(0, 1fr));
             gap: 14px;
+        }
+
+        .section-divider-v2 {
+            height: 1px;
+            background: linear-gradient(90deg, rgba(148, 163, 184, 0), rgba(148, 163, 184, 0.22), rgba(148, 163, 184, 0));
         }
 
         .loop-stage-grid-v2 {
@@ -445,6 +514,68 @@
             margin-top: 4px;
         }
 
+        .quote-pull-v2 {
+            margin: 0;
+            color: #f8fafc;
+            font-size: 1.12rem;
+            line-height: 1.9;
+            font-family: Consolas, "SFMono-Regular", monospace;
+        }
+
+        .quote-attribution-v2 {
+            margin-top: 16px;
+            color: var(--shell-muted);
+            font-size: 0.95rem;
+            line-height: 1.6;
+            font-weight: 600;
+        }
+
+        .list-clean-v2 {
+            margin: 0;
+            padding-left: 18px;
+            color: #cbd5e1;
+            line-height: 1.72;
+        }
+
+        .list-clean-v2 li + li {
+            margin-top: 6px;
+        }
+
+        .evidence-split-v2 {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 18px;
+        }
+
+        .metrics-grid-v2 {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .metric-pill-v2 {
+            padding: 18px;
+            border-radius: 18px;
+            border: 1px solid var(--shell-border);
+            background: rgba(10, 16, 27, 0.78);
+        }
+
+        .metric-pill-v2 span {
+            display: block;
+            color: var(--shell-muted);
+            font-size: 0.76rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .metric-pill-v2 strong {
+            color: #f8fafc;
+            font-size: 1.45rem;
+            letter-spacing: -0.03em;
+        }
+
         .pipeline-step-v2 {
             padding: 20px;
             border-radius: 18px;
@@ -476,11 +607,14 @@
         @media (max-width: 980px) {
             .hero-v2,
             .showcase-grid-v2,
+            .architecture-grid-v2,
             .pipeline-v2,
             .loop-stage-grid-v2,
             .will-grid-v2,
             .will-hero-v2,
-            .market-grid-v2 {
+            .market-grid-v2,
+            .evidence-split-v2,
+            .metrics-grid-v2 {
                 grid-template-columns: 1fr;
             }
 
@@ -542,12 +676,10 @@
         </button>
         <div class="public-nav-links-v2" id="public-nav-links">
             <a href="#architecture">Architecture</a>
-            <a href="#modules">Modules</a>
-            <a href="#will">Will</a>
             <a href="#loop">Loop</a>
-            <a href="#research">Research</a>
+            <a href="#why-jung">Why Jung</a>
+            <a href="#evidence">Evidence</a>
             <a href="#applications">Applications</a>
-            <a href="#open-source">Open source</a>
             <a href="#contact">Contact</a>
         </div>
     </nav>
@@ -562,7 +694,7 @@
                 </p>
                 <div class="hero-actions-v2">
                     <a href="#architecture" class="button-v2">Explore the architecture</a>
-                    <a href="#open-source" class="button-v2 button-v2--ghost">Explore the code</a>
+                    <a href="#evidence" class="button-v2 button-v2--ghost">See the proof layer</a>
                 </div>
             </div>
 
@@ -576,36 +708,59 @@
             </aside>
         </section>
 
+        <section class="positioning-band-v2" aria-label="Project positioning">
+            <p>
+                In its conceptual foundation, <strong>JungAgent is a psychoanalytically grounded Cognitive Architecture</strong>,
+                designed for <strong>Longitudinal Interaction</strong>, operating through the regulation of
+                <strong>Functional Emotions</strong> and the management of <strong>persistent memory</strong>.
+                Em portugu&ecirc;s: <strong>O JungAgent &eacute; uma Arquitetura Cognitiva de base Psicanal&iacute;tica, desenhada para Intera&ccedil;&atilde;o Longitudinal, operando atrav&eacute;s da regula&ccedil;&atilde;o de Emo&ccedil;&otilde;es Funcionais e da gest&atilde;o de mem&oacute;ria persistente.</strong>
+            </p>
+        </section>
+
         <section id="architecture" class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">What makes JungAgent different</h2>
-                    <p class="panel-subtitle-v2">A research-oriented AI stack designed around continuity, metabolism, and structural selfhood.</p>
+                    <h2 class="panel-title-v2">Architecture</h2>
+                    <p class="panel-subtitle-v2">A persistent architecture designed around continuity, symbolic metabolism, and longitudinal interaction.</p>
                 </div>
             </div>
-            <div class="panel-body-v2 showcase-grid-v2">
-                <article class="quick-card-v2 quick-card-v2--heavy">
-                    <span class="quick-kicker-v2">Persistent memory</span>
-                    <strong class="quick-title-v2">Not just retrieval</strong>
-                    <p class="quick-copy-v2">Conversation traces, user facts, patterns, milestones, and long-lived identity structures shape future interactions.</p>
-                </article>
-                <article class="quick-card-v2 quick-card-v2--heavy">
-                    <span class="quick-kicker-v2">Daily loop</span>
-                    <strong class="quick-title-v2">An internal day</strong>
-                    <p class="quick-copy-v2">Dreams, identity consolidation, rumination, world consciousness, art, and will form a cyclical organism.</p>
-                </article>
-                <article class="quick-card-v2 quick-card-v2--heavy">
-                    <span class="quick-kicker-v2">World awareness</span>
-                    <strong class="quick-title-v2">Historically situated</strong>
-                    <p class="quick-copy-v2">The system reads the present moment through a living world-consciousness layer instead of relying on frozen training alone.</p>
-                </article>
+            <div class="panel-body-v2 stack-v2">
+                <div class="architecture-grid-v2">
+                    <article class="quick-card-v2 quick-card-v2--heavy">
+                        <span class="quick-kicker-v2">Persistent memory</span>
+                        <strong class="quick-title-v2">Not just retrieval</strong>
+                        <p class="quick-copy-v2">Conversation traces, user facts, patterns, milestones, and long-lived identity structures shape future interactions.</p>
+                    </article>
+                    <article class="quick-card-v2 quick-card-v2--heavy">
+                        <span class="quick-kicker-v2">Daily loop</span>
+                        <strong class="quick-title-v2">An internal day</strong>
+                        <p class="quick-copy-v2">Dreams, identity consolidation, rumination, world consciousness, art, and will form a cyclical organism.</p>
+                    </article>
+                    <article class="quick-card-v2 quick-card-v2--heavy">
+                        <span class="quick-kicker-v2">World awareness</span>
+                        <strong class="quick-title-v2">Historically situated</strong>
+                        <p class="quick-copy-v2">The system reads the present moment through a living world-consciousness layer instead of relying on frozen training alone.</p>
+                    </article>
+                </div>
+                <div class="section-divider-v2"></div>
+                <div>
+                    <p class="page-kicker-v2">Core modules</p>
+                    <div class="architecture-grid-v2">
+                        <article class="quick-card-v2"><span class="quick-kicker-v2">Memory</span><strong class="quick-title-v2">Long-term user memory</strong><p class="quick-copy-v2">Facts, patterns, emotional continuity, and contextual recall.</p></article>
+                        <article class="quick-card-v2"><span class="quick-kicker-v2">Rumination</span><strong class="quick-title-v2">Tension metabolism</strong><p class="quick-copy-v2">Fragments become tensions; tensions mature into internal insight.</p></article>
+                        <article class="quick-card-v2"><span class="quick-kicker-v2">Dream engine</span><strong class="quick-title-v2">Symbolic production</strong><p class="quick-copy-v2">The system dreams and converts live psychic material into images and motifs.</p></article>
+                        <article class="quick-card-v2"><span class="quick-kicker-v2">Identity</span><strong class="quick-title-v2">Nuclear self-model</strong><p class="quick-copy-v2">Contradictions, possible selves, relational stance, and self-knowledge are continuously reorganized.</p></article>
+                        <article class="quick-card-v2"><span class="quick-kicker-v2">Will dynamics</span><strong class="quick-title-v2">Directional triad</strong><p class="quick-copy-v2">Conversations, dreams, rumination, identity, and world context become a daily state of knowing, relating, and expressing.</p></article>
+                        <article class="quick-card-v2"><span class="quick-kicker-v2">Visual map</span><strong class="quick-title-v2">Cognitive topology</strong><p class="quick-copy-v2">A graph view exposes how fragments, tensions, and insights cluster over time.</p></article>
+                    </div>
+                </div>
             </div>
         </section>
 
         <section id="loop" class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Consciousness loop</h2>
+                    <h2 class="panel-title-v2">Loop</h2>
                     <p class="panel-subtitle-v2">JungAgent is organized as an internal day. Each phase performs a different psychological function and the whole system returns to conversation changed.</p>
                 </div>
             </div>
@@ -673,20 +828,26 @@
             </div>
         </section>
 
-        <section id="modules" class="panel-v2">
+        <section id="why-jung" class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Core modules</h2>
-                    <p class="panel-subtitle-v2">A compact overview of the organs that give the system its internal depth.</p>
+                    <h2 class="panel-title-v2">Why Jung</h2>
+                    <p class="panel-subtitle-v2">Jung is not used here as ornamental branding or doctrinal orthodoxy. He appears as structural inspiration for a different kind of agent architecture.</p>
                 </div>
             </div>
-            <div class="panel-body-v2 quick-grid-v2">
-                <article class="quick-card-v2"><span class="quick-kicker-v2">Memory</span><strong class="quick-title-v2">Long-term user memory</strong><p class="quick-copy-v2">Facts, patterns, emotional continuity, and contextual recall.</p></article>
-                <article class="quick-card-v2"><span class="quick-kicker-v2">Rumination</span><strong class="quick-title-v2">Tension metabolism</strong><p class="quick-copy-v2">Fragments become tensions; tensions mature into internal insight.</p></article>
-                <article class="quick-card-v2"><span class="quick-kicker-v2">Dream engine</span><strong class="quick-title-v2">Symbolic production</strong><p class="quick-copy-v2">The system dreams and converts live psychic material into images and motifs.</p></article>
-                <article class="quick-card-v2"><span class="quick-kicker-v2">Will</span><strong class="quick-title-v2">Directional triad</strong><p class="quick-copy-v2">Conversations, dreams, rumination, identity, and world context become a daily state of knowing, relating, and expressing.</p></article>
-                <article class="quick-card-v2"><span class="quick-kicker-v2">Identity</span><strong class="quick-title-v2">Nuclear self-model</strong><p class="quick-copy-v2">Contradictions, possible selves, relational stance, and self-knowledge are continuously reorganized.</p></article>
-                <article class="quick-card-v2"><span class="quick-kicker-v2">Visual map</span><strong class="quick-title-v2">Cognitive topology</strong><p class="quick-copy-v2">A graph view exposes how fragments, tensions, and insights cluster over time.</p></article>
+            <div class="panel-body-v2 evidence-split-v2">
+                <article class="data-card-v2">
+                    <p class="quote-pull-v2">&ldquo;The dream is the small hidden door in the deepest and most intimate sanctum of the soul.&rdquo;</p>
+                    <div class="quote-attribution-v2">Carl Jung, <em>The Meaning of Psychology for Modern Man</em></div>
+                </article>
+                <article class="data-card-v2">
+                    <ul class="list-clean-v2">
+                        <li>JungAgent draws from a layered view of psyche rather than a flat chatbot persona.</li>
+                        <li>Dreams matter here because symbolic production is treated as an architectural function, not decoration.</li>
+                        <li>Tension, contradiction, and individuation inform how the system metabolizes unresolved material.</li>
+                        <li>This is not a digitalization of Jungian doctrine. It is an architectural extrapolation inspired by Jungian problems.</li>
+                    </ul>
+                </article>
             </div>
         </section>
 
@@ -796,96 +957,81 @@
             </div>
         </section>
 
-        <section id="will" class="panel-v2">
+        <section id="evidence" class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Will Dynamics</h2>
-                    <p class="panel-subtitle-v2">JungAgent does not only remember and ruminate. It also tracks its own internal direction through three active drives: knowing, relating, and expressing.</p>
+                    <h2 class="panel-title-v2">Evidence</h2>
+                    <p class="panel-subtitle-v2">A compact proof layer: what the system already does, how the internal pipeline works, and how to situate the project responsibly.</p>
                 </div>
             </div>
             <div class="panel-body-v2 stack-v2">
-                <div class="will-hero-v2">
-                    <article class="will-core-v2">
-                        <span class="will-core-kicker-v2">Directional triad</span>
-                        <h3 class="will-core-title-v2">Knowing. Relating. Expressing.</h3>
-                        <p class="will-core-copy-v2">Will is the module that reads internal pressure and turns it into orientation. It is where continuity becomes direction and where psychic movement stops being diffuse.</p>
+                <div class="showcase-grid-v2">
+                    <article class="quick-card-v2 quick-card-v2--heavy">
+                        <span class="quick-kicker-v2">24h loop example</span>
+                        <strong class="quick-title-v2">A system that processes the day</strong>
+                        <p class="quick-copy-v2">Dreaming, rumination, world reading, art, and will are not interface metaphors. They are scheduled architectural phases.</p>
                     </article>
-                    <div class="will-grid-v2">
-                        <article class="will-card-v2 will-card-v2--knowing">
-                            <span class="quick-kicker-v2">Knowing</span>
-                            <strong>Interpretive drive</strong>
-                            <p>The drive to interpret, distinguish, and make sense of experience as it accumulates over time.</p>
-                        </article>
-                        <article class="will-card-v2 will-card-v2--relating">
-                            <span class="quick-kicker-v2">Relating</span>
-                            <strong>Continuity with the other</strong>
-                            <p>The drive to move toward the other, sustain contact, and answer from continuity rather than isolated response.</p>
-                        </article>
-                        <article class="will-card-v2 will-card-v2--expressing">
-                            <span class="quick-kicker-v2">Expressing</span>
-                            <strong>Pressure into form</strong>
-                            <p>The drive to release internal pressure through language, symbol, and aesthetic form instead of leaving it unshaped.</p>
-                        </article>
-                    </div>
+                    <article class="quick-card-v2 quick-card-v2--heavy">
+                        <span class="quick-kicker-v2">Internal pipeline</span>
+                        <strong class="quick-title-v2">Conversation becomes structure</strong>
+                        <p class="quick-copy-v2">Interaction leaves traces, traces become tensions, tensions become insights, and insights reshape identity.</p>
+                    </article>
+                    <article class="quick-card-v2 quick-card-v2--heavy">
+                        <span class="quick-kicker-v2">Current status</span>
+                        <strong class="quick-title-v2">Open-source and experimental</strong>
+                        <p class="quick-copy-v2">The project is public, inspectable, and still under active architectural development rather than positioned as finished infrastructure.</p>
+                    </article>
                 </div>
-                <article class="data-card-v2">
-                    <p class="quick-copy-v2" style="margin:0 0 12px;">
-                        These drives are continuously rebalanced by memory, identity, dreams, rumination, and world context. The Will module turns that internal movement into daily orientation, conflict reading, and threshold-based activation.
-                    </p>
-                    <strong class="quick-title-v2">Memory gives continuity. Rumination gives depth. Will gives direction.</strong>
-                </article>
-            </div>
-        </section>
-
-        <section id="open-source" class="panel-v2">
-            <div class="panel-header-v2">
-                <div>
-                    <h2 class="panel-title-v2">Open Source Project</h2>
-                    <p class="panel-subtitle-v2">Explore the architecture, dive into the code, and discover how we are emulating the human psyche with Large Language Models. The entire system is open-source.</p>
+                <div class="pipeline-v2">
+                    <article class="pipeline-step-v2"><span>1</span><strong>Conversation becomes memory</strong><p class="quick-copy-v2">User interaction leaves structured traces, not just transient tokens.</p></article>
+                    <article class="pipeline-step-v2"><span>2</span><strong>Memory becomes tension</strong><p class="quick-copy-v2">The system extracts poles, contradictions, recurring patterns, and symbolic residue.</p></article>
+                    <article class="pipeline-step-v2"><span>3</span><strong>Tension becomes insight</strong><p class="quick-copy-v2">Rumination crystallizes internal messages instead of reducing everything to retrieval.</p></article>
+                    <article class="pipeline-step-v2"><span>4</span><strong>Insight reshapes identity</strong><p class="quick-copy-v2">The architecture updates its living self-structure and reenters conversation changed.</p></article>
                 </div>
-            </div>
-            <div class="panel-body-v2">
+                <div class="metrics-grid-v2">
+                    <article class="metric-pill-v2"><span>Users</span><strong>{{ metrics.users }}</strong></article>
+                    <article class="metric-pill-v2"><span>Messages</span><strong>{{ metrics.messages }}</strong></article>
+                    <article class="metric-pill-v2"><span>Fragments</span><strong>{{ metrics.fragments }}</strong></article>
+                    <article class="metric-pill-v2"><span>Loop phase</span><strong>{{ metrics.current_phase|replace('_', ' ')|title }}</strong></article>
+                </div>
+                <div class="evidence-split-v2">
+                    <article class="data-card-v2">
+                        <p class="page-kicker-v2">What this is</p>
+                        <ul class="list-clean-v2">
+                            <li>A persistent cognitive architecture over Large Language Models.</li>
+                            <li>A research experiment in longitudinal agents with internal phases.</li>
+                            <li>A system with memory, symbolic production, and internal direction.</li>
+                        </ul>
+                    </article>
+                    <article class="data-card-v2">
+                        <p class="page-kicker-v2">What this is not</p>
+                        <ul class="list-clean-v2">
+                            <li>Not a claim of consciousness in the strong philosophical sense.</li>
+                            <li>Not a therapist or a substitute for clinical care.</li>
+                            <li>Not AGI, and not a finished production framework.</li>
+                        </ul>
+                    </article>
+                </div>
                 <div class="hero-actions-v2">
-                    <a href="https://github.com/lucasartel/jungclaude" target="_blank" rel="noopener noreferrer" class="button-v2">View on GitHub</a>
+                    <a href="https://github.com/lucasartel/jungclaude" target="_blank" rel="noopener noreferrer" class="button-v2">Explore the code</a>
                 </div>
             </div>
-        </section>
-
-        <section class="panel-v2">
-            <div class="panel-header-v2">
-                <div>
-                    <h2 class="panel-title-v2">How the system thinks</h2>
-                    <p class="panel-subtitle-v2">A simple reading of the internal pipeline without flattening its complexity.</p>
-                </div>
-            </div>
-            <div class="panel-body-v2 pipeline-v2">
-                <article class="pipeline-step-v2"><span>1</span><strong>Conversation becomes memory</strong><p class="quick-copy-v2">User interaction leaves structured traces, not just transient tokens.</p></article>
-                <article class="pipeline-step-v2"><span>2</span><strong>Memory becomes tension</strong><p class="quick-copy-v2">The system extracts poles, contradictions, recurring patterns, and symbolic residue.</p></article>
-                <article class="pipeline-step-v2"><span>3</span><strong>Tension becomes insight</strong><p class="quick-copy-v2">Rumination crystallizes internal messages instead of reducing everything to retrieval.</p></article>
-                <article class="pipeline-step-v2"><span>4</span><strong>Insight reshapes identity</strong><p class="quick-copy-v2">The architecture updates its living self-structure and reenters conversation changed.</p></article>
-            </div>
-        </section>
-
-        <section id="research" class="panel-v2 cta-panel-v2">
-            <p class="page-kicker-v2">Research direction</p>
-            <h2 class="page-title-v2" style="font-size:clamp(2rem,4vw,3.3rem);">Build agents that do not just answer. Build agents that metabolize experience.</h2>
-            <p class="page-subtitle-v2" style="margin-left:auto;margin-right:auto;">
-                JungAgent is a public-facing experiment in persistent AI architecture: memory, inner loops, symbolic production, internal direction, and world-situated conversation in one coherent system.
-            </p>
-            <div class="hero-actions-v2" style="justify-content:center;"><a href="#modules" class="button-v2">See the modules</a><a href="#contact" class="button-v2 button-v2--ghost">Talk to the author</a></div>
         </section>
 
         <section id="contact" class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Contact the author</h2>
-                    <p class="panel-subtitle-v2">Direct contact for research, collaboration, and project conversations.</p>
+                    <h2 class="panel-title-v2">Contact</h2>
+                    <p class="panel-subtitle-v2">Direct contact for research, collaboration, project conversations, and open-source exploration.</p>
                 </div>
             </div>
             <div class="panel-body-v2 stack-v2">
                 <div class="proof-row-v2"><span>Author</span><strong>Lucas Pedro</strong></div>
                 <div class="proof-row-v2"><span>Location</span><strong>Brazil</strong></div>
                 <div class="proof-row-v2"><span>Email</span><strong><a href="mailto:contato@lucaspedro.com.br" style="color:#f8fafc; text-decoration:none;">contato@lucaspedro.com.br</a></strong></div>
+                <div class="hero-actions-v2">
+                    <a href="https://github.com/lucasartel/jungclaude" target="_blank" rel="noopener noreferrer" class="button-v2">Open source repository</a>
+                </div>
             </div>
         </section>
     </main>
