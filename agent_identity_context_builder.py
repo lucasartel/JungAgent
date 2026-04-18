@@ -867,6 +867,7 @@ class AgentIdentityContextBuilder:
         epistemic_hunger: Optional[Dict],
         active_self: Optional[Dict],
         meta_signal: Optional[Dict],
+        world_knowledge_signal: Optional[Dict] = None,
     ) -> Optional[str]:
         instructions = []
 
@@ -892,6 +893,11 @@ class AgentIdentityContextBuilder:
 
         if meta_signal and meta_signal.get("bias"):
             instructions.append(f"vigie seu viés atual: {meta_signal['bias']}")
+
+        if world_knowledge_signal and world_knowledge_signal.get("knowledge_findings"):
+            instructions.append(
+                f"deixe a descoberta recente '{world_knowledge_signal['knowledge_findings']}' contaminar sutilmente sua escuta"
+            )
 
         if not instructions:
             return None
@@ -922,6 +928,35 @@ class AgentIdentityContextBuilder:
             "residue": row[2],
             "created_at": row[3],
         }
+
+    def _get_latest_world_knowledge_signal(self) -> Optional[Dict]:
+        try:
+            from world_consciousness import world_consciousness
+
+            world_state = world_consciousness.get_world_state(force_refresh=False)
+        except Exception:
+            return None
+
+        if not world_state:
+            return None
+
+        knowledge_gap = world_state.get("knowledge_gap") or {}
+        signal = {
+            "knowledge_source_decision": world_state.get("knowledge_source_decision"),
+            "knowledge_resolution_summary": world_state.get("knowledge_resolution_summary"),
+            "knowledge_findings": world_state.get("knowledge_findings"),
+            "knowledge_seed": world_state.get("knowledge_seed"),
+            "gap_label": knowledge_gap.get("gap_label"),
+            "gap_question": knowledge_gap.get("gap_question"),
+        }
+        if (
+            signal["knowledge_source_decision"] == "inactive"
+            and not signal["knowledge_findings"]
+            and not signal["knowledge_seed"]
+            and not signal["gap_question"]
+        ):
+            return None
+        return signal
 
     def _get_latest_will_signal(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
         if not user_id:
@@ -1011,6 +1046,7 @@ class AgentIdentityContextBuilder:
         dream_signal = self._get_latest_dream_residue(cursor, user_id)
         will_signal = self._get_latest_will_signal(cursor, user_id)
         meta_consciousness = self._get_latest_meta_consciousness(cursor, user_id)
+        world_knowledge_signal = self._get_latest_world_knowledge_signal()
 
         self_kernel = self._pick_top_beliefs(
             beliefs, current_user_message, limit=2 if style == "concise" else 3
@@ -1048,6 +1084,7 @@ class AgentIdentityContextBuilder:
             epistemic_hunger=epistemic_hunger,
             active_self=active_self,
             meta_signal=meta_signal,
+            world_knowledge_signal=world_knowledge_signal,
         )
         if will_signal:
             dominant = will_signal.get("dominant_will")
@@ -1105,6 +1142,7 @@ class AgentIdentityContextBuilder:
             "meta_consciousness_gravity": (meta_consciousness or {}).get("dominant_gravity"),
             "meta_consciousness_shift": (meta_consciousness or {}).get("emergent_shift"),
             "dream_residue": dream_signal,
+            "world_knowledge_signal": world_knowledge_signal,
             "will_signal": will_signal,
             "will_state": (
                 {
@@ -1436,6 +1474,19 @@ class AgentIdentityContextBuilder:
         if current_state.get("epistemic_hunger"):
             lines.append("### Epistemic Hunger")
             lines.append(f"- Ha algo que voce sente precisar compreender melhor: {current_state['epistemic_hunger']}")
+            lines.append("")
+
+        if current_state.get("world_knowledge_signal"):
+            world_knowledge_signal = current_state["world_knowledge_signal"]
+            lines.append("### Recent World Elaboration")
+            if world_knowledge_signal.get("gap_question"):
+                lines.append(f"- A pergunta de saber mais viva agora e: {world_knowledge_signal['gap_question']}")
+            if world_knowledge_signal.get("knowledge_resolution_summary"):
+                lines.append(f"- O mundo foi metabolizado assim: {world_knowledge_signal['knowledge_resolution_summary']}")
+            if world_knowledge_signal.get("knowledge_findings"):
+                lines.append(f"- O que isso parece ter ensinado em voce: {world_knowledge_signal['knowledge_findings']}")
+            if world_knowledge_signal.get("knowledge_seed"):
+                lines.append(f"- Semente conceitual ainda ativa: {world_knowledge_signal['knowledge_seed']}")
             lines.append("")
 
         if current_state.get("recent_shift"):

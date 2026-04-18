@@ -707,7 +707,7 @@ ESTADO QUALITATIVO:
 
     def _execute_saber_release(self, user_id: str, cycle_id: str) -> Dict[str, Any]:
         from will_engine import load_latest_will_state
-        from world_consciousness import world_consciousness
+        from world_consciousness import AREA_CONFIG, world_consciousness
 
         will_state = load_latest_will_state(self.db, user_id=user_id, cycle_id=cycle_id)
         world_state = world_consciousness.get_world_state(
@@ -716,6 +716,9 @@ ESTADO QUALITATIVO:
             epistemic_trigger="saber_release",
         )
         top_seed = (world_state.get("work_seeds") or world_state.get("hobby_seeds") or [])[:1]
+        knowledge_gap = world_state.get("knowledge_gap") or {}
+        target_area = knowledge_gap.get("target_area") or ((world_state.get("attention_profile") or {}).get("biased_area_order") or [None])[0]
+        area_label = AREA_CONFIG.get(target_area or "", {}).get("label") or "Area nao nomeada"
         knowledge_decision = world_state.get("knowledge_source_decision")
         if knowledge_decision == "latent_sufficient":
             decision_line = "A elaboracao do saber foi resolvida sobretudo por aprofundamento interno."
@@ -723,11 +726,7 @@ ESTADO QUALITATIVO:
             decision_line = "O saber apareceu mais como reintegracao do que ja vinha sendo metabolizado."
         else:
             decision_line = "A elaboracao do saber precisou de atualizacao externa do mundo."
-        admin_text = (
-            "Transbordo de saber.\n\n"
-            f"{(world_state.get('formatted_admin_summary') or '').strip()}\n\n"
-            f"Leitura de fundo: {decision_line}"
-        ).strip()
+        admin_text = f"Area de interesse neste transbordo: {area_label}."
         pending_delivery = self._build_admin_delivery(
             user_id=user_id,
             cycle_id=cycle_id,

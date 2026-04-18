@@ -421,6 +421,26 @@ class ConsciousnessLoopManager:
                 _ingest_material(identity_summary, 0.78, 0.64, 0.82)
             except Exception as exc:
                 logger.debug("LOOP RUMINATION intro sem estado identitario adicional: %s", exc)
+
+            try:
+                from world_consciousness import world_consciousness
+
+                world_state = world_consciousness.get_world_state(force_refresh=False)
+                knowledge_decision = world_state.get("knowledge_source_decision")
+                knowledge_gap = (world_state.get("knowledge_gap") or {}).get("gap_question")
+                knowledge_findings = world_state.get("knowledge_findings")
+                knowledge_seed = world_state.get("knowledge_seed")
+                if any([knowledge_gap, knowledge_findings, knowledge_seed]) and knowledge_decision != "inactive":
+                    epistemic_summary = (
+                        f"[ELABORACAO DE SABER DO CICLO {cycle_id}] "
+                        f"Lacuna cognitiva: {knowledge_gap or 'sem pergunta explicitada'}. "
+                        f"Resolucao atual: {world_state.get('knowledge_resolution_summary') or 'sem resolucao nomeada'}. "
+                        f"Descoberta principal: {knowledge_findings or 'sem descoberta resumida'}. "
+                        f"Semente conceitual: {knowledge_seed or 'sem semente conceitual ativa'}."
+                    )
+                    _ingest_material(epistemic_summary, 0.76, 0.51, 0.86)
+            except Exception as exc:
+                logger.debug("LOOP RUMINATION intro sem elaboracao de saber adicional: %s", exc)
         else:
             try:
                 from world_consciousness import world_consciousness
@@ -430,6 +450,9 @@ class ConsciousnessLoopManager:
                     f"[MATERIAL DE MUNDO DO CICLO {cycle_id}] "
                     f"Atmosfera: {world_state.get('atmosphere') or 'sem atmosfera definida'}. "
                     f"Tensoes: {', '.join(world_state.get('dominant_tensions', [])[:3]) or 'abertura e incerteza'}. "
+                    f"Leitura do saber: {world_state.get('knowledge_resolution_summary') or 'sem aprofundamento epistemico especial'}. "
+                    f"Descoberta: {world_state.get('knowledge_findings') or 'sem descoberta principal resumida'}. "
+                    f"Semente conceitual: {world_state.get('knowledge_seed') or 'sem semente conceitual ativa'}. "
                     f"Seeds de hobby: {'; '.join(world_state.get('hobby_seeds', [])[:2]) or 'sem seed simbolico forte'}."
                 )
                 _ingest_material(world_summary, 0.74, 0.52, 0.71)

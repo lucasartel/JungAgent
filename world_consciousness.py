@@ -1362,6 +1362,12 @@ Contexto:
 
         return {"work": work_seeds[:6], "hobby": hobby_seeds[:6]}
 
+    def _knowledge_seed_for_hobby(self, knowledge_seed: Optional[str]) -> str:
+        cleaned = self._truncate_text(knowledge_seed or "", 140).strip().rstrip(".")
+        if not cleaned:
+            return ""
+        return f"explorar imagens, simbolos ou atmosferas ligados a {cleaned.lower()}"
+
     def _flatten_headlines(self, signals: List[Dict]) -> List[str]:
         items = []
         seen = set()
@@ -1541,6 +1547,8 @@ Estado estruturado:
             f"Implicacao humana do tempo: {human_implication}",
             f"Vies atual das vontades: {snapshot.get('will_bias_summary', 'sem vies ativo')}",
             f"Elaboracao do saber: {snapshot.get('knowledge_resolution_summary', 'sem aprofundamento epistemico especial')}",
+            f"Descoberta recente do saber: {snapshot.get('knowledge_findings', 'sem descoberta sintetizada nesta janela')}",
+            f"Semente conceitual ativa: {snapshot.get('knowledge_seed', 'sem semente conceitual destacada')}",
             f"Continuidade Percebida: {snapshot.get('continuity_note', 'sem memoria acumulada do mundo nesta janela')}",
             "",
             "Leituras dominantes do momento:",
@@ -1577,6 +1585,8 @@ Estado estruturado:
             f"Confianca geral: {snapshot.get('confidence_overall', 0.0):.2f} ({snapshot.get('lucidity_level', 'media')})",
             f"Vies das vontades: {snapshot.get('will_bias_summary', 'sem vies ativo')}",
             f"Leitura do saber: {snapshot.get('knowledge_resolution_summary', 'sem aprofundamento epistemico especial')}",
+            f"Descoberta do saber: {snapshot.get('knowledge_findings', 'sem descoberta sintetizada nesta janela')}",
+            f"Semente conceitual: {snapshot.get('knowledge_seed', 'sem semente conceitual destacada')}",
             f"Continuidade: {snapshot.get('continuity_note', '')}",
             "",
             "Areas nucleares:",
@@ -1643,7 +1653,11 @@ Estado estruturado:
         continuity = self._build_continuity(history, area_panels)
         world_seeds = self._build_world_seeds(area_panels)
         if knowledge_probe.get("knowledge_seed"):
-            world_seeds["work"] = [knowledge_probe["knowledge_seed"], *world_seeds["work"]][:6]
+            knowledge_seed = knowledge_probe["knowledge_seed"]
+            world_seeds["work"] = [knowledge_seed, *world_seeds["work"]][:6]
+            hobby_seed = self._knowledge_seed_for_hobby(knowledge_seed)
+            if hobby_seed:
+                world_seeds["hobby"] = [hobby_seed, *world_seeds["hobby"]][:6]
         weather_text = self._fetch_weather("Sao_Paulo" if not locale else locale)
         headlines = self._flatten_headlines(signals)
         knowledge_decision = knowledge_probe.get("knowledge_source_decision") or "inactive"

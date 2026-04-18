@@ -129,6 +129,9 @@ class HobbyArtEngine:
                 "tensions": world_state.get("dominant_tensions", [])[:3],
                 "hobby_seeds": world_state.get("hobby_seeds", [])[:3],
                 "continuity_note": world_state.get("continuity_note"),
+                "knowledge_resolution_summary": world_state.get("knowledge_resolution_summary"),
+                "knowledge_findings": world_state.get("knowledge_findings"),
+                "knowledge_seed": world_state.get("knowledge_seed"),
             },
             "dream": {
                 "theme": (dream or {}).get("symbolic_theme"),
