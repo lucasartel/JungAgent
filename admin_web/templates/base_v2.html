@@ -24,19 +24,16 @@
 
             <nav class="admin-nav-v2" aria-label="Navegacao principal">
                 {% if is_org_admin %}
-                <a href="{{ dashboard_href }}" class="admin-nav-link-v2{% if path == '/admin/org/dashboard' %} is-active{% endif %}">
-                    Cockpit
-                </a>
                 <a href="{{ users_href }}" class="admin-nav-link-v2{% if path.startswith('/admin/org/users') %} is-active{% endif %}">
                     Usuarios
                 </a>
                 <a href="{{ dashboard_href }}" class="admin-nav-link-v2">
                     Instancia
                 </a>
-                {% else %}
-                <a href="{{ dashboard_href }}" class="admin-nav-link-v2{% if path in ['/admin', '/admin/master/dashboard'] %} is-active{% endif %}">
-                    Cockpit
+                <a href="{{ dashboard_href }}" class="admin-nav-link-v2{% if path == '/admin/org/dashboard' %} is-active{% endif %}">
+                    Legado
                 </a>
+                {% else %}
                 <a href="/admin/consciousness-loop/dashboard" class="admin-nav-link-v2{% if path.startswith('/admin/consciousness-loop') %} is-active{% endif %}">
                     Loop
                 </a>
@@ -58,25 +55,15 @@
                 <a href="/admin/work/dashboard" class="admin-nav-link-v2{% if path.startswith('/admin/work') %} is-active{% endif %}">
                     Work
                 </a>
-                <a href="/admin/memory-metrics" class="admin-nav-link-v2{% if path == '/admin/memory-metrics' %} is-active{% endif %}">
-                    Memoria
-                </a>
-                <a href="{{ operation_href }}" class="admin-nav-link-v2{% if path.startswith('/admin/users') or path.startswith('/admin/organizations') or path.startswith('/admin/admins') or path.startswith('/admin/sync-check') or path.startswith('/admin/unesco') or path.startswith('/admin/irt') %} is-active{% endif %}">
-                    Operacao
+                <a href="{{ dashboard_href }}" class="admin-nav-link-v2{% if path in ['/admin', '/admin/master/dashboard'] %} is-active{% endif %}">
+                    Legado
                 </a>
                 {% endif %}
             </nav>
 
             <div class="admin-topbar-meta-v2">
-                {% if is_master_admin and path != '/admin/master/dashboard' %}
-                <a href="/admin/master/dashboard" class="admin-meta-link-v2">Voltar ao cockpit</a>
-                {% elif is_org_admin and path != '/admin/org/dashboard' %}
-                <a href="/admin/org/dashboard" class="admin-meta-link-v2">Voltar ao cockpit</a>
-                {% endif %}
                 <a href="/admin/logout" class="admin-meta-link-v2">Sair</a>
-                {% block topbar_meta %}
-                <span class="admin-status-chip-v2">{% if is_org_admin %}Org admin{% else %}Instancia online{% endif %}</span>
-                {% endblock %}
+                {% block topbar_meta %}{% endblock %}
             </div>
         </div>
     </header>
