@@ -317,7 +317,7 @@ def format_time_delta(dt: datetime) -> str:
 # ============================================================
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para /start - com consentimento LGPD"""
+    """Handler para /start - entrada privada da instancia."""
 
     user = update.effective_user
     if not _is_admin_telegram_user(user):
@@ -326,6 +326,44 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Verificar se há parâmetro de organização (ex: /start org_37graus)
+    user_id = ensure_user_in_database(user)
+    stats = bot_state.db.get_user_stats(user_id) or {}
+    total_messages = stats.get('total_messages', 0)
+    first_interaction = stats.get('first_interaction')
+
+    if first_interaction:
+        try:
+            since = format_time_delta(datetime.fromisoformat(first_interaction))
+        except Exception:
+            since = "registro antigo"
+    else:
+        since = "agora"
+
+    welcome_message = (
+        f"*JungAgent | Instancia privada*\n\n"
+        f"Ola, {user.first_name}.\n\n"
+        "Esta e a sua instancia pessoal do JungAgent no Telegram. "
+        "Aqui eu acompanho o seu organismo em curso: conversas, loop, vontade, "
+        "sonhos, ruminacao e memoria.\n\n"
+        "*Estado rapido desta instancia:*\n"
+        f"- Conversas registradas: {total_messages}\n"
+        f"- Primeira interacao: {since}\n\n"
+        "*Atalhos uteis:*\n"
+        "- /meu_perfil para ler seu perfil atual\n"
+        "- /stats para um retrato tecnico da instancia\n"
+        "- /reset para reiniciar a memoria conversacional\n"
+        "- /job para abrir um trabalho no modulo Work\n\n"
+        "Pode falar comigo normalmente a partir daqui."
+    )
+
+    await update.message.reply_text(welcome_message, parse_mode='Markdown')
+    logger.info(
+        "Comando /start do admin em instancia privada: %s (ID: %s)",
+        user.first_name,
+        user_id[:8],
+    )
+    return
+
     org_slug = None
     if context.args and len(context.args) > 0:
         param = context.args[0]
