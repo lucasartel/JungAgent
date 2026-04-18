@@ -52,6 +52,19 @@ from identity_config import ADMIN_USER_ID as ACTIVE_CONSCIOUSNESS_ADMIN_USER_ID
 # ✅ IMPORTAR SISTEMA PROATIVO AVANÇADO
 from jung_proactive_advanced import ProactiveAdvancedSystem
 
+
+def _is_admin_telegram_user(telegram_user) -> bool:
+    """Retorna se o usuario do Telegram pertence ao admin desta instancia."""
+    return bool(telegram_user and telegram_user.id in ADMIN_IDS)
+
+
+async def _reply_instance_private(update: Update):
+    """Mensagem padrao para bloquear acesso de nao-admin ao bot desta instancia."""
+    if update.message:
+        await update.message.reply_text(
+            "Esta instancia do JungAgent e privada e atende apenas o admin configurado."
+        )
+
 # ============================================================
 # CONFIGURAÇÃO DE LOGGING
 # ============================================================
@@ -307,6 +320,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para /start - com consentimento LGPD"""
 
     user = update.effective_user
+    if not _is_admin_telegram_user(user):
+        logger.info("Acesso Telegram bloqueado para nao-admin em /start: telegram_id=%s", getattr(user, "id", None))
+        await _reply_instance_private(update)
+        return
 
     # Verificar se há parâmetro de organização (ex: /start org_37graus)
     org_slug = None
@@ -411,6 +428,10 @@ async def meu_perfil_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     import os
 
     user = update.effective_user
+    if not _is_admin_telegram_user(user):
+        logger.info("Acesso Telegram bloqueado para nao-admin em /meu_perfil: telegram_id=%s", getattr(user, "id", None))
+        await _reply_instance_private(update)
+        return
     user_id = ensure_user_in_database(user)
 
     profile_path = os.path.join(
@@ -445,6 +466,10 @@ async def minha_jornada_command(update: Update, context: ContextTypes.DEFAULT_TY
     """Handler para /minha_jornada - Mostra evolução do vínculo (Substitui /desenvolvimento e /stats para usuários comuns)"""
 
     user = update.effective_user
+    if not _is_admin_telegram_user(user):
+        logger.info("Acesso Telegram bloqueado para nao-admin em /minha_jornada: telegram_id=%s", getattr(user, "id", None))
+        await _reply_instance_private(update)
+        return
     user_id = ensure_user_in_database(user)
 
     await update.message.reply_text("🌱 *Analisando desenvolvimento do agente...*", parse_mode='Markdown')
@@ -571,6 +596,10 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para /stats - estatísticas completas (Admin Only)"""
 
     user = update.effective_user
+    if not _is_admin_telegram_user(user):
+        logger.info("Acesso Telegram bloqueado para nao-admin em /stats: telegram_id=%s", getattr(user, "id", None))
+        await _reply_instance_private(update)
+        return
     telegram_id = str(user.id)
     user_id = ensure_user_in_database(user)
 
@@ -646,6 +675,10 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para /reset - reinicia conversação (Admin-only)"""
 
     user = update.effective_user
+    if not _is_admin_telegram_user(user):
+        logger.info("Acesso Telegram bloqueado para nao-admin em /reset: telegram_id=%s", getattr(user, "id", None))
+        await _reply_instance_private(update)
+        return
     user_id = ensure_user_in_database(user)
 
     confirm_text = (
@@ -676,6 +709,10 @@ def _clear_work_job_state(context: ContextTypes.DEFAULT_TYPE):
 async def job_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para /job - cria um brief de trabalho para o modulo Work."""
     user = update.effective_user
+    if not _is_admin_telegram_user(user):
+        logger.info("Acesso Telegram bloqueado para nao-admin em /job: telegram_id=%s", getattr(user, "id", None))
+        await _reply_instance_private(update)
+        return
 
     if user.id not in ADMIN_IDS:
         await update.message.reply_text(
@@ -733,6 +770,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler principal de mensagens de texto"""
 
     user = update.effective_user
+    if not _is_admin_telegram_user(user):
+        logger.info(
+            "Mensagem Telegram bloqueada para nao-admin: telegram_id=%s username=%s",
+            getattr(user, "id", None),
+            getattr(user, "username", None),
+        )
+        await _reply_instance_private(update)
+        return
     telegram_id = user.id
     message_text = update.message.text
 
