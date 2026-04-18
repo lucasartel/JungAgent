@@ -1,20 +1,20 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ 'Editar' if organization else 'Nova' }} Organização - JungAgent Admin</title>
+    <title>{{ 'Edit' if organization else 'New' }} Organization - JungAgent Admin</title>
     <link rel="stylesheet" href="/static/admin.css">
 </head>
 <body>
     <div class="header">
         <div class="header-content">
             <div>
-                <h1>{{ '✏️ Editar' if organization else '➕ Nova' }} Organização</h1>
+                <h1>{{ 'Edit' if organization else 'New' }} Organization</h1>
             </div>
             <div class="header-info">
                 <div class="user-name">{{ admin.full_name or admin.email }}</div>
-                <span class="role-badge">👑 Master Admin</span>
+                <span class="role-badge">Master Admin</span>
             </div>
         </div>
     </div>
@@ -22,10 +22,10 @@
     <div class="nav">
         <div class="nav-content">
             <a href="/admin/master/dashboard">Dashboard</a>
-            <a href="/admin/organizations" class="active">Organizações</a>
-            <a href="/admin/admins">Administradores</a>
+            <a href="/admin/organizations" class="active">Organizations</a>
+            <a href="/admin/admins">Administrators</a>
             <form action="/admin/logout" method="POST" style="margin-left: auto;">
-                <button type="submit" class="logout-btn nav">Sair</button>
+                <button type="submit" class="logout-btn nav">Logout</button>
             </form>
         </div>
     </div>
@@ -34,9 +34,8 @@
         <div class="form-container">
             <form method="POST" action="{{ '/admin/organizations/' + organization.org_id + '/edit' if organization else '/admin/organizations/new' }}">
 
-                <!-- Nome da Organização -->
                 <div class="form-group">
-                    <label for="org_name">Nome da Organização *</label>
+                    <label for="org_name">Organization name *</label>
                     <input
                         type="text"
                         id="org_name"
@@ -44,13 +43,12 @@
                         value="{{ organization.org_name if organization else '' }}"
                         required
                         minlength="3"
-                        placeholder="Ex: Acme Corporation"
+                        placeholder="Example: Acme Corporation"
                     >
-                    <small>Nome completo da empresa (mínimo 3 caracteres)</small>
+                    <small>Full company name (minimum 3 characters)</small>
                 </div>
 
                 {% if organization %}
-                <!-- Slug (Read-only ao editar) -->
                 <div class="form-group">
                     <label for="org_slug">Slug (URL)</label>
                     <input
@@ -60,38 +58,35 @@
                         readonly
                         style="background: #f5f5f5; cursor: not-allowed;"
                     >
-                    <small>Gerado automaticamente a partir do nome</small>
+                    <small>Generated automatically from the name</small>
                 </div>
                 {% endif %}
 
-                <!-- Indústria -->
                 <div class="form-group">
-                    <label for="industry">Indústria</label>
+                    <label for="industry">Industry</label>
                     <select id="industry" name="industry">
-                        <option value="">Selecione...</option>
-                        <option value="Tecnologia" {{ 'selected' if organization and organization.industry == 'Tecnologia' else '' }}>Tecnologia</option>
-                        <option value="Saúde" {{ 'selected' if organization and organization.industry == 'Saúde' else '' }}>Saúde</option>
-                        <option value="Educação" {{ 'selected' if organization and organization.industry == 'Educação' else '' }}>Educação</option>
-                        <option value="Financeiro" {{ 'selected' if organization and organization.industry == 'Financeiro' else '' }}>Financeiro</option>
-                        <option value="Varejo" {{ 'selected' if organization and organization.industry == 'Varejo' else '' }}>Varejo</option>
-                        <option value="Consultoria" {{ 'selected' if organization and organization.industry == 'Consultoria' else '' }}>Consultoria</option>
-                        <option value="Outro" {{ 'selected' if organization and organization.industry == 'Outro' else '' }}>Outro</option>
+                        <option value="">Select...</option>
+                        <option value="Tecnologia" {{ 'selected' if organization and organization.industry == 'Tecnologia' else '' }}>Technology</option>
+                        <option value="Saúde" {{ 'selected' if organization and organization.industry == 'Saúde' else '' }}>Health</option>
+                        <option value="Educação" {{ 'selected' if organization and organization.industry == 'Educação' else '' }}>Education</option>
+                        <option value="Financeiro" {{ 'selected' if organization and organization.industry == 'Financeiro' else '' }}>Finance</option>
+                        <option value="Varejo" {{ 'selected' if organization and organization.industry == 'Varejo' else '' }}>Retail</option>
+                        <option value="Consultoria" {{ 'selected' if organization and organization.industry == 'Consultoria' else '' }}>Consulting</option>
+                        <option value="Outro" {{ 'selected' if organization and organization.industry == 'Outro' else '' }}>Other</option>
                     </select>
                 </div>
 
-                <!-- Tamanho -->
                 <div class="form-group">
-                    <label for="size">Tamanho da Empresa</label>
+                    <label for="size">Company size</label>
                     <select id="size" name="size">
-                        <option value="small" {{ 'selected' if organization and organization.size == 'small' else '' }}>Pequena (1-50 funcionários)</option>
-                        <option value="medium" {{ 'selected' if not organization or organization.size == 'medium' else '' }}>Média (51-500 funcionários)</option>
-                        <option value="large" {{ 'selected' if organization and organization.size == 'large' else '' }}>Grande (500+ funcionários)</option>
+                        <option value="small" {{ 'selected' if organization and organization.size == 'small' else '' }}>Small (1-50 employees)</option>
+                        <option value="medium" {{ 'selected' if not organization or organization.size == 'medium' else '' }}>Medium (51-500 employees)</option>
+                        <option value="large" {{ 'selected' if organization and organization.size == 'large' else '' }}>Large (500+ employees)</option>
                     </select>
                 </div>
 
-                <!-- Plano de Assinatura -->
                 <div class="form-group">
-                    <label for="subscription_tier">Plano de Assinatura *</label>
+                    <label for="subscription_tier">Subscription plan *</label>
                     <select id="subscription_tier" name="subscription_tier" required>
                         <option value="basic" {{ 'selected' if not organization or organization.subscription_tier == 'basic' else '' }}>Basic</option>
                         <option value="pro" {{ 'selected' if organization and organization.subscription_tier == 'pro' else '' }}>Pro</option>
@@ -100,44 +95,40 @@
                 </div>
 
                 {% if organization %}
-                <!-- Status (apenas ao editar) -->
                 <div class="form-group">
-                    <label for="subscription_status">Status da Assinatura</label>
+                    <label for="subscription_status">Subscription status</label>
                     <select id="subscription_status" name="subscription_status">
-                        <option value="active" {{ 'selected' if organization.subscription_status == 'active' else '' }}>Ativo</option>
+                        <option value="active" {{ 'selected' if organization.subscription_status == 'active' else '' }}>Active</option>
                         <option value="trial" {{ 'selected' if organization.subscription_status == 'trial' else '' }}>Trial</option>
-                        <option value="suspended" {{ 'selected' if organization.subscription_status == 'suspended' else '' }}>Suspenso</option>
+                        <option value="suspended" {{ 'selected' if organization.subscription_status == 'suspended' else '' }}>Suspended</option>
                     </select>
                 </div>
                 {% endif %}
 
-                <!-- Email de Contato -->
                 <div class="form-group">
-                    <label for="contact_email">Email de Contato</label>
+                    <label for="contact_email">Contact email</label>
                     <input
                         type="email"
                         id="contact_email"
                         name="contact_email"
                         value="{{ organization.contact_email if organization else '' }}"
-                        placeholder="contato@empresa.com"
+                        placeholder="contact@company.com"
                     >
-                    <small>Email principal para comunicações</small>
+                    <small>Main email for communications</small>
                 </div>
 
                 {% if organization %}
-                <!-- Informações adicionais (read-only) -->
                 <div class="info-box">
-                    <h4>Informações Adicionais</h4>
+                    <h4>Additional information</h4>
                     <p><strong>ID:</strong> <code>{{ organization.org_id }}</code></p>
-                    <p><strong>Criada em:</strong> {{ organization.created_at[:10] if organization.created_at else '—' }}</p>
+                    <p><strong>Created at:</strong> {{ organization.created_at[:10] if organization.created_at else '-' }}</p>
                 </div>
                 {% endif %}
 
-                <!-- Botões -->
                 <div class="form-actions">
-                    <a href="/admin/organizations" class="btn btn-secondary">Cancelar</a>
+                    <a href="/admin/organizations" class="btn btn-secondary">Cancel</a>
                     <button type="submit" class="btn btn-primary">
-                        {{ 'Salvar Alterações' if organization else 'Criar Organização' }}
+                        {{ 'Save changes' if organization else 'Create organization' }}
                     </button>
                 </div>
             </form>

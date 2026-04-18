@@ -6,9 +6,9 @@
 <section class="page-shell-v2">
     <header class="page-header-v2">
         <div>
-            <p class="page-kicker-v2">Loop · Direção interna</p>
-            <h1 class="page-title-v2">Módulo Will</h1>
-            <p class="page-subtitle-v2">Leitura diária das três vontades do agente e arquivo histórico do antigo Scholar.</p>
+            <p class="page-kicker-v2">Loop · Internal direction</p>
+            <h1 class="page-title-v2">Will Module</h1>
+            <p class="page-subtitle-v2">Daily reading of the agent's three wills and historical archive of the former Scholar.</p>
         </div>
     </header>
 
@@ -21,19 +21,19 @@
             <p class="metric-note-v2">Leituras persistidas do estado das vontades.</p>
         </article>
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Gerados</span>
+            <span class="metric-label-v2">Generated</span>
             <strong class="metric-value-v2">{{ will_stats.generated_states }}</strong>
-            <p class="metric-note-v2">Formulações consolidadas pelo módulo Will.</p>
+            <p class="metric-note-v2">Formulations consolidated by the Will module.</p>
         </article>
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Preliminares</span>
+            <span class="metric-label-v2">Preliminary</span>
             <strong class="metric-value-v2">{{ will_stats.preliminary_states }}</strong>
-            <p class="metric-note-v2">Leituras abertas ainda na fase identity.</p>
+            <p class="metric-note-v2">Open readings still in the identity phase.</p>
         </article>
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Ciclos lidos</span>
+            <span class="metric-label-v2">Read cycles</span>
             <strong class="metric-value-v2">{{ will_stats.distinct_cycles }}</strong>
-            <p class="metric-note-v2">Quantos ciclos já tiveram direção de vontade registrada.</p>
+            <p class="metric-note-v2">How many cycles already have a recorded direction of will.</p>
         </article>
     </section>
 
@@ -41,24 +41,24 @@
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Texto diário vigente</h2>
-                <p class="panel-subtitle-v2">Síntese do estado atual das três vontades no ciclo {{ latest_will.cycle_id }}.</p>
+                <h2 class="panel-title-v2">Current daily text</h2>
+                <p class="panel-subtitle-v2">Synthesis of the current state of the three wills in cycle {{ latest_will.cycle_id }}.</p>
             </div>
             <span class="table-badge-v2">{{ latest_will.status|upper }}</span>
         </div>
         <div class="panel-body-v2 stack-v2">
             <article class="data-card-v2">
                 <div class="tag-list-v2">
-                    <span class="tag-v2">Dominante: {{ latest_will.dominant_will or '-' }}</span>
-                    <span class="tag-v2">Secundária: {{ latest_will.secondary_will or '-' }}</span>
-                    <span class="tag-v2">Constrita: {{ latest_will.constrained_will or '-' }}</span>
+                    <span class="tag-v2">Dominant: {{ latest_will.dominant_will or '-' }}</span>
+                    <span class="tag-v2">Secondary: {{ latest_will.secondary_will or '-' }}</span>
+                    <span class="tag-v2">Constrained: {{ latest_will.constrained_will or '-' }}</span>
                 </div>
-                <div class="mono-block-v2">{{ latest_will.daily_text or 'Sem texto diário.' }}</div>
+                <div class="mono-block-v2">{{ latest_will.daily_text or 'No daily text.' }}</div>
                 {% if latest_will.will_conflict %}
-                <div class="mono-block-v2">Conflito atual: {{ latest_will.will_conflict }}</div>
+                <div class="mono-block-v2">Current conflict: {{ latest_will.will_conflict }}</div>
                 {% endif %}
                 {% if latest_will.attention_bias_note %}
-                <div class="mono-block-v2">Impacto no organismo: {{ latest_will.attention_bias_note }}</div>
+                <div class="mono-block-v2">Impact on the organism: {{ latest_will.attention_bias_note }}</div>
                 {% endif %}
                 <div class="meta-line-v2">
                     <span>Saber: {{ '%.2f'|format(latest_will.saber_score or 0) }}</span>
@@ -82,8 +82,8 @@
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Pressão psíquica atual</h2>
-                <p class="panel-subtitle-v2">Camada energético-operacional que agora governa pulsos, catarse e proatividade endógena.</p>
+                <h2 class="panel-title-v2">Current psychic pressure</h2>
+                <p class="panel-subtitle-v2">Energetic-operational layer that now governs pulses, catharsis, and endogenous proactivity.</p>
             </div>
             <span class="table-badge-v2">{{ latest_pressure.dominant_pressure or 'equilibrio' }}</span>
         </div>
@@ -92,38 +92,38 @@
                 <article class="metric-card-v2">
                     <span class="metric-label-v2">Saber</span>
                     <strong class="metric-value-v2">{{ '%.0f'|format(latest_pressure.saber_pressure or 0) }}</strong>
-                    <p class="metric-note-v2">Pressão de compreender, nomear e distinguir.</p>
+                    <p class="metric-note-v2">Pressure to understand, name, and distinguish.</p>
                 </article>
                 <article class="metric-card-v2">
-                    <span class="metric-label-v2">Relacionar</span>
+                    <span class="metric-label-v2">Relating</span>
                     <strong class="metric-value-v2">{{ '%.0f'|format(latest_pressure.relacionar_pressure or 0) }}</strong>
-                    <p class="metric-note-v2">Pressão de vínculo, aproximação e resposta ao outro.</p>
+                    <p class="metric-note-v2">Pressure for bond, approach, and response to the other.</p>
                 </article>
                 <article class="metric-card-v2">
-                    <span class="metric-label-v2">Expressar</span>
+                    <span class="metric-label-v2">Expressing</span>
                     <strong class="metric-value-v2">{{ '%.0f'|format(latest_pressure.expressar_pressure or 0) }}</strong>
-                    <p class="metric-note-v2">Pressão de forma, símbolo e catarse estética.</p>
+                    <p class="metric-note-v2">Pressure for form, symbol, and aesthetic catharsis.</p>
                 </article>
                 <article class="metric-card-v2">
-                    <span class="metric-label-v2">Próximo pulso</span>
+                    <span class="metric-label-v2">Next pulse</span>
                     <strong class="metric-value-v2">{{ pressure_stats.next_pulse_at or '-' }}</strong>
-                    <p class="metric-note-v2">Limiar atual: {{ pressure_stats.threshold }} · última atualização {{ latest_pressure.updated_at }}.</p>
+                    <p class="metric-note-v2">Current threshold: {{ pressure_stats.threshold }} · last update {{ latest_pressure.updated_at }}.</p>
                 </article>
             </section>
             <article class="data-card-v2">
                 <div class="tag-list-v2">
-                    <span class="tag-v2">Dominante por pressão: {{ latest_pressure.dominant_pressure or '-' }}</span>
-                    <span class="tag-v2">Threshold crossed: {{ 'sim' if latest_pressure.threshold_crossed else 'não' }}</span>
-                    <span class="tag-v2">Última catarse: {{ latest_pressure.last_release_will or '-' }}</span>
+                    <span class="tag-v2">Dominant by pressure: {{ latest_pressure.dominant_pressure or '-' }}</span>
+                    <span class="tag-v2">Threshold crossed: {{ 'yes' if latest_pressure.threshold_crossed else 'no' }}</span>
+                    <span class="tag-v2">Last catharsis: {{ latest_pressure.last_release_will or '-' }}</span>
                     <span class="tag-v2">Status: {{ latest_pressure.last_action_status or '-' }}</span>
                 </div>
                 {% if latest_pressure.last_action_summary %}
                 <div class="mono-block-v2">{{ latest_pressure.last_action_summary }}</div>
                 {% endif %}
                 <div class="meta-line-v2">
-                    <span>Refratário saber até: {{ latest_pressure.refractory_until_saber or '-' }}</span>
-                    · <span>relacionar até: {{ latest_pressure.refractory_until_relacionar or '-' }}</span>
-                    · <span>expressar até: {{ latest_pressure.refractory_until_expressar or '-' }}</span>
+                    <span>Refractory saber until: {{ latest_pressure.refractory_until_saber or '-' }}</span>
+                    · <span>relacionar until: {{ latest_pressure.refractory_until_relacionar or '-' }}</span>
+                    · <span>expressar until: {{ latest_pressure.refractory_until_expressar or '-' }}</span>
                 </div>
             </article>
         </div>
@@ -133,8 +133,8 @@
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Histórico recente do Will</h2>
-                <p class="panel-subtitle-v2">Como a direção interna foi se consolidando entre identity e o fechamento diário.</p>
+                <h2 class="panel-title-v2">Recent Will history</h2>
+                <p class="panel-subtitle-v2">How internal direction consolidated between identity and the daily closing.</p>
             </div>
         </div>
         <div class="panel-body-v2 stack-v2">
@@ -142,22 +142,22 @@
             <article class="data-card-v2">
                 <div class="table-controls-v2">
                     <div>
-                        <strong>Ciclo {{ state.cycle_id }} · {{ state.phase|upper }}</strong>
+                        <strong>Cycle {{ state.cycle_id }} · {{ state.phase|upper }}</strong>
                         <div class="meta-line-v2">{{ state.trigger_source }} · {{ state.created_at }}</div>
                     </div>
                     <span class="table-badge-v2">{{ state.status|upper }}</span>
                 </div>
                 <div class="tag-list-v2">
-                    <span class="tag-v2">Dominante: {{ state.dominant_will or '-' }}</span>
-                    <span class="tag-v2">Secundária: {{ state.secondary_will or '-' }}</span>
-                    <span class="tag-v2">Constrita: {{ state.constrained_will or '-' }}</span>
+                    <span class="tag-v2">Dominant: {{ state.dominant_will or '-' }}</span>
+                    <span class="tag-v2">Secondary: {{ state.secondary_will or '-' }}</span>
+                    <span class="tag-v2">Constrained: {{ state.constrained_will or '-' }}</span>
                 </div>
                 {% if state.will_conflict %}
                 <div class="mono-block-v2">{{ state.will_conflict }}</div>
                 {% endif %}
-                <div class="mono-block-v2">{{ state.daily_text or 'Sem texto diário.' }}</div>
+                <div class="mono-block-v2">{{ state.daily_text or 'No daily text.' }}</div>
                 {% if state.attention_bias_note %}
-                <div class="mono-block-v2">Impacto: {{ state.attention_bias_note }}</div>
+                <div class="mono-block-v2">Impact: {{ state.attention_bias_note }}</div>
                 {% endif %}
                 <div class="meta-line-v2">
                     <span>Saber: {{ '%.2f'|format(state.saber_score or 0) }}</span>
@@ -167,9 +167,9 @@
             </article>
             {% else %}
             <div class="empty-state-v2">
-                <div class="empty-state-icon-v2">Sem leituras</div>
-                <p class="empty-state-title-v2">O módulo Will ainda não produziu snapshots persistidos.</p>
-                <p class="empty-state-copy-v2">Quando o fechamento diário acontecer, o texto das vontades aparecerá aqui.</p>
+                <div class="empty-state-icon-v2">No readings</div>
+                <p class="empty-state-title-v2">The Will module has not produced persisted snapshots yet.</p>
+                <p class="empty-state-copy-v2">When the daily closing happens, the will text will appear here.</p>
             </div>
             {% endfor %}
         </div>
@@ -178,31 +178,31 @@
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Histórico dos pulsos</h2>
-                <p class="panel-subtitle-v2">Eventos do novo sistema de pressão psíquica, incluindo disparos, bloqueios refratários e falhas.</p>
+                <h2 class="panel-title-v2">Pulse history</h2>
+                <p class="panel-subtitle-v2">Events from the new psychic pressure system, including triggers, refractory blocks, and failures.</p>
             </div>
         </div>
         <div class="panel-body-v2 stack-v2">
             <section class="metric-grid-v2 metric-grid-v2--quad">
                 <article class="metric-card-v2">
-                    <span class="metric-label-v2">Pulsos</span>
+                    <span class="metric-label-v2">Pulses</span>
                     <strong class="metric-value-v2">{{ pressure_stats.total_pulse_events }}</strong>
-                    <p class="metric-note-v2">Medições registradas pelo pulso.</p>
+                    <p class="metric-note-v2">Measurements recorded by the pulse.</p>
                 </article>
                 <article class="metric-card-v2">
-                    <span class="metric-label-v2">Ações concluídas</span>
+                    <span class="metric-label-v2">Completed actions</span>
                     <strong class="metric-value-v2">{{ pressure_stats.completed_actions }}</strong>
-                    <p class="metric-note-v2">Catarse bem-sucedida após cruzar o limiar.</p>
+                    <p class="metric-note-v2">Successful catharsis after crossing the threshold.</p>
                 </article>
                 <article class="metric-card-v2">
-                    <span class="metric-label-v2">Falhas</span>
+                    <span class="metric-label-v2">Failures</span>
                     <strong class="metric-value-v2">{{ pressure_stats.failed_actions }}</strong>
-                    <p class="metric-note-v2">Ações que reduziram pressão parcialmente e viraram frustração.</p>
+                    <p class="metric-note-v2">Actions that partially reduced pressure and became frustration.</p>
                 </article>
                 <article class="metric-card-v2">
-                    <span class="metric-label-v2">Bloqueios</span>
+                    <span class="metric-label-v2">Blocks</span>
                     <strong class="metric-value-v2">{{ pressure_stats.refractory_blocks }}</strong>
-                    <p class="metric-note-v2">Pulso bloqueado por refratariedade ativa.</p>
+                    <p class="metric-note-v2">Pulse blocked by active refractoriness.</p>
                 </article>
             </section>
             {% for event in pulse_events %}
@@ -216,9 +216,9 @@
                 </div>
                 <div class="tag-list-v2">
                     <span class="tag-v2">Saber: {{ '%.0f'|format(event.saber_pressure or 0) }}</span>
-                    <span class="tag-v2">Relacionar: {{ '%.0f'|format(event.relacionar_pressure or 0) }}</span>
-                    <span class="tag-v2">Expressar: {{ '%.0f'|format(event.expressar_pressure or 0) }}</span>
-                    <span class="tag-v2">Ação: {{ event.action_attempted or '-' }}</span>
+                    <span class="tag-v2">Relating: {{ '%.0f'|format(event.relacionar_pressure or 0) }}</span>
+                    <span class="tag-v2">Expressing: {{ '%.0f'|format(event.expressar_pressure or 0) }}</span>
+                    <span class="tag-v2">Action: {{ event.action_attempted or '-' }}</span>
                 </div>
                 {% if event.decision_reason %}
                 <div class="mono-block-v2">{{ event.decision_reason }}</div>
@@ -229,9 +229,9 @@
             </article>
             {% else %}
             <div class="empty-state-v2">
-                <div class="empty-state-icon-v2">Sem pulsos</div>
-                <p class="empty-state-title-v2">O sistema de pressão psíquica ainda não registrou eventos.</p>
-                <p class="empty-state-copy-v2">Quando o pulso começar a rodar, os eventos aparecerão aqui.</p>
+                <div class="empty-state-icon-v2">No pulses</div>
+                <p class="empty-state-title-v2">The psychic pressure system has not recorded events yet.</p>
+                <p class="empty-state-copy-v2">When the pulse starts running, events will appear here.</p>
             </div>
             {% endfor %}
         </div>
@@ -241,8 +241,8 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Arquivo do Scholar</h2>
-                    <p class="panel-subtitle-v2">Ensaios e artigos antigos preservados como memória histórica.</p>
+                <h2 class="panel-title-v2">Scholar archive</h2>
+                    <p class="panel-subtitle-v2">Old essays and articles preserved as historical memory.</p>
                 </div>
             </div>
             <div class="panel-body-v2 stack-v2">
@@ -256,7 +256,7 @@
                     <div class="mono-block-v2">{{ research.synthesized_insight }}</div>
                 </article>
                 {% else %}
-                <div class="empty-row-v2">Nenhum ensaio histórico registrado.</div>
+                <div class="empty-row-v2">No historical essay recorded.</div>
                 {% endfor %}
             </div>
         </section>
@@ -264,19 +264,19 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Runs arquivados</h2>
-                    <p class="panel-subtitle-v2">Rastro operacional do antigo Scholar, mantido apenas como arquivo.</p>
+                    <h2 class="panel-title-v2">Archived runs</h2>
+                    <p class="panel-subtitle-v2">Operational trail of the former Scholar, kept only as an archive.</p>
                 </div>
             </div>
             <div class="panel-body-v2 stack-v2">
                 <article class="metric-card-v2">
                     <span class="metric-label-v2">Total</span>
                     <strong class="metric-value-v2">{{ archive_stats.total_runs }}</strong>
-                    <p class="metric-note-v2">Runs históricos do módulo descontinuado.</p>
+                    <p class="metric-note-v2">Historical runs from the discontinued module.</p>
                 </article>
                 {% for run in scholar_archive_runs %}
                 <article class="data-card-v2">
-                    <strong>#{{ run.id }} · {{ run.topic or 'sem tópico' }}</strong>
+                    <strong>#{{ run.id }} · {{ run.topic or 'no topic' }}</strong>
                     <div class="meta-line-v2">{{ run.started_at }} · {{ run.status|upper }}</div>
                     {% if run.result_summary %}
                     <div class="mono-block-v2">{{ run.result_summary }}</div>
@@ -286,7 +286,7 @@
                     {% endif %}
                 </article>
                 {% else %}
-                <div class="empty-row-v2">Sem runs arquivados.</div>
+                <div class="empty-row-v2">No archived runs.</div>
                 {% endfor %}
             </div>
         </section>

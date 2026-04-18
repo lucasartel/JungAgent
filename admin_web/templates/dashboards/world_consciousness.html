@@ -1,17 +1,17 @@
 {% extends "base_v2.html" %}
 
-{% block title %}Lucidez do Mundo - JungAgent Admin{% endblock %}
+{% block title %}World Lucidity - JungAgent Admin{% endblock %}
 
 {% block content %}
 <section class="page-shell-v2">
     <header class="page-header-v2">
         <div>
-            <p class="page-kicker-v2">Loop · Lucidez externa</p>
-            <h1 class="page-title-v2">Consciencia do Mundo</h1>
-            <p class="page-subtitle-v2">Estado atual do zeitgeist, areas dominantes e historico recente de leitura do mundo.</p>
+            <p class="page-kicker-v2">Loop · External lucidity</p>
+            <h1 class="page-title-v2">World Consciousness</h1>
+            <p class="page-subtitle-v2">Current state of the zeitgeist, dominant areas, and recent history of world readings.</p>
         </div>
         <div class="page-actions-v2">
-            <button class="button-v2" onclick="refreshWorld()">Atualizar leitura</button>
+            <button class="button-v2" onclick="refreshWorld()">Refresh reading</button>
         </div>
     </header>
 
@@ -23,8 +23,8 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Tensoes e implicacao humana</h2>
-                    <p class="panel-subtitle-v2">O que o modulo percebe como pano de fundo do presente.</p>
+                    <h2 class="panel-title-v2">Tensions and human implication</h2>
+                    <p class="panel-subtitle-v2">What the module perceives as the background of the present.</p>
                 </div>
             </div>
             <div class="panel-body-v2 stack-v2">
@@ -37,8 +37,8 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Areas carregadas</h2>
-                    <p class="panel-subtitle-v2">Leitura resumida por area com sinais, consenso e divergencia.</p>
+                    <h2 class="panel-title-v2">Charged areas</h2>
+                    <p class="panel-subtitle-v2">Area-level summary with signals, consensus, and divergence.</p>
                 </div>
             </div>
             <div class="panel-body-v2">
@@ -51,8 +51,8 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Discernimento do saber</h2>
-                    <p class="panel-subtitle-v2">Quando a vontade de saber se ativa, o mundo decide entre elaboracao interna, atualizacao externa ou reintegracao.</p>
+                    <h2 class="panel-title-v2">Knowledge discernment</h2>
+                    <p class="panel-subtitle-v2">When the will to know activates, the world chooses between internal elaboration, external updating, or reintegration.</p>
                 </div>
             </div>
             <div class="panel-body-v2 stack-v2" id="knowledgePanel"></div>
@@ -62,8 +62,8 @@
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Historico recente</h2>
-                <p class="panel-subtitle-v2">Ultimos snapshots para leitura de continuidade.</p>
+                <h2 class="panel-title-v2">Recent history</h2>
+                <p class="panel-subtitle-v2">Latest snapshots for reading continuity.</p>
             </div>
         </div>
         <div class="panel-body-v2">
@@ -86,16 +86,16 @@ function escapeHtml(value) {
 
 function renderState(state) {
     const cards = [
-        ["Lucidez", state.lucidity_level || "-"],
-        ["Confianca geral", state.confidence_overall ?? "-"],
+        ["Lucidity", state.lucidity_level || "-"],
+        ["Overall confidence", state.confidence_overall ?? "-"],
         ["Atmosfera", state.atmosphere || "-"],
-        ["Vies de atencao", state.will_bias_summary || "-"],
-        ["Elaboracao do saber", state.knowledge_resolution_summary || "-"],
-        ["Continuidade", state.continuity?.summary || state.continuity_note || "-"],
-        ["Tempo local", state.generated_at_local || state.generated_at || "-"],
-        ["Areas em consenso", (state.consensus_map ? Object.keys(state.consensus_map).length : 0)],
-        ["Areas em disputa", (state.divergence_map ? Object.keys(state.divergence_map).length : 0)],
-        ["Areas stale", (state.stale_areas || []).length]
+        ["Attention bias", state.will_bias_summary || "-"],
+        ["Knowledge elaboration", state.knowledge_resolution_summary || "-"],
+        ["Continuity", state.continuity?.summary || state.continuity_note || "-"],
+        ["Local time", state.generated_at_local || state.generated_at || "-"],
+        ["Consensus areas", (state.consensus_map ? Object.keys(state.consensus_map).length : 0)],
+        ["Divergence areas", (state.divergence_map ? Object.keys(state.divergence_map).length : 0)],
+        ["Stale areas", (state.stale_areas || []).length]
     ];
 
     document.getElementById("worldStateGrid").innerHTML = cards.map(([label, value]) => `
@@ -109,48 +109,48 @@ function renderState(state) {
 function renderNarrative(state) {
     document.getElementById("worldNarrative").innerHTML = `
         <article class="data-card-v2">
-            <strong>Implicacao humana do tempo</strong>
-            <div class="mono-block-v2">${escapeHtml(state.human_implication || state.implicacao_humana || state.formatted_admin_summary || state.formatted_prompt_summary || "Sem sintese disponivel.")}</div>
-            ${state.will_bias_summary ? `<div class="mono-block-v2">Vies do ciclo: ${escapeHtml(state.will_bias_summary)}</div>` : ""}
+            <strong>Human implication of the moment</strong>
+            <div class="mono-block-v2">${escapeHtml(state.human_implication || state.implicacao_humana || state.formatted_admin_summary || state.formatted_prompt_summary || "No synthesis available.")}</div>
+            ${state.will_bias_summary ? `<div class="mono-block-v2">Cycle bias: ${escapeHtml(state.will_bias_summary)}</div>` : ""}
         </article>
     `;
 
     document.getElementById("worldTensions").innerHTML = (state.dominant_tensions || []).length
         ? (state.dominant_tensions || []).map((item) => `<span class="tag-v2">${escapeHtml(item)}</span>`).join("")
-        : '<span class="tag-v2">Sem tensoes registradas</span>';
+        : '<span class="tag-v2">No recorded tensions</span>';
 
     const seeds = [
-        ...(state.work_seeds || []).slice(0, 3).map((item) => `Acao: ${item}`),
+        ...(state.work_seeds || []).slice(0, 3).map((item) => `Action: ${item}`),
         ...(state.hobby_seeds || []).slice(0, 3).map((item) => `Arte: ${item}`)
     ];
     document.getElementById("worldSeeds").innerHTML = seeds.length
         ? seeds.map((item) => `<span class="tag-v2">${escapeHtml(item)}</span>`).join("")
-        : '<span class="tag-v2">Sem seeds ativas</span>';
+        : '<span class="tag-v2">No active seeds</span>';
 }
 
 function renderKnowledge(state) {
     const gap = state.knowledge_gap || {};
     const dynamicQueries = state.dynamic_queries || [];
     const decisionMap = {
-        latent_sufficient: "elaboracao interna",
-        web_required: "atualizacao externa",
-        already_integrated: "integracao do ja sabido",
-        inactive: "sem aprofundamento especial"
+        latent_sufficient: "internal elaboration",
+        web_required: "external update",
+        already_integrated: "integration of what is already known",
+        inactive: "no special deepening"
     };
 
     document.getElementById("knowledgePanel").innerHTML = `
         <article class="data-card-v2">
-            <strong>Estado do saber neste ciclo</strong>
-            <div class="meta-line-v2">${escapeHtml(decisionMap[state.knowledge_source_decision] || state.knowledge_source_decision || "sem leitura")}</div>
-            <div class="mono-block-v2">${escapeHtml(state.knowledge_resolution_summary || "Sem aprofundamento epistemico especial nesta janela.")}</div>
-            ${gap.gap_question ? `<div class="mono-block-v2">Lacuna viva: ${escapeHtml(gap.gap_question)}</div>` : ""}
-            ${state.latent_probe_summary ? `<div class="mono-block-v2">Sondagem interna: ${escapeHtml(state.latent_probe_summary)}</div>` : ""}
-            ${state.knowledge_findings ? `<div class="mono-block-v2">Achado principal: ${escapeHtml(state.knowledge_findings)}</div>` : ""}
-            ${state.knowledge_seed ? `<div class="mono-block-v2">Seed conceitual: ${escapeHtml(state.knowledge_seed)}</div>` : ""}
+            <strong>Knowledge state in this cycle</strong>
+            <div class="meta-line-v2">${escapeHtml(decisionMap[state.knowledge_source_decision] || state.knowledge_source_decision || "no reading")}</div>
+            <div class="mono-block-v2">${escapeHtml(state.knowledge_resolution_summary || "No special epistemic deepening in this window.")}</div>
+            ${gap.gap_question ? `<div class="mono-block-v2">Living gap: ${escapeHtml(gap.gap_question)}</div>` : ""}
+            ${state.latent_probe_summary ? `<div class="mono-block-v2">Internal probe: ${escapeHtml(state.latent_probe_summary)}</div>` : ""}
+            ${state.knowledge_findings ? `<div class="mono-block-v2">Main finding: ${escapeHtml(state.knowledge_findings)}</div>` : ""}
+            ${state.knowledge_seed ? `<div class="mono-block-v2">Conceptual seed: ${escapeHtml(state.knowledge_seed)}</div>` : ""}
             <div class="tag-list-v2">
                 ${gap.target_area ? `<span class="tag-v2">Area: ${escapeHtml(gap.target_area)}</span>` : ""}
-                ${gap.target_scope ? `<span class="tag-v2">Escopo: ${escapeHtml(gap.target_scope)}</span>` : ""}
-                ${dynamicQueries.length ? `<span class="tag-v2">Queries dinamicas: ${escapeHtml(dynamicQueries.length)}</span>` : ""}
+                ${gap.target_scope ? `<span class="tag-v2">Scope: ${escapeHtml(gap.target_scope)}</span>` : ""}
+                ${dynamicQueries.length ? `<span class="tag-v2">Dynamic queries: ${escapeHtml(dynamicQueries.length)}</span>` : ""}
             </div>
             ${dynamicQueries.length ? `<div class="mono-block-v2">${escapeHtml(dynamicQueries.map((item) => item.query).join(" | "))}</div>` : ""}
         </article>
@@ -163,15 +163,15 @@ function renderAreas(state) {
         ? panels.map(([key, panel]) => `
             <article class="data-card-v2">
                 <strong>${escapeHtml(panel.label || key)}</strong>
-                <div class="meta-line-v2">Confianca ${escapeHtml(panel.confidence ?? "-")} · sinais ${escapeHtml(panel.signal_count ?? 0)}</div>
-                <div class="mono-block-v2">${escapeHtml(panel.dominant_reading || panel.reading || panel.summary || "Sem leitura sintetica.")}</div>
+                <div class="meta-line-v2">Confidence ${escapeHtml(panel.confidence ?? "-")} · signals ${escapeHtml(panel.signal_count ?? 0)}</div>
+                <div class="mono-block-v2">${escapeHtml(panel.dominant_reading || panel.reading || panel.summary || "No synthetic reading.")}</div>
                 <div class="tag-list-v2">
                     ${(panel.consensus_signals || []).slice(0, 4).map((item) => `<span class="tag-v2">${escapeHtml(item.theme || item)}</span>`).join("")}
                     ${(panel.divergent_signals || []).slice(0, 3).map((item) => `<span class="tag-v2">${escapeHtml(item.theme || item)}</span>`).join("")}
                 </div>
             </article>
         `).join("")
-        : '<div class="empty-row-v2">Nenhuma area carregada ainda.</div>';
+        : '<div class="empty-row-v2">No charged area yet.</div>';
 }
 
 function renderHistory(history) {
@@ -185,7 +185,7 @@ function renderHistory(history) {
                 <div class="mono-block-v2">${escapeHtml((item.dominant_tensions || []).join(" | "))}</div>
             </article>
         `).join("")
-        : '<div class="empty-row-v2">Sem historico recente.</div>';
+        : '<div class="empty-row-v2">No recent history.</div>';
 }
 
 async function loadWorld() {

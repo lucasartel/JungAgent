@@ -1,34 +1,34 @@
 {% extends "base_v2.html" %}
 
-{% block title %}Operacao - Diagnostico de Sincronizacao{% endblock %}
+{% block title %}Operation - Sync Diagnostics{% endblock %}
 {% block head_extra %}<script src="https://unpkg.com/htmx.org@1.9.10"></script>{% endblock %}
 
 {% block content %}
 <section class="page-shell-v2">
     <header class="page-header-v2">
         <div>
-            <p class="page-kicker-v2">Operacao · Integridade da instancia</p>
-            <h1 class="page-title-v2">Diagnostico de Sincronizacao</h1>
+            <p class="page-kicker-v2">Operation · Instance integrity</p>
+            <h1 class="page-title-v2">Sync Diagnostics</h1>
             <p class="page-subtitle-v2">
-                Verifique a consistencia entre o banco relacional da instancia e o banco vetorial usado para memoria semantica.
+                Check consistency between the instance relational database and the vector database used for semantic memory.
             </p>
         </div>
         <div class="page-actions-v2">
-            <a href="/admin/master/dashboard" class="button-v2 button-v2--ghost">Voltar ao cockpit</a>
+            <a href="/admin/master/dashboard" class="button-v2 button-v2--ghost">Back to legacy</a>
         </div>
     </header>
 
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Executar verificacao</h2>
-                <p class="panel-subtitle-v2">Conta registros nas camadas de memoria e aponta discrepancias de sincronizacao.</p>
+                <h2 class="panel-title-v2">Run check</h2>
+                <p class="panel-subtitle-v2">Counts records in the memory layers and points out sync discrepancies.</p>
             </div>
         </div>
         <div class="panel-body-v2 stack-v2">
             <div class="notice-v2">
-                <strong>Leitura operacional</strong>
-                <p>Este diagnostico ajuda a localizar perda de registros, divergencia entre SQLite e ChromaDB e inconsistencias no pipeline de memoria.</p>
+                <strong>Operational reading</strong>
+                <p>This diagnostic helps locate record loss, divergence between SQLite and ChromaDB, and inconsistencies in the memory pipeline.</p>
             </div>
             <div>
                 <button
@@ -37,7 +37,7 @@
                     hx-indicator="#spinner"
                     class="button-v2"
                 >
-                    Rodar verificacao
+                    Run check
                     <span id="spinner" class="htmx-indicator" style="margin-left: 0.5rem;">...</span>
                 </button>
             </div>
@@ -47,15 +47,15 @@
     <section class="panel-v2" id="diagnosis-result">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Resultado</h2>
-                <p class="panel-subtitle-v2">O retorno do diagnostico aparece aqui.</p>
+                <h2 class="panel-title-v2">Result</h2>
+                <p class="panel-subtitle-v2">The diagnostic output appears here.</p>
             </div>
         </div>
         <div class="panel-body-v2">
             <div class="empty-state-v2">
-                <div class="empty-state-icon-v2">Sem leitura</div>
-                <p class="empty-state-title-v2">Nenhum diagnostico executado ainda.</p>
-                <p class="empty-state-copy-v2">Use o botao acima para inspecionar o estado de sincronizacao da instancia.</p>
+                <div class="empty-state-icon-v2">No reading</div>
+                <p class="empty-state-title-v2">No diagnostic has been run yet.</p>
+                <p class="empty-state-copy-v2">Use the button above to inspect the instance sync state.</p>
             </div>
         </div>
     </section>
@@ -63,18 +63,18 @@
     <section class="quick-grid-v2">
         <a href="/admin/master/dashboard" class="quick-card-v2">
             <span class="quick-kicker-v2">Cockpit</span>
-            <strong class="quick-title-v2">Instancia</strong>
-            <p class="quick-copy-v2">Voltar ao painel principal do organismo.</p>
+            <strong class="quick-title-v2">Instance</strong>
+            <p class="quick-copy-v2">Return to the organism's main panel.</p>
         </a>
         <a href="/admin/memory-metrics" class="quick-card-v2">
-            <span class="quick-kicker-v2">Memoria</span>
+            <span class="quick-kicker-v2">Memory</span>
             <strong class="quick-title-v2">Memory metrics</strong>
-            <p class="quick-copy-v2">Cruzar o diagnostico com consolidacao, recuperacao e qualidade das camadas.</p>
+            <p class="quick-copy-v2">Cross-check the diagnostic with consolidation, retrieval, and layer quality.</p>
         </a>
         <a href="/admin/jung-lab" class="quick-card-v2">
-            <span class="quick-kicker-v2">Ruminacao</span>
+            <span class="quick-kicker-v2">Rumination</span>
             <strong class="quick-title-v2">Jung Lab</strong>
-            <p class="quick-copy-v2">Acessar a leitura profunda do metabolismo interno depois da checagem tecnica.</p>
+            <p class="quick-copy-v2">Access the deep reading of internal metabolism after the technical check.</p>
         </a>
     </section>
 </section>

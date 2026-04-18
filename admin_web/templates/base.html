@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 
 <head>
     <meta charset="UTF-8">
@@ -39,7 +39,7 @@
                             style="border-bottom: 2px solid transparent; color: #94a3b8; padding-top: 1rem; padding-bottom: 1rem; padding-left: 0.5rem; padding-right: 0.5rem; text-decoration: none; font-weight: 500; display: inline-flex; align-items: center; transition: all 0.3s;"
                             onmouseover="this.style.borderBottomColor='#64748b'; this.style.color='#e2e8f0';"
                             onmouseout="this.style.borderBottomColor='transparent'; this.style.color='#94a3b8';">
-                            Usuarios
+                            Users
                         </a>
                         {% if is_master_admin %}
                         <a href="/admin/master/dashboard"
@@ -54,12 +54,12 @@
                 <div class="flex items-center">
                     <a href="/admin/logout"
                         style="display: inline-flex; align-items: center; padding: 0.45rem 0.8rem; border-radius: 9999px; border: 1px solid rgba(139, 92, 246, 0.2); color: #cbd5e1; text-decoration: none; margin-right: 0.8rem; font-size: 0.82rem;">
-                        Sair
+                        Logout
                     </a>
                     <div id="sync-status-indicator" hx-get="/admin/api/sync-status" hx-trigger="load, every 30s">
                         <span
                             style="display: inline-flex; align-items: center; padding: 0.25rem 0.625rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; background: rgba(139, 92, 246, 0.15); color: #c4b5fd;">
-                            Carregando...
+                            Loading...
                         </span>
                     </div>
                 </div>

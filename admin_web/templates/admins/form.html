@@ -1,19 +1,19 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>{{ 'Editar' if admin_user else 'Novo' }} Admin</title>
+    <title>{{ 'Edit' if admin_user else 'New' }} Admin</title>
     <link rel="stylesheet" href="/static/admin.css">
 </head>
 <body>
-    <div class="header"><div class="header-content"><h1>{{ '✏️ Editar' if admin_user else '➕ Novo' }} Administrador</h1></div></div>
-    <div class="nav"><div class="nav-content"><a href="/admin/organizations">Organizações</a><a href="/admin/admins" class="active">Administradores</a></div></div>
+    <div class="header"><div class="header-content"><h1>{{ 'Edit' if admin_user else 'New' }} Administrator</h1></div></div>
+    <div class="nav"><div class="nav-content"><a href="/admin/organizations">Organizations</a><a href="/admin/admins" class="active">Administrators</a></div></div>
 
     <div class="container"><div class="form-container">
         <form method="POST" action="{{ '/admin/admins/' + admin_user.admin_id + '/edit' if admin_user else '/admin/admins/new' }}">
 
             <div class="form-group">
-                <label>Nome Completo *</label>
+                <label>Full name *</label>
                 <input type="text" name="full_name" value="{{ admin_user.full_name if admin_user else '' }}" required minlength="3">
             </div>
 
@@ -23,9 +23,9 @@
             </div>
 
             <div class="form-group">
-                <label>{{ 'Nova Senha (deixe em branco para manter)' if admin_user else 'Senha *' }}</label>
+                <label>{{ 'New password (leave blank to keep current)' if admin_user else 'Password *' }}</label>
                 <input type="password" name="{{ 'new_password' if admin_user else 'password' }}" {{ 'required' if not admin_user else '' }} minlength="8">
-                <small>Mínimo 8 caracteres, com maiúscula, minúscula e número</small>
+                <small>Minimum 8 characters, with uppercase, lowercase, and number</small>
             </div>
 
             <div class="form-group">
@@ -37,9 +37,9 @@
             </div>
 
             <div class="form-group">
-                <label>Organização</label>
+                <label>Organization</label>
                 <select name="org_id">
-                    <option value="">Nenhuma (Master Admin)</option>
+                    <option value="">None (Master Admin)</option>
                     {% for org in organizations %}
                     <option value="{{ org.org_id }}" {{ 'selected' if admin_user and admin_user.org_id == org.org_id else '' }}>
                         {{ org.org_name }}
@@ -52,14 +52,14 @@
             <div class="form-group">
                 <label>
                     <input type="checkbox" name="is_active" value="1" {{ 'checked' if admin_user.is_active else '' }}>
-                    Conta Ativa
+                    Active account
                 </label>
             </div>
             {% endif %}
 
             <div class="form-actions">
-                <a href="/admin/admins" class="btn btn-secondary">Cancelar</a>
-                <button type="submit" class="btn btn-primary">{{ 'Salvar' if admin_user else 'Criar' }}</button>
+                <a href="/admin/admins" class="btn btn-secondary">Cancel</a>
+                <button type="submit" class="btn btn-primary">{{ 'Save' if admin_user else 'Create' }}</button>
             </div>
         </form>
     </div></div>

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -25,13 +25,13 @@
             <nav class="admin-nav-v2" aria-label="Navegacao principal">
                 {% if is_org_admin %}
                 <a href="{{ users_href }}" class="admin-nav-link-v2{% if path.startswith('/admin/org/users') %} is-active{% endif %}">
-                    Usuarios
+                    Users
                 </a>
                 <a href="{{ dashboard_href }}" class="admin-nav-link-v2">
-                    Instancia
+                    Instance
                 </a>
                 <a href="{{ dashboard_href }}" class="admin-nav-link-v2{% if path == '/admin/org/dashboard' %} is-active{% endif %}">
-                    Legado
+                    Legacy
                 </a>
                 {% else %}
                 <a href="/admin/consciousness-loop/dashboard" class="admin-nav-link-v2{% if path.startswith('/admin/consciousness-loop') %} is-active{% endif %}">
@@ -41,28 +41,28 @@
                     Will
                 </a>
                 <a href="/admin/dreams" class="admin-nav-link-v2{% if path == '/admin/dreams' %} is-active{% endif %}">
-                    Sonhos
+                    Dreams
                 </a>
                 <a href="/admin/jung-lab" class="admin-nav-link-v2{% if path == '/admin/jung-lab' or path == '/admin/jung-mind' %} is-active{% endif %}">
-                    Ruminacao
+                    Rumination
                 </a>
                 <a href="/admin/world-consciousness/dashboard" class="admin-nav-link-v2{% if path.startswith('/admin/world-consciousness') %} is-active{% endif %}">
-                    Mundo
+                    World
                 </a>
                 <a href="/admin/agent-identity/dashboard" class="admin-nav-link-v2{% if path.startswith('/admin/agent-identity') %} is-active{% endif %}">
-                    Identidade
+                    Identity
                 </a>
                 <a href="/admin/work/dashboard" class="admin-nav-link-v2{% if path.startswith('/admin/work') %} is-active{% endif %}">
                     Work
                 </a>
                 <a href="{{ dashboard_href }}" class="admin-nav-link-v2{% if path in ['/admin', '/admin/master/dashboard'] %} is-active{% endif %}">
-                    Legado
+                    Legacy
                 </a>
                 {% endif %}
             </nav>
 
             <div class="admin-topbar-meta-v2">
-                <a href="/admin/logout" class="admin-meta-link-v2">Sair</a>
+                <a href="/admin/logout" class="admin-meta-link-v2">Logout</a>
                 {% block topbar_meta %}{% endblock %}
             </div>
         </div>
@@ -76,7 +76,7 @@
 
     <footer class="admin-footer-v2">
         <div class="admin-footer-inner-v2">
-            <p>JungAgent Admin | Cockpit da instancia</p>
+            <p>JungAgent Admin | Instance cockpit</p>
         </div>
     </footer>
 

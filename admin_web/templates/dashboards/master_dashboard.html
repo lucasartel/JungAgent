@@ -1,124 +1,124 @@
 {% extends "base_v2.html" %}
 
-{% block title %}Cockpit da Instancia - JungAgent Admin{% endblock %}
+{% block title %}Instance Legacy - JungAgent Admin{% endblock %}
 
 {% block content %}
 <section class="page-shell-v2">
     <header class="page-header-v2">
         <div>
-            <p class="page-kicker-v2">Instancia · Cockpit principal</p>
-            <h1 class="page-title-v2">Cockpit da Instancia</h1>
+            <p class="page-kicker-v2">Instance · Legacy</p>
+            <h1 class="page-title-v2">Instance Legacy</h1>
             <p class="page-subtitle-v2">
-                Painel principal do JungAgent instalado, com o organismo no centro e a infraestrutura residual tratada como apoio operacional.
+                Legacy entry point for the installed JungAgent, preserving residual infrastructure as operational support.
             </p>
         </div>
     </header>
 
     <section class="metric-grid-v2 metric-grid-v2--quad">
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Interacoes</span>
+            <span class="metric-label-v2">Interactions</span>
             <strong class="metric-value-v2">{{ "{:,}".format(total_interactions) }}</strong>
-            <p class="metric-note-v2">Volume total de mensagens processadas pela instancia.</p>
+            <p class="metric-note-v2">Total volume of messages processed by the instance.</p>
         </article>
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Conflitos</span>
+            <span class="metric-label-v2">Conflicts</span>
             <strong class="metric-value-v2">{{ total_conflicts }}</strong>
-            <p class="metric-note-v2">Tensoes psicologicas persistidas pelo organismo.</p>
+            <p class="metric-note-v2">Psychological tensions persisted by the organism.</p>
         </article>
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Usuarios mapeados</span>
+            <span class="metric-label-v2">Mapped users</span>
             <strong class="metric-value-v2">{{ total_jung_users }}</strong>
-            <p class="metric-note-v2">Base conversacional conhecida pela instancia.</p>
+            <p class="metric-note-v2">Conversational base known by the instance.</p>
         </article>
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Infra residual</span>
+            <span class="metric-label-v2">Residual infra</span>
             <strong class="metric-value-v2">{{ total_organizations }}</strong>
-            <p class="metric-note-v2">Elementos de governanca ainda presentes no ambiente.</p>
+            <p class="metric-note-v2">Governance elements still present in the environment.</p>
         </article>
     </section>
 
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Acesso principal</h2>
-                <p class="panel-subtitle-v2">Orgaos do agente primeiro; infraestrutura e legado ficam no fim da grade.</p>
+                <h2 class="panel-title-v2">Main access</h2>
+                <p class="panel-subtitle-v2">Agent organs first; infrastructure and legacy stay at the end of the grid.</p>
             </div>
         </div>
         <div class="quick-grid-v2">
             <a href="/admin/consciousness-loop/dashboard" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Organismo</span>
+                <span class="quick-kicker-v2">Organism</span>
                 <strong class="quick-title-v2">Loop</strong>
-                <p class="quick-copy-v2">Fase atual, eventos recentes e transicoes do ciclo psiquico.</p>
+                <p class="quick-copy-v2">Current phase, recent events, and transitions of the psychic cycle.</p>
             </a>
             <a href="/admin/jung-lab" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Organismo</span>
-                <strong class="quick-title-v2">Ruminacao</strong>
-                <p class="quick-copy-v2">Fragmentos, tensoes, insights e metabolismo profundo do agente.</p>
+                <span class="quick-kicker-v2">Organism</span>
+                <strong class="quick-title-v2">Rumination</strong>
+                <p class="quick-copy-v2">Fragments, tensions, insights, and the agent's deep metabolism.</p>
             </a>
             <a href="/admin/jung-mind" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Mapa</span>
-                <strong class="quick-title-v2">Mapa visual</strong>
-                <p class="quick-copy-v2">Mapa cognitivo e panorama das gravidades psiquicas persistidas.</p>
+                <span class="quick-kicker-v2">Map</span>
+                <strong class="quick-title-v2">Visual map</strong>
+                <p class="quick-copy-v2">Cognitive map and panorama of persisted psychic gravities.</p>
             </a>
             <a href="/admin/dreams" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Organismo</span>
-                <strong class="quick-title-v2">Sonhos</strong>
-                <p class="quick-copy-v2">Repositorio de sonhos, imagens e simbolos recentes do sistema.</p>
+                <span class="quick-kicker-v2">Organism</span>
+                <strong class="quick-title-v2">Dreams</strong>
+                <p class="quick-copy-v2">Repository of dreams, images, and recent symbols of the system.</p>
             </a>
             <a href="/admin/research" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Organismo</span>
+                <span class="quick-kicker-v2">Organism</span>
                 <strong class="quick-title-v2">Will</strong>
-                <p class="quick-copy-v2">Estado diario das tres vontades que orientam conversa, mundo, ruminacao e arte.</p>
+                <p class="quick-copy-v2">Daily state of the three wills that orient conversation, world, rumination, and art.</p>
             </a>
             <a href="/admin/agent-identity/dashboard" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Organismo</span>
-                <strong class="quick-title-v2">Identidade</strong>
-                <p class="quick-copy-v2">Painel especializado da identidade persistida e suas contradicoes.</p>
+                <span class="quick-kicker-v2">Organism</span>
+                <strong class="quick-title-v2">Identity</strong>
+                <p class="quick-copy-v2">Specialized panel for persisted identity and its contradictions.</p>
             </a>
             <a href="/admin/memory-metrics" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Memoria</span>
+                <span class="quick-kicker-v2">Memory</span>
                 <strong class="quick-title-v2">Memory metrics</strong>
-                <p class="quick-copy-v2">Qualidade de memoria, consolidacao e diagnostico de recuperacao.</p>
+                <p class="quick-copy-v2">Memory quality, consolidation, and retrieval diagnostics.</p>
             </a>
             <a href="/admin/world-consciousness/dashboard" class="quick-card-v2 quick-card-v2--heavy">
-                <span class="quick-kicker-v2">Organismo</span>
-                <strong class="quick-title-v2">Mundo</strong>
-                <p class="quick-copy-v2">Zeitgeist, consenso, divergencia e seeds para acao e hobby.</p>
+                <span class="quick-kicker-v2">Organism</span>
+                <strong class="quick-title-v2">World</strong>
+                <p class="quick-copy-v2">Zeitgeist, consensus, divergence, and seeds for action and hobby.</p>
             </a>
             <a href="/admin/work/dashboard" class="quick-card-v2">
-                <span class="quick-kicker-v2">Acao</span>
+                <span class="quick-kicker-v2">Action</span>
                 <strong class="quick-title-v2">Work</strong>
-                <p class="quick-copy-v2">Briefs, destinos, tickets, artefatos e fluxo de execucao.</p>
+                <p class="quick-copy-v2">Briefs, destinations, tickets, artifacts, and execution flow.</p>
             </a>
             <a href="/admin/sync-check" class="quick-card-v2">
-                <span class="quick-kicker-v2">Operacao</span>
-                <strong class="quick-title-v2">Diagnostico</strong>
-                <p class="quick-copy-v2">Checagem de sincronizacao, estado tecnico e troubleshooting rapido.</p>
+                <span class="quick-kicker-v2">Operation</span>
+                <strong class="quick-title-v2">Diagnostics</strong>
+                <p class="quick-copy-v2">Sync check, technical state, and quick troubleshooting.</p>
             </a>
             <a href="/admin/organizations" class="quick-card-v2">
                 <span class="quick-kicker-v2">Infra</span>
-                <strong class="quick-title-v2">Organizacoes</strong>
-                <p class="quick-copy-v2">Governanca residual do ambiente, fora do centro do produto.</p>
+                <strong class="quick-title-v2">Organizations</strong>
+                <p class="quick-copy-v2">Residual environment governance outside the product center.</p>
             </a>
             <a href="/admin/admins" class="quick-card-v2">
                 <span class="quick-kicker-v2">Infra</span>
                 <strong class="quick-title-v2">Admins</strong>
-                <p class="quick-copy-v2">Contas administrativas e papeis internos do ambiente.</p>
+                <p class="quick-copy-v2">Administrative accounts and internal environment roles.</p>
             </a>
             <a href="/admin/org/users" class="quick-card-v2">
                 <span class="quick-kicker-v2">Infra</span>
-                <strong class="quick-title-v2">Usuarios</strong>
-                <p class="quick-copy-v2">Listagem residual de usuarios e historico mapeado.</p>
+                <strong class="quick-title-v2">Users</strong>
+                <p class="quick-copy-v2">Residual user list and mapped history.</p>
             </a>
             <a href="/admin/unesco/export" class="quick-card-v2">
-                <span class="quick-kicker-v2">Arquivo</span>
-                <strong class="quick-title-v2">Piloto UNESCO</strong>
-                <p class="quick-copy-v2">Exportacao e leitura de dados anonimizados do piloto.</p>
+                <span class="quick-kicker-v2">Archive</span>
+                <strong class="quick-title-v2">UNESCO pilot</strong>
+                <p class="quick-copy-v2">Export and reading of anonymized pilot data.</p>
             </a>
             <a href="/admin/irt/dashboard" class="quick-card-v2">
                 <span class="quick-kicker-v2">Wellness</span>
-                <strong class="quick-title-v2">Sistema TRI/IRT</strong>
-                <p class="quick-copy-v2">Camada de wellness mantida como area secundaria do admin.</p>
+                <strong class="quick-title-v2">TRI/IRT System</strong>
+                <p class="quick-copy-v2">Wellness layer kept as a secondary admin area.</p>
             </a>
         </div>
     </section>
@@ -126,41 +126,41 @@
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Gatilhos manuais</h2>
-                <p class="panel-subtitle-v2">Execucao sob demanda dos processos de background mais importantes.</p>
+                <h2 class="panel-title-v2">Manual triggers</h2>
+                <p class="panel-subtitle-v2">On-demand execution of the most important background processes.</p>
             </div>
         </div>
         <div class="panel-body-v2 stack-v2">
             <div class="action-grid-v2">
                 <button onclick="triggerJob('/admin/triggers/rumination', this)" class="action-tile-v2">
-                    <span class="action-tile-title-v2">Motor onirico</span>
-                    <span class="action-tile-copy-v2">Executa a ruminacao total do sistema.</span>
+                    <span class="action-tile-title-v2">Dream engine</span>
+                    <span class="action-tile-copy-v2">Runs the system's full rumination.</span>
                 </button>
                 <button onclick="triggerJob('/admin/triggers/research', this)" class="action-tile-v2">
-                    <span class="action-tile-title-v2">Modulo Will</span>
-                    <span class="action-tile-copy-v2">Formula o estado atual das tres vontades do agente.</span>
+                    <span class="action-tile-title-v2">Will module</span>
+                    <span class="action-tile-copy-v2">Formulates the current state of the agent's three wills.</span>
                 </button>
                 <button onclick="triggerJob('/admin/triggers/identity-consolidation', this)" class="action-tile-v2">
-                    <span class="action-tile-title-v2">Consolidacao de identidade</span>
-                    <span class="action-tile-copy-v2">Atualiza identidade nuclear, selves e contradicoes.</span>
+                    <span class="action-tile-title-v2">Identity consolidation</span>
+                    <span class="action-tile-copy-v2">Updates nuclear identity, selves, and contradictions.</span>
                 </button>
                 <button onclick="triggerJob('/admin/triggers/identity-bridge', this)" class="action-tile-v2">
-                    <span class="action-tile-title-v2">Bridge identidade-ruminacao</span>
-                    <span class="action-tile-copy-v2">Sincroniza maturacao entre ruminar, contradizer e consolidar.</span>
+                    <span class="action-tile-title-v2">Identity-rumination bridge</span>
+                    <span class="action-tile-copy-v2">Synchronizes maturation between ruminating, contradicting, and consolidating.</span>
                 </button>
                 <button onclick="triggerJob('/admin/triggers/memory-metrics', this)" class="action-tile-v2">
                     <span class="action-tile-title-v2">Memory metrics</span>
-                    <span class="action-tile-copy-v2">Atualiza consolidacao e diagnostico da memoria longa.</span>
+                    <span class="action-tile-copy-v2">Updates long-memory consolidation and diagnostics.</span>
                 </button>
                 {% if proactive_enabled %}
                 <button onclick="triggerJob('/admin/triggers/proactive-messages', this)" class="action-tile-v2">
-                    <span class="action-tile-title-v2">Mensagens proativas</span>
-                    <span class="action-tile-copy-v2">Dispara o loop de mensagens proativas do sistema.</span>
+                    <span class="action-tile-title-v2">Proactive messages</span>
+                    <span class="action-tile-copy-v2">Triggers the system's proactive message loop.</span>
                 </button>
                 {% else %}
-                <button class="action-tile-v2 action-tile-v2--disabled" disabled title="Defina PROACTIVE_ENABLED=true para reativar">
-                    <span class="action-tile-title-v2">Mensagens proativas</span>
-                    <span class="action-tile-copy-v2">Desativado no ambiente atual.</span>
+                <button class="action-tile-v2 action-tile-v2--disabled" disabled title="Set PROACTIVE_ENABLED=true to reactivate">
+                    <span class="action-tile-title-v2">Proactive messages</span>
+                    <span class="action-tile-copy-v2">Disabled in the current environment.</span>
                 </button>
                 {% endif %}
             </div>
@@ -172,21 +172,21 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Organizacoes</h2>
-                    <p class="panel-subtitle-v2">Preview rapido das ultimas organizacoes criadas.</p>
+                    <h2 class="panel-title-v2">Organizations</h2>
+                    <p class="panel-subtitle-v2">Quick preview of the latest created organizations.</p>
                 </div>
-                <a href="/admin/organizations" class="button-v2 button-v2--ghost">Ver todas</a>
+                <a href="/admin/organizations" class="button-v2 button-v2--ghost">View all</a>
             </div>
             {% if organizations %}
             <div class="table-shell-v2">
                 <table class="data-table-v2">
                     <thead>
                         <tr>
-                            <th>Nome</th>
+                            <th>Name</th>
                             <th>Slug</th>
-                            <th>Plano</th>
+                            <th>Plan</th>
                             <th>Status</th>
-                            <th>Criada em</th>
+                            <th>Created at</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -195,7 +195,7 @@
                             <td><span class="cell-primary-v2">{{ org.org_name }}</span></td>
                             <td><span class="table-badge-v2 table-badge-v2--mono">{{ org.org_slug }}</span></td>
                             <td><span class="table-badge-v2">{{ org.subscription_tier|upper }}</span></td>
-                            <td><span class="table-badge-v2">{{ "Ativo" if org.is_active else "Inativo" }}</span></td>
+                            <td><span class="table-badge-v2">{{ "Active" if org.is_active else "Inactive" }}</span></td>
                             <td><span class="cell-secondary-v2">{{ org.created_at[:10] if org.created_at else "-" }}</span></td>
                         </tr>
                         {% endfor %}
@@ -204,9 +204,9 @@
             </div>
             {% else %}
             <div class="empty-state-v2">
-                <div class="empty-state-icon-v2">Sem tenants</div>
-                <p class="empty-state-title-v2">Nenhuma organizacao encontrada.</p>
-                <p class="empty-state-copy-v2">As organizacoes criadas aparecerao aqui automaticamente.</p>
+                <div class="empty-state-icon-v2">No tenants</div>
+                <p class="empty-state-title-v2">No organization found.</p>
+                <p class="empty-state-copy-v2">Created organizations will appear here automatically.</p>
             </div>
             {% endif %}
         </section>
@@ -214,21 +214,21 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Administradores</h2>
-                    <p class="panel-subtitle-v2">Preview das contas internas de governanca.</p>
+                    <h2 class="panel-title-v2">Administrators</h2>
+                    <p class="panel-subtitle-v2">Preview of internal governance accounts.</p>
                 </div>
-                <a href="/admin/admins" class="button-v2 button-v2--ghost">Ver todos</a>
+                <a href="/admin/admins" class="button-v2 button-v2--ghost">View all</a>
             </div>
             {% if admin_users %}
             <div class="table-shell-v2">
                 <table class="data-table-v2">
                     <thead>
                         <tr>
-                            <th>Nome</th>
+                            <th>Name</th>
                             <th>Email</th>
-                            <th>Papel</th>
+                            <th>Role</th>
                             <th>Org</th>
-                            <th>Ultimo login</th>
+                            <th>Last login</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -238,7 +238,7 @@
                             <td><span class="cell-secondary-v2">{{ admin_user.email }}</span></td>
                             <td><span class="table-badge-v2">{{ "Master" if admin_user.role == "master" else "Org admin" }}</span></td>
                             <td><span class="cell-secondary-v2">{{ admin_user.org_id or "-" }}</span></td>
-                            <td><span class="cell-secondary-v2">{{ admin_user.last_login[:16] if admin_user.last_login else "Nunca" }}</span></td>
+                            <td><span class="cell-secondary-v2">{{ admin_user.last_login[:16] if admin_user.last_login else "Never" }}</span></td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -246,9 +246,9 @@
             </div>
             {% else %}
             <div class="empty-state-v2">
-                <div class="empty-state-icon-v2">Sem admins</div>
-                <p class="empty-state-title-v2">Nenhum administrador encontrado.</p>
-                <p class="empty-state-copy-v2">As contas administrativas aparecerao aqui quando forem criadas.</p>
+                <div class="empty-state-icon-v2">No admins</div>
+                <p class="empty-state-title-v2">No administrator found.</p>
+                <p class="empty-state-copy-v2">Administrative accounts will appear here when they are created.</p>
             </div>
             {% endif %}
         </section>
@@ -257,27 +257,27 @@
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Usuarios Jung</h2>
-                <p class="panel-subtitle-v2">Preview operacional dos usuarios recentes sem transformar a tela num painel pesado.</p>
+                <h2 class="panel-title-v2">Jung users</h2>
+                <p class="panel-subtitle-v2">Operational preview of recent users without turning the screen into a heavy panel.</p>
             </div>
-            <a href="/admin/org/users" class="button-v2 button-v2--ghost">Ver todos</a>
+            <a href="/admin/org/users" class="button-v2 button-v2--ghost">View all</a>
         </div>
         {% if jung_users %}
         <div class="table-shell-v2">
             <table class="data-table-v2">
                 <thead>
                     <tr>
-                        <th>Nome</th>
+                        <th>Name</th>
                         <th>User ID</th>
-                        <th>Mensagens</th>
+                        <th>Messages</th>
                         <th>MBTI</th>
-                        <th>Criado em</th>
+                        <th>Created at</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for user in jung_users[:10] %}
                     <tr>
-                        <td><span class="cell-primary-v2">{{ user.user_name or "Usuario anonimo" }}</span></td>
+                        <td><span class="cell-primary-v2">{{ user.user_name or "Anonymous user" }}</span></td>
                         <td><span class="table-badge-v2 table-badge-v2--mono">{{ user.user_id[:12] }}...</span></td>
                         <td><span class="metric-inline-v2">{{ user.total_messages or 0 }}</span></td>
                         <td><span class="cell-secondary-v2">{{ user.mbti_type or "-" }}</span></td>
@@ -289,9 +289,9 @@
         </div>
         {% else %}
         <div class="empty-state-v2">
-            <div class="empty-state-icon-v2">Sem usuarios</div>
-            <p class="empty-state-title-v2">Nenhum usuario Jung encontrado.</p>
-            <p class="empty-state-copy-v2">Assim que houver atividade persistida, os registros aparecerao aqui.</p>
+            <div class="empty-state-icon-v2">No users</div>
+            <p class="empty-state-title-v2">No Jung user found.</p>
+            <p class="empty-state-copy-v2">As soon as there is persisted activity, records will appear here.</p>
         </div>
         {% endif %}
     </section>
@@ -306,11 +306,11 @@ async function triggerJob(url, btn) {
 
     btn.disabled = true;
     btn.classList.add("action-tile-v2--busy");
-    btn.innerHTML = '<span class="action-tile-title-v2">Processando...</span><span class="action-tile-copy-v2">Aguarde a resposta do backend.</span>';
+    btn.innerHTML = '<span class="action-tile-title-v2">Processing...</span><span class="action-tile-copy-v2">Waiting for the backend response.</span>';
 
     statusDiv.style.display = "block";
     statusDiv.className = "notice-v2";
-    statusDiv.innerHTML = "<strong>Executando</strong><p>Requisicao enviada. Aguarde o retorno do sistema.</p>";
+    statusDiv.innerHTML = "<strong>Running</strong><p>Request sent. Waiting for the system response.</p>";
 
     try {
         const response = await fetch(url, {
@@ -324,14 +324,14 @@ async function triggerJob(url, btn) {
 
         if (response.ok) {
             statusDiv.className = "notice-v2 notice-v2--success";
-            statusDiv.innerHTML = `<strong>Sucesso</strong><p>${data.message || "Job concluido."}</p>`;
+            statusDiv.innerHTML = `<strong>Success</strong><p>${data.message || "Job completed."}</p>`;
         } else {
             statusDiv.className = "notice-v2 notice-v2--warning";
-            statusDiv.innerHTML = `<strong>Erro</strong><p>${data.detail || data.error || "Falha ao processar job."}</p>`;
+            statusDiv.innerHTML = `<strong>Error</strong><p>${data.detail || data.error || "Failed to process job."}</p>`;
         }
     } catch (error) {
         statusDiv.className = "notice-v2 notice-v2--warning";
-        statusDiv.innerHTML = `<strong>Erro de conexao</strong><p>${error.message}</p>`;
+        statusDiv.innerHTML = `<strong>Connection error</strong><p>${error.message}</p>`;
     } finally {
         btn.disabled = false;
         btn.classList.remove("action-tile-v2--busy");

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -165,7 +165,7 @@
             100% { transform: rotate(360deg); }
         }
 
-        /* Responsivo */
+        /* Responsive */
         @media (max-width: 480px) {
             .login-container {
                 padding: 40px 30px;
@@ -180,8 +180,8 @@
 <body>
     <div class="login-container">
         <div class="logo-section">
-            <h1>🧠 JungAgent</h1>
-            <p class="subtitle">Admin Multi-Tenant</p>
+            <h1>JungAgent</h1>
+            <p class="subtitle">Instance Admin</p>
         </div>
 
         {% if error %}
@@ -208,13 +208,13 @@
                     name="email"
                     required
                     autocomplete="email"
-                    placeholder="seu@email.com"
+                    placeholder="you@example.com"
                     autofocus
                 >
             </div>
 
             <div class="form-group">
-                <label for="password">Senha</label>
+                <label for="password">Password</label>
                 <input
                     type="password"
                     id="password"
@@ -226,28 +226,28 @@
             </div>
 
             <button type="submit" class="btn-login">
-                Entrar
+                Sign in
             </button>
 
             <div class="loading" id="loading">
                 <div class="spinner"></div>
-                <p style="margin-top: 10px; color: #8b5cf6; font-size: 0.9em;">Autenticando...</p>
+                <p style="margin-top: 10px; color: #8b5cf6; font-size: 0.9em;">Authenticating...</p>
             </div>
         </form>
 
         <div class="footer-text">
-            Sistema Multi-Tenant v1.0 | JungAgent © 2026
+            Instance Admin v1.0 | JungAgent © 2026
         </div>
     </div>
 
     <script>
-        // Mostrar loading ao enviar form
+        // Show loading while the form is submitted.
         document.getElementById('loginForm').addEventListener('submit', function() {
             document.getElementById('loading').classList.add('active');
             document.querySelector('.btn-login').disabled = true;
         });
 
-        // Enter no email vai para senha
+        // Enter on the email field moves focus to password.
         document.getElementById('email').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 e.preventDefault();

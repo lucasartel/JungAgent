@@ -1,18 +1,18 @@
 {% extends "base_v2.html" %}
 
-{% block title %}Loop de Consciencia - JungAgent Admin{% endblock %}
+{% block title %}Consciousness Loop - JungAgent Admin{% endblock %}
 
 {% block content %}
 <section class="page-shell-v2">
     <header class="page-header-v2">
         <div>
-            <p class="page-kicker-v2">Loop · Observabilidade</p>
-            <h1 class="page-title-v2">Loop de Consciencia</h1>
-            <p class="page-subtitle-v2">Estado persistente, eventos recentes e resultados das fases do dia psiquico.</p>
+            <p class="page-kicker-v2">Loop · Observability</p>
+            <h1 class="page-title-v2">Consciousness Loop</h1>
+            <p class="page-subtitle-v2">Persistent state, recent events, and results from the phases of the psychic day.</p>
         </div>
         <div class="page-actions-v2">
-            <button class="button-v2" onclick="syncLoop()">Sincronizar loop</button>
-            <button class="button-v2 button-v2--ghost" onclick="executeCurrent()">Executar fase atual</button>
+            <button class="button-v2" onclick="syncLoop()">Sync loop</button>
+            <button class="button-v2 button-v2--ghost" onclick="executeCurrent()">Run current phase</button>
         </div>
     </header>
 
@@ -24,8 +24,8 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Eventos recentes</h2>
-                    <p class="panel-subtitle-v2">Ultimas transicoes e acoes registradas pelo loop.</p>
+                    <h2 class="panel-title-v2">Recent events</h2>
+                    <p class="panel-subtitle-v2">Latest transitions and actions recorded by the loop.</p>
                 </div>
             </div>
             <div class="panel-body-v2">
@@ -36,8 +36,8 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Resultados de fase</h2>
-                    <p class="panel-subtitle-v2">Resumo operacional das ultimas execucoes.</p>
+                    <h2 class="panel-title-v2">Phase results</h2>
+                    <p class="panel-subtitle-v2">Operational summary of the latest executions.</p>
                 </div>
             </div>
             <div class="panel-body-v2">
@@ -68,14 +68,14 @@ async function loadDashboard() {
 function renderState(state, config) {
     const cards = [
         ["Status", state.status || "-"],
-        ["Ciclo atual", state.cycle_id || "-"],
-        ["Fase atual", state.current_phase_label || state.current_phase || "-"],
-        ["Proxima fase", state.next_phase_label || state.next_phase || "-"],
-        ["Inicio da fase", state.phase_started_at || "-"],
+        ["Current cycle", state.cycle_id || "-"],
+        ["Current phase", state.current_phase_label || state.current_phase || "-"],
+        ["Next phase", state.next_phase_label || state.next_phase || "-"],
+        ["Phase started at", state.phase_started_at || "-"],
         ["Deadline", state.phase_deadline_at || "-"],
-        ["Ultima fase concluida", state.last_completed_phase || "-"],
-        ["Fase recomendada pelo relogio", state.recommended_clock_phase || "-"],
-        ["Configuracao do ciclo", (config || []).map((item) => `${item.order_index}. ${item.phase} (${item.default_duration_minutes} min)`).join(" | ") || "-"]
+        ["Last completed phase", state.last_completed_phase || "-"],
+        ["Clock-recommended phase", state.recommended_clock_phase || "-"],
+        ["Cycle configuration", (config || []).map((item) => `${item.order_index}. ${item.phase} (${item.default_duration_minutes} min)`).join(" | ") || "-"]
     ];
 
     document.getElementById("stateGrid").innerHTML = cards.map(([label, value]) => `
@@ -95,7 +95,7 @@ function renderEvents(events) {
                 <div class="mono-block-v2">${event.output_summary || event.input_summary || ""}</div>
             </article>
         `).join("")
-        : '<div class="empty-row-v2">Nenhum evento ainda.</div>';
+        : '<div class="empty-row-v2">No events yet.</div>';
 }
 
 function renderResults(results) {
@@ -110,7 +110,7 @@ function renderResults(results) {
                 <div class="mono-block-v2">Metrics: ${result.metrics_json || "{}"}</div>
             </article>
         `).join("")
-        : '<div class="empty-row-v2">Nenhum resultado ainda.</div>';
+        : '<div class="empty-row-v2">No results yet.</div>';
 }
 
 async function syncLoop() {

@@ -1,14 +1,14 @@
 {% extends "base_v2.html" %}
 
-{% block title %}Sonhos - JungAgent Admin{% endblock %}
+{% block title %}Dreams - JungAgent Admin{% endblock %}
 
 {% block content %}
 <section class="page-shell-v2">
     <header class="page-header-v2">
         <div>
             <p class="page-kicker-v2">Loop · Inconsciente</p>
-            <h1 class="page-title-v2">Motor Onirico</h1>
-            <p class="page-subtitle-v2">Galeria dos sonhos, imagens e temas simbolicos produzidos pelo sistema durante o periodo de sonho.</p>
+            <h1 class="page-title-v2">Dream Engine</h1>
+            <p class="page-subtitle-v2">Gallery of dreams, images, and symbolic themes produced by the system during the dream phase.</p>
         </div>
     </header>
 
@@ -16,19 +16,19 @@
 
     <section class="metric-grid-v2 metric-grid-v2--triple">
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Total de sonhos</span>
+            <span class="metric-label-v2">Total dreams</span>
             <strong class="metric-value-v2">{{ dreams|length }}</strong>
-            <p class="metric-note-v2">Historico recente preservado no banco.</p>
+            <p class="metric-note-v2">Recent history preserved in the database.</p>
         </article>
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Pendentes</span>
+            <span class="metric-label-v2">Pending</span>
             <strong class="metric-value-v2">{{ dreams|selectattr('status', 'equalto', 'pending')|list|length }}</strong>
-            <p class="metric-note-v2">Ainda latentes para uso em conversa.</p>
+            <p class="metric-note-v2">Still latent for use in conversation.</p>
         </article>
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Entregues</span>
+            <span class="metric-label-v2">Delivered</span>
             <strong class="metric-value-v2">{{ dreams|selectattr('status', 'equalto', 'delivered')|list|length }}</strong>
-            <p class="metric-note-v2">Ja metabolizados na experiencia do usuario.</p>
+            <p class="metric-note-v2">Already metabolized in the user experience.</p>
         </article>
     </section>
 
@@ -39,7 +39,7 @@
         <article class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Sonho #{{ dream.id }}</h2>
+                    <h2 class="panel-title-v2">Dream #{{ dream.id }}</h2>
                     <p class="panel-subtitle-v2">{{ dream.created_at }} · {{ dream.user_id[:8] }}... · {{ dream.status|upper }}</p>
                 </div>
             </div>
@@ -47,22 +47,22 @@
                 <div class="dashboard-columns-v2 dashboard-columns-v2--balanced">
                     <section class="data-card-v2">
                         {% if dream.image_url %}
-                        <img src="{{ dream.image_url }}" alt="Visao onirica" class="table-cover-v2" onerror="this.style.display='none';">
+                        <img src="{{ dream.image_url }}" alt="Dream vision" class="table-cover-v2" onerror="this.style.display='none';">
                         {% endif %}
-                        <strong>Metafora surreal</strong>
+                        <strong>Surreal metaphor</strong>
                         <div class="mono-block-v2">{{ dream.dream_content }}</div>
                         {% if dream.symbolic_theme %}
                         <div class="tag-list-v2">
-                            <span class="tag-v2">Tema: {{ dream.symbolic_theme }}</span>
+                            <span class="tag-v2">Theme: {{ dream.symbolic_theme }}</span>
                         </div>
                         {% endif %}
                     </section>
                     <section class="data-card-v2">
-                        <strong>Insight extraido</strong>
+                        <strong>Extracted insight</strong>
                         <div class="mono-block-v2">{{ dream.extracted_insight }}</div>
-                        <div class="meta-line-v2">Prompt visual: {{ dream.image_prompt or "-" }}</div>
+                        <div class="meta-line-v2">Image prompt: {{ dream.image_prompt or "-" }}</div>
                         {% if dream.delivered_at %}
-                        <div class="meta-line-v2">Entregue em {{ dream.delivered_at }}</div>
+                        <div class="meta-line-v2">Delivered at {{ dream.delivered_at }}</div>
                         {% endif %}
                     </section>
                 </div>
@@ -72,9 +72,9 @@
 
         {% if not ns.found %}
         <div class="empty-state-v2">
-            <div class="empty-state-icon-v2">Sem sonhos</div>
-            <p class="empty-state-title-v2">A mente ainda nao sonhou nesta camada.</p>
-            <p class="empty-state-copy-v2">Os sonhos surgem no periodo do loop dedicado ao sono e passam a aparecer aqui automaticamente.</p>
+            <div class="empty-state-icon-v2">No dreams</div>
+            <p class="empty-state-title-v2">The mind has not dreamed in this layer yet.</p>
+            <p class="empty-state-copy-v2">Dreams arise during the sleep phase of the loop and appear here automatically.</p>
         </div>
         {% endif %}
     </section>

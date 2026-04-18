@@ -1,18 +1,18 @@
 {% extends "base_v2.html" %}
 
-{% block title %}Identidade Nuclear - JungAgent Admin{% endblock %}
+{% block title %}Nuclear Identity - JungAgent Admin{% endblock %}
 
 {% block content %}
 <section class="page-shell-v2">
     <header class="page-header-v2">
         <div>
             <p class="page-kicker-v2">Loop · Nucleo identitario</p>
-            <h1 class="page-title-v2">Identidade Nuclear</h1>
-            <p class="page-subtitle-v2">Leitura consolidada do self persistido do JungAgent, com crenças, contradicoes, narrativa e vinculos relacionais.</p>
+            <h1 class="page-title-v2">Nuclear Identity</h1>
+            <p class="page-subtitle-v2">Consolidated reading of the JungAgent's persisted self, with beliefs, contradictions, narrative, and relational bonds.</p>
         </div>
         <div class="page-actions-v2">
-            <button class="button-v2" onclick="runConsolidation()">Consolidar identidade</button>
-            <a class="button-v2 button-v2--ghost" href="/admin/agent-identity/export/download">Baixar snapshot</a>
+            <button class="button-v2" onclick="runConsolidation()">Consolidate identity</button>
+            <a class="button-v2 button-v2--ghost" href="/admin/agent-identity/export/download">Download snapshot</a>
         </div>
     </header>
 
@@ -24,32 +24,32 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Estado atual</h2>
-                    <p class="panel-subtitle-v2">Resumo expandido do estado mental sintetizado a partir do nucleo.</p>
+                    <h2 class="panel-title-v2">Current state</h2>
+                    <p class="panel-subtitle-v2">Expanded summary of the mental state synthesized from the core.</p>
                 </div>
             </div>
             <div class="panel-body-v2">
-                <div class="mono-block-v2" id="currentMindState">Carregando...</div>
+                <div class="mono-block-v2" id="currentMindState">Loading...</div>
             </div>
         </section>
 
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Metaconsciência</h2>
-                    <p class="panel-subtitle-v2">Leitura viva do devir atual do Jung e das perguntas que ficam para o próximo giro.</p>
+                    <h2 class="panel-title-v2">Metaconsciousness</h2>
+                    <p class="panel-subtitle-v2">Living reading of Jung's current becoming and the questions left for the next turn.</p>
                 </div>
             </div>
             <div class="panel-body-v2">
-                <div class="scroll-list-v2" id="metaConsciousnessPanel">Carregando...</div>
+                <div class="scroll-list-v2" id="metaConsciousnessPanel">Loading...</div>
             </div>
         </section>
 
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Contexto identitario</h2>
-                    <p class="panel-subtitle-v2">Camadas consolidadas do self atual.</p>
+                    <h2 class="panel-title-v2">Identity context</h2>
+                    <p class="panel-subtitle-v2">Consolidated layers of the current self.</p>
                 </div>
             </div>
             <div class="panel-body-v2">
@@ -62,8 +62,8 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Crenças nucleares</h2>
-                    <p class="panel-subtitle-v2">Elementos mais cristalizados do self.</p>
+                    <h2 class="panel-title-v2">Nuclear beliefs</h2>
+                    <p class="panel-subtitle-v2">The most crystallized elements of the self.</p>
                 </div>
             </div>
             <div class="panel-body-v2">
@@ -74,8 +74,8 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Contradicoes ativas</h2>
-                    <p class="panel-subtitle-v2">Campos de tensao ainda nao integrados.</p>
+                    <h2 class="panel-title-v2">Active contradictions</h2>
+                    <p class="panel-subtitle-v2">Fields of tension not yet integrated.</p>
                 </div>
             </div>
             <div class="panel-body-v2">
@@ -88,8 +88,8 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Narrativa</h2>
-                    <p class="panel-subtitle-v2">Capitulos de formacao e fases do agente.</p>
+                    <h2 class="panel-title-v2">Narrative</h2>
+                    <p class="panel-subtitle-v2">Formation chapters and phases of the agent.</p>
                 </div>
             </div>
             <div class="panel-body-v2">
@@ -100,8 +100,8 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Identidade relacional</h2>
-                    <p class="panel-subtitle-v2">Como o agente se entende em relacao aos outros.</p>
+                    <h2 class="panel-title-v2">Relational identity</h2>
+                    <p class="panel-subtitle-v2">How the agent understands itself in relation to others.</p>
                 </div>
             </div>
             <div class="panel-body-v2">
@@ -132,7 +132,7 @@ function renderIdentityStats(stats) {
                 <strong class="cell-primary-v2">${escapeHtml(value)}</strong>
             </article>
         `).join("")
-        : '<div class="empty-row-v2">Sem estatisticas ainda.</div>';
+        : '<div class="empty-row-v2">No statistics yet.</div>';
 }
 
 function renderCollection(targetId, items, formatter, emptyText) {
@@ -168,56 +168,56 @@ async function loadIdentity() {
     const meta = metaData.meta_consciousness || null;
     document.getElementById("metaConsciousnessPanel").innerHTML = meta ? `
         <article class="data-card-v2">
-            <strong>Status ${escapeHtml(meta.status || "-")} · ciclo ${escapeHtml(meta.cycle_id || "-")}</strong>
-            <div class="meta-line-v2">fase ${escapeHtml(meta.phase || "-")} · trigger ${escapeHtml(meta.trigger_source || "-")} · ${escapeHtml(meta.created_at || "-")}</div>
+            <strong>Status ${escapeHtml(meta.status || "-")} · cycle ${escapeHtml(meta.cycle_id || "-")}</strong>
+            <div class="meta-line-v2">phase ${escapeHtml(meta.phase || "-")} · trigger ${escapeHtml(meta.trigger_source || "-")} · ${escapeHtml(meta.created_at || "-")}</div>
             <div class="mono-block-v2">${escapeHtml(meta.integration_note || meta.dominant_form || "")}</div>
         </article>
         <article class="data-card-v2">
-            <strong>Forma dominante</strong>
+            <strong>Dominant form</strong>
             <div class="mono-block-v2">${escapeHtml(meta.dominant_form || "-")}</div>
         </article>
         <article class="data-card-v2">
-            <strong>Deslocamento emergente</strong>
+            <strong>Emergent shift</strong>
             <div class="mono-block-v2">${escapeHtml(meta.emergent_shift || "-")}</div>
         </article>
         <article class="data-card-v2">
-            <strong>Gravidade a vigiar</strong>
+            <strong>Gravity to watch</strong>
             <div class="mono-block-v2">${escapeHtml(meta.dominant_gravity || "-")}</div>
         </article>
         <article class="data-card-v2">
-            <strong>Ponto cego</strong>
+            <strong>Blind spot</strong>
             <div class="mono-block-v2">${escapeHtml(meta.blind_spot || "-")}</div>
         </article>
         <article class="data-card-v2">
-            <strong>Perguntas internas</strong>
+            <strong>Internal questions</strong>
             <div class="mono-block-v2">${escapeHtml((meta.internal_questions || []).join(" | ") || "-")}</div>
         </article>
-    ` : '<div class="empty-row-v2">Nenhuma leitura metaconsciente registrada ainda.</div>';
+    ` : '<div class="empty-row-v2">No metaconscious reading recorded yet.</div>';
 
     const context = contextData.context || {};
     const contextTags = [
-        ...(context.nuclear_identity ? ["nucleo consolidado"] : []),
+        ...(context.nuclear_identity ? ["consolidated core"] : []),
         ...(context.contradictions ? [`contradicoes ${context.contradictions.length || 0}`] : []),
         ...(context.possible_selves ? [`selves ${context.possible_selves.length || 0}`] : []),
-        ...(context.relational_identity ? [`relacoes ${context.relational_identity.length || 0}`] : []),
+        ...(context.relational_identity ? [`relations ${context.relational_identity.length || 0}`] : []),
         ...(context.meta_knowledge ? [`meta ${context.meta_knowledge.length || 0}`] : []),
         ...(meta ? [`metaconsciencia ${meta.status || "ativa"}`] : [])
     ];
     document.getElementById("identityContextTags").innerHTML = contextTags.length
         ? contextTags.map((item) => `<span class="tag-v2">${escapeHtml(item)}</span>`).join("")
-        : '<span class="tag-v2">Contexto vazio</span>';
+        : '<span class="tag-v2">Empty context</span>';
 
     renderCollection(
         "beliefsList",
         beliefsData.beliefs || [],
         (item) => `
             <article class="data-card-v2">
-                <strong>${escapeHtml(item.type || "crenca")}</strong>
-                <div class="meta-line-v2">certeza ${escapeHtml(item.certainty)} · estabilidade ${escapeHtml(item.stability)}</div>
+                <strong>${escapeHtml(item.type || "belief")}</strong>
+                <div class="meta-line-v2">certainty ${escapeHtml(item.certainty)} · stability ${escapeHtml(item.stability)}</div>
                 <div class="mono-block-v2">${escapeHtml(item.content || "")}</div>
             </article>
         `,
-        "Nenhuma crenca nuclear registrada."
+        "No nuclear belief recorded."
     );
 
     renderCollection(
@@ -226,11 +226,11 @@ async function loadIdentity() {
         (item) => `
             <article class="data-card-v2">
                 <strong>${escapeHtml(item.pole_a || "")} ↔ ${escapeHtml(item.pole_b || "")}</strong>
-                <div class="meta-line-v2">${escapeHtml(item.type || "-")} · tensao ${escapeHtml(item.tension)}</div>
+                <div class="meta-line-v2">${escapeHtml(item.type || "-")} · tension ${escapeHtml(item.tension)}</div>
                 <div class="mono-block-v2">status ${escapeHtml(item.status || "-")} · tentativas ${escapeHtml(item.integration_attempts ?? 0)}</div>
             </article>
         `,
-        "Nenhuma contradicao ativa."
+        "No active contradiction."
     );
 
     renderCollection(
@@ -238,12 +238,12 @@ async function loadIdentity() {
         narrativeData.chapters || [],
         (item) => `
             <article class="data-card-v2">
-                <strong>${escapeHtml(item.name || "capitulo")}</strong>
+                <strong>${escapeHtml(item.name || "chapter")}</strong>
                 <div class="meta-line-v2">${escapeHtml(item.theme || "-")} · tom ${escapeHtml(item.tone || "-")}</div>
                 <div class="mono-block-v2">${escapeHtml((item.key_scenes || []).join(" | "))}</div>
             </article>
         `,
-        "Nenhum capitulo narrativo registrado."
+        "No narrative chapter recorded."
     );
 
     renderCollection(
@@ -251,12 +251,12 @@ async function loadIdentity() {
         relationalData.identities || [],
         (item) => `
             <article class="data-card-v2">
-                <strong>${escapeHtml(item.type || "relacao")} · ${escapeHtml(item.target || "-")}</strong>
-                <div class="meta-line-v2">saliencia ${escapeHtml(item.salience)}</div>
+                <strong>${escapeHtml(item.type || "relation")} · ${escapeHtml(item.target || "-")}</strong>
+                <div class="meta-line-v2">salience ${escapeHtml(item.salience)}</div>
                 <div class="mono-block-v2">${escapeHtml(item.content || "")}</div>
             </article>
         `,
-        "Nenhuma identidade relacional registrada."
+        "No relational identity recorded."
     );
 }
 

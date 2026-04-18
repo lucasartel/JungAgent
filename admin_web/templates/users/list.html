@@ -1,21 +1,21 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Usuários Jung - JungAgent Admin</title>
+    <title>Jung Users - JungAgent Admin</title>
     <link rel="stylesheet" href="/static/admin.css">
 </head>
 <body>
     <div class="header">
         <div class="header-content">
             <div>
-                <h1>🧠 Usuários Jung</h1>
+                <h1>Jung Users</h1>
                 <p style="opacity: 0.9; margin-top: 5px;">
                     {% if admin.role == 'master' %}
-                    Gerenciar todos os usuários do sistema
+                    Manage all system users
                     {% else %}
-                    Gerenciar usuários da sua organização
+                    Manage users in your organization
                     {% endif %}
                 </p>
             </div>
@@ -23,9 +23,9 @@
                 <div class="user-name">{{ admin.full_name or admin.email }}</div>
                 <span class="role-badge">
                     {% if admin.role == 'master' %}
-                    👑 Master Admin
+                    Master Admin
                     {% else %}
-                    🏢 Org Admin
+                    Org Admin
                     {% endif %}
                 </span>
             </div>
@@ -36,15 +36,15 @@
         <div class="nav-content">
             {% if admin.role == 'master' %}
             <a href="/admin/master/dashboard">Dashboard</a>
-            <a href="/admin/organizations">Organizações</a>
-            <a href="/admin/admins">Administradores</a>
-            <a href="/admin/org/users" class="active">Usuários Jung</a>
+            <a href="/admin/organizations">Organizations</a>
+            <a href="/admin/admins">Administrators</a>
+            <a href="/admin/org/users" class="active">Jung Users</a>
             {% else %}
             <a href="/admin/org/dashboard">Dashboard</a>
-            <a href="/admin/org/users" class="active">Usuários Jung</a>
+            <a href="/admin/org/users" class="active">Jung Users</a>
             {% endif %}
             <form action="/admin/logout" method="POST" style="margin-left: auto;">
-                <button type="submit" class="logout-btn nav">Sair</button>
+                <button type="submit" class="logout-btn nav">Logout</button>
             </form>
         </div>
     </div>
@@ -52,21 +52,21 @@
     <div class="container">
         <div class="section">
             <div class="section-header">
-                <h2>📋 Todos os Usuários ({{ total_users }})</h2>
+                <h2>All Users ({{ total_users }})</h2>
             </div>
 
             {% if users %}
             <table>
                 <thead>
                     <tr>
-                        <th>Nome</th>
+                        <th>Name</th>
                         {% if admin.role == 'master' %}
-                        <th>Organização</th>
+                        <th>Organization</th>
                         {% endif %}
-                        <th>Mensagens</th>
-                        <th>Última Interação</th>
-                        <th>Cadastro</th>
-                        <th>Ações</th>
+                        <th>Messages</th>
+                        <th>Last interaction</th>
+                        <th>Registered</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -77,15 +77,15 @@
                         <td>{{ user.org_name }}</td>
                         {% endif %}
                         <td>{{ user.total_messages }}</td>
-                        <td>{{ user.last_interaction_at[:16] if user.last_interaction_at else 'Nunca' }}</td>
-                        <td>{{ user.created_at[:10] if user.created_at else '—' }}</td>
+                        <td>{{ user.last_interaction_at[:16] if user.last_interaction_at else 'Never' }}</td>
+                        <td>{{ user.created_at[:10] if user.created_at else '-' }}</td>
                         <td class="actions" style="display: flex; gap: 8px; justify-content: center;">
-                            <a href="/admin/user/{{ user.user_id }}/analysis" class="btn-action" title="Ver Análise">
-                                📊
+                            <a href="/admin/user/{{ user.user_id }}/analysis" class="btn-action" title="View analysis">
+                                View
                             </a>
-                            <form action="/admin/user/{{ user.user_id }}/delete" method="POST" onsubmit="return confirm('Tem certeza absoluta que deseja excluir PERMANENTEMENTE o usuário {{ user.full_name }} e todo o seu histórico e embeddings? Esta ação não pode ser desfeita.');" style="margin: 0;">
-                                <button type="submit" class="btn-action" title="Excluir Usuário" style="background: none; border: none; cursor: pointer; font-size: 1.2rem; padding: 4px;">
-                                    🗑️
+                            <form action="/admin/user/{{ user.user_id }}/delete" method="POST" onsubmit="return confirm('Are you absolutely sure you want to PERMANENTLY delete user {{ user.full_name }} and all related history and embeddings? This action cannot be undone.');" style="margin: 0;">
+                                <button type="submit" class="btn-action" title="Delete user" style="background: none; border: none; cursor: pointer; font-size: 1rem; padding: 4px;">
+                                    Delete
                                 </button>
                             </form>
                         </td>
@@ -95,10 +95,10 @@
             </table>
             {% else %}
             <div class="empty-state">
-                <p>Nenhum usuário encontrado</p>
+                <p>No user found</p>
                 {% if admin.role != 'master' %}
                 <p style="margin-top: 10px; color: #666;">
-                    Os usuários aparecerão aqui quando começarem a interagir com o bot.
+                    Users will appear here when they start interacting with the bot.
                 </p>
                 {% endif %}
             </div>

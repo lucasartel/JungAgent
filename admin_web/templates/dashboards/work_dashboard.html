@@ -7,8 +7,8 @@
     <header class="page-header-v2">
         <div>
             <p class="page-kicker-v2">Loop · Trabalho e publicacao</p>
-            <h1 class="page-title-v2">Modulo Work</h1>
-            <p class="page-subtitle-v2">Destinos, briefs, tickets e artefatos do fluxo editorial do JungAgent.</p>
+            <h1 class="page-title-v2">Work Module</h1>
+            <p class="page-subtitle-v2">Destinations, briefs, tickets, and artifacts from the JungAgent editorial workflow.</p>
         </div>
     </header>
 
@@ -20,8 +20,8 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Destinos e briefs</h2>
-                    <p class="panel-subtitle-v2">Para onde o modulo pode publicar e o que esta em preparacao.</p>
+                    <h2 class="panel-title-v2">Destinations and briefs</h2>
+                    <p class="panel-subtitle-v2">Where the module can publish and what is being prepared.</p>
                 </div>
             </div>
             <div class="panel-body-v2">
@@ -32,8 +32,8 @@
         <section class="panel-v2">
             <div class="panel-header-v2">
                 <div>
-                    <h2 class="panel-title-v2">Tickets e entregas</h2>
-                    <p class="panel-subtitle-v2">Fila de aprovacao, artefatos e eventos de entrega.</p>
+                    <h2 class="panel-title-v2">Tickets and deliveries</h2>
+                    <p class="panel-subtitle-v2">Approval queue, artifacts, and delivery events.</p>
                 </div>
             </div>
             <div class="panel-body-v2">
@@ -45,8 +45,8 @@
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Ultimas execucoes</h2>
-                <p class="panel-subtitle-v2">Historico do orgao de trabalho para diagnostico rapido.</p>
+                <h2 class="panel-title-v2">Latest executions</h2>
+                <p class="panel-subtitle-v2">History of the work organ for quick diagnostics.</p>
             </div>
         </div>
         <div class="panel-body-v2">
@@ -69,9 +69,9 @@ function escapeHtml(value) {
 
 function renderWorkState(state) {
     const cards = [
-        ["Credenciais", state.credentials_configured ? "Configuradas" : "Ausentes"],
+        ["Credentials", state.credentials_configured ? "Configured" : "Missing"],
         ["Providers", (state.providers || []).length],
-        ["Destinos", (state.destinations || []).length],
+        ["Destinations", (state.destinations || []).length],
         ["Briefs", (state.briefs || []).length],
         ["Tickets", (state.tickets || []).length],
         ["Runs", (state.runs || []).length],
@@ -105,12 +105,12 @@ async function loadWork() {
         [...(state.destinations || []).slice(0, 3), ...(state.briefs || []).slice(0, 6)],
         (item) => `
             <article class="data-card-v2">
-                <strong>${escapeHtml(item.label || item.title_hint || item.objective || item.slug || "registro")}</strong>
+                <strong>${escapeHtml(item.label || item.title_hint || item.objective || item.slug || "record")}</strong>
                 <div class="meta-line-v2">${escapeHtml(item.base_url || item.origin || item.status || "-")}</div>
                 <div class="mono-block-v2">${escapeHtml(item.notes || item.raw_input || item.default_voice_mode || "")}</div>
             </article>
         `,
-        "Nenhum destino ou brief registrado."
+        "No destination or brief recorded."
     );
 
     renderCollection(
@@ -123,7 +123,7 @@ async function loadWork() {
                 <div class="mono-block-v2">${escapeHtml(item.note || item.summary || item.external_id || item.url || "")}</div>
             </article>
         `,
-        "Nenhum ticket, entrega ou artefato recente."
+        "No recent ticket, delivery, or artifact."
     );
 
     renderCollection(
@@ -136,7 +136,7 @@ async function loadWork() {
                 <div class="mono-block-v2">${escapeHtml(item.output_summary || item.error_message || item.trigger_source || "")}</div>
             </article>
         `,
-        "Nenhuma execucao recente."
+        "No recent execution."
     );
 }
 

@@ -6,14 +6,14 @@
 <section class="page-shell-v2">
     <header class="page-header-v2">
         <div>
-            <p class="page-kicker-v2">Diagnostico · Memoria longa</p>
+            <p class="page-kicker-v2">Diagnostics · Long memory</p>
             <h1 class="page-title-v2">Memory Metrics</h1>
-            <p class="page-subtitle-v2">Cobertura das camadas de memoria por usuario, com fatos canonicos, lacunas e diagnostico de indexacao.</p>
+            <p class="page-subtitle-v2">Coverage of memory layers by user, with canonical facts, gaps, and indexing diagnostics.</p>
         </div>
         <div class="page-actions-v2">
-            <button class="button-v2" onclick="reloadMetrics()">Atualizar dados</button>
+            <button class="button-v2" onclick="reloadMetrics()">Refresh data</button>
             {% if unsafe_admin_endpoints_enabled %}
-            <button class="button-v2 button-v2--ghost" id="btnConsolidate" onclick="runConsolidation()">Executar consolidacao</button>
+            <button class="button-v2 button-v2--ghost" id="btnConsolidate" onclick="runConsolidation()">Run consolidation</button>
             {% endif %}
         </div>
     </header>
@@ -28,11 +28,11 @@
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Usuarios e cobertura de memoria</h2>
-                <p class="panel-subtitle-v2">SQLite como camada canonica; Mem0 e Chroma entram como leitura complementar.</p>
+                <h2 class="panel-title-v2">Users and memory coverage</h2>
+                <p class="panel-subtitle-v2">SQLite as the canonical layer; Mem0 and Chroma enter as complementary readings.</p>
             </div>
             <div class="table-controls-v2">
-                <input id="userSearch" class="search-input-v2" type="search" placeholder="Filtrar por nome, user_id ou plataforma..." oninput="renderUsers()">
+                <input id="userSearch" class="search-input-v2" type="search" placeholder="Filter by name, user_id, or platform..." oninput="renderUsers()">
             </div>
         </div>
         <div class="panel-body-v2">
@@ -40,16 +40,16 @@
                 <table class="data-table-v2">
                     <thead>
                         <tr>
-                            <th>Usuario</th>
-                            <th>Plataforma</th>
-                            <th>Conversas</th>
-                            <th>Fatos SQLite</th>
-                            <th>Fatos V2</th>
-                            <th>Fatos V1</th>
+                            <th>User</th>
+                            <th>Platform</th>
+                            <th>Conversations</th>
+                            <th>SQLite facts</th>
+                            <th>Facts V2</th>
+                            <th>Facts V1</th>
                             <th>Knowledge gaps</th>
                             <th>Chroma</th>
-                            <th>Ultima atividade</th>
-                            <th>Acoes</th>
+                            <th>Last activity</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="usersTableBody"></tbody>
@@ -63,10 +63,10 @@
     <div class="modal-card-v2">
         <div class="modal-head-v2">
             <div>
-                <h3 id="modalTitle">Fatos atuais</h3>
-                <p id="modalSubtitle">Carregando...</p>
+                <h3 id="modalTitle">Current facts</h3>
+                <p id="modalSubtitle">Loading...</p>
             </div>
-            <button class="button-v2 button-v2--ghost" onclick="closeModal()">Fechar</button>
+            <button class="button-v2 button-v2--ghost" onclick="closeModal()">Close</button>
         </div>
         <div id="modalBody"></div>
     </div>
@@ -94,7 +94,7 @@ function escapeAttr(value) {
 function showAlert(message, isError = false) {
     document.getElementById('alertBox').innerHTML = `
         <div class="notice-v2${isError ? '' : ' notice-v2--success'}">
-            <strong>${isError ? 'Erro' : 'Atualizacao'}</strong>
+            <strong>${isError ? 'Error' : 'Update'}</strong>
             <p>${escapeHtml(message)}</p>
         </div>
     `;
@@ -107,24 +107,24 @@ function renderOverview() {
     const data = dashboardData.overview;
     document.getElementById('overviewCards').innerHTML = `
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Usuarios</span>
+            <span class="metric-label-v2">Users</span>
             <strong class="metric-value-v2">${data.total_users}</strong>
-            <p class="metric-note-v2">${data.users_with_facts} com fatos canonicos em SQLite.</p>
+            <p class="metric-note-v2">${data.users_with_facts} with canonical facts in SQLite.</p>
         </article>
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Conversas</span>
+            <span class="metric-label-v2">Conversations</span>
             <strong class="metric-value-v2">${data.total_conversations}</strong>
-            <p class="metric-note-v2">${data.recent_conversations_30d} nos ultimos 30 dias.</p>
+            <p class="metric-note-v2">${data.recent_conversations_30d} in the last 30 days.</p>
         </article>
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Fatos atuais</span>
+            <span class="metric-label-v2">Current facts</span>
             <strong class="metric-value-v2">${data.total_sqlite_current_facts}</strong>
-            <p class="metric-note-v2">Fatos estruturados correntes na camada canonica.</p>
+            <p class="metric-note-v2">Current structured facts in the canonical layer.</p>
         </article>
         <article class="metric-card-v2">
             <span class="metric-label-v2">Links Chroma</span>
             <strong class="metric-value-v2">${data.total_chroma_links}</strong>
-            <p class="metric-note-v2">Conversas com indexacao semantica vinculada.</p>
+            <p class="metric-note-v2">Conversations with linked semantic indexing.</p>
         </article>
     `;
 }
@@ -134,18 +134,18 @@ function renderLayers() {
     document.getElementById('layerCards').innerHTML = `
         <article class="metric-card-v2">
             <span class="metric-label-v2">SQLite facts</span>
-            <strong class="cell-primary-v2">${sqlite.canonical_source || 'indisponivel'}</strong>
+            <strong class="cell-primary-v2">${sqlite.canonical_source || 'unavailable'}</strong>
             <p class="metric-note-v2">${sqlite.note}</p>
         </article>
         <article class="metric-card-v2">
             <span class="metric-label-v2">Mem0 / Qdrant</span>
-            <strong class="cell-primary-v2">${mem0.enabled ? (mem0.healthy ? 'OK' : 'Instavel') : 'Desabilitado'}</strong>
+            <strong class="cell-primary-v2">${mem0.enabled ? (mem0.healthy ? 'OK' : 'Unstable') : 'Disabled'}</strong>
             <p class="metric-note-v2">${mem0.error || mem0.note}</p>
         </article>
         <article class="metric-card-v2">
             <span class="metric-label-v2">Chroma</span>
-            <strong class="cell-primary-v2">${chroma.enabled ? 'Ativo' : 'Desabilitado'}</strong>
-            <p class="metric-note-v2">${chroma.documents ?? 0} docs globais · ${chroma.error || chroma.note}</p>
+            <strong class="cell-primary-v2">${chroma.enabled ? 'Active' : 'Disabled'}</strong>
+            <p class="metric-note-v2">${chroma.documents ?? 0} global docs · ${chroma.error || chroma.note}</p>
         </article>
     `;
 }
@@ -161,7 +161,7 @@ function renderUsers() {
         ? rows.map((user) => `
             <tr>
                 <td>
-                    <span class="cell-primary-v2">${escapeHtml(user.user_name || 'Usuario anonimo')}</span>
+                    <span class="cell-primary-v2">${escapeHtml(user.user_name || 'Anonymous user')}</span>
                     <span class="cell-secondary-v2">${escapeHtml(user.user_id)}</span>
                 </td>
                 <td><span class="cell-secondary-v2">${escapeHtml(user.platform || 'N/A')}</span></td>
@@ -175,10 +175,10 @@ function renderUsers() {
                     <span class="cell-secondary-v2">${escapeHtml(user.last_conversation_at)}</span>
                     <span class="cell-secondary-v2">last_seen: ${escapeHtml(user.last_seen)}</span>
                 </td>
-                <td><button class="button-v2 button-v2--ghost" onclick="openFactsModal('${escapeAttr(user.user_id)}', '${escapeAttr(user.user_name || 'Usuario anonimo')}')">Ver fatos atuais</button></td>
+                <td><button class="button-v2 button-v2--ghost" onclick="openFactsModal('${escapeAttr(user.user_id)}', '${escapeAttr(user.user_name || 'Anonymous user')}')">View current facts</button></td>
             </tr>
         `).join('')
-        : '<tr><td colspan="10" class="empty-row-v2">Nenhum usuario encontrado para esse filtro.</td></tr>';
+        : '<tr><td colspan="10" class="empty-row-v2">No user found for this filter.</td></tr>';
 }
 
 async function reloadMetrics() {
@@ -186,9 +186,9 @@ async function reloadMetrics() {
         const response = await fetch('/admin/memory-metrics?format=json');
         dashboardData = await response.json();
         renderAll();
-        showAlert('Dados atualizados com sucesso.');
+        showAlert('Data refreshed successfully.');
     } catch (error) {
-        showAlert(`Erro ao atualizar dados: ${error.message}`, true);
+        showAlert(`Error refreshing data: ${error.message}`, true);
     }
 }
 
@@ -196,26 +196,26 @@ async function runConsolidation() {
     const btn = document.getElementById('btnConsolidate');
     if (!btn) return;
     btn.disabled = true;
-    btn.textContent = 'Executando...';
+    btn.textContent = 'Running...';
     try {
         const response = await fetch('/admin/triggers/memory-metrics', { method: 'POST' });
         const result = await response.json();
-        if (result.status !== 'success') throw new Error(result.message || result.detail || 'Falha na consolidacao');
+        if (result.status !== 'success') throw new Error(result.message || result.detail || 'Consolidation failed');
         await reloadMetrics();
-        showAlert('Consolidacao executada com sucesso.');
+        showAlert('Consolidation completed successfully.');
     } catch (error) {
-        showAlert(`Erro ao consolidar memorias: ${error.message}`, true);
+        showAlert(`Error consolidating memories: ${error.message}`, true);
     } finally {
         btn.disabled = false;
-        btn.textContent = 'Executar consolidacao';
+        btn.textContent = 'Run consolidation';
     }
 }
 
 async function openFactsModal(userId, userName) {
     const modal = document.getElementById('factsModal');
-    document.getElementById('modalTitle').textContent = `Fatos atuais · ${userName}`;
-    document.getElementById('modalSubtitle').textContent = 'Carregando SQLite, Mem0/Qdrant e cobertura de Chroma...';
-    document.getElementById('modalBody').innerHTML = '<div class="empty-row-v2">Buscando detalhes...</div>';
+    document.getElementById('modalTitle').textContent = `Current facts · ${userName}`;
+    document.getElementById('modalSubtitle').textContent = 'Loading SQLite, Mem0/Qdrant, and Chroma coverage...';
+    document.getElementById('modalBody').innerHTML = '<div class="empty-row-v2">Fetching details...</div>';
     modal.classList.add('open');
 
     try {
@@ -232,12 +232,12 @@ async function openFactsModal(userId, userName) {
 function renderFactsSection(title, items, renderer, openByDefault, mem0Meta = null) {
     let extra = '';
     if (mem0Meta) {
-        if (!mem0Meta.enabled) extra += '<div class="empty-row-v2">Mem0 nao esta habilitado nesta instancia.</div>';
+        if (!mem0Meta.enabled) extra += '<div class="empty-row-v2">Mem0 is not enabled in this instance.</div>';
         if (mem0Meta.error) extra += `<div class="empty-row-v2">${escapeHtml(mem0Meta.error)}</div>`;
     }
     const body = items.length
         ? `<div class="stack-v2">${items.map(renderer).join('')}</div>`
-        : '<div class="empty-row-v2">Nenhum item encontrado.</div>';
+        : '<div class="empty-row-v2">No item found.</div>';
     return `
         <details class="details-v2" ${openByDefault ? 'open' : ''}>
             <summary>${title}</summary>
@@ -248,16 +248,16 @@ function renderFactsSection(title, items, renderer, openByDefault, mem0Meta = nu
 
 function renderCanonicalFact(fact) {
     const label = fact.type ? `${fact.category}.${fact.type}.${fact.attribute}` : `${fact.category}.${fact.attribute}`;
-    return `<article class="data-card-v2"><strong>${escapeHtml(label)}</strong><div class="mono-block-v2">${escapeHtml(fact.value || '')}</div><div class="meta-line-v2">confianca: ${formatConfidence(fact.confidence)} · versao: ${fact.version || 1} · conversa fonte: ${fact.source_conversation_id || 'N/A'}</div></article>`;
+    return `<article class="data-card-v2"><strong>${escapeHtml(label)}</strong><div class="mono-block-v2">${escapeHtml(fact.value || '')}</div><div class="meta-line-v2">confidence: ${formatConfidence(fact.confidence)} · version: ${fact.version || 1} · source conversation: ${fact.source_conversation_id || 'N/A'}</div></article>`;
 }
 
 function renderV2Fact(fact) {
-    const ctx = fact.context ? `<div class="meta-line-v2">contexto: ${escapeHtml(fact.context)}</div>` : '';
-    return `<article class="data-card-v2"><strong>${escapeHtml(`${fact.category}.${fact.type}.${fact.attribute}`)}</strong><div class="mono-block-v2">${escapeHtml(fact.value || '')}</div><div class="meta-line-v2">confianca: ${formatConfidence(fact.confidence)} · metodo: ${escapeHtml(fact.extraction_method || 'N/A')} · conversa fonte: ${fact.source_conversation_id || 'N/A'}</div>${ctx}</article>`;
+    const ctx = fact.context ? `<div class="meta-line-v2">context: ${escapeHtml(fact.context)}</div>` : '';
+    return `<article class="data-card-v2"><strong>${escapeHtml(`${fact.category}.${fact.type}.${fact.attribute}`)}</strong><div class="mono-block-v2">${escapeHtml(fact.value || '')}</div><div class="meta-line-v2">confidence: ${formatConfidence(fact.confidence)} · method: ${escapeHtml(fact.extraction_method || 'N/A')} · source conversation: ${fact.source_conversation_id || 'N/A'}</div>${ctx}</article>`;
 }
 
 function renderV1Fact(fact) {
-    return `<article class="data-card-v2"><strong>${escapeHtml(`${fact.category}.${fact.attribute}`)}</strong><div class="mono-block-v2">${escapeHtml(fact.value || '')}</div><div class="meta-line-v2">confianca: ${formatConfidence(fact.confidence)} · versao: ${fact.version || 1} · conversa fonte: ${fact.source_conversation_id || 'N/A'}</div></article>`;
+    return `<article class="data-card-v2"><strong>${escapeHtml(`${fact.category}.${fact.attribute}`)}</strong><div class="mono-block-v2">${escapeHtml(fact.value || '')}</div><div class="meta-line-v2">confidence: ${formatConfidence(fact.confidence)} · version: ${fact.version || 1} · source conversation: ${fact.source_conversation_id || 'N/A'}</div></article>`;
 }
 
 function renderMem0Memory(memory) {
@@ -266,7 +266,7 @@ function renderMem0Memory(memory) {
 }
 
 function renderGap(gap) {
-    return `<article class="data-card-v2"><strong>${escapeHtml(gap.topic || 'gap')}</strong><div class="mono-block-v2">${escapeHtml(gap.gap || '')}</div><div class="meta-line-v2">importancia: ${formatConfidence(gap.importance_score)} · criado em: ${escapeHtml(gap.created_at || 'N/A')}</div></article>`;
+    return `<article class="data-card-v2"><strong>${escapeHtml(gap.topic || 'gap')}</strong><div class="mono-block-v2">${escapeHtml(gap.gap || '')}</div><div class="meta-line-v2">importance: ${formatConfidence(gap.importance_score)} · created at: ${escapeHtml(gap.created_at || 'N/A')}</div></article>`;
 }
 
 function renderModalBody(data) {
@@ -277,16 +277,16 @@ function renderModalBody(data) {
     const knowledgeGaps = data.knowledge_gaps || [];
     return `
         <div class="detail-grid-v2">
-            <div class="detail-card-v2"><div class="detail-label-v2">Conversas</div><div class="detail-value-v2">${data.summary.conversation_count}</div></div>
-            <div class="detail-card-v2"><div class="detail-label-v2">Fatos SQLite</div><div class="detail-value-v2">${data.summary.sqlite_current_facts}</div></div>
-            <div class="detail-card-v2"><div class="detail-label-v2">Memorias Mem0</div><div class="detail-value-v2">${data.summary.mem0_memories}</div></div>
+            <div class="detail-card-v2"><div class="detail-label-v2">Conversations</div><div class="detail-value-v2">${data.summary.conversation_count}</div></div>
+            <div class="detail-card-v2"><div class="detail-label-v2">SQLite facts</div><div class="detail-value-v2">${data.summary.sqlite_current_facts}</div></div>
+            <div class="detail-card-v2"><div class="detail-label-v2">Mem0 memories</div><div class="detail-value-v2">${data.summary.mem0_memories}</div></div>
             <div class="detail-card-v2"><div class="detail-label-v2">Links Chroma</div><div class="detail-value-v2">${data.summary.chroma_linked_conversations}</div></div>
         </div>
-        ${renderFactsSection(`Fatos canonicos atuais (${canonicalFacts.length})`, canonicalFacts, renderCanonicalFact, true)}
-        ${renderFactsSection(`Fatos estruturados V2 (${factsV2.length})`, factsV2, renderV2Fact, false)}
-        ${renderFactsSection(`Fatos legados V1 (${factsV1.length})`, factsV1, renderV1Fact, false)}
-        ${renderFactsSection(`Memorias Mem0 / Qdrant (${mem0Memories.length})`, mem0Memories, renderMem0Memory, false, data.mem0)}
-        ${renderFactsSection(`Knowledge gaps ativos (${knowledgeGaps.length})`, knowledgeGaps, renderGap, false)}
+        ${renderFactsSection(`Current canonical facts (${canonicalFacts.length})`, canonicalFacts, renderCanonicalFact, true)}
+        ${renderFactsSection(`Structured facts V2 (${factsV2.length})`, factsV2, renderV2Fact, false)}
+        ${renderFactsSection(`Legacy facts V1 (${factsV1.length})`, factsV1, renderV1Fact, false)}
+        ${renderFactsSection(`Mem0 / Qdrant memories (${mem0Memories.length})`, mem0Memories, renderMem0Memory, false, data.mem0)}
+        ${renderFactsSection(`Active knowledge gaps (${knowledgeGaps.length})`, knowledgeGaps, renderGap, false)}
     `;
 }
 
