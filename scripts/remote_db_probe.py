@@ -347,6 +347,46 @@ def query_pressure(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
     }
 
 
+def fetch_latest_saber_event(cursor: sqlite3.Cursor, user_id: str) -> Optional[Dict[str, Any]]:
+    if not table_exists(cursor, "agent_will_pulse_events"):
+        return None
+    columns = table_columns(cursor, "agent_will_pulse_events")
+    selected = [
+        column
+        for column in [
+            "id",
+            "cycle_id",
+            "trigger_source",
+            "saber_pressure",
+            "relacionar_pressure",
+            "expressar_pressure",
+            "winning_will",
+            "decision_reason",
+            "action_attempted",
+            "action_summary",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
+        if column in columns
+    ]
+    if not selected:
+        return None
+    cursor.execute(
+        f"""
+        SELECT {', '.join(selected)}
+        FROM agent_will_pulse_events
+        WHERE user_id = ?
+          AND (winning_will = 'saber' OR action_attempted = 'saber_release')
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (user_id,),
+    )
+    row = cursor.fetchone()
+    return dict(row) if row else None
+
+
 def query_meta(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
     cursor.execute(
         """
@@ -697,11 +737,12 @@ def query_integration(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[
     identity_payload = query_identity(cursor, args)
     world_payload = query_world(cursor, args)
 
+    latest_saber_event = fetch_latest_saber_event(cursor, args.user_id)
     saber_events = [
         event for event in pressure_payload.get("events", [])
         if event.get("winning_will") == "saber" or event.get("action_attempted") == "saber_release"
     ]
-    latest_saber_event = saber_events[0] if saber_events else None
+    latest_saber_event = latest_saber_event or (saber_events[0] if saber_events else None)
     latest_will = (will_payload.get("rows") or [None])[0]
     latest_identity_phase = (_latest_raw_phase(cursor, "identity", 1) or [None])[0]
     latest_rumination_intro = (_latest_raw_phase(cursor, "rumination_intro", 1) or [None])[0]
