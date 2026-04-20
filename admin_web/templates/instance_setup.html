@@ -1,0 +1,164 @@
+{% extends "base_v2.html" %}
+
+{% block title %}Instance Setup - JungAgent Admin{% endblock %}
+
+{% block content %}
+<section class="page-shell-v2">
+    <header class="page-header-v2">
+        <div>
+            <p class="page-kicker-v2">Install - Instance center</p>
+            <h1 class="page-title-v2">Instance Setup</h1>
+            <p class="page-subtitle-v2">
+                Validate the single-user installation link between the web admin, Telegram admin, and the agent's central memory id.
+            </p>
+        </div>
+        <div class="page-actions-v2">
+            <a href="/admin/instance/health" class="button-v2 button-v2--ghost">JSON health</a>
+            <a href="/admin/master/dashboard" class="button-v2 button-v2--ghost">Back to legacy</a>
+        </div>
+    </header>
+
+    {% if repaired %}
+    <section class="notice-v2 notice-v2--success">
+        <strong>Safe repair completed</strong>
+        <p>The central admin user row was created or gently aligned. Existing history was preserved.</p>
+    </section>
+    {% endif %}
+
+    {% if overall_status == "healthy" %}
+    <section class="notice-v2 notice-v2--success">
+        <strong>Instance is healthy</strong>
+        <p>The configured admin, Telegram gate, and core loop identity are aligned for this installation.</p>
+    </section>
+    {% elif overall_status == "attention" %}
+    <section class="notice-v2 notice-v2--warning">
+        <strong>Instance needs attention</strong>
+        <p>The installation can run, but one or more setup items should be reviewed before treating it as fully portable.</p>
+    </section>
+    {% else %}
+    <section class="notice-v2 notice-v2--warning">
+        <strong>Instance is misconfigured</strong>
+        <p>At least one setup item can split the admin's conversations from the agent's central psyche.</p>
+    </section>
+    {% endif %}
+
+    <section class="metric-grid-v2 metric-grid-v2--quad">
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Instance</span>
+            <strong class="metric-value-v2">{{ summary.instance_name }}</strong>
+            <p class="metric-note-v2"><span class="table-badge-v2 table-badge-v2--mono">{{ summary.agent_instance }}</span></p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Admin user id</span>
+            <strong class="metric-value-v2">{{ summary.admin_user_id }}</strong>
+            <p class="metric-note-v2">Central id used by will, dreams, rumination, identity, and wellness.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Telegram admins</span>
+            <strong class="metric-value-v2">{{ telegram_admin_count }}</strong>
+            <p class="metric-note-v2">Allowed ids loaded from instance config.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Admin conversations</span>
+            <strong class="metric-value-v2">{{ admin_conversations }}</strong>
+            <p class="metric-note-v2">Messages feeding the central admin psyche.</p>
+        </article>
+    </section>
+
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Health checks</h2>
+                <p class="panel-subtitle-v2">These checks make the installable Path A explicit without removing legacy infrastructure.</p>
+            </div>
+        </div>
+        <div class="panel-body-v2 stack-v2">
+            {% for check in checks %}
+            <div class="notice-v2{% if check.status == 'ok' %} notice-v2--success{% elif check.status in ['warning', 'error'] %} notice-v2--warning{% endif %}">
+                <strong>{{ check.title }} <span class="table-badge-v2">{{ check.status|upper }}</span></strong>
+                <p>{{ check.detail }}</p>
+                {% if check.status != "ok" and check.action %}
+                <p style="margin-top: 8px;">Recommended action: {{ check.action }}</p>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="split-panels-v2">
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Safe repair</h2>
+                    <p class="panel-subtitle-v2">Create or align only the central admin user row.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2 stack-v2">
+                <div class="notice-v2">
+                    <strong>What this touches</strong>
+                    <p>
+                        If the admin user row is missing, it creates it. If it exists, it only fills platform/platform_id when needed.
+                        It does not replace conversation history, memories, dreams, rumination, identity, or will state.
+                    </p>
+                </div>
+                <form method="post" action="/admin/instance/ensure-admin-user">
+                    <button type="submit" class="button-v2">Repair central admin user</button>
+                </form>
+            </div>
+        </section>
+
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Current wiring</h2>
+                    <p class="panel-subtitle-v2">Non-secret view of the environment contract.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2">
+                <div class="table-wrap-v2">
+                    <table class="table-v2">
+                        <tbody>
+                            <tr>
+                                <th>Admin platform</th>
+                                <td>{{ summary.admin_platform }}</td>
+                            </tr>
+                            <tr>
+                                <th>Platform id configured</th>
+                                <td>{{ "yes" if summary.admin_platform_id_configured else "no" }}</td>
+                            </tr>
+                            <tr>
+                                <th>Derived admin id</th>
+                                <td><span class="table-badge-v2 table-badge-v2--mono">{{ derived_admin_user_id or "-" }}</span></td>
+                            </tr>
+                            <tr>
+                                <th>Proactive enabled</th>
+                                <td>{{ "yes" if summary.proactive_enabled else "no" }}</td>
+                            </tr>
+                            <tr>
+                                <th>Loop state</th>
+                                <td>
+                                    {% if loop_state %}
+                                    {{ loop_state.status or "-" }} / {{ loop_state.current_phase or "-" }} / updated {{ loop_state.updated_at or "-" }}
+                                    {% else %}
+                                    -
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Admin row</th>
+                                <td>
+                                    {% if admin_user %}
+                                    {{ admin_user.user_name or "Admin" }} / {{ admin_user.platform or "-" }}
+                                    {% else %}
+                                    missing
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </section>
+</section>
+{% endblock %}

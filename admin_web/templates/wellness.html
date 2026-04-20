@@ -22,6 +22,16 @@
         </p>
     </section>
 
+    {% if not admin_user %}
+    <section class="notice-v2 notice-v2--warning">
+        <strong>Central admin row not found</strong>
+        <p>
+            Wellness is already scoped to the configured admin id, but the user row has not been created yet.
+            Open Instance Setup to repair this safely before using profile-level wellness pages.
+        </p>
+    </section>
+    {% endif %}
+
     <section class="metric-grid-v2 metric-grid-v2--quad">
         <article class="metric-card-v2">
             <span class="metric-label-v2">Central user</span>
@@ -73,6 +83,11 @@
             <span class="quick-kicker-v2">Audit</span>
             <strong class="quick-title-v2">Admin data</strong>
             <p class="quick-copy-v2">Operational view of the central user's persisted conversations and proactive records.</p>
+        </a>
+        <a href="/admin/instance/setup" class="quick-card-v2">
+            <span class="quick-kicker-v2">Install</span>
+            <strong class="quick-title-v2">Instance setup</strong>
+            <p class="quick-copy-v2">Check or repair the link between the admin account, Telegram id, and central memory id.</p>
         </a>
         <a href="/admin/memory-metrics?format=facts&user_id={{ admin_user_id }}" class="quick-card-v2">
             <span class="quick-kicker-v2">Memory</span>

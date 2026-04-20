@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request, Depends, HTTPException, status
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 import os
 from typing import Dict, List, Optional
 import logging
@@ -322,6 +322,46 @@ async def export_unesco_csv(admin: Dict = Depends(require_master)):
 async def sync_check_page(request: Request, admin: Dict = Depends(require_master)):
     """Página de diagnóstico de sincronização"""
     return templates.TemplateResponse("sync_check.html", {"request": request, "active_nav": "operation"})
+
+@router.get("/instance/setup", response_class=HTMLResponse)
+async def instance_setup_page(
+    request: Request,
+    repaired: Optional[str] = None,
+    admin: Dict = Depends(require_master),
+):
+    """Single-installation setup and health center."""
+    from instance_setup import build_instance_setup_payload
+
+    db = get_db()
+    payload = build_instance_setup_payload(db)
+    payload.update(
+        {
+            "request": request,
+            "active_nav": "legacy",
+            "repaired": repaired == "1",
+        }
+    )
+    return templates.TemplateResponse("instance_setup.html", payload)
+
+
+@router.get("/instance/health")
+async def instance_health(admin: Dict = Depends(require_master)):
+    """Machine-readable single-installation health check."""
+    from instance_setup import build_instance_setup_payload
+
+    db = get_db()
+    return JSONResponse(build_instance_setup_payload(db))
+
+
+@router.post("/instance/ensure-admin-user")
+async def instance_ensure_admin_user(admin: Dict = Depends(require_master)):
+    """Safely create or align the central admin user row."""
+    from instance_setup import ensure_central_admin_user
+
+    db = get_db()
+    ensure_central_admin_user(db)
+    return RedirectResponse("/admin/instance/setup?repaired=1", status_code=303)
+
 
 @router.get("/wellness", response_class=HTMLResponse)
 async def wellness_dashboard(request: Request, admin: Dict = Depends(require_master)):

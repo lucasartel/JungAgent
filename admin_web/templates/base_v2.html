@@ -59,7 +59,7 @@
                 <a href="/admin/wellness" class="admin-nav-link-v2{% if wellness_path %} is-active{% endif %}">
                     Wellness
                 </a>
-                <a href="{{ dashboard_href }}" class="admin-nav-link-v2{% if path in ['/admin', '/admin/master/dashboard'] %} is-active{% endif %}">
+                <a href="{{ dashboard_href }}" class="admin-nav-link-v2{% if path in ['/admin', '/admin/master/dashboard'] or path.startswith('/admin/instance') %} is-active{% endif %}">
                     Legacy
                 </a>
                 {% endif %}
