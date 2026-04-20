@@ -151,6 +151,135 @@ The admin area exposes the inner life of the system through modules such as:
 - will
 - visual map
 
+## Installation
+
+JungAgent is currently best installed as a **single-admin agent instance**:
+
+- one deployed service
+- one Telegram bot
+- one central admin user
+- one persistent memory database
+- one admin dashboard for inspecting the agent's internal life
+
+The older multi-tenant / organization surfaces still exist as legacy infrastructure, but they are not the recommended product path for new installations.
+
+### Requirements
+
+- Python 3.11+
+- a Telegram bot token from BotFather
+- at least one LLM provider key
+- persistent storage for SQLite and ChromaDB
+- a master admin account for the web dashboard
+
+### Environment
+
+Copy the example environment file and fill in your local values:
+
+```bash
+cp .env.example .env
+```
+
+The most important variables are:
+
+```bash
+INSTANCE_NAME=JungAgent
+AGENT_INSTANCE=jung_v1
+INSTANCE_TIMEZONE=America/Sao_Paulo
+
+TELEGRAM_BOT_TOKEN=your-telegram-bot-token
+TELEGRAM_ADMIN_IDS=123456789
+
+ADMIN_PLATFORM=telegram
+ADMIN_PLATFORM_ID=123456789
+ADMIN_USER_ID=
+
+OPENROUTER_API_KEY=your-openrouter-key
+OPENAI_API_KEY=your-openai-key
+CONVERSATION_MODEL=google/gemini-2.5-flash-lite
+INTERNAL_MODEL=google/gemini-2.5-flash-lite
+
+PROACTIVE_ENABLED=true
+ACTIVE_CONSCIOUSNESS_ENABLED=true
+ENABLE_UNSAFE_ADMIN_ENDPOINTS=false
+```
+
+For new Telegram-only installations, prefer setting `ADMIN_PLATFORM_ID` to the numeric Telegram id of the instance admin and leaving `ADMIN_USER_ID` empty. JungAgent will derive the internal admin memory id as `sha256(ADMIN_PLATFORM_ID)[:16]`.
+
+Set `ADMIN_USER_ID` directly only when migrating an existing installation that already has memory under a known user id.
+
+### Local Run
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Start the app:
+
+```bash
+python main.py
+```
+
+The service runs the FastAPI admin interface and the Telegram bot from the same process. By default, the web server listens on `PORT` or `8000`.
+
+After the first boot, make sure the SQLite database exists and create a master admin account if your database does not already have one. The current admin auth layer still comes from the legacy admin system, so use the existing migration/helper flow for now:
+
+```bash
+python migrations/migrate_multi_tenant.py \
+  --db-path ./data/jung_hybrid.db \
+  --master-email admin@example.com \
+  --master-password "change-this-password" \
+  --master-name "Instance Admin"
+```
+
+Then open:
+
+```text
+http://localhost:8000/admin/login
+```
+
+### Instance Setup
+
+After logging into the dashboard, open:
+
+```text
+/admin/instance/setup
+```
+
+This page checks whether the installation is coherently wired:
+
+- the web admin exists
+- the Telegram admin id is configured
+- the Telegram admin is in the allowlist
+- the derived `ADMIN_USER_ID` matches the Telegram identity
+- the central admin user row exists in the JungAgent memory database
+- proactive messaging is enabled or intentionally disabled
+
+If the central admin user row is missing, use the safe repair button on that page. It creates or aligns only the admin user row and does not replace conversation history, memories, dreams, rumination, identity, or will state.
+
+### Railway Deploy
+
+The repository includes a `Dockerfile`, `Procfile`, and `railway.toml`.
+
+For Railway:
+
+1. Create a new Railway project from this repository.
+2. Add a persistent volume and point `SQLITE_DB_PATH` to that volume, for example `/data/jung_hybrid.db`.
+3. Set `CHROMA_DB_PATH` to a persistent path when using vector memory, for example `/data/chroma_db`.
+4. Add the same environment variables described above.
+5. Deploy the service.
+6. Create or migrate the master admin user if needed.
+7. Open `/admin/instance/setup` and verify the installation.
+
+### Security Notes
+
+- Keep `TELEGRAM_BOT_TOKEN` and LLM provider keys out of git.
+- Keep `ENABLE_UNSAFE_ADMIN_ENDPOINTS=false` in production unless you are doing a short, controlled maintenance operation.
+- Use `TELEGRAM_ADMIN_IDS` to prevent non-admin Telegram users from interacting with the private instance.
+- Treat the SQLite database and ChromaDB directory as sensitive memory stores.
+- Keep a persistent backup strategy before running migrations or manual repair scripts.
+
 ## Repository layout
 
 The repository root is intentionally kept focused on runtime code and deployment entrypoints.
