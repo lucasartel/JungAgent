@@ -62,6 +62,10 @@ class RuminationEngine:
                 context TEXT,
                 source_conversation_id INTEGER,
                 source_quote TEXT,
+                source_kind TEXT DEFAULT 'conversation',
+                source_table TEXT,
+                source_id TEXT,
+                source_metadata_json TEXT,
                 emotional_weight REAL DEFAULT 0.5,
                 tension_level REAL DEFAULT 0.0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -154,6 +158,17 @@ class RuminationEngine:
             cursor.execute("ALTER TABLE rumination_fragments ADD COLUMN last_detection_attempt_at DATETIME")
         except sqlite3.OperationalError:
             pass
+
+        for column_def in [
+            "source_kind TEXT DEFAULT 'conversation'",
+            "source_table TEXT",
+            "source_id TEXT",
+            "source_metadata_json TEXT",
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE rumination_fragments ADD COLUMN {column_def}")
+            except sqlite3.OperationalError:
+                pass
 
         self.db.conn.commit()
         logger.info("✅ Tabelas de ruminação criadas/verificadas")

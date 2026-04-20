@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import socket
+import sqlite3
 import unicodedata
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -52,6 +53,19 @@ DEFAULT_PROVIDER_SPECS = {
 APP_BASE_URL = os.getenv("APP_BASE_URL", "").rstrip("/")
 ALLOW_PRIVATE_WORK_DESTINATIONS = os.getenv("ALLOW_PRIVATE_WORK_DESTINATIONS", "").strip().lower() in {"1", "true", "yes", "on"}
 ALLOW_HTTP_WORK_DESTINATIONS = os.getenv("ALLOW_HTTP_WORK_DESTINATIONS", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+WORK_AUTONOMY_ENABLED = os.getenv("WORK_AUTONOMY_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY = _env_int("WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY", 3)
+WORK_MAX_PENDING_TICKETS = _env_int("WORK_MAX_PENDING_TICKETS", 3)
+WORK_NOTIFY_ADMIN_ON_TICKETS = os.getenv("WORK_NOTIFY_ADMIN_ON_TICKETS", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _now_iso() -> str:
@@ -469,6 +483,198 @@ class WorkEngine:
             )
         self.db.conn.commit()
 
+    def list_projects(self) -> List[Dict[str, Any]]:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT p.*, d.label AS destination_label, d.provider_key, d.base_url
+            FROM work_projects p
+            LEFT JOIN work_destinations d ON d.id = p.default_destination_id
+            ORDER BY
+                CASE WHEN p.status = 'active' THEN 0 ELSE 1 END,
+                p.priority DESC,
+                p.created_at DESC
+            """
+        )
+        projects = []
+        for row in cursor.fetchall():
+            item = dict(row)
+            item["allowed_skills"] = _json_loads_maybe(item.get("allowed_skills_json") or "[]")
+            item["autonomy_policy"] = _json_loads_maybe(item.get("autonomy_policy_json") or "{}")
+            projects.append(item)
+        return projects
+
+    def list_active_projects(self) -> List[Dict[str, Any]]:
+        return [project for project in self.list_projects() if project.get("status") == "active"]
+
+    def _unique_project_key(self, name: str, existing_project_id: Optional[int] = None) -> str:
+        base = _slugify(name)
+        candidate = base
+        suffix = 2
+        cursor = self.db.conn.cursor()
+        while True:
+            if existing_project_id:
+                cursor.execute(
+                    "SELECT id FROM work_projects WHERE project_key = ? AND id != ? LIMIT 1",
+                    (candidate, existing_project_id),
+                )
+            else:
+                cursor.execute("SELECT id FROM work_projects WHERE project_key = ? LIMIT 1", (candidate,))
+            if not cursor.fetchone():
+                return candidate
+            candidate = f"{base}-{suffix}"
+            suffix += 1
+
+    def get_project(self, project_id: int) -> Optional[Dict[str, Any]]:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT p.*, d.label AS destination_label, d.provider_key, d.base_url
+            FROM work_projects p
+            LEFT JOIN work_destinations d ON d.id = p.default_destination_id
+            WHERE p.id = ?
+            LIMIT 1
+            """,
+            (project_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["allowed_skills"] = _json_loads_maybe(item.get("allowed_skills_json") or "[]")
+        item["autonomy_policy"] = _json_loads_maybe(item.get("autonomy_policy_json") or "{}")
+        return item
+
+    def create_project(
+        self,
+        name: str,
+        description: str = "",
+        directive: str = "",
+        default_destination_id: Optional[int] = None,
+        allowed_skills: Optional[List[str]] = None,
+        editorial_policy: str = "",
+        seo_policy: str = "",
+        priority: int = 50,
+        status: str = "active",
+        daily_action_limit: int = 3,
+    ) -> Dict[str, Any]:
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("Nome do projeto e obrigatorio")
+
+        destination_id = int(default_destination_id) if default_destination_id else None
+        if destination_id and not self.get_destination(destination_id):
+            raise ValueError("Destino padrao nao encontrado")
+
+        allowed = allowed_skills or ["wordpress"]
+        project_key = self._unique_project_key(name)
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO work_projects (
+                project_key, name, description, directive, status, priority,
+                default_destination_id, allowed_skills_json, editorial_policy,
+                seo_policy, autonomy_policy_json, daily_action_limit, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                project_key,
+                name,
+                description,
+                directive,
+                status if status in {"active", "paused"} else "active",
+                int(priority or 50),
+                destination_id,
+                json.dumps(allowed, ensure_ascii=False),
+                editorial_policy,
+                seo_policy,
+                json.dumps(
+                    {
+                        "external_effects_require_approval": True,
+                        "max_autonomous_actions_per_day": WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY,
+                    },
+                    ensure_ascii=False,
+                ),
+                int(daily_action_limit or 3),
+                _now_iso(),
+                _now_iso(),
+            ),
+        )
+        self.db.conn.commit()
+        project = self.get_project(cursor.lastrowid)
+        self.record_work_experience(
+            event_type="project_created",
+            summary=f"Projeto de Work criado: {name}",
+            project_id=project["id"],
+            source_table="work_projects",
+            source_id=project["id"],
+            metadata={"directive": directive, "destination_id": destination_id},
+            emotional_weight=0.45,
+            tension_level=0.25,
+        )
+        return project
+
+    def update_project(self, project_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("Projeto nao encontrado")
+
+        allowed_fields = {
+            "name",
+            "description",
+            "directive",
+            "status",
+            "priority",
+            "default_destination_id",
+            "allowed_skills_json",
+            "editorial_policy",
+            "seo_policy",
+            "daily_action_limit",
+        }
+        payload = {}
+        for key, value in (updates or {}).items():
+            if key == "allowed_skills":
+                payload["allowed_skills_json"] = json.dumps(value or ["wordpress"], ensure_ascii=False)
+            elif key in allowed_fields:
+                payload[key] = value
+
+        if not payload:
+            return project
+
+        if "name" in payload:
+            payload["project_key"] = self._unique_project_key(str(payload["name"]), existing_project_id=project_id)
+        if "status" in payload and payload["status"] not in {"active", "paused"}:
+            payload["status"] = "active"
+        if "default_destination_id" in payload:
+            if payload["default_destination_id"]:
+                destination_id = int(payload["default_destination_id"])
+                if not self.get_destination(destination_id):
+                    raise ValueError("Destino padrao nao encontrado")
+                payload["default_destination_id"] = destination_id
+            else:
+                payload["default_destination_id"] = None
+
+        payload["updated_at"] = _now_iso()
+        assignments = ", ".join(f"{key} = ?" for key in payload.keys())
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            f"UPDATE work_projects SET {assignments} WHERE id = ?",
+            [*payload.values(), project_id],
+        )
+        self.db.conn.commit()
+        updated = self.get_project(project_id)
+        self.record_work_experience(
+            event_type="project_updated",
+            summary=f"Diretriz/configuracao do projeto atualizada: {updated['name']}",
+            project_id=project_id,
+            source_table="work_projects",
+            source_id=project_id,
+            metadata={"updated_fields": sorted(payload.keys())},
+            emotional_weight=0.35,
+            tension_level=0.2,
+        )
+        return updated
+
     def _secret_manager(self) -> IntegrationSecretsManager:
         return IntegrationSecretsManager()
 
@@ -742,21 +948,25 @@ Responda APENAS em JSON com:
         source_seed: Optional[str] = None,
         admin_telegram_id: Optional[str] = None,
         extracted: Optional[Dict[str, Any]] = None,
+        project_id: Optional[int] = None,
+        action_type: str = "create_content",
     ) -> Dict[str, Any]:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
             INSERT INTO work_briefs (
-                origin, status, trigger_source, priority, destination_id, voice_mode,
+                origin, status, trigger_source, priority, destination_id, project_id, action_type, voice_mode,
                 delivery_mode, content_type, objective, source_seed, admin_telegram_id,
                 title_hint, notes, raw_input, extracted_json, created_at, updated_at
-            ) VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 origin,
                 trigger_source,
                 priority,
                 destination_id,
+                project_id,
+                action_type,
                 voice_mode,
                 delivery_mode,
                 content_type,
@@ -772,15 +982,28 @@ Responda APENAS em JSON com:
             ),
         )
         self.db.conn.commit()
-        return self.get_brief(cursor.lastrowid)
+        brief = self.get_brief(cursor.lastrowid)
+        self.record_work_experience(
+            event_type="brief_created",
+            summary=f"Brief de Work criado: {_truncate(objective, 180)}",
+            project_id=project_id,
+            source_table="work_briefs",
+            source_id=brief["id"],
+            metadata={"origin": origin, "action_type": action_type, "destination_id": destination_id},
+            emotional_weight=0.5,
+            tension_level=0.35,
+        )
+        return brief
 
     def get_brief(self, brief_id: int) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
-            SELECT b.*, d.label AS destination_label, d.provider_key, d.base_url
+            SELECT b.*, d.label AS destination_label, d.provider_key, d.base_url,
+                   p.name AS project_name
             FROM work_briefs b
             LEFT JOIN work_destinations d ON d.id = b.destination_id
+            LEFT JOIN work_projects p ON p.id = b.project_id
             WHERE b.id = ?
             LIMIT 1
             """,
@@ -793,9 +1016,10 @@ Responda APENAS em JSON com:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
-            SELECT b.*, d.label AS destination_label
+            SELECT b.*, d.label AS destination_label, p.name AS project_name
             FROM work_briefs b
             LEFT JOIN work_destinations d ON d.id = b.destination_id
+            LEFT JOIN work_projects p ON p.id = b.project_id
             ORDER BY
                 CASE WHEN b.status = 'queued' THEN 0 WHEN b.status = 'awaiting_approval' THEN 1 ELSE 2 END,
                 CASE WHEN b.origin = 'admin' THEN 0 WHEN b.origin = 'hybrid' THEN 1 ELSE 2 END,
@@ -807,23 +1031,26 @@ Responda APENAS em JSON com:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def create_brief_from_seed(self, seed: str, destination_id: int) -> Optional[Dict[str, Any]]:
+    def create_brief_from_seed(self, seed: str, destination_id: int, project_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
             SELECT id
             FROM work_briefs
-            WHERE source_seed = ? AND destination_id = ? AND created_at >= datetime('now', '-24 hours')
+            WHERE source_seed = ?
+              AND destination_id = ?
+              AND COALESCE(project_id, 0) = COALESCE(?, 0)
+              AND created_at >= datetime('now', '-7 days')
             LIMIT 1
             """,
-            (seed, destination_id),
+            (seed, destination_id, project_id),
         )
         if cursor.fetchone():
             return None
 
         return self.create_brief(
-            origin="world",
-            trigger_source="world_consciousness",
+            origin="autonomous_project" if project_id else "world",
+            trigger_source="work_autonomy" if project_id else "world_consciousness",
             destination_id=destination_id,
             objective=seed,
             voice_mode="endojung",
@@ -833,7 +1060,9 @@ Responda APENAS em JSON com:
             notes="Brief automatico gerado a partir da lucidez do mundo.",
             raw_input=seed,
             source_seed=seed,
-            extracted={"source": "world_seed"},
+            extracted={"source": "world_seed", "project_id": project_id},
+            project_id=project_id,
+            action_type="create_content",
         )
 
     def _build_work_package(self, brief: Dict[str, Any]) -> Dict[str, Any]:
@@ -852,6 +1081,17 @@ Responda APENAS em JSON com:
         except Exception as exc:
             logger.warning(f"WorkEngine: falha ao carregar identidade para composicao: {exc}")
 
+        project_context = ""
+        if brief.get("project_id"):
+            project = self.get_project(int(brief["project_id"]))
+            if project:
+                project_context = (
+                    f"Nome: {project.get('name')}\n"
+                    f"Diretriz: {project.get('directive') or project.get('description') or ''}\n"
+                    f"Politica editorial: {project.get('editorial_policy') or ''}\n"
+                    f"Politica SEO: {project.get('seo_policy') or ''}"
+                )
+
         prompt = f"""
 Voce esta compondo um pacote editorial de trabalho para o EndoJung.
 
@@ -860,8 +1100,12 @@ BRIEF:
 - voz editorial: {brief.get('voice_mode')}
 - modo de entrega: {brief.get('delivery_mode')}
 - destino: {brief.get('destination_label')}
+- projeto: {brief.get('project_name') or 'sem projeto'}
 - hint de titulo: {brief.get('title_hint') or 'nenhum'}
 - notas: {brief.get('notes') or 'nenhuma'}
+
+PROJETO DE WORK:
+{project_context or 'Sem projeto especifico.'}
 
 ESTADO INTERNO RELEVANTE:
 {identity_summary[:2200]}
@@ -911,16 +1155,26 @@ Responda APENAS em JSON com:
         cursor.execute(
             """
             INSERT INTO work_runs (
-                cycle_id, phase, trigger_source, selected_brief_id, destination_id,
-                status, input_summary, output_summary, metrics_json, errors_json, created_at, updated_at
-            ) VALUES (?, 'work', ?, ?, ?, 'running', ?, '', '{}', '[]', ?, ?)
+                cycle_id, phase, trigger_source, selected_brief_id, destination_id, project_id,
+                status, input_summary, output_summary, metrics_json, errors_json,
+                autonomy_decision_json, created_at, updated_at
+            ) VALUES (?, 'work', ?, ?, ?, ?, 'running', ?, '', '{}', '[]', ?, ?, ?)
             """,
             (
                 cycle_id,
                 trigger_source,
                 brief["id"],
                 brief["destination_id"],
+                brief.get("project_id"),
                 _truncate(brief["objective"], 220),
+                json.dumps(
+                    {
+                        "origin": brief.get("origin"),
+                        "project_id": brief.get("project_id"),
+                        "action_type": brief.get("action_type"),
+                    },
+                    ensure_ascii=False,
+                ),
                 _now_iso(),
                 _now_iso(),
             ),
@@ -965,15 +1219,16 @@ Responda APENAS em JSON com:
         cursor.execute(
             """
             INSERT INTO work_artifacts (
-                brief_id, run_id, destination_id, status, title, excerpt, body, slug,
+                brief_id, run_id, destination_id, project_id, status, title, excerpt, body, slug,
                 tags_json, categories_json, cta, editorial_note, voice_mode, content_type,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, 'composed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, 'composed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 brief["id"],
                 run_id,
                 brief["destination_id"],
+                brief.get("project_id"),
                 package["title"],
                 package["excerpt"],
                 package["body"],
@@ -998,6 +1253,16 @@ Responda APENAS em JSON com:
             (_now_iso(), brief["id"]),
         )
         self.db.conn.commit()
+        self.record_work_experience(
+            event_type="artifact_composed",
+            summary=f"Work compôs artifact para '{brief.get('project_name') or brief.get('destination_label') or 'projeto'}': {package['title']}",
+            project_id=brief.get("project_id"),
+            source_table="work_artifacts",
+            source_id=artifact_id,
+            metadata={"brief_id": brief["id"], "run_id": run_id, "title": package["title"]},
+            emotional_weight=0.6,
+            tension_level=0.45,
+        )
 
         ticket = self.create_approval_ticket(
             brief_id=brief["id"],
@@ -1037,26 +1302,40 @@ Responda APENAS em JSON com:
         action: str,
         requested_by: str,
     ) -> Dict[str, Any]:
+        brief = self.get_brief(brief_id)
+        project_id = brief.get("project_id") if brief else None
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
             INSERT INTO work_approval_tickets (
-                brief_id, artifact_id, destination_id, action, status, requested_by, created_at
-            ) VALUES (?, ?, ?, ?, 'pending', ?, ?)
+                brief_id, artifact_id, destination_id, project_id, action, status, requested_by, created_at
+            ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
             """,
-            (brief_id, artifact_id, destination_id, action, requested_by, _now_iso()),
+            (brief_id, artifact_id, destination_id, project_id, action, requested_by, _now_iso()),
         )
         self.db.conn.commit()
-        return self.get_ticket(cursor.lastrowid)
+        ticket = self.get_ticket(cursor.lastrowid)
+        self.record_work_experience(
+            event_type="ticket_opened",
+            summary=f"Ticket de Work aberto para aprovacao: {action}",
+            project_id=project_id,
+            source_table="work_approval_tickets",
+            source_id=ticket["id"],
+            metadata={"brief_id": brief_id, "artifact_id": artifact_id, "destination_id": destination_id},
+            emotional_weight=0.5,
+            tension_level=0.4,
+        )
+        return ticket
 
     def get_ticket(self, ticket_id: int) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
-            SELECT t.*, d.label AS destination_label, a.title AS artifact_title
+            SELECT t.*, d.label AS destination_label, a.title AS artifact_title, p.name AS project_name
             FROM work_approval_tickets t
             LEFT JOIN work_destinations d ON d.id = t.destination_id
             LEFT JOIN work_artifacts a ON a.id = t.artifact_id
+            LEFT JOIN work_projects p ON p.id = t.project_id
             WHERE t.id = ?
             LIMIT 1
             """,
@@ -1069,10 +1348,11 @@ Responda APENAS em JSON com:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
-            SELECT t.*, d.label AS destination_label, a.title AS artifact_title
+            SELECT t.*, d.label AS destination_label, a.title AS artifact_title, p.name AS project_name
             FROM work_approval_tickets t
             LEFT JOIN work_destinations d ON d.id = t.destination_id
             LEFT JOIN work_artifacts a ON a.id = t.artifact_id
+            LEFT JOIN work_projects p ON p.id = t.project_id
             ORDER BY
                 CASE WHEN t.status = 'pending' THEN 0 ELSE 1 END,
                 t.created_at DESC
@@ -1086,10 +1366,11 @@ Responda APENAS em JSON com:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
-            SELECT r.*, b.objective, d.label AS destination_label
+            SELECT r.*, b.objective, d.label AS destination_label, p.name AS project_name
             FROM work_runs r
             LEFT JOIN work_briefs b ON b.id = r.selected_brief_id
             LEFT JOIN work_destinations d ON d.id = r.destination_id
+            LEFT JOIN work_projects p ON p.id = r.project_id
             ORDER BY r.created_at DESC
             LIMIT ?
             """,
@@ -1101,9 +1382,10 @@ Responda APENAS em JSON com:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
-            SELECT a.*, d.label AS destination_label
+            SELECT a.*, d.label AS destination_label, p.name AS project_name
             FROM work_artifacts a
             LEFT JOIN work_destinations d ON d.id = a.destination_id
+            LEFT JOIN work_projects p ON p.id = a.project_id
             ORDER BY a.created_at DESC
             LIMIT ?
             """,
@@ -1115,15 +1397,133 @@ Responda APENAS em JSON com:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
-            SELECT e.*, d.label AS destination_label
+            SELECT e.*, d.label AS destination_label, p.name AS project_name
             FROM work_delivery_events e
             LEFT JOIN work_destinations d ON d.id = e.destination_id
+            LEFT JOIN work_projects p ON p.id = e.project_id
             ORDER BY e.created_at DESC
             LIMIT ?
             """,
             (limit,),
         )
         return [dict(row) for row in cursor.fetchall()]
+
+    def list_experience_events(self, limit: int = 60) -> List[Dict[str, Any]]:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT e.*, p.name AS project_name
+            FROM work_experience_events e
+            LEFT JOIN work_projects p ON p.id = e.project_id
+            ORDER BY e.created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def _fragment_type_for_work_event(self, event_type: str) -> str:
+        mapping = {
+            "ticket_rejected": "work_rejection",
+            "delivery_failed": "work_failure",
+            "delivery_success": "work_delivery",
+            "artifact_composed": "work_expression",
+            "brief_created": "work_responsibility",
+            "project_created": "work_project_identity",
+            "project_updated": "work_project_identity",
+        }
+        return mapping.get(event_type, "work_experience")
+
+    def record_work_experience(
+        self,
+        event_type: str,
+        summary: str,
+        project_id: Optional[int] = None,
+        source_table: str = "",
+        source_id: Any = None,
+        source_kind: str = "work",
+        metadata: Optional[Dict[str, Any]] = None,
+        emotional_weight: float = 0.55,
+        tension_level: float = 0.35,
+    ) -> Optional[Dict[str, Any]]:
+        summary = (summary or "").strip()
+        if not summary:
+            return None
+
+        event_key = f"{event_type}:{source_table}:{source_id}:{project_id or ''}"
+        metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
+        cursor = self.db.conn.cursor()
+        try:
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO work_experience_events (
+                    event_key, project_id, event_type, summary, source_table, source_id,
+                    source_kind, metadata_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_key,
+                    project_id,
+                    event_type,
+                    summary,
+                    source_table,
+                    str(source_id) if source_id is not None else None,
+                    source_kind,
+                    metadata_json,
+                    _now_iso(),
+                ),
+            )
+            if cursor.rowcount == 0:
+                self.db.conn.commit()
+                cursor.execute("SELECT * FROM work_experience_events WHERE event_key = ?", (event_key,))
+                row = cursor.fetchone()
+                return dict(row) if row else None
+
+            event_id = cursor.lastrowid
+            fragment_id = None
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO rumination_fragments (
+                        user_id, fragment_type, content, context, source_conversation_id,
+                        source_quote, emotional_weight, tension_level, source_kind,
+                        source_table, source_id, source_metadata_json
+                    ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        self.admin_user_id,
+                        self._fragment_type_for_work_event(event_type),
+                        summary,
+                        f"Experiencia de trabalho: {event_type}",
+                        summary[:500],
+                        emotional_weight,
+                        tension_level,
+                        source_kind,
+                        source_table or "work_experience_events",
+                        str(source_id) if source_id is not None else str(event_id),
+                        metadata_json,
+                    ),
+                )
+                fragment_id = cursor.lastrowid
+                cursor.execute(
+                    """
+                    UPDATE work_experience_events
+                    SET rumination_fragment_id = ?
+                    WHERE id = ?
+                    """,
+                    (fragment_id, event_id),
+                )
+            except sqlite3.OperationalError as exc:
+                logger.warning("WorkEngine: nao foi possivel criar fragmento ruminal de Work: %s", exc)
+
+            self.db.conn.commit()
+            cursor.execute("SELECT * FROM work_experience_events WHERE id = ?", (event_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as exc:
+            self.db.conn.rollback()
+            logger.warning("WorkEngine: falha ao registrar experiencia de trabalho: %s", exc)
+            return None
 
     def _log_delivery_event(
         self,
@@ -1133,6 +1533,7 @@ Responda APENAS em JSON com:
         provider_key: str,
         action: str,
         status: str,
+        project_id: Optional[int] = None,
         external_id: Optional[str] = None,
         external_url: Optional[str] = None,
         response: Optional[Dict[str, Any]] = None,
@@ -1142,14 +1543,15 @@ Responda APENAS em JSON com:
         cursor.execute(
             """
             INSERT INTO work_delivery_events (
-                ticket_id, artifact_id, destination_id, provider_key, action, status,
+                ticket_id, artifact_id, destination_id, project_id, provider_key, action, status,
                 external_id, external_url, response_json, error_message, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ticket_id,
                 artifact_id,
                 destination_id,
+                project_id,
                 provider_key,
                 action,
                 status,
@@ -1249,9 +1651,20 @@ Responda APENAS em JSON com:
                 provider_key=destination["provider_key"],
                 action=ticket["action"],
                 status="success",
+                project_id=ticket.get("project_id"),
                 external_id=provider_result.get("external_id"),
                 external_url=provider_result.get("external_url"),
                 response=provider_result.get("response"),
+            )
+            self.record_work_experience(
+                event_type="delivery_success",
+                summary=f"Acao externa de Work executada com sucesso: {ticket['action']} para {artifact.get('title') or artifact['id']}",
+                project_id=ticket.get("project_id"),
+                source_table="work_delivery_events",
+                source_id=f"ticket:{ticket_id}",
+                metadata={"ticket_id": ticket_id, "artifact_id": artifact["id"], "external_url": provider_result.get("external_url")},
+                emotional_weight=0.65,
+                tension_level=0.35,
             )
             return {
                 "success": True,
@@ -1279,8 +1692,19 @@ Responda APENAS em JSON com:
             provider_key=destination["provider_key"],
             action=ticket["action"],
             status="failed",
+            project_id=ticket.get("project_id"),
             error_message=provider_result.get("message", "delivery_failed"),
             response=provider_result,
+        )
+        self.record_work_experience(
+            event_type="delivery_failed",
+            summary=f"Falha ao executar acao externa de Work: {ticket['action']} para {artifact.get('title') or artifact['id']}",
+            project_id=ticket.get("project_id"),
+            source_table="work_delivery_events",
+            source_id=f"ticket:{ticket_id}",
+            metadata={"ticket_id": ticket_id, "artifact_id": artifact["id"], "message": provider_result.get("message")},
+            emotional_weight=0.7,
+            tension_level=0.65,
         )
         return {
             "success": False,
@@ -1310,6 +1734,16 @@ Responda APENAS em JSON com:
             (_now_iso(), ticket["brief_id"]),
         )
         self.db.conn.commit()
+        self.record_work_experience(
+            event_type="ticket_rejected",
+            summary=f"Ticket de Work rejeitado pelo admin: {ticket.get('action')} ({note or 'sem nota'})",
+            project_id=ticket.get("project_id"),
+            source_table="work_approval_tickets",
+            source_id=ticket_id,
+            metadata={"brief_id": ticket.get("brief_id"), "artifact_id": ticket.get("artifact_id"), "note": note},
+            emotional_weight=0.75,
+            tension_level=0.7,
+        )
         return {"success": True, "ticket_id": ticket_id, "status": "rejected"}
 
     def request_publish_ticket(self, artifact_id: int, requested_by: str = "master_admin") -> Dict[str, Any]:
@@ -1326,27 +1760,148 @@ Responda APENAS em JSON com:
             requested_by=requested_by,
         )
 
-    def _ensure_world_seed_briefs(self) -> int:
+    def _autonomous_actions_today(self) -> int:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM work_briefs
+            WHERE origin = 'autonomous_project'
+              AND created_at >= datetime('now', 'start of day')
+            """
+        )
+        return int(cursor.fetchone()[0] or 0)
+
+    def _pending_ticket_count(self) -> int:
+        cursor = self.db.conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM work_approval_tickets WHERE status = 'pending'")
+        return int(cursor.fetchone()[0] or 0)
+
+    def _build_project_seed(self, project: Dict[str, Any], seed: str = "") -> str:
+        directive = (project.get("directive") or project.get("description") or project.get("name") or "").strip()
+        editorial = (project.get("editorial_policy") or "").strip()
+        seo = (project.get("seo_policy") or "").strip()
+        parts = [
+            f"Projeto: {project.get('name')}",
+            f"Diretriz: {directive or 'desenvolver uma acao editorial coerente com o projeto'}",
+        ]
+        if seed:
+            parts.append(f"Semente do mundo: {seed}")
+        if editorial:
+            parts.append(f"Politica editorial: {editorial}")
+        if seo:
+            parts.append(f"SEO: {seo}")
+        return " | ".join(parts)
+
+    def _has_recent_project_brief(self, project_id: int, source_seed: str, action_type: str = "create_content") -> bool:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT id
+            FROM work_briefs
+            WHERE project_id = ?
+              AND action_type = ?
+              AND source_seed = ?
+              AND created_at >= datetime('now', '-7 days')
+            LIMIT 1
+            """,
+            (project_id, action_type, source_seed),
+        )
+        return cursor.fetchone() is not None
+
+    def _ensure_project_autonomous_briefs(self) -> int:
+        if not WORK_AUTONOMY_ENABLED:
+            return 0
+
+        pending_tickets = self._pending_ticket_count()
+        remaining = max(0, WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY - self._autonomous_actions_today())
+        remaining = min(remaining, max(0, WORK_MAX_PENDING_TICKETS - pending_tickets))
+
+        if pending_tickets >= WORK_MAX_PENDING_TICKETS:
+            self.record_work_experience(
+                event_type="autonomy_paused_pending_tickets",
+                summary="Work adiou novas acoes autonomas porque ha tickets pendentes aguardando revisao.",
+                source_table="work_approval_tickets",
+                source_id="pending_backlog",
+                emotional_weight=0.4,
+                tension_level=0.35,
+            )
+            return 0
+
+        if remaining <= 0:
+            return 0
+
         try:
             from world_consciousness import world_consciousness
 
             world_state = world_consciousness.get_world_state(force_refresh=False)
         except Exception as exc:
             logger.warning(f"WorkEngine: falha ao carregar seeds do mundo: {exc}")
+            world_state = {}
+
+        projects = self.list_active_projects()
+        if not projects:
             return 0
 
-        destinations = self.list_destinations()
-        if not destinations:
-            return 0
-
-        default_destination = next((item for item in destinations if item["is_active"]), None)
-        if not default_destination:
-            return 0
-
+        seeds = list(world_state.get("work_seeds") or [])
         created = 0
-        for seed in (world_state.get("work_seeds") or [])[:2]:
-            if self.create_brief_from_seed(seed, default_destination["id"]):
+        for project in projects:
+            if created >= remaining:
+                break
+
+            destination_id = project.get("default_destination_id")
+            if not destination_id:
+                self.record_work_experience(
+                    event_type="project_blocked_missing_destination",
+                    summary=f"Projeto '{project.get('name')}' nao gerou acao porque nao possui destino padrao.",
+                    project_id=project.get("id"),
+                    source_table="work_projects",
+                    source_id=project.get("id"),
+                    emotional_weight=0.4,
+                    tension_level=0.3,
+                )
+                continue
+
+            seed = seeds[created % len(seeds)] if seeds else ""
+            source_seed = seed or f"project:{project.get('project_key')}"
+            if self._has_recent_project_brief(int(project["id"]), source_seed):
+                continue
+
+            objective = self._build_project_seed(project, seed)
+            brief = self.create_brief(
+                origin="autonomous_project",
+                trigger_source="work_autonomy",
+                destination_id=int(destination_id),
+                objective=objective,
+                voice_mode="endojung",
+                delivery_mode="draft",
+                content_type="post",
+                priority=int(project.get("priority") or 50),
+                title_hint="",
+                notes="Brief autonomo gerado pelo Work a partir da diretriz do projeto.",
+                raw_input=objective,
+                source_seed=source_seed,
+                extracted={
+                    "source": "work_project",
+                    "project_id": project.get("id"),
+                    "project_name": project.get("name"),
+                    "world_seed": seed,
+                },
+                project_id=project.get("id"),
+                action_type="create_content",
+            )
+            if brief:
                 created += 1
+                self.record_work_experience(
+                    event_type="autonomous_action_decided",
+                    summary=f"Work decidiu propor uma acao para o projeto '{project.get('name')}': {_truncate(objective, 180)}",
+                    project_id=project.get("id"),
+                    source_table="work_briefs",
+                    source_id=brief["id"],
+                    metadata={"world_seed": seed, "brief_id": brief["id"]},
+                    emotional_weight=0.55,
+                    tension_level=0.45,
+                )
         return created
 
     def _select_next_brief(self) -> Optional[Dict[str, Any]]:
@@ -1366,91 +1921,200 @@ Responda APENAS em JSON com:
         row = cursor.fetchone()
         return self.get_brief(row[0]) if row else None
 
+    def _artifacts_for_processed_results(self, processed_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        artifacts: List[Dict[str, Any]] = []
+        for item in processed_results:
+            if item.get("brief_id"):
+                artifacts.append(
+                    {
+                        "artifact_type": "work_brief",
+                        "artifact_id": item["brief_id"],
+                        "artifact_table": "work_briefs",
+                        "summary": "Brief de Work processado",
+                    }
+                )
+            if item.get("artifact_id"):
+                artifacts.append(
+                    {
+                        "artifact_type": "work_artifact",
+                        "artifact_id": item["artifact_id"],
+                        "artifact_table": "work_artifacts",
+                        "summary": "Pacote editorial composto",
+                    }
+                )
+            if item.get("ticket_id"):
+                artifacts.append(
+                    {
+                        "artifact_type": "work_approval_ticket",
+                        "artifact_id": item["ticket_id"],
+                        "artifact_table": "work_approval_tickets",
+                        "summary": "Aprovacao pendente para acao externa",
+                    }
+                )
+        return artifacts
+
+    def _get_admin_chat_id(self) -> Optional[str]:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT platform_id
+            FROM users
+            WHERE user_id = ?
+            LIMIT 1
+            """,
+            (self.admin_user_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        try:
+            return str(row["platform_id"]).strip()
+        except (TypeError, KeyError):
+            return str(row[0]).strip() if row and row[0] else None
+
+    def notify_admin_new_tickets(self, ticket_ids: List[int]) -> bool:
+        token = os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = self._get_admin_chat_id()
+        if not token or not chat_id or not ticket_ids:
+            return False
+
+        label = "uma proposta" if len(ticket_ids) == 1 else f"{len(ticket_ids)} propostas"
+        text = f"Work criou {label} para revisao."
+        if APP_BASE_URL:
+            text += f"\nRevisao: {APP_BASE_URL}/admin/work/dashboard"
+
+        try:
+            import httpx
+
+            response = httpx.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                data={"chat_id": chat_id, "text": text[:3900]},
+                timeout=20.0,
+            )
+            if response.status_code == 200:
+                return True
+            logger.warning("WorkEngine: notificacao Telegram falhou (%s): %s", response.status_code, response.text[:240])
+            return False
+        except Exception as exc:
+            logger.warning("WorkEngine: erro ao notificar admin sobre tickets: %s", exc)
+            return False
+
     def run_work_phase(self, trigger_source: str = "consciousness_loop", cycle_id: Optional[str] = None) -> Dict[str, Any]:
-        world_briefs_created = self._ensure_world_seed_briefs()
-        brief = self._select_next_brief()
-        if not brief:
+        autonomous_briefs_created = self._ensure_project_autonomous_briefs()
+        processed_results: List[Dict[str, Any]] = []
+        skipped_warnings: List[str] = []
+        max_to_process = max(1, WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY)
+
+        for _ in range(max_to_process):
+            brief = self._select_next_brief()
+            if not brief:
+                break
+
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                """
+                SELECT id
+                FROM work_approval_tickets
+                WHERE brief_id = ? AND status = 'pending'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (brief["id"],),
+            )
+            pending_ticket = cursor.fetchone()
+            if pending_ticket:
+                ticket = self.get_ticket(pending_ticket[0])
+                skipped_warnings.append("work_existing_pending_ticket")
+                processed_results.append(
+                    {
+                        "status": "awaiting_approval",
+                        "brief_id": brief["id"],
+                        "ticket_id": ticket["id"],
+                        "existing_ticket": True,
+                        "artifact_type": "work_approval_ticket",
+                        "artifact_table": "work_approval_tickets",
+                        "summary": ticket["action"],
+                    }
+                )
+                break
+
+            package_result = self.create_artifact_for_brief(
+                brief["id"],
+                trigger_source=trigger_source,
+                cycle_id=cycle_id,
+            )
+            processed_results.append(
+                {
+                    "status": "awaiting_approval",
+                    "brief_id": brief["id"],
+                    "artifact_id": package_result["artifact_id"],
+                    "ticket_id": package_result["ticket_id"],
+                    "output_summary": package_result["output_summary"],
+                }
+            )
+
+        if not processed_results:
             return {
                 "success": True,
                 "status": "no_work",
                 "output_summary": "Nenhum brief pendente para a fase Work.",
-                "metrics": {"world_briefs_created": world_briefs_created},
+                "metrics": {
+                    "autonomous_briefs_created": autonomous_briefs_created,
+                    "projects_active": len(self.list_active_projects()),
+                    "pending_tickets": self._pending_ticket_count(),
+                },
                 "warnings": ["work_no_briefs"],
                 "errors": [],
                 "artifacts": [],
             }
 
-        cursor = self.db.conn.cursor()
-        cursor.execute(
-            """
-            SELECT id
-            FROM work_approval_tickets
-            WHERE brief_id = ? AND status = 'pending'
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (brief["id"],),
-        )
-        pending_ticket = cursor.fetchone()
-        if pending_ticket:
-            ticket = self.get_ticket(pending_ticket[0])
-            return {
-                "success": True,
-                "status": "awaiting_approval",
-                "output_summary": (
-                    f"Brief {brief['id']} ja aguarda aprovacao no ticket {ticket['id']}."
-                    + (f" Revisao: {APP_BASE_URL}/admin/work/dashboard" if APP_BASE_URL else "")
-                ),
-                "metrics": {"world_briefs_created": world_briefs_created, "brief_id": brief["id"], "ticket_id": ticket["id"]},
-                "warnings": ["work_existing_pending_ticket"],
-                "errors": [],
-                "artifacts": [{"artifact_type": "work_approval_ticket", "artifact_id": ticket["id"], "artifact_table": "work_approval_tickets", "summary": ticket["action"]}],
-            }
+        ticket_ids = [item["ticket_id"] for item in processed_results if item.get("ticket_id")]
+        new_ticket_ids = [item["ticket_id"] for item in processed_results if item.get("ticket_id") and not item.get("existing_ticket")]
+        if WORK_NOTIFY_ADMIN_ON_TICKETS and new_ticket_ids:
+            self.notify_admin_new_tickets(new_ticket_ids)
 
-        package_result = self.create_artifact_for_brief(brief["id"], trigger_source=trigger_source, cycle_id=cycle_id)
+        if new_ticket_ids:
+            output_summary = f"Work criou {len(new_ticket_ids)} novo(s) ticket(s) de aprovacao."
+        else:
+            output_summary = "Work encontrou ticket(s) ja pendente(s) e aguardou revisao."
+        if APP_BASE_URL:
+            output_summary += f" Revisao: {APP_BASE_URL}/admin/work/dashboard"
         return {
             "success": True,
             "status": "awaiting_approval",
-            "output_summary": package_result["output_summary"],
+            "output_summary": output_summary,
             "metrics": {
-                "world_briefs_created": world_briefs_created,
-                "brief_id": brief["id"],
-                "artifact_id": package_result["artifact_id"],
-                "ticket_id": package_result["ticket_id"],
+                "autonomous_briefs_created": autonomous_briefs_created,
+                "tickets_created": len(new_ticket_ids),
+                "brief_ids": [item.get("brief_id") for item in processed_results if item.get("brief_id")],
+                "ticket_ids": ticket_ids,
+                "new_ticket_ids": new_ticket_ids,
+                "pending_tickets": self._pending_ticket_count(),
             },
-            "warnings": [],
+            "warnings": skipped_warnings,
             "errors": [],
-            "artifacts": [
-                {
-                    "artifact_type": "work_brief",
-                    "artifact_id": brief["id"],
-                    "artifact_table": "work_briefs",
-                    "summary": _truncate(brief["objective"], 120),
-                },
-                {
-                    "artifact_type": "work_artifact",
-                    "artifact_id": package_result["artifact_id"],
-                    "artifact_table": "work_artifacts",
-                    "summary": "Pacote editorial composto",
-                },
-                {
-                    "artifact_type": "work_approval_ticket",
-                    "artifact_id": package_result["ticket_id"],
-                    "artifact_table": "work_approval_tickets",
-                    "summary": "Aprovacao pendente para criacao de rascunho",
-                },
-            ],
+            "artifacts": self._artifacts_for_processed_results(processed_results),
         }
 
     def get_dashboard_state(self) -> Dict[str, Any]:
         return {
             "credentials_configured": self.credentials_available(),
             "providers": list(DEFAULT_PROVIDER_SPECS.keys()),
+            "autonomy": {
+                "enabled": WORK_AUTONOMY_ENABLED,
+                "max_actions_per_day": WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY,
+                "max_pending_tickets": WORK_MAX_PENDING_TICKETS,
+                "notify_admin_on_tickets": WORK_NOTIFY_ADMIN_ON_TICKETS,
+                "autonomous_actions_today": self._autonomous_actions_today(),
+                "pending_tickets": self._pending_ticket_count(),
+            },
+            "projects": self.list_projects(),
             "destinations": self.list_destinations(),
             "briefs": self.list_briefs(),
             "tickets": self.list_approval_tickets(),
             "runs": self.list_runs(),
             "artifacts": self.list_artifacts(),
             "deliveries": self.list_delivery_events(),
+            "experiences": self.list_experience_events(),
             "app_base_url": APP_BASE_URL,
         }

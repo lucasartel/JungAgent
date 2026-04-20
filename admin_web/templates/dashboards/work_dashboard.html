@@ -16,6 +16,29 @@
 
     <section class="dashboard-grid-v2" id="workStateGrid"></section>
 
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Autonomous projects</h2>
+                <p class="panel-subtitle-v2">Project directives define what Work may try to do, before external approval.</p>
+            </div>
+        </div>
+        <div class="panel-body-v2 stack-v2">
+            <form id="projectForm" class="stack-v2">
+                <div class="dashboard-grid-v2">
+                    <input class="input-v2" name="name" placeholder="Project name" required>
+                    <select class="input-v2" name="default_destination_id" id="projectDestinationSelect"></select>
+                    <input class="input-v2" name="priority" type="number" min="0" max="100" value="50" placeholder="Priority">
+                </div>
+                <textarea class="input-v2" name="directive" rows="3" placeholder="Project directive: what should the agent try to develop?"></textarea>
+                <textarea class="input-v2" name="editorial_policy" rows="2" placeholder="Editorial policy / voice"></textarea>
+                <textarea class="input-v2" name="seo_policy" rows="2" placeholder="SEO policy"></textarea>
+                <button class="button-v2 button-v2--primary" type="submit">Create project</button>
+            </form>
+            <div class="scroll-list-v2" id="projectsList"></div>
+        </div>
+    </section>
+
     <section class="dashboard-columns-v2">
         <section class="panel-v2">
             <div class="panel-header-v2">
@@ -45,6 +68,18 @@
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
+                <h2 class="panel-title-v2">Work experience</h2>
+                <p class="panel-subtitle-v2">How project contact is being metabolized into rumination and identity.</p>
+            </div>
+        </div>
+        <div class="panel-body-v2">
+            <div class="scroll-list-v2" id="experiencesList"></div>
+        </div>
+    </section>
+
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
                 <h2 class="panel-title-v2">Latest executions</h2>
                 <p class="panel-subtitle-v2">History of the work organ for quick diagnostics.</p>
             </div>
@@ -68,15 +103,19 @@ function escapeHtml(value) {
 }
 
 function renderWorkState(state) {
+    const autonomy = state.autonomy || {};
     const cards = [
         ["Credentials", state.credentials_configured ? "Configured" : "Missing"],
+        ["Autonomy", autonomy.enabled ? "Enabled" : "Paused"],
+        ["Projects", (state.projects || []).length],
         ["Providers", (state.providers || []).length],
         ["Destinations", (state.destinations || []).length],
         ["Briefs", (state.briefs || []).length],
         ["Tickets", (state.tickets || []).length],
         ["Runs", (state.runs || []).length],
         ["Artifacts", (state.artifacts || []).length],
-        ["Deliveries", (state.deliveries || []).length]
+        ["Deliveries", (state.deliveries || []).length],
+        ["Experiences", (state.experiences || []).length]
     ];
 
     document.getElementById("workStateGrid").innerHTML = cards.map(([label, value]) => `
@@ -85,6 +124,13 @@ function renderWorkState(state) {
             <strong class="cell-primary-v2">${escapeHtml(value)}</strong>
         </article>
     `).join("");
+}
+
+function renderProjectDestinationOptions(destinations) {
+    const select = document.getElementById("projectDestinationSelect");
+    const options = [`<option value="">No destination yet</option>`]
+        .concat((destinations || []).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)} - ${escapeHtml(item.provider_key)}</option>`));
+    select.innerHTML = options.join("");
 }
 
 function renderCollection(targetId, items, formatter, emptyText) {
@@ -99,6 +145,20 @@ async function loadWork() {
     const state = payload.state || {};
 
     renderWorkState(state);
+    renderProjectDestinationOptions(state.destinations || []);
+
+    renderCollection(
+        "projectsList",
+        (state.projects || []).slice(0, 8),
+        (item) => `
+            <article class="data-card-v2">
+                <strong>${escapeHtml(item.name || "project")}</strong>
+                <div class="meta-line-v2">${escapeHtml(item.status || "-")} - priority ${escapeHtml(item.priority ?? "-")} - ${escapeHtml(item.destination_label || "no destination")}</div>
+                <div class="mono-block-v2">${escapeHtml(item.directive || item.description || "")}</div>
+            </article>
+        `,
+        "No Work project configured."
+    );
 
     renderCollection(
         "briefsList",
@@ -138,7 +198,43 @@ async function loadWork() {
         `,
         "No recent execution."
     );
+
+    renderCollection(
+        "experiencesList",
+        (state.experiences || []).slice(0, 12),
+        (item) => `
+            <article class="data-card-v2">
+                <strong>${escapeHtml(item.event_type || "work_experience")}</strong>
+                <div class="meta-line-v2">${escapeHtml(item.created_at || "-")} - ${escapeHtml(item.project_name || "no project")}</div>
+                <div class="mono-block-v2">${escapeHtml(item.summary || "")}</div>
+            </article>
+        `,
+        "No work experience metabolized yet."
+    );
 }
+
+document.getElementById("projectForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const payload = Object.fromEntries(formData.entries());
+    payload.default_destination_id = payload.default_destination_id ? Number(payload.default_destination_id) : null;
+    payload.priority = Number(payload.priority || 50);
+    payload.allowed_skills = ["wordpress"];
+
+    const response = await fetch("/admin/work/projects", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    });
+    const result = await response.json();
+    if (!result.success) {
+        alert(result.error || "Could not create project.");
+        return;
+    }
+    form.reset();
+    await loadWork();
+});
 
 loadWork();
 setInterval(loadWork, 30000);

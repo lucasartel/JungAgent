@@ -1016,15 +1016,32 @@ class ConsciousnessLoopManager:
         return result
 
     def _run_work_phase(self, result: Dict) -> Dict:
+        from work_engine import WorkEngine
+
         self._promote_from_placeholder(result)
-        result["status"] = "partial_success"
-        result["warnings"].append("work_not_implemented")
-        result["metrics"]["work_enabled"] = 0
-        result["raw_result"]["work_result"] = {
-            "status": "not_implemented",
-            "reason": "Modulo Job/Work pausado ate nova rodada de desenvolvimento.",
-        }
-        result["output_summary"] = "Work/Job segue pausado e fora desta rodada do loop."
+        engine = WorkEngine(self.db)
+        work_result = engine.run_work_phase(
+            trigger_source=result.get("trigger_source") or "consciousness_loop",
+            cycle_id=result.get("cycle_id"),
+        )
+
+        result["status"] = "success" if work_result.get("success") else "partial_success"
+        result["warnings"].extend(work_result.get("warnings") or [])
+        result["errors"].extend(work_result.get("errors") or [])
+        result["metrics"]["work_enabled"] = 1
+        result["metrics"].update(work_result.get("metrics") or {})
+        result["raw_result"]["work_result"] = work_result
+
+        for artifact in work_result.get("artifacts") or []:
+            self._record_virtual_artifact(
+                result,
+                artifact_type=artifact.get("artifact_type", "work_artifact"),
+                artifact_id=artifact.get("artifact_id"),
+                artifact_table=artifact.get("artifact_table", "work"),
+                summary=artifact.get("summary", "Work artifact"),
+            )
+
+        result["output_summary"] = work_result.get("output_summary") or "Work executado sem acoes pendentes."
         return result
 
     def _run_hobby_phase(self, result: Dict) -> Dict:

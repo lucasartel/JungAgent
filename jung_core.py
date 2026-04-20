@@ -1435,6 +1435,27 @@ class HybridDatabaseManager:
         """)
 
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS work_projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_key TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT,
+                directive TEXT,
+                status TEXT DEFAULT 'active',
+                priority INTEGER DEFAULT 50,
+                default_destination_id INTEGER,
+                allowed_skills_json TEXT,
+                editorial_policy TEXT,
+                seo_policy TEXT,
+                autonomy_policy_json TEXT,
+                daily_action_limit INTEGER DEFAULT 3,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (default_destination_id) REFERENCES work_destinations(id)
+            )
+        """)
+
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS work_destinations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 destination_key TEXT NOT NULL UNIQUE,
@@ -1567,6 +1588,41 @@ class HybridDatabaseManager:
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS work_experience_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_key TEXT UNIQUE,
+                project_id INTEGER,
+                event_type TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                source_table TEXT,
+                source_id TEXT,
+                source_kind TEXT DEFAULT 'work',
+                metadata_json TEXT,
+                rumination_fragment_id INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (project_id) REFERENCES work_projects(id)
+            )
+        """)
+
+        for table, column_def in [
+            ("work_briefs", "project_id INTEGER"),
+            ("work_briefs", "action_type TEXT DEFAULT 'create_content'"),
+            ("work_runs", "project_id INTEGER"),
+            ("work_runs", "autonomy_decision_json TEXT"),
+            ("work_artifacts", "project_id INTEGER"),
+            ("work_approval_tickets", "project_id INTEGER"),
+            ("work_delivery_events", "project_id INTEGER"),
+            ("rumination_fragments", "source_kind TEXT DEFAULT 'conversation'"),
+            ("rumination_fragments", "source_table TEXT"),
+            ("rumination_fragments", "source_id TEXT"),
+            ("rumination_fragments", "source_metadata_json TEXT"),
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column_def}")
+            except sqlite3.OperationalError:
+                pass
+
         # ========== DADOS DO PILOTO UNESCO (JAISD) ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS unesco_pilot_data (
@@ -1644,11 +1700,18 @@ class HybridDatabaseManager:
 
         # Work / integrations
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_destinations_provider ON work_destinations(provider_key, is_active)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_projects_status ON work_projects(status, priority DESC, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_briefs_status ON work_briefs(status, origin, priority DESC, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_briefs_project ON work_briefs(project_id, status, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_runs_cycle ON work_runs(cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_artifacts_brief ON work_artifacts(brief_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_tickets_status ON work_approval_tickets(status, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_delivery_status ON work_delivery_events(status, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_experience_project ON work_experience_events(project_id, created_at DESC)")
+        try:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_rumination_fragments_source ON rumination_fragments(source_kind, source_table, source_id)")
+        except sqlite3.OperationalError:
+            pass
 
         self.conn.commit()
         logger.info("✅ Schema SQLite criado/verificado com índices de performance")

@@ -92,6 +92,42 @@ async def create_destination(request: Request, admin: Dict = Depends(require_mas
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 
+@router.post("/projects")
+async def create_project(request: Request, admin: Dict = Depends(require_master)):
+    try:
+        payload = await request.json()
+        engine = get_work_engine()
+        project = await asyncio.to_thread(
+            engine.create_project,
+            payload.get("name", ""),
+            payload.get("description", ""),
+            payload.get("directive", ""),
+            payload.get("default_destination_id"),
+            payload.get("allowed_skills") or ["wordpress"],
+            payload.get("editorial_policy", ""),
+            payload.get("seo_policy", ""),
+            int(payload.get("priority", 50)),
+            payload.get("status", "active"),
+            int(payload.get("daily_action_limit", 3)),
+        )
+        return {"success": True, "project": project}
+    except Exception as e:
+        logger.error(f"Erro ao criar projeto Work: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
+@router.patch("/projects/{project_id}")
+async def update_project(project_id: int, request: Request, admin: Dict = Depends(require_master)):
+    try:
+        payload = await request.json()
+        engine = get_work_engine()
+        project = await asyncio.to_thread(engine.update_project, project_id, payload)
+        return {"success": True, "project": project}
+    except Exception as e:
+        logger.error(f"Erro ao atualizar projeto Work {project_id}: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
 @router.post("/briefs/manual")
 async def create_manual_brief(request: Request, admin: Dict = Depends(require_master)):
     try:
@@ -113,6 +149,8 @@ async def create_manual_brief(request: Request, admin: Dict = Depends(require_ma
             payload.get("source_seed"),
             None,
             payload.get("extracted") or {},
+            payload.get("project_id"),
+            payload.get("action_type", "create_content"),
         )
         return {"success": True, "brief": brief}
     except Exception as e:
