@@ -15,6 +15,7 @@
     {% set dashboard_href = '/admin/master/dashboard' if is_master_admin else '/admin/org/dashboard' if is_org_admin else '/admin' %}
     {% set users_href = '/admin/users' if is_master_admin else '/admin/org/users' if is_org_admin else '/admin/users' %}
     {% set operation_href = '/admin/sync-check' if is_master_admin else dashboard_href %}
+    {% set wellness_path = path.startswith('/admin/wellness') or path.startswith('/admin/irt') or (path.startswith('/admin/user/') and ('psychometrics' in path or 'analysis' in path)) %}
     <header class="admin-topbar-v2">
         <div class="admin-topbar-inner-v2">
             <a href="{{ dashboard_href }}" class="admin-brand-v2" aria-label="JungAgent Admin">
@@ -54,6 +55,9 @@
                 </a>
                 <a href="/admin/work/dashboard" class="admin-nav-link-v2{% if path.startswith('/admin/work') %} is-active{% endif %}">
                     Work
+                </a>
+                <a href="/admin/wellness" class="admin-nav-link-v2{% if wellness_path %} is-active{% endif %}">
+                    Wellness
                 </a>
                 <a href="{{ dashboard_href }}" class="admin-nav-link-v2{% if path in ['/admin', '/admin/master/dashboard'] %} is-active{% endif %}">
                     Legacy

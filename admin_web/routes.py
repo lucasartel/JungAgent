@@ -101,6 +101,17 @@ def verify_user_access(admin: Dict, user_id: str, db_manager) -> bool:
     return True
 
 
+def verify_admin_wellness_target(user_id: str) -> None:
+    """Restrict legacy wellness surfaces to the configured central admin user."""
+    from instance_config import ADMIN_USER_ID
+
+    if str(user_id) != str(ADMIN_USER_ID):
+        raise HTTPException(
+            status_code=403,
+            detail="Wellness resources are restricted to the configured instance admin.",
+        )
+
+
 # ============================================================================
 # AUTENTICAÇÃO
 # ============================================================================
@@ -312,10 +323,72 @@ async def sync_check_page(request: Request, admin: Dict = Depends(require_master
     """Página de diagnóstico de sincronização"""
     return templates.TemplateResponse("sync_check.html", {"request": request, "active_nav": "operation"})
 
+@router.get("/wellness", response_class=HTMLResponse)
+async def wellness_dashboard(request: Request, admin: Dict = Depends(require_master)):
+    """Admin-only wellness surface for the central user of this instance."""
+    from instance_config import ADMIN_USER_ID
+
+    db = get_db()
+    cursor = db.conn.cursor()
+    admin_user = db.get_user(ADMIN_USER_ID) or {}
+    total_conversations = db.count_conversations(ADMIN_USER_ID)
+    psychometrics = db.get_psychometrics(ADMIN_USER_ID)
+
+    cursor.execute(
+        """
+        SELECT COUNT(*)
+        FROM archetype_conflicts
+        WHERE user_id = ?
+        """,
+        (ADMIN_USER_ID,),
+    )
+    total_conflicts = cursor.fetchone()[0]
+
+    cursor.execute(
+        """
+        SELECT COUNT(*)
+        FROM knowledge_gaps
+        WHERE user_id = ? AND status = 'open'
+        """,
+        (ADMIN_USER_ID,),
+    )
+    open_knowledge_gaps = cursor.fetchone()[0]
+
+    tri_tables = [
+        "irt_fragments",
+        "irt_item_parameters",
+        "detected_fragments",
+        "irt_trait_estimates",
+        "facet_scores",
+        "psychometric_quality_checks",
+    ]
+    cursor.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    existing_tables = {row[0] for row in cursor.fetchall()}
+    tri_ready_count = sum(1 for table in tri_tables if table in existing_tables)
+
+    return templates.TemplateResponse(
+        "wellness.html",
+        {
+            "request": request,
+            "active_nav": "wellness",
+            "admin_user_id": ADMIN_USER_ID,
+            "admin_user": admin_user,
+            "total_conversations": total_conversations,
+            "total_conflicts": total_conflicts,
+            "open_knowledge_gaps": open_knowledge_gaps,
+            "psychometrics": psychometrics,
+            "psychometrics_available": bool(psychometrics),
+            "tri_ready_count": tri_ready_count,
+            "tri_total_count": len(tri_tables),
+        },
+    )
+
+
 @router.get("/user/{user_id}/analysis", response_class=HTMLResponse)
 async def user_analysis_page(request: Request, user_id: str, admin: Dict = Depends(require_org_admin)):
     """Página de análise MBTI/Jungiana do usuário"""
     db = get_db()
+    verify_admin_wellness_target(user_id)
 
     # Verificar se admin pode acessar este usuário
     verify_user_access(admin, user_id, db)
@@ -726,6 +799,7 @@ Retorne JSON com esta estrutura EXATA:
 async def user_psychometrics_page(request: Request, user_id: str, admin: Dict = Depends(require_org_admin)):
     """Página de análises psicométricas completas (Big Five, EQ, VARK, Schwartz)"""
     db = get_db()
+    verify_admin_wellness_target(user_id)
 
     # Verificar se admin pode acessar este usuário
     verify_user_access(admin, user_id, db)
@@ -843,6 +917,7 @@ async def user_psychometrics_page(request: Request, user_id: str, admin: Dict = 
 async def regenerate_psychometrics(user_id: str, admin: Dict = Depends(require_org_admin)):
     """Força regeneração das análises psicométricas (cria nova versão) - acessível para org_admin"""
     db = get_db()
+    verify_admin_wellness_target(user_id)
     verify_user_access(admin, user_id, db)
 
     try:
@@ -880,6 +955,7 @@ async def generate_personal_report(user_id: str, admin: Dict = Depends(require_o
     import json as json_lib
 
     db = get_db()
+    verify_admin_wellness_target(user_id)
     verify_user_access(admin, user_id, db)
 
     try:
@@ -1070,6 +1146,7 @@ async def generate_hr_report(user_id: str, admin: Dict = Depends(require_org_adm
     import json as json_lib
 
     db = get_db()
+    verify_admin_wellness_target(user_id)
     verify_user_access(admin, user_id, db)
 
     try:
@@ -1254,6 +1331,7 @@ async def download_psychometrics_pdf(user_id: str, admin: Dict = Depends(require
     import json as json_lib
 
     db = get_db()
+    verify_admin_wellness_target(user_id)
     verify_user_access(admin, user_id, db)
 
     try:
@@ -1587,6 +1665,7 @@ async def get_dimension_evidence(
         import json as json_lib
 
         db = get_db()
+        verify_admin_wellness_target(user_id)
 
         # Validar dimensão
         valid_dimensions = ['openness', 'conscientiousness', 'extraversion', 'agreeableness', 'neuroticism']
@@ -1695,6 +1774,7 @@ async def extract_all_evidence(
         import json as json_lib
 
         db = get_db()
+        verify_admin_wellness_target(user_id)
 
         # Buscar análise psicométrica
         psychometrics = db.get_psychometrics(user_id)

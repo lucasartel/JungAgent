@@ -1,0 +1,128 @@
+{% extends "base_v2.html" %}
+
+{% block title %}Wellness - JungAgent Admin{% endblock %}
+
+{% block content %}
+<section class="page-shell-v2">
+    <header class="page-header-v2">
+        <div>
+            <p class="page-kicker-v2">Instance - Admin wellness</p>
+            <h1 class="page-title-v2">Wellness</h1>
+            <p class="page-subtitle-v2">
+                Admin-only reflective and psychometric resources for the central user of this JungAgent instance.
+            </p>
+        </div>
+    </header>
+
+    <section class="notice-v2 notice-v2--warning">
+        <strong>Single-user scope</strong>
+        <p>
+            This area keeps the wellness layer available only as an admin self-analysis surface.
+            It is not the product center and should not be treated as a multi-user wellness app.
+        </p>
+    </section>
+
+    <section class="metric-grid-v2 metric-grid-v2--quad">
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Central user</span>
+            <strong class="metric-value-v2">{{ (admin_user.user_name or admin_user.first_name or "Admin") if admin_user else "Admin" }}</strong>
+            <p class="metric-note-v2"><span class="table-badge-v2 table-badge-v2--mono">{{ admin_user_id }}</span></p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Conversations</span>
+            <strong class="metric-value-v2">{{ total_conversations }}</strong>
+            <p class="metric-note-v2">Messages available for reflective analysis.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Conflicts</span>
+            <strong class="metric-value-v2">{{ total_conflicts }}</strong>
+            <p class="metric-note-v2">Archetypal or psychological tensions persisted.</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">TRI tables</span>
+            <strong class="metric-value-v2">{{ tri_ready_count }}/{{ tri_total_count }}</strong>
+            <p class="metric-note-v2">Readiness of the legacy TRI/IRT layer.</p>
+        </article>
+    </section>
+
+    <section class="quick-grid-v2">
+        <a href="/admin/user/{{ admin_user_id }}/analysis" class="quick-card-v2 quick-card-v2--heavy">
+            <span class="quick-kicker-v2">Wellness - Admin</span>
+            <strong class="quick-title-v2">Reflective profile</strong>
+            <p class="quick-copy-v2">Legacy Jungian/MBTI-style reading scoped to the admin's own conversational base.</p>
+        </a>
+        <a href="/admin/user/{{ admin_user_id }}/psychometrics" class="quick-card-v2 quick-card-v2--heavy">
+            <span class="quick-kicker-v2">Wellness - Admin</span>
+            <strong class="quick-title-v2">Psychometrics</strong>
+            <p class="quick-copy-v2">
+                Big Five, EQ, VARK, values and report generation for the central admin user.
+                {% if psychometrics_available %}Latest version: v{{ psychometrics.version }}.{% else %}No generated profile yet.{% endif %}
+            </p>
+        </a>
+        <a href="/admin/irt/dashboard" class="quick-card-v2">
+            <span class="quick-kicker-v2">Wellness - Legacy</span>
+            <strong class="quick-title-v2">TRI/IRT dashboard</strong>
+            <p class="quick-copy-v2">Legacy item-response tooling preserved as admin diagnostics, not as a public product surface.</p>
+        </a>
+        <a href="/admin/irt/user/{{ admin_user_id }}" class="quick-card-v2">
+            <span class="quick-kicker-v2">Wellness - Admin</span>
+            <strong class="quick-title-v2">Admin TRI profile</strong>
+            <p class="quick-copy-v2">Direct TRI/IRT profile for the instance admin when the TRI layer is available.</p>
+        </a>
+        <a href="/admin/user/{{ admin_user_id }}/agent-data" class="quick-card-v2">
+            <span class="quick-kicker-v2">Audit</span>
+            <strong class="quick-title-v2">Admin data</strong>
+            <p class="quick-copy-v2">Operational view of the central user's persisted conversations and proactive records.</p>
+        </a>
+        <a href="/admin/memory-metrics?format=facts&user_id={{ admin_user_id }}" class="quick-card-v2">
+            <span class="quick-kicker-v2">Memory</span>
+            <strong class="quick-title-v2">Admin memory facts</strong>
+            <p class="quick-copy-v2">Raw structured memory detail for the admin user, returned as diagnostic JSON.</p>
+        </a>
+    </section>
+
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Legacy classification</h2>
+                <p class="panel-subtitle-v2">Initial Phase 5 boundary for wellness-related surfaces.</p>
+            </div>
+        </div>
+        <div class="panel-body-v2">
+            <div class="table-wrap-v2">
+                <table class="table-v2">
+                    <thead>
+                        <tr>
+                            <th>Surface</th>
+                            <th>Status</th>
+                            <th>Decision</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Psychometrics</td>
+                            <td><span class="table-badge-v2">admin-only</span></td>
+                            <td>Keep, but route through Wellness for the central admin user.</td>
+                        </tr>
+                        <tr>
+                            <td>TRI/IRT</td>
+                            <td><span class="table-badge-v2">legacy diagnostics</span></td>
+                            <td>Keep visible here as an admin diagnostic layer.</td>
+                        </tr>
+                        <tr>
+                            <td>Organizations and org users</td>
+                            <td><span class="table-badge-v2">legacy infra</span></td>
+                            <td>Keep outside the main product flow; classify before deeper pruning.</td>
+                        </tr>
+                        <tr>
+                            <td>Public wellness onboarding</td>
+                            <td><span class="table-badge-v2">blocked by Telegram</span></td>
+                            <td>Do not revive as a multi-user product surface in Path A.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+</section>
+{% endblock %}
