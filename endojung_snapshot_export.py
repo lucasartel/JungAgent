@@ -17,7 +17,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
-from identity_config import AGENT_INSTANCE, ADMIN_USER_ID
+from instance_config import AGENT_INSTANCE, ADMIN_USER_ID
 
 
 USER_SCOPED_TABLES: Tuple[str, ...] = (

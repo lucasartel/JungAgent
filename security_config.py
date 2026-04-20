@@ -1,5 +1,7 @@
 import os
 
+from instance_config import PROACTIVE_ENABLED
+
 
 TRUE_VALUES = {"1", "true", "yes", "on"}
 FALSE_VALUES = {"0", "false", "no", "off"}
@@ -19,7 +21,7 @@ def unsafe_admin_endpoints_enabled() -> bool:
 
 
 def proactive_messages_enabled() -> bool:
-    return env_flag("PROACTIVE_ENABLED", default=True)
+    return PROACTIVE_ENABLED
 
 
 def should_use_secure_cookie(request) -> bool:

@@ -14,7 +14,7 @@ import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from identity_config import AGENT_INSTANCE
+from instance_config import AGENT_INSTANCE
 
 logger = logging.getLogger(__name__)
 

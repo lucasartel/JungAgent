@@ -401,6 +401,6 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
 if __name__ == "__main__":
     db = HybridDatabaseManager()
     engine = DreamEngine(db)
-    from rumination_config import ADMIN_USER_ID
+    from instance_config import ADMIN_USER_ID
 
     engine.generate_dream(ADMIN_USER_ID)

@@ -36,7 +36,7 @@ async def trigger_research(admin: Dict = Depends(require_master)):
         from will_engine import WillEngine
         from agent_identity_context_builder import AgentIdentityContextBuilder
         from jung_core import HybridDatabaseManager
-        from rumination_config import ADMIN_USER_ID
+        from instance_config import ADMIN_USER_ID
         from world_consciousness import world_consciousness
         
         def run_will():

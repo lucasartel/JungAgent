@@ -9,7 +9,8 @@ from datetime import datetime
 
 from jung_core import HybridDatabaseManager
 from jung_rumination import RuminationEngine
-from rumination_config import ADMIN_USER_ID, DIGEST_INTERVAL_HOURS
+from instance_config import ADMIN_USER_ID
+from rumination_config import DIGEST_INTERVAL_HOURS
 
 logging.basicConfig(
     level=logging.INFO,

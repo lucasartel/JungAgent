@@ -15,8 +15,8 @@ from anthropic import Anthropic
 import os
 
 from agent_identity_extractor import AgentIdentityExtractor
+from instance_config import ADMIN_USER_ID
 from identity_config import (
-    ADMIN_USER_ID,
     IDENTITY_EXTRACTION_ENABLED,
     IDENTITY_CONSOLIDATION_INTERVAL_HOURS,
     MAX_CONVERSATIONS_PER_CONSOLIDATION

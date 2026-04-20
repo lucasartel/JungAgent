@@ -8,7 +8,7 @@ Funciona apenas na relação com o usuário Master Admin.
 """
 
 # ID do usuário Master Admin (mesmo do sistema de ruminação)
-ADMIN_USER_ID = "367f9e509e396d51"
+from instance_config import ADMIN_USER_ID, AGENT_INSTANCE
 
 # Flag para habilitar/desabilitar sistema
 IDENTITY_EXTRACTION_ENABLED = True
@@ -40,5 +40,4 @@ MAX_CONVERSATIONS_PER_CHAPTER = 200  # Máximo antes de considerar transição
 ENABLE_IDENTITY_DEBUG_LOGS = True  # Logs detalhados de extração
 
 # Metadados
-AGENT_INSTANCE = "jung_v1"  # Versão do agente
 SYSTEM_VERSION = "1.0.0"  # Versão do sistema de identidade

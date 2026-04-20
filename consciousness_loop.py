@@ -18,7 +18,7 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from identity_config import AGENT_INSTANCE, ADMIN_USER_ID
+from instance_config import AGENT_INSTANCE, ADMIN_USER_ID
 
 logger = logging.getLogger(__name__)
 

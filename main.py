@@ -234,7 +234,7 @@ async def lifespan(app: FastAPI):
 
     async def will_pulse_scheduler():
         """Mede pressão psíquica e aciona proatividade endógena quando houver transbordamento."""
-        from rumination_config import ADMIN_USER_ID
+        from instance_config import ADMIN_USER_ID
         from will_pressure import PULSE_INTERVAL_HOURS, WillPressureEngine
 
         logger.info("⏳ [WILL PULSE] Aguardando 2 min antes do primeiro pulso de pressão...")

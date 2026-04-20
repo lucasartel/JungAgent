@@ -14,7 +14,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from identity_config import AGENT_INSTANCE
+from instance_config import AGENT_INSTANCE
 from llm_providers import get_llm_response
 
 logger = logging.getLogger(__name__)

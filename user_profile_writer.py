@@ -242,7 +242,7 @@ def rebuild_agent_profile_md(db_connection) -> None:
 
         # ── Métricas de Desenvolvimento ──────────────────────────────────
         try:
-            from identity_config import ADMIN_USER_ID
+            from instance_config import ADMIN_USER_ID
             cursor.execute("""
                 SELECT phase, total_interactions,
                        self_awareness_score, moral_complexity_score,

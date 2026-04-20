@@ -9,7 +9,7 @@ sys.path.insert(0, '.')
 
 from jung_core import HybridDatabaseManager
 from jung_rumination import RuminationEngine
-from rumination_config import ADMIN_USER_ID
+from instance_config import ADMIN_USER_ID
 import logging
 
 logging.basicConfig(level=logging.DEBUG, format='%(message)s')

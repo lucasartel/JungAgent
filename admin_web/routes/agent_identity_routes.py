@@ -102,7 +102,7 @@ async def get_agent_identity_context(
             include_meta_knowledge=True,
             max_items_per_category=10
         )
-        from identity_config import ADMIN_USER_ID
+        from instance_config import ADMIN_USER_ID
         context["current_mind_state"] = builder.build_current_mind_state(
             user_id=ADMIN_USER_ID,
             style="expanded",
@@ -135,7 +135,7 @@ async def get_current_mind_state(
     """
     try:
         from agent_identity_context_builder import AgentIdentityContextBuilder
-        from identity_config import ADMIN_USER_ID
+        from instance_config import ADMIN_USER_ID
 
         db = get_hybrid_db()
         builder = AgentIdentityContextBuilder(db)
@@ -170,7 +170,7 @@ async def get_meta_consciousness_status(
     Restrito ao master admin.
     """
     try:
-        from identity_config import ADMIN_USER_ID, AGENT_INSTANCE
+        from instance_config import ADMIN_USER_ID, AGENT_INSTANCE
 
         db = get_hybrid_db()
         cursor = db.conn.cursor()
@@ -265,7 +265,7 @@ async def get_nuclear_beliefs(
     Restrito ao master admin
     """
     try:
-        from identity_config import AGENT_INSTANCE
+        from instance_config import AGENT_INSTANCE
 
         db = get_hybrid_db()
         cursor = db.conn.cursor()
@@ -332,7 +332,7 @@ async def get_active_contradictions(
     Restrito ao master admin
     """
     try:
-        from identity_config import AGENT_INSTANCE
+        from instance_config import AGENT_INSTANCE
 
         db = get_hybrid_db()
         cursor = db.conn.cursor()
@@ -399,7 +399,7 @@ async def get_narrative_chapters(
     Restrito ao master admin
     """
     try:
-        from identity_config import AGENT_INSTANCE
+        from instance_config import AGENT_INSTANCE
 
         db = get_hybrid_db()
         cursor = db.conn.cursor()
@@ -468,7 +468,7 @@ async def get_relational_identities(
     Restrito ao master admin
     """
     try:
-        from identity_config import AGENT_INSTANCE
+        from instance_config import AGENT_INSTANCE
 
         db = get_hybrid_db()
         cursor = db.conn.cursor()
@@ -530,7 +530,8 @@ async def run_manual_consolidation(
 
     Requer: Master Admin only
     """
-    from identity_config import ADMIN_USER_ID, MAX_CONVERSATIONS_PER_CONSOLIDATION
+    from instance_config import ADMIN_USER_ID, AGENT_INSTANCE
+    from identity_config import MAX_CONVERSATIONS_PER_CONSOLIDATION
     from agent_identity_extractor import AgentIdentityExtractor
 
     try:
@@ -612,13 +613,13 @@ async def run_manual_consolidation(
         # Obter estatísticas atualizadas
         cursor.execute("""
             SELECT
-                (SELECT COUNT(*) FROM agent_identity_core WHERE agent_instance = 'jung_v1' AND is_current = 1) as nuclear_count,
-                (SELECT AVG(certainty) FROM agent_identity_core WHERE agent_instance = 'jung_v1' AND is_current = 1) as avg_certainty,
-                (SELECT COUNT(*) FROM agent_identity_contradictions WHERE agent_instance = 'jung_v1' AND status IN ('unresolved', 'integrating')) as contradictions_count,
-                (SELECT COUNT(*) FROM agent_narrative_chapters WHERE agent_instance = 'jung_v1') as chapters_count,
-                (SELECT COUNT(*) FROM agent_possible_selves WHERE agent_instance = 'jung_v1' AND status = 'active') as possible_selves_count,
-                (SELECT COUNT(*) FROM agent_agency_memory WHERE agent_instance = 'jung_v1') as agency_moments_count
-        """)
+                (SELECT COUNT(*) FROM agent_identity_core WHERE agent_instance = ? AND is_current = 1) as nuclear_count,
+                (SELECT AVG(certainty) FROM agent_identity_core WHERE agent_instance = ? AND is_current = 1) as avg_certainty,
+                (SELECT COUNT(*) FROM agent_identity_contradictions WHERE agent_instance = ? AND status IN ('unresolved', 'integrating')) as contradictions_count,
+                (SELECT COUNT(*) FROM agent_narrative_chapters WHERE agent_instance = ?) as chapters_count,
+                (SELECT COUNT(*) FROM agent_possible_selves WHERE agent_instance = ? AND status = 'active') as possible_selves_count,
+                (SELECT COUNT(*) FROM agent_agency_memory WHERE agent_instance = ?) as agency_moments_count
+        """, (AGENT_INSTANCE, AGENT_INSTANCE, AGENT_INSTANCE, AGENT_INSTANCE, AGENT_INSTANCE, AGENT_INSTANCE))
         current_stats = cursor.fetchone()
 
         logger.info(f"✅ Consolidação manual executada por {admin['email']}")

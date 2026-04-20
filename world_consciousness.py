@@ -326,17 +326,19 @@ class WorldConsciousnessFetcher:
 
     def _admin_user_id(self) -> str:
         try:
-            from identity_config import ADMIN_USER_ID
+            from instance_config import ADMIN_USER_ID
 
             return ADMIN_USER_ID
         except Exception:
-            return "367f9e509e396d51"
+            from instance_config import LEGACY_DEFAULT_ADMIN_USER_ID
+
+            return LEGACY_DEFAULT_ADMIN_USER_ID
 
     def _resolve_will_state(self, will_state: Optional[Dict]) -> Dict:
         if will_state:
             return will_state
         try:
-            from identity_config import ADMIN_USER_ID
+            from instance_config import ADMIN_USER_ID
             from will_engine import load_latest_will_state_from_sqlite
 
             return load_latest_will_state_from_sqlite(ADMIN_USER_ID) or {}

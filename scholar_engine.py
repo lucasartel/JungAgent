@@ -1516,6 +1516,6 @@ Responda SOMENTE com o corpo do artigo, sem involucros de chat.
 if __name__ == "__main__":
     db = HybridDatabaseManager()
     engine = ScholarEngine(db)
-    from rumination_config import ADMIN_USER_ID
+    from instance_config import ADMIN_USER_ID
 
     print(engine.run_scholarly_routine(ADMIN_USER_ID, trigger_source="manual_cli"))

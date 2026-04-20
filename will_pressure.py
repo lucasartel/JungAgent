@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from llm_providers import get_llm_response
-from rumination_config import ADMIN_USER_ID
+from instance_config import ADMIN_USER_ID
 
 logger = logging.getLogger(__name__)
 

@@ -47,7 +47,7 @@ from jung_core import (
     format_conflict_for_display,
     format_archetype_info
 )
-from identity_config import ADMIN_USER_ID as ACTIVE_CONSCIOUSNESS_ADMIN_USER_ID
+from instance_config import ADMIN_USER_ID as ACTIVE_CONSCIOUSNESS_ADMIN_USER_ID
 
 # ✅ IMPORTAR SISTEMA PROATIVO AVANÇADO
 from jung_proactive_advanced import ProactiveAdvancedSystem

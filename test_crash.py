@@ -4,8 +4,6 @@ import sys
 
 logging.basicConfig(level=logging.INFO)
 from jung_core import HybridDatabaseManager, JungianEngine
-
-os.environ["ADMIN_USER_ID"] = "1228514589"
 db = HybridDatabaseManager()
 engine = JungianEngine(db)
 

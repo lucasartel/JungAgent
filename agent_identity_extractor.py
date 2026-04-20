@@ -19,14 +19,13 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from anthropic import Anthropic
 
+from instance_config import ADMIN_USER_ID, AGENT_INSTANCE
 from identity_config import (
-    ADMIN_USER_ID,
     IDENTITY_EXTRACTION_ENABLED,
     MIN_CERTAINTY_FOR_NUCLEAR,
     MIN_TENSION_FOR_CONTRADICTION,
     MIN_VIVIDNESS_FOR_POSSIBLE_SELF,
     MIN_SALIENCE_FOR_RELATIONAL,
-    AGENT_INSTANCE,
     ENABLE_IDENTITY_DEBUG_LOGS
 )
 

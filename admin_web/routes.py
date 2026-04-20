@@ -2374,7 +2374,7 @@ async def jung_lab_dashboard(
     admin: Dict = Depends(require_master)
 ):
     """Dashboard do Sistema de Ruminação Cognitiva (Admin only)"""
-    from rumination_config import ADMIN_USER_ID
+    from instance_config import ADMIN_USER_ID
     from jung_rumination import RuminationEngine
     import os
 
@@ -2453,7 +2453,7 @@ async def run_manual_digest(
     admin: Dict = Depends(require_master)
 ):
     """Executa digestão manual do sistema de ruminação"""
-    from rumination_config import ADMIN_USER_ID
+    from instance_config import ADMIN_USER_ID
     from jung_rumination import RuminationEngine
 
     try:
@@ -2570,7 +2570,7 @@ async def diagnose_rumination(
     Diagnóstico completo do sistema de ruminação
     Verifica conversas, fragmentos, tensões e possíveis problemas
     """
-    from rumination_config import ADMIN_USER_ID
+    from instance_config import ADMIN_USER_ID
     from jung_rumination import RuminationEngine
 
     try:
@@ -2708,7 +2708,7 @@ async def diagnose_rumination(
                     diagnosis["recommendations"].append({
                         "action": "FIX: Atualizar conversas antigas para platform='telegram'",
                         "steps": [
-                            "1. Executar SQL: UPDATE conversations SET platform='telegram' WHERE user_id='367f9e509e396d51' AND (platform IS NULL OR platform != 'telegram')",
+                            f"1. Executar SQL: UPDATE conversations SET platform='telegram' WHERE user_id='{ADMIN_USER_ID}' AND (platform IS NULL OR platform != 'telegram')",
                             "2. Enviar nova mensagem no Telegram",
                             "3. Verificar se agora cria fragmentos"
                         ]
@@ -2778,7 +2778,7 @@ async def fix_platform_issue(
     FIX automático: Atualiza conversas antigas para platform='telegram'
     Resolve o problema de conversas sem platform definido
     """
-    from rumination_config import ADMIN_USER_ID
+    from instance_config import ADMIN_USER_ID
 
     try:
         db = get_db()
@@ -2835,7 +2835,8 @@ async def debug_rumination_full(
     if not UNSAFE_ADMIN_ENDPOINTS_ENABLED:
         raise HTTPException(status_code=404, detail="Not found")
 
-    from rumination_config import ADMIN_USER_ID, MIN_TENSION_LEVEL
+    from instance_config import ADMIN_USER_ID
+    from rumination_config import MIN_TENSION_LEVEL
     import inspect
 
     try:
@@ -2992,7 +2993,7 @@ async def debug_rumination_full(
 
         # TESTE 7: Imports
         try:
-            from rumination_config import ADMIN_USER_ID as test_id
+            from instance_config import ADMIN_USER_ID as test_id
             debug_result["imports"]["rumination_config"] = "OK"
         except Exception as e:
             debug_result["imports"]["rumination_config"] = f"ERRO: {e}"
@@ -3217,7 +3218,7 @@ async def export_fragments(
     """
     Exporta todos os fragmentos de ruminação para análise
     """
-    from rumination_config import ADMIN_USER_ID
+    from instance_config import ADMIN_USER_ID
 
     try:
         db = get_db()
@@ -3250,7 +3251,7 @@ async def export_tensions(
     """
     Exporta todas as tensões para análise detalhada
     """
-    from rumination_config import ADMIN_USER_ID
+    from instance_config import ADMIN_USER_ID
 
     try:
         db = get_db()
@@ -3286,7 +3287,7 @@ async def export_insights(
     """
     Exporta todos os insights gerados
     """
-    from rumination_config import ADMIN_USER_ID
+    from instance_config import ADMIN_USER_ID
 
     try:
         db = get_db()
@@ -3353,7 +3354,7 @@ async def jung_mind_data(admin: Dict = Depends(require_master)):
     try:
         # Importar ADMIN_USER_ID
         try:
-            from rumination_config import ADMIN_USER_ID
+            from instance_config import ADMIN_USER_ID
         except ImportError:
             logger.error("❌ Não foi possível importar ADMIN_USER_ID de rumination_config")
             raise HTTPException(500, "ADMIN_USER_ID não configurado para esta rota")

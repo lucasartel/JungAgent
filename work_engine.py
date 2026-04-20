@@ -15,7 +15,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 
 from agent_identity_context_builder import AgentIdentityContextBuilder
-from identity_config import ADMIN_USER_ID
+from instance_config import ADMIN_USER_ID
 from integration_secrets import IntegrationSecretsError, IntegrationSecretsManager
 from llm_providers import get_llm_response
 

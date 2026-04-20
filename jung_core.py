@@ -34,6 +34,13 @@ from collections import Counter
 
 from dotenv import load_dotenv
 from openai import OpenAI
+from instance_config import (
+    ADMIN_USER_ID as INSTANCE_ADMIN_USER_ID,
+    AGENT_INSTANCE as INSTANCE_AGENT_INSTANCE,
+    INSTANCE_NAME as CONFIG_INSTANCE_NAME,
+    INSTANCE_TIMEZONE as CONFIG_INSTANCE_TIMEZONE,
+    TELEGRAM_ADMIN_IDS as INSTANCE_TELEGRAM_ADMIN_IDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,11 +123,11 @@ class Config:
     MEM0_LLM_MODEL = os.getenv("MEM0_LLM_MODEL", "openai/gpt-4o-mini")
     MEM0_LLM_BASE_URL = os.getenv("MEM0_LLM_BASE_URL", "https://openrouter.ai/api/v1")
 
-    TELEGRAM_ADMIN_IDS = [
-        int(id.strip()) 
-        for id in os.getenv("TELEGRAM_ADMIN_IDS", "").split(",") 
-        if id.strip()
-    ]
+    INSTANCE_NAME = CONFIG_INSTANCE_NAME
+    INSTANCE_TIMEZONE = CONFIG_INSTANCE_TIMEZONE
+    AGENT_INSTANCE = INSTANCE_AGENT_INSTANCE
+    ADMIN_USER_ID = INSTANCE_ADMIN_USER_ID
+    TELEGRAM_ADMIN_IDS = INSTANCE_TELEGRAM_ADMIN_IDS
     
     # 1. Configuração de Diretórios (Prioridade para Volumes Persistentes)
     DATA_DIR = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
@@ -2172,7 +2179,7 @@ Resposta: {ai_response}
 
         # 7. HOOK: Sistema de Ruminação (só para admin)
         try:
-            from rumination_config import ADMIN_USER_ID
+            from instance_config import ADMIN_USER_ID
             if user_id == ADMIN_USER_ID and platform == "telegram":
                 from jung_rumination import RuminationEngine
                 rumination = RuminationEngine(self)
@@ -5133,7 +5140,7 @@ class JungianEngine:
 
         # Injetar os últimos insights de ruminação gerados (apenas para admin)
         try:
-            from rumination_config import ADMIN_USER_ID as _ADMIN_ID
+            from instance_config import ADMIN_USER_ID as _ADMIN_ID
             if user_id == _ADMIN_ID:
                 _ri_cursor = self.db.conn.cursor()
                 _ri_cursor.execute("""
@@ -5253,11 +5260,7 @@ class JungianEngine:
     # ========================================
 
     def _get_admin_user_id(self) -> str:
-        try:
-            from rumination_config import ADMIN_USER_ID as _ADMIN_ID
-            return str(_ADMIN_ID)
-        except ImportError:
-            return str(os.getenv("ADMIN_USER_ID", "1228514589"))
+        return str(Config.ADMIN_USER_ID)
 
     def _active_consciousness_enabled_for_user(self, user_id: str) -> bool:
         return bool(Config.ACTIVE_CONSCIOUSNESS_ENABLED and str(user_id) == self._get_admin_user_id())
@@ -6519,12 +6522,8 @@ class JungianEngine:
                 role = "Usuário" if msg["role"] == "user" else "Jung"
                 history_text += f"{role}: {msg['content'][:400]}\n"
 
-        # Identificar se é o Admin (Criador) ou Usuário Padrão
-        try:
-            from rumination_config import ADMIN_USER_ID as _ADMIN_ID
-            admin_id = _ADMIN_ID
-        except ImportError:
-            admin_id = os.getenv("ADMIN_USER_ID", "1228514589")
+        # Identificar se e o Admin (Criador) ou Usuario Padrao.
+        admin_id = Config.ADMIN_USER_ID
             
         is_admin = (str(user_id) == str(admin_id))
         identity_state_injected = False

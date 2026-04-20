@@ -6,7 +6,7 @@ Baseado em SISTEMA_RUMINACAO_v1.md
 # ============================================================
 # CONFIGURACAO DE USUARIO ADMIN
 # ============================================================
-ADMIN_USER_ID = "367f9e509e396d51"  # Unico usuario com ruminacao ativa
+from instance_config import ADMIN_USER_ID  # Unico usuario com ruminacao ativa
 
 # ============================================================
 # FASE 1: INGESTAO

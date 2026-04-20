@@ -17,7 +17,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from identity_config import AGENT_INSTANCE, MIN_CERTAINTY_FOR_NUCLEAR, ADMIN_USER_ID
+from instance_config import AGENT_INSTANCE, ADMIN_USER_ID
+from identity_config import MIN_CERTAINTY_FOR_NUCLEAR
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
