@@ -29,6 +29,18 @@ def _count(conn, table: str) -> int:
     return int(row["count"] if row else 0)
 
 
+def _configured_qdrant_collection(agent_instance: str) -> str:
+    configured = os.getenv("QDRANT_COLLECTION_NAME")
+    if configured:
+        return configured.strip()
+
+    safe_instance = "".join(
+        char if char.isalnum() or char in ("_", "-") else "_"
+        for char in str(agent_instance).strip()
+    ).strip("_")
+    return f"jung_memories_{safe_instance or 'jung_v1'}"
+
+
 def run_healthcheck(json_output: bool = False, db_path: str | None = None) -> int:
     if db_path:
         os.environ["SQLITE_DB_PATH"] = db_path
@@ -64,9 +76,40 @@ def run_healthcheck(json_output: bool = False, db_path: str | None = None) -> in
     checks.append(
         {
             "status": "ok" if chroma_path.exists() else "warning",
-            "title": "Chroma path",
+            "title": "Chroma fallback path",
             "detail": str(chroma_path),
-            "action": "Set CHROMA_DB_PATH to a persistent path if semantic memory is enabled.",
+            "action": "Use Qdrant for production semantic memory, or set CHROMA_DB_PATH if intentionally using the legacy fallback.",
+        }
+    )
+
+    qdrant_url = os.getenv("QDRANT_URL")
+    qdrant_api_key = os.getenv("QDRANT_API_KEY")
+    qdrant_collection = _configured_qdrant_collection(AGENT_INSTANCE)
+    qdrant_missing = [
+        name
+        for name, value in {
+            "QDRANT_URL": qdrant_url,
+            "QDRANT_API_KEY": qdrant_api_key,
+            "QDRANT_COLLECTION_NAME": qdrant_collection,
+            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+            "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
+        }.items()
+        if not value
+    ]
+    if qdrant_url or qdrant_api_key:
+        qdrant_status = "ok" if not qdrant_missing else "error"
+        qdrant_detail = f"collection={qdrant_collection}" if not qdrant_missing else f"missing: {', '.join(qdrant_missing)}"
+        qdrant_action = "Complete Qdrant and mem0 environment variables before relying on semantic memory."
+    else:
+        qdrant_status = "warning"
+        qdrant_detail = "not configured; legacy/local memory fallback may be used"
+        qdrant_action = "Set QDRANT_URL, QDRANT_API_KEY, and QDRANT_COLLECTION_NAME for production semantic memory."
+    checks.append(
+        {
+            "status": qdrant_status,
+            "title": "Qdrant semantic memory",
+            "detail": qdrant_detail,
+            "action": qdrant_action,
         }
     )
 
@@ -122,6 +165,11 @@ def run_healthcheck(json_output: bool = False, db_path: str | None = None) -> in
         "admin_platform_id_configured": bool(ADMIN_PLATFORM_ID),
         "telegram_admin_count": len(TELEGRAM_ADMIN_IDS),
         "proactive_enabled": PROACTIVE_ENABLED,
+        "semantic_memory": {
+            "backend": "qdrant" if qdrant_url or qdrant_api_key else "legacy_fallback",
+            "collection": qdrant_collection,
+            "configured": qdrant_status == "ok",
+        },
         "setup_status": setup.get("overall_status"),
         "checks": checks,
     }
@@ -135,6 +183,7 @@ def run_healthcheck(json_output: bool = False, db_path: str | None = None) -> in
         print("=" * 35)
         print(f"Instance: {INSTANCE_NAME} ({AGENT_INSTANCE})")
         print(f"Admin user id: {ADMIN_USER_ID}")
+        print(f"Semantic memory: {summary['semantic_memory']['backend']} / {qdrant_collection}")
         print(f"Setup status: {setup.get('overall_status')}")
         print()
         for check in checks:

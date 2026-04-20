@@ -169,7 +169,8 @@ The older multi-tenant / organization surfaces still exist as legacy infrastruct
 - Python 3.11+
 - a Telegram bot token from BotFather
 - at least one LLM provider key
-- persistent storage for SQLite and ChromaDB
+- persistent storage for SQLite
+- a Qdrant Cloud cluster or reachable Qdrant endpoint for semantic memory
 - a master admin account for the web dashboard
 
 ### Environment
@@ -199,6 +200,13 @@ OPENAI_API_KEY=your-openai-key
 CONVERSATION_MODEL=google/gemini-2.5-flash-lite
 INTERNAL_MODEL=google/gemini-2.5-flash-lite
 
+QDRANT_URL=https://your-cluster.qdrant.io
+QDRANT_API_KEY=your-qdrant-api-key
+QDRANT_COLLECTION_NAME=jung_memories_jung_v1
+MEM0_LLM_MODEL=openai/gpt-4o-mini
+MEM0_LLM_BASE_URL=https://openrouter.ai/api/v1
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+
 PROACTIVE_ENABLED=true
 ACTIVE_CONSCIOUSNESS_ENABLED=true
 ENABLE_UNSAFE_ADMIN_ENDPOINTS=false
@@ -207,6 +215,30 @@ ENABLE_UNSAFE_ADMIN_ENDPOINTS=false
 For new Telegram-only installations, prefer setting `ADMIN_PLATFORM_ID` to the numeric Telegram id of the instance admin and leaving `ADMIN_USER_ID` empty. JungAgent will derive the internal admin memory id as `sha256(ADMIN_PLATFORM_ID)[:16]`.
 
 Set `ADMIN_USER_ID` directly only when migrating an existing installation that already has memory under a known user id.
+
+### Semantic Memory With Qdrant
+
+JungAgent uses SQLite and Qdrant for different kinds of persistence.
+
+SQLite is the operational source of truth: conversations, dreams, rumination, identity, will, loop state, admin users, and structured records.
+
+Qdrant is the recommended production backend for semantic memory through `mem0`. It stores vectorized memories that can be searched by meaning and used as long-term continuity during conversation.
+
+ChromaDB remains a legacy/local fallback for older or development installations. New production instances should prefer Qdrant.
+
+Use one Qdrant collection per JungAgent instance:
+
+```bash
+QDRANT_COLLECTION_NAME=jung_memories_<agent_instance>
+```
+
+For example:
+
+```bash
+QDRANT_COLLECTION_NAME=jung_memories_jung_v1
+```
+
+Do not share a Qdrant collection between unrelated instances, because semantic memories can mix across agents. See [`docs/QDRANT_SEMANTIC_MEMORY.md`](docs/QDRANT_SEMANTIC_MEMORY.md) for the full setup and security notes.
 
 ### Local Run
 
@@ -281,19 +313,22 @@ For Railway:
 
 1. Create a new Railway project from this repository.
 2. Add a persistent volume and point `SQLITE_DB_PATH` to that volume, for example `/data/jung_hybrid.db`.
-3. Set `CHROMA_DB_PATH` to a persistent path when using vector memory, for example `/data/chroma_db`.
-4. Add the same environment variables described above.
-5. Deploy the service.
-6. Create the master admin user if needed with `python setup_instance.py --master-email admin@example.com`.
-7. Run `python instance_healthcheck.py`.
-8. Open `/admin/instance/setup` and verify the installation.
+3. Create or reuse a Qdrant Cloud cluster for semantic memory.
+4. Set `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION_NAME`.
+5. Keep `CHROMA_DB_PATH` only if you intentionally need the legacy/local fallback.
+6. Add the same environment variables described above.
+7. Deploy the service.
+8. Create the master admin user if needed with `python setup_instance.py --master-email admin@example.com`.
+9. Run `python instance_healthcheck.py`.
+10. Open `/admin/instance/setup` and verify the installation.
 
 ### Security Notes
 
 - Keep `TELEGRAM_BOT_TOKEN` and LLM provider keys out of git.
+- Keep `QDRANT_API_KEY` out of git and treat Qdrant collections as sensitive semantic memory stores.
 - Keep `ENABLE_UNSAFE_ADMIN_ENDPOINTS=false` in production unless you are doing a short, controlled maintenance operation.
 - Use `TELEGRAM_ADMIN_IDS` to prevent non-admin Telegram users from interacting with the private instance.
-- Treat the SQLite database and ChromaDB directory as sensitive memory stores.
+- Treat the SQLite database, Qdrant collection, and any ChromaDB fallback directory as sensitive memory stores.
 - Keep a persistent backup strategy before running migrations or manual repair scripts.
 
 ## Repository layout
@@ -313,7 +348,7 @@ The repository root is intentionally kept focused on runtime code and deployment
 - **Web:** FastAPI
 - **Bot:** python-telegram-bot
 - **Database:** SQLite
-- **Vector / memory stack:** hybrid memory architecture with structured and semantic retrieval layers
+- **Semantic memory:** mem0 with Qdrant as the recommended production vector store
 - **LLMs:** Anthropic Claude, OpenAI embeddings, and provider integrations through OpenRouter
 - **Scheduling:** asynchronous recurring jobs and internal loop orchestration
 

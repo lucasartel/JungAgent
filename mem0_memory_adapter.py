@@ -31,6 +31,23 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def _default_collection_name() -> str:
+    configured = os.getenv("QDRANT_COLLECTION_NAME")
+    if configured:
+        return configured.strip()
+
+    try:
+        from instance_config import AGENT_INSTANCE
+    except Exception:
+        AGENT_INSTANCE = "jung_v1"
+
+    safe_instance = "".join(
+        char if char.isalnum() or char in ("_", "-") else "_"
+        for char in str(AGENT_INSTANCE).strip()
+    ).strip("_")
+    return f"jung_memories_{safe_instance or 'jung_v1'}"
+
+
 def _build_mem0_config() -> dict:
     """
     Constrói configuração do mem0 usando Qdrant Cloud como vector store.
@@ -41,6 +58,7 @@ def _build_mem0_config() -> dict:
     """
     qdrant_url = os.getenv("QDRANT_URL")
     qdrant_api_key = os.getenv("QDRANT_API_KEY")
+    collection_name = _default_collection_name()
     if not qdrant_url or not qdrant_api_key:
         raise ValueError("QDRANT_URL e QDRANT_API_KEY são obrigatórios para mem0")
 
@@ -68,7 +86,7 @@ def _build_mem0_config() -> dict:
         "vector_store": {
             "provider": "qdrant",
             "config": {
-                "collection_name": "jung_memories",
+                "collection_name": collection_name,
                 "url": qdrant_url,
                 "api_key": qdrant_api_key,
             },
