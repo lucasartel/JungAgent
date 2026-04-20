@@ -1617,6 +1617,13 @@ try:
 except Exception as e:
     logger.warning(f"⚠️  Rotas do modulo Work não disponíveis: {e}")
 
+try:
+    from admin_web.routes.art_routes import router as art_router
+    app.include_router(art_router)
+    logger.info("✅ Rotas do modulo Arte/Hobby carregadas (protegidas - Master Admin only)")
+except Exception as e:
+    logger.warning(f"⚠️  Rotas do modulo Arte/Hobby não disponíveis: {e}")
+
 # ROTAS TRI/IRT (Item Response Theory) - Sistema Psicométrico Avançado
 # ============================================================================
 try:

@@ -12,7 +12,8 @@
     {% set is_master_admin = current_admin and current_admin.role == 'master' %}
     {% set is_org_admin = current_admin and current_admin.role == 'org_admin' %}
     {% set path = request.url.path %}
-    {% set dashboard_href = '/admin/master/dashboard' if is_master_admin else '/admin/org/dashboard' if is_org_admin else '/admin' %}
+    {% set dashboard_href = '/admin' if is_master_admin else '/admin/org/dashboard' if is_org_admin else '/admin' %}
+    {% set legacy_href = '/admin/master/dashboard' if is_master_admin else '/admin/org/dashboard' if is_org_admin else '/admin' %}
     {% set users_href = '/admin/users' if is_master_admin else '/admin/org/users' if is_org_admin else '/admin/users' %}
     {% set operation_href = '/admin/sync-check' if is_master_admin else dashboard_href %}
     {% set wellness_path = path.startswith('/admin/wellness') or path.startswith('/admin/irt') or (path.startswith('/admin/user/') and ('psychometrics' in path or 'analysis' in path)) %}
@@ -35,6 +36,9 @@
                     Legacy
                 </a>
                 {% else %}
+                <a href="/admin" class="admin-nav-link-v2{% if path == '/admin' %} is-active{% endif %}">
+                    Cockpit
+                </a>
                 <a href="/admin/consciousness-loop/dashboard" class="admin-nav-link-v2{% if path.startswith('/admin/consciousness-loop') %} is-active{% endif %}">
                     Loop
                 </a>
@@ -53,13 +57,16 @@
                 <a href="/admin/agent-identity/dashboard" class="admin-nav-link-v2{% if path.startswith('/admin/agent-identity') %} is-active{% endif %}">
                     Identity
                 </a>
+                <a href="/admin/art/dashboard" class="admin-nav-link-v2{% if path.startswith('/admin/art') %} is-active{% endif %}">
+                    Art
+                </a>
                 <a href="/admin/work/dashboard" class="admin-nav-link-v2{% if path.startswith('/admin/work') %} is-active{% endif %}">
                     Work
                 </a>
                 <a href="/admin/wellness" class="admin-nav-link-v2{% if wellness_path %} is-active{% endif %}">
                     Wellness
                 </a>
-                <a href="{{ dashboard_href }}" class="admin-nav-link-v2{% if path in ['/admin', '/admin/master/dashboard'] or path.startswith('/admin/instance') %} is-active{% endif %}">
+                <a href="{{ legacy_href }}" class="admin-nav-link-v2{% if path == '/admin/master/dashboard' or path.startswith('/admin/instance') %} is-active{% endif %}">
                     Legacy
                 </a>
                 {% endif %}

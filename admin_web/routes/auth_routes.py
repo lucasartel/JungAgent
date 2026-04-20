@@ -175,7 +175,7 @@ async def login(
         if _is_safe_next_path(next):
             redirect_url = next
         elif admin["role"] == "master":
-            redirect_url = "/admin/consciousness-loop/dashboard"
+            redirect_url = "/admin"
         else:
             redirect_url = "/admin/org/dashboard"
 

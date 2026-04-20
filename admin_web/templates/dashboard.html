@@ -1,36 +1,22 @@
 {% extends "base_v2.html" %}
 
-{% block title %}Dashboard - JungAgent Admin{% endblock %}
+{% block title %}Cockpit - JungAgent Admin{% endblock %}
 
 {% block content %}
 <section class="page-shell-v2">
     <header class="page-header-v2">
         <div>
-            <p class="page-kicker-v2">Instance · Local cockpit</p>
-            <h1 class="page-title-v2">Instance Cockpit</h1>
+            <p class="page-kicker-v2">Instance - Living cockpit</p>
+            <h1 class="page-title-v2">{{ summary.instance_name if summary else "JungAgent" }} Cockpit</h1>
             <p class="page-subtitle-v2">
-                Initial JungAgent instance panel, prioritizing a quick organism reading and safe access to dense areas.
+                Synthetic reading of the agent's psychic state, technical health, and safe operational actions.
             </p>
         </div>
+        <div class="page-actions-v2">
+            <a href="/admin/instance/setup" class="button-v2 button-v2--ghost">Instance setup</a>
+            <a href="/admin/consciousness-loop/dashboard" class="button-v2">Open loop</a>
+        </div>
     </header>
-
-    <section class="metric-grid-v2 metric-grid-v2--triple">
-        <article class="metric-card-v2">
-            <span class="metric-label-v2">Mapped users</span>
-            <strong class="metric-value-v2">{{ total_users }}</strong>
-            <p class="metric-note-v2">Conversational base known by the instance.</p>
-        </article>
-        <article class="metric-card-v2">
-            <span class="metric-label-v2">Interactions</span>
-            <strong class="metric-value-v2">{{ total_interactions }}</strong>
-            <p class="metric-note-v2">Total volume of messages metabolized by the system.</p>
-        </article>
-        <article class="metric-card-v2">
-            <span class="metric-label-v2">Active conflicts</span>
-            <strong class="metric-value-v2">{{ total_conflicts }}</strong>
-            <p class="metric-note-v2">Psychological tensions persisted in instance memory.</p>
-        </article>
-    </section>
 
     {% if diagnostic_mode %}
     <section class="panel-v2 panel-v2--warning">
@@ -72,93 +58,140 @@
     </section>
     {% endif %}
 
-    <section class="quick-grid-v2">
-        <a href="/admin/consciousness-loop/dashboard" class="quick-card-v2 quick-card-v2--heavy">
-            <span class="quick-kicker-v2">Organism</span>
-            <strong class="quick-title-v2">Loop</strong>
-            <p class="quick-copy-v2">Current phase, recent events, and results of the psychic day.</p>
-        </a>
-        <a href="/admin/research" class="quick-card-v2 quick-card-v2--heavy">
-            <span class="quick-kicker-v2">Organism</span>
-            <strong class="quick-title-v2">Will</strong>
-            <p class="quick-copy-v2">Internal direction, psychic pressure, and overflow history.</p>
-        </a>
-        <a href="/admin/dreams" class="quick-card-v2 quick-card-v2--heavy">
-            <span class="quick-kicker-v2">Organism</span>
-            <strong class="quick-title-v2">Dreams</strong>
-            <p class="quick-copy-v2">Recent dream narratives, delivery, and symbolic state.</p>
-        </a>
-        <a href="/admin/jung-lab" class="quick-card-v2 quick-card-v2--heavy">
-            <span class="quick-kicker-v2">Organism</span>
-            <strong class="quick-title-v2">Rumination</strong>
-            <p class="quick-copy-v2">Fragments, tensions, and insights from internal metabolism.</p>
-        </a>
-        <a href="/admin/world-consciousness/dashboard" class="quick-card-v2 quick-card-v2--heavy">
-            <span class="quick-kicker-v2">Organism</span>
-            <strong class="quick-title-v2">World</strong>
-            <p class="quick-copy-v2">External lucidity, knowledge discernment, and charged areas.</p>
-        </a>
-        <a href="/admin/agent-identity/dashboard" class="quick-card-v2 quick-card-v2--heavy">
-            <span class="quick-kicker-v2">Organism</span>
-            <strong class="quick-title-v2">Identity</strong>
-            <p class="quick-copy-v2">Self kernel, active selves, and instance contradictions.</p>
-        </a>
-        <a href="/admin/work/dashboard" class="quick-card-v2">
-            <span class="quick-kicker-v2">Flow</span>
-            <strong class="quick-title-v2">Work</strong>
-            <p class="quick-copy-v2">Briefs, destinations, tickets, and artifacts from the work flow.</p>
-        </a>
-        <a href="/admin/wellness" class="quick-card-v2">
-            <span class="quick-kicker-v2">Admin</span>
-            <strong class="quick-title-v2">Wellness</strong>
-            <p class="quick-copy-v2">Reflective and psychometric resources scoped only to the instance admin.</p>
-        </a>
-        <a href="/admin/memory-metrics" class="quick-card-v2">
-            <span class="quick-kicker-v2">Memory</span>
-            <strong class="quick-title-v2">Memory metrics</strong>
-            <p class="quick-copy-v2">Consolidation health, retrieval, and memory layers.</p>
-        </a>
-        <a href="/admin/sync-check" class="quick-card-v2">
-            <span class="quick-kicker-v2">Operation</span>
-            <strong class="quick-title-v2">Diagnostics</strong>
-            <p class="quick-copy-v2">Sync check, technical state, and quick troubleshooting.</p>
-        </a>
+    <section class="metric-grid-v2 metric-grid-v2--quad">
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Loop phase</span>
+            <strong class="metric-value-v2">{{ psychic_summary.loop_phase if psychic_summary else "-" }}</strong>
+            <p class="metric-note-v2">{{ loop_state.status if loop_state else "No loop state yet" }}</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Dominant will</span>
+            <strong class="metric-value-v2">{{ psychic_summary.will if psychic_summary else "-" }}</strong>
+            <p class="metric-note-v2">{{ will_state.secondary_will or "No secondary reading" if will_state else "Will has not run yet" }}</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Instance health</span>
+            <strong class="metric-value-v2">{{ setup_status|upper if setup_status else "UNKNOWN" }}</strong>
+            <p class="metric-note-v2">OK {{ health_counts.ok if health_counts else 0 }} - warning {{ health_counts.warning if health_counts else 0 }} - error {{ health_counts.error if health_counts else 0 }}</p>
+        </article>
+        <article class="metric-card-v2">
+            <span class="metric-label-v2">Admin memory</span>
+            <strong class="metric-value-v2">{{ admin_conversations or 0 }}</strong>
+            <p class="metric-note-v2"><span class="table-badge-v2 table-badge-v2--mono">{{ admin_user_id or "-" }}</span></p>
+        </article>
+    </section>
+
+    <section class="dashboard-columns-v2 dashboard-columns-v2--balanced">
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">Psychic state</h2>
+                    <p class="panel-subtitle-v2">Current organism reading across loop, will, dream, world, rumination, and art.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2 stack-v2">
+                <article class="data-card-v2">
+                    <strong>Will</strong>
+                    <div class="meta-line-v2">{{ will_state.dominant_will or "-" if will_state else "-" }} / {{ will_state.secondary_will or "-" if will_state else "-" }} / constrained {{ will_state.constrained_will or "-" if will_state else "-" }}</div>
+                    <div class="mono-block-v2">{{ will_state.daily_text or will_state.will_conflict or "No current will text." if will_state else "No current will state." }}</div>
+                </article>
+                <article class="data-card-v2">
+                    <strong>Dream residue</strong>
+                    <div class="meta-line-v2">{{ latest_dream.symbolic_theme or "No recent dream" if latest_dream else "No recent dream" }}</div>
+                    <div class="mono-block-v2">{{ latest_dream.extracted_insight or latest_dream.dream_content or "No dream residue available." if latest_dream else "No dream residue available." }}</div>
+                </article>
+                <article class="data-card-v2">
+                    <strong>Rumination</strong>
+                    <div class="meta-line-v2">{{ rumination_snapshot.fragments if rumination_snapshot else 0 }} fragments - {{ rumination_snapshot.open_tensions if rumination_snapshot else 0 }} open tensions - {{ rumination_snapshot.insights if rumination_snapshot else 0 }} insights</div>
+                    <div class="mono-block-v2">{{ latest_insight.full_message or latest_insight.question_content or "No crystallized insight yet." if latest_insight else "No crystallized insight yet." }}</div>
+                </article>
+            </div>
+        </section>
+
+        <section class="panel-v2">
+            <div class="panel-header-v2">
+                <div>
+                    <h2 class="panel-title-v2">External and expressive field</h2>
+                    <p class="panel-subtitle-v2">World pressure, art output, and action queue.</p>
+                </div>
+            </div>
+            <div class="panel-body-v2 stack-v2">
+                <article class="data-card-v2">
+                    <strong>World atmosphere</strong>
+                    <div class="mono-block-v2">{{ world_state.atmosphere or world_state.formatted_admin_summary or "No world reading available." if world_state else "No world reading available." }}</div>
+                    <div class="tag-list-v2">
+                        {% for tension in (world_state.dominant_tensions or [])[:5] %}
+                        <span class="tag-v2">{{ tension }}</span>
+                        {% endfor %}
+                    </div>
+                </article>
+                <article class="data-card-v2">
+                    <strong>Art / Hobby</strong>
+                    <div class="meta-line-v2">{{ artifact_count or 0 }} generated artifacts</div>
+                    <div class="mono-block-v2">{{ latest_artifact.title ~ " - " ~ latest_artifact.summary if latest_artifact else "No cycle art generated yet." }}</div>
+                    <a href="/admin/art/dashboard" class="button-v2 button-v2--ghost">Open Art</a>
+                </article>
+                <article class="data-card-v2">
+                    <strong>Work</strong>
+                    <div class="meta-line-v2">{{ work_snapshot.pending_briefs if work_snapshot else 0 }} pending briefs - {{ work_snapshot.pending_tickets if work_snapshot else 0 }} pending tickets - {{ work_snapshot.artifacts if work_snapshot else 0 }} artifacts</div>
+                    <a href="/admin/work/dashboard" class="button-v2 button-v2--ghost">Open Work</a>
+                </article>
+            </div>
+        </section>
     </section>
 
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
-                <h2 class="panel-title-v2">Recent users</h2>
-                <p class="panel-subtitle-v2">Recent activity without turning the dashboard into a heavy audit page.</p>
+                <h2 class="panel-title-v2">Safe actions</h2>
+                <p class="panel-subtitle-v2">Actions that inspect or advance the instance without exposing legacy multi-user surfaces.</p>
             </div>
-            <a href="/admin/users" class="button-v2 button-v2--ghost">View all</a>
         </div>
+        <div class="quick-grid-v2">
+            <a href="/admin/instance/setup" class="quick-card-v2 quick-card-v2--heavy">
+                <span class="quick-kicker-v2">Install</span>
+                <strong class="quick-title-v2">Instance setup</strong>
+                <p class="quick-copy-v2">Validate Telegram admin, central memory id, proactive mode, and admin user row.</p>
+            </a>
+            <a href="/admin/sync-check" class="quick-card-v2">
+                <span class="quick-kicker-v2">Health</span>
+                <strong class="quick-title-v2">Memory sync</strong>
+                <p class="quick-copy-v2">Check consistency between SQLite and semantic memory layers.</p>
+            </a>
+            <a href="/admin/consciousness-loop/dashboard" class="quick-card-v2">
+                <span class="quick-kicker-v2">Loop</span>
+                <strong class="quick-title-v2">Manual loop controls</strong>
+                <p class="quick-copy-v2">Inspect current phase and run safe loop actions from the loop dashboard.</p>
+            </a>
+        </div>
+    </section>
 
-        {% if users %}
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Recent loop events</h2>
+                <p class="panel-subtitle-v2">Last visible movements of the instance organism.</p>
+            </div>
+        </div>
+        {% if recent_events %}
         <div class="stack-list-v2">
-            {% for user in users %}
+            {% for event in recent_events %}
             <article class="list-card-v2">
-                <div class="list-card-main-v2">
-                    <div class="list-avatar-v2">
-                        {{ (user.user_name or user.first_name or 'U')[:2].upper() }}
-                    </div>
-                    <div class="stack-compact-v2">
-                        <strong class="cell-primary-v2">{{ user.user_name or user.first_name or "Anonymous user" }}</strong>
-                        <span class="cell-secondary-v2">{{ user.user_id }}</span>
-                    </div>
+                <div class="stack-compact-v2">
+                    <strong class="cell-primary-v2">{{ event.phase }} - {{ event.status }}</strong>
+                    <span class="cell-secondary-v2">{{ event.trigger_source or "unknown trigger" }}</span>
                 </div>
                 <div class="list-card-meta-v2">
-                    <span class="metric-inline-v2">{{ user.total_messages or 0 }}</span>
-                    <span class="cell-secondary-v2">{{ user.last_seen or "No record" }}</span>
+                    <span class="cell-secondary-v2">{{ event.completed_at or "-" }}</span>
                 </div>
             </article>
             {% endfor %}
         </div>
         {% else %}
         <div class="empty-state-v2">
-            <div class="empty-state-icon-v2">No activity</div>
-            <p class="empty-state-title-v2">No recent user.</p>
-            <p class="empty-state-copy-v2">The first conversation records will appear here when the bot receives new interactions.</p>
+            <div class="empty-state-icon-v2">No events</div>
+            <p class="empty-state-title-v2">No loop event has been recorded yet.</p>
+            <p class="empty-state-copy-v2">Events will appear here after the consciousness loop starts moving.</p>
         </div>
         {% endif %}
     </section>

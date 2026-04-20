@@ -149,6 +149,7 @@ The admin area exposes the inner life of the system through modules such as:
 - dreams
 - world consciousness
 - will
+- art / hobby
 - visual map
 
 ## Installation
@@ -223,10 +224,10 @@ python main.py
 
 The service runs the FastAPI admin interface and the Telegram bot from the same process. By default, the web server listens on `PORT` or `8000`.
 
-After the first boot, make sure the SQLite database exists and create a master admin account if your database does not already have one. The current admin auth layer still comes from the legacy admin system, so use the existing migration/helper flow for now:
+After the first boot, make sure the SQLite database exists and create a master admin account if your database does not already have one:
 
 ```bash
-python migrations/migrate_multi_tenant.py \
+python setup_instance.py \
   --db-path ./data/jung_hybrid.db \
   --master-email admin@example.com \
   --master-password "change-this-password" \
@@ -258,6 +259,20 @@ This page checks whether the installation is coherently wired:
 
 If the central admin user row is missing, use the safe repair button on that page. It creates or aligns only the admin user row and does not replace conversation history, memories, dreams, rumination, identity, or will state.
 
+You can also run the post-deploy CLI healthcheck:
+
+```bash
+python instance_healthcheck.py
+```
+
+For machine-readable output:
+
+```bash
+python instance_healthcheck.py --json
+```
+
+Use `--db-path` when checking a database outside the configured environment.
+
 ### Railway Deploy
 
 The repository includes a `Dockerfile`, `Procfile`, and `railway.toml`.
@@ -269,8 +284,9 @@ For Railway:
 3. Set `CHROMA_DB_PATH` to a persistent path when using vector memory, for example `/data/chroma_db`.
 4. Add the same environment variables described above.
 5. Deploy the service.
-6. Create or migrate the master admin user if needed.
-7. Open `/admin/instance/setup` and verify the installation.
+6. Create the master admin user if needed with `python setup_instance.py --master-email admin@example.com`.
+7. Run `python instance_healthcheck.py`.
+8. Open `/admin/instance/setup` and verify the installation.
 
 ### Security Notes
 

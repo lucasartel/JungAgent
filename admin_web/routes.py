@@ -169,17 +169,22 @@ async def dashboard(request: Request, admin: Dict = Depends(require_master)):
     
     # Modo normal com jung_core disponível
     db = get_db()
-    
-    # Estatísticas Gerais
+
+    cursor = db.conn.cursor()
+    try:
+        from instance_dashboard import build_instance_cockpit_payload
+
+        cockpit_payload = build_instance_cockpit_payload(db)
+    except Exception as exc:
+        logger.warning("Falha ao montar cockpit sintetico; usando fallback leve: %s", exc)
+        cockpit_payload = {}
+
     sqlite_users = db.get_all_users(platform="telegram")
     total_interactions = sum(u.get('total_messages', 0) for u in sqlite_users)
-    
-    # Conflitos
-    cursor = db.conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM archetype_conflicts")
     total_conflicts = cursor.fetchone()[0]
-    
-    return templates.TemplateResponse("dashboard.html", {
+
+    payload = {
         "request": request,
         "jung_core_available": True,
         "total_users": len(sqlite_users),
@@ -188,7 +193,9 @@ async def dashboard(request: Request, admin: Dict = Depends(require_master)):
         "users": sqlite_users[:5],  # Top 5 recentes
         "diagnostic_mode": False,
         "active_nav": "cockpit",
-    })
+    }
+    payload.update(cockpit_payload)
+    return templates.TemplateResponse("dashboard.html", payload)
 
 @router.get("/users", response_class=HTMLResponse)
 async def users_list(request: Request, admin: Dict = Depends(require_master)):
