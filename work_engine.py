@@ -26,11 +26,19 @@ logger = logging.getLogger(__name__)
 DEFAULT_PROVIDER_SPECS = {
     "wordpress": {
         "display_name": "WordPress",
+        "status": "executable",
+        "description": "Publicacao editorial em sites WordPress via REST API.",
         "credential_schema": {
-            "fields": ["base_url", "username", "application_password"],
+            "fields": [
+                {"name": "base_url", "label": "Site URL", "type": "url", "required": True},
+                {"name": "username", "label": "Username", "type": "text", "required": True},
+                {"name": "application_password", "label": "Application Password", "type": "password", "required": True},
+            ],
             "secret_fields": ["application_password"],
+            "public_fields": ["base_url", "username"],
         },
         "capabilities": [
+            "test_connection",
             "create_draft",
             "update_draft",
             "publish_draft",
@@ -38,13 +46,93 @@ DEFAULT_PROVIDER_SPECS = {
             "upload_media",
         ],
     },
+    "github": {
+        "display_name": "GitHub",
+        "status": "planned",
+        "description": "Manutencao de repositorios por issue, branch e pull request obrigatorio.",
+        "credential_schema": {
+            "fields": [
+                {"name": "owner", "label": "Owner", "type": "text", "required": True},
+                {"name": "repo", "label": "Repository", "type": "text", "required": True},
+                {"name": "default_branch", "label": "Default branch", "type": "text", "required": False, "default": "main"},
+                {"name": "branch_prefix", "label": "Branch prefix", "type": "text", "required": False, "default": "jungagent/"},
+                {"name": "token", "label": "GitHub token or app token", "type": "password", "required": True},
+            ],
+            "secret_fields": ["token"],
+            "public_fields": ["owner", "repo", "default_branch", "branch_prefix"],
+        },
+        "capabilities": [
+            "test_connection",
+            "create_issue",
+            "create_branch",
+            "commit_patch",
+            "open_pr",
+            "comment_pr",
+        ],
+        "guardrails": [
+            "no_direct_push_to_main",
+            "pull_request_required",
+            "no_merge",
+            "no_secret_changes",
+        ],
+    },
+    "google_drive": {
+        "display_name": "Google Drive",
+        "status": "planned",
+        "description": "Leitura e escrita aprovada de documentos/pastas do Google Drive.",
+        "credential_schema": {
+            "fields": [
+                {"name": "workspace_label", "label": "Workspace label", "type": "text", "required": True},
+                {"name": "root_folder_id", "label": "Root folder ID", "type": "text", "required": False},
+                {"name": "oauth_reference", "label": "OAuth reference", "type": "password", "required": True},
+            ],
+            "secret_fields": ["oauth_reference"],
+            "public_fields": ["workspace_label", "root_folder_id"],
+        },
+        "capabilities": ["test_connection", "read_file", "create_doc", "update_doc", "comment_doc"],
+    },
+    "google_calendar": {
+        "display_name": "Google Calendar",
+        "status": "planned",
+        "description": "Criacao e ajuste aprovado de eventos no calendario.",
+        "credential_schema": {
+            "fields": [
+                {"name": "calendar_id", "label": "Calendar ID", "type": "text", "required": True},
+                {"name": "oauth_reference", "label": "OAuth reference", "type": "password", "required": True},
+            ],
+            "secret_fields": ["oauth_reference"],
+            "public_fields": ["calendar_id"],
+        },
+        "capabilities": ["test_connection", "create_event", "update_event", "cancel_event"],
+    },
+    "railway": {
+        "display_name": "Railway",
+        "status": "planned",
+        "description": "Operacao segura de projeto Railway com logs, healthcheck e deploy gates.",
+        "credential_schema": {
+            "fields": [
+                {"name": "project_id", "label": "Project ID", "type": "text", "required": True},
+                {"name": "service_id", "label": "Service ID", "type": "text", "required": False},
+                {"name": "environment", "label": "Environment", "type": "text", "required": False, "default": "production"},
+                {"name": "token", "label": "Railway token", "type": "password", "required": True},
+            ],
+            "secret_fields": ["token"],
+            "public_fields": ["project_id", "service_id", "environment"],
+        },
+        "capabilities": ["test_connection", "read_logs", "read_deployments", "trigger_deploy_after_approval"],
+        "guardrails": ["no_secret_reads", "no_unapproved_deploy", "production_confirmation_required"],
+    },
     "google": {
         "display_name": "Google",
+        "status": "legacy_placeholder",
+        "description": "Placeholder legado; preferir google_drive ou google_calendar.",
         "credential_schema": {"fields": ["oauth"], "secret_fields": ["oauth_refresh_token"]},
         "capabilities": [],
     },
     "asana": {
         "display_name": "Asana",
+        "status": "planned",
+        "description": "Gestao futura de tarefas e projetos externos.",
         "credential_schema": {"fields": ["workspace"], "secret_fields": ["api_token"]},
         "capabilities": [],
     },
@@ -566,7 +654,7 @@ class WorkEngine:
         if destination_id and not self.get_destination(destination_id):
             raise ValueError("Destino padrao nao encontrado")
 
-        allowed = allowed_skills or ["wordpress"]
+        allowed = ["wordpress"] if allowed_skills is None else allowed_skills
         project_key = self._unique_project_key(name)
         cursor = self.db.conn.cursor()
         cursor.execute(
@@ -681,6 +769,153 @@ class WorkEngine:
     def credentials_available(self) -> bool:
         return IntegrationSecretsManager.is_configured()
 
+    def list_provider_specs(self) -> List[Dict[str, Any]]:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT provider_key, display_name, credential_schema_json, capabilities_json, enabled
+            FROM work_skill_providers
+            ORDER BY display_name
+            """
+        )
+        rows = {row["provider_key"]: dict(row) for row in cursor.fetchall()}
+        providers: List[Dict[str, Any]] = []
+        for provider_key, spec in DEFAULT_PROVIDER_SPECS.items():
+            persisted = rows.get(provider_key, {})
+            credential_schema = spec.get("credential_schema") or {}
+            capabilities = spec.get("capabilities") or []
+            providers.append(
+                {
+                    "provider_key": provider_key,
+                    "display_name": persisted.get("display_name") or spec.get("display_name") or provider_key,
+                    "description": spec.get("description", ""),
+                    "status": spec.get("status", "planned"),
+                    "enabled": bool(persisted.get("enabled", 1)),
+                    "credential_schema": credential_schema,
+                    "capabilities": capabilities,
+                    "guardrails": spec.get("guardrails", []),
+                    "executable": provider_key in self.skill_registry,
+                }
+            )
+        return providers
+
+    def _provider_spec(self, provider_key: str) -> Dict[str, Any]:
+        normalized = (provider_key or "").strip().lower()
+        spec = DEFAULT_PROVIDER_SPECS.get(normalized)
+        if not spec:
+            raise ValueError(f"Provider Work desconhecido: {provider_key}")
+        return spec
+
+    def _provider_fields(self, provider_key: str) -> List[Dict[str, Any]]:
+        schema = self._provider_spec(provider_key).get("credential_schema") or {}
+        fields = schema.get("fields") or []
+        normalized = []
+        for field in fields:
+            if isinstance(field, str):
+                normalized.append({"name": field, "label": field.replace("_", " ").title(), "type": "text", "required": True})
+            elif isinstance(field, dict) and field.get("name"):
+                normalized.append(field)
+        return normalized
+
+    def _provider_secret_fields(self, provider_key: str) -> List[str]:
+        schema = self._provider_spec(provider_key).get("credential_schema") or {}
+        return list(schema.get("secret_fields") or [])
+
+    def _destination_url_for_provider(self, provider_key: str, fields: Dict[str, Any], test_result: Optional[Dict[str, Any]] = None) -> str:
+        if provider_key == "wordpress":
+            return ((test_result or {}).get("resolved_base_url") or fields.get("base_url") or "").strip().rstrip("/")
+        if provider_key == "github":
+            owner = (fields.get("owner") or "").strip()
+            repo = (fields.get("repo") or "").strip()
+            return f"https://github.com/{owner}/{repo}".rstrip("/")
+        if provider_key == "google_drive":
+            root_folder_id = (fields.get("root_folder_id") or "").strip()
+            return f"gdrive://{root_folder_id or fields.get('workspace_label') or 'workspace'}"
+        if provider_key == "google_calendar":
+            return f"gcal://{(fields.get('calendar_id') or '').strip()}"
+        if provider_key == "railway":
+            project_id = (fields.get("project_id") or "").strip()
+            service_id = (fields.get("service_id") or "").strip()
+            return f"railway://{project_id}/{service_id}".rstrip("/")
+        return (fields.get("base_url") or fields.get("url") or provider_key).strip()
+
+    def _destination_username_for_provider(self, provider_key: str, fields: Dict[str, Any]) -> str:
+        return (
+            fields.get("username")
+            or fields.get("owner")
+            or fields.get("workspace_label")
+            or fields.get("calendar_id")
+            or fields.get("project_id")
+            or provider_key
+        ).strip()
+
+    def _secret_payload_for_provider(self, provider_key: str, fields: Dict[str, Any]) -> str:
+        secret_fields = self._provider_secret_fields(provider_key)
+        if not secret_fields:
+            return ""
+        if len(secret_fields) == 1:
+            return str(fields.get(secret_fields[0]) or "").strip()
+        payload = {field: fields.get(field) for field in secret_fields if fields.get(field)}
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _safe_config_for_provider(self, provider_key: str, fields: Dict[str, Any], test_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        secret_fields = set(self._provider_secret_fields(provider_key))
+        safe_fields = {
+            key: value
+            for key, value in fields.items()
+            if key not in secret_fields and value not in (None, "")
+        }
+        return {
+            "provider_key": provider_key,
+            "fields": safe_fields,
+            "test_result": {
+                key: value
+                for key, value in (test_result or {}).items()
+                if key not in {"response", "attempts"} and value not in (None, "")
+            },
+        }
+
+    def test_destination_connection(self, provider_key: str, fields: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        provider_key = (provider_key or "wordpress").strip().lower()
+        fields = fields or {}
+        spec = self._provider_spec(provider_key)
+
+        missing = []
+        for field in self._provider_fields(provider_key):
+            if field.get("required") and not str(fields.get(field["name"]) or "").strip():
+                missing.append(field.get("label") or field["name"])
+        if missing:
+            return {
+                "success": False,
+                "message": "Campos obrigatorios ausentes: " + ", ".join(missing),
+                "diagnosis": "missing_required_fields",
+            }
+
+        if provider_key == "wordpress":
+            return self.test_wordpress_connection(
+                str(fields.get("base_url") or ""),
+                str(fields.get("username") or ""),
+                str(fields.get("application_password") or ""),
+            )
+
+        if provider_key not in self.skill_registry:
+            return {
+                "success": False,
+                "message": f"{spec.get('display_name') or provider_key} esta registrado como destino previsto, mas ainda nao executa acoes reais nesta etapa.",
+                "diagnosis": "provider_planned_not_executable",
+                "capabilities": spec.get("capabilities") or [],
+                "guardrails": spec.get("guardrails") or [],
+            }
+
+        secret = self._secret_payload_for_provider(provider_key, fields)
+        destination = {
+            "label": "temp",
+            "provider_key": provider_key,
+            "base_url": self._destination_url_for_provider(provider_key, fields),
+            "username": self._destination_username_for_provider(provider_key, fields),
+        }
+        return self.skill_registry[provider_key].test_connection(destination, secret)
+
     def list_destinations(self) -> List[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
         cursor.execute(
@@ -740,9 +975,8 @@ class WorkEngine:
     def create_destination(
         self,
         label: str,
-        base_url: str,
-        username: str,
-        application_password: str,
+        provider_key: str = "wordpress",
+        fields: Optional[Dict[str, Any]] = None,
         default_voice_mode: str = "endojung",
         default_delivery_mode: str = "draft",
     ) -> Dict[str, Any]:
@@ -750,27 +984,25 @@ class WorkEngine:
             raise IntegrationSecretsError("INTEGRATIONS_MASTER_KEY nao configurada")
 
         label = (label or "").strip()
-        base_url = (base_url or "").strip().rstrip("/")
-        username = (username or "").strip()
-        application_password = (application_password or "").strip()
-        if not label or not base_url or not username or not application_password:
-            raise ValueError("Campos obrigatorios ausentes para destino WordPress")
-        _validate_destination_url(base_url)
+        provider_key = (provider_key or "wordpress").strip().lower()
+        fields = fields or {}
+        spec = self._provider_spec(provider_key)
+        if not label:
+            raise ValueError("Nome do destino e obrigatorio")
 
-        test_result = self.test_wordpress_connection(base_url, username, application_password)
+        test_result = self.test_destination_connection(provider_key, fields)
         if not test_result.get("success"):
-            raise ValueError(test_result.get("message") or "Falha ao testar conexao WordPress")
+            raise ValueError(test_result.get("message") or f"Falha ao testar conexao {provider_key}")
 
-        resolved_base_url = (test_result.get("resolved_base_url") or base_url).strip().rstrip("/")
+        base_url = self._destination_url_for_provider(provider_key, fields, test_result)
+        username = self._destination_username_for_provider(provider_key, fields)
+        secret_payload = self._secret_payload_for_provider(provider_key, fields)
+        if not base_url or not username or not secret_payload:
+            raise ValueError("Campos obrigatorios ausentes para criar destino Work")
+
         destination_key = _slugify(label)
-        secret_ciphertext = self._secret_manager().encrypt(application_password)
-        config_json = json.dumps(
-            {
-                "site_user": test_result.get("site_user"),
-                "resolved_base_url": resolved_base_url,
-            },
-            ensure_ascii=False,
-        )
+        secret_ciphertext = self._secret_manager().encrypt(secret_payload)
+        config_json = json.dumps(self._safe_config_for_provider(provider_key, fields, test_result), ensure_ascii=False)
 
         cursor = self.db.conn.cursor()
         cursor.execute(
@@ -779,17 +1011,18 @@ class WorkEngine:
                 destination_key, provider_key, label, base_url, username, secret_ciphertext,
                 default_voice_mode, default_delivery_mode, last_test_status, last_test_message,
                 last_tested_at, config_json, is_active, created_at, updated_at
-            ) VALUES (?, 'wordpress', ?, ?, ?, ?, ?, ?, 'success', ?, ?, ?, 1, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'success', ?, ?, ?, 1, ?, ?)
             """,
             (
                 destination_key,
+                provider_key,
                 label,
-                resolved_base_url,
+                base_url,
                 username,
                 secret_ciphertext,
                 default_voice_mode,
                 default_delivery_mode,
-                test_result.get("message"),
+                test_result.get("message") or f"{spec.get('display_name') or provider_key} conectado",
                 _now_iso(),
                 config_json,
                 _now_iso(),
@@ -1221,8 +1454,8 @@ Responda APENAS em JSON com:
             INSERT INTO work_artifacts (
                 brief_id, run_id, destination_id, project_id, status, title, excerpt, body, slug,
                 tags_json, categories_json, cta, editorial_note, voice_mode, content_type,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, 'composed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                provider_payload_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'composed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 brief["id"],
@@ -1239,6 +1472,14 @@ Responda APENAS em JSON com:
                 package["editorial_note"],
                 brief["voice_mode"],
                 brief["content_type"],
+                json.dumps(
+                    {
+                        "provider_key": brief.get("provider_key"),
+                        "action_type": brief.get("action_type"),
+                        "package": package,
+                    },
+                    ensure_ascii=False,
+                ),
                 _now_iso(),
                 _now_iso(),
             ),
@@ -2099,7 +2340,7 @@ Responda APENAS em JSON com:
     def get_dashboard_state(self) -> Dict[str, Any]:
         return {
             "credentials_configured": self.credentials_available(),
-            "providers": list(DEFAULT_PROVIDER_SPECS.keys()),
+            "providers": self.list_provider_specs(),
             "autonomy": {
                 "enabled": WORK_AUTONOMY_ENABLED,
                 "max_actions_per_day": WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY,

@@ -19,6 +19,34 @@
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
+                <h2 class="panel-title-v2">Destinations</h2>
+                <p class="panel-subtitle-v2">Concrete places where Work may act after human approval. WordPress is executable now; other providers are reserved for future skills.</p>
+            </div>
+        </div>
+        <div class="panel-body-v2 stack-v2">
+            <form id="destinationForm" class="stack-v2">
+                <div class="dashboard-grid-v2">
+                    <input class="input-v2" name="label" placeholder="Destination label" required>
+                    <select class="input-v2" name="provider_key" id="destinationProviderSelect"></select>
+                    <select class="input-v2" name="default_delivery_mode">
+                        <option value="draft">Draft / proposed change</option>
+                    </select>
+                </div>
+                <div class="mono-block-v2" id="providerDescription"></div>
+                <div class="dashboard-grid-v2" id="destinationDynamicFields"></div>
+                <div class="dashboard-grid-v2">
+                    <input class="input-v2" name="default_voice_mode" value="endojung" placeholder="Default voice mode">
+                    <button class="button-v2" type="button" id="testDestinationButton">Test connection</button>
+                    <button class="button-v2 button-v2--primary" type="submit">Save destination</button>
+                </div>
+                <div class="mono-block-v2" id="destinationFormStatus"></div>
+            </form>
+        </div>
+    </section>
+
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
                 <h2 class="panel-title-v2">Autonomous projects</h2>
                 <p class="panel-subtitle-v2">Project directives define what Work may try to do, before external approval.</p>
             </div>
@@ -102,6 +130,8 @@ function escapeHtml(value) {
         .replace(/'/g, "&#39;");
 }
 
+let currentWorkState = {};
+
 function renderWorkState(state) {
     const autonomy = state.autonomy || {};
     const cards = [
@@ -126,6 +156,79 @@ function renderWorkState(state) {
     `).join("");
 }
 
+function providerLabel(provider) {
+    const status = provider.status && provider.status !== "executable" ? ` (${provider.status})` : "";
+    return `${provider.display_name || provider.provider_key}${status}`;
+}
+
+function selectedProvider() {
+    const providerKey = document.getElementById("destinationProviderSelect").value;
+    return (currentWorkState.providers || []).find((provider) => provider.provider_key === providerKey) || null;
+}
+
+function providerFields(provider) {
+    const schema = provider?.credential_schema || {};
+    return (schema.fields || []).map((field) => typeof field === "string"
+        ? {name: field, label: field, type: "text", required: true}
+        : field
+    );
+}
+
+function renderDestinationProviderOptions(providers) {
+    const select = document.getElementById("destinationProviderSelect");
+    const previousValue = select.value;
+    const previousOptions = select.dataset.providerKeys || "";
+    const nextOptions = (providers || []).map((provider) => provider.provider_key).join("|");
+    if (previousOptions === nextOptions && select.options.length) {
+        return;
+    }
+    select.innerHTML = (providers || []).map((provider) => `
+        <option value="${escapeHtml(provider.provider_key)}">${escapeHtml(providerLabel(provider))}</option>
+    `).join("");
+    if (previousValue && (providers || []).some((provider) => provider.provider_key === previousValue)) {
+        select.value = previousValue;
+    }
+    select.dataset.providerKeys = nextOptions;
+    renderDestinationDynamicFields();
+}
+
+function renderDestinationDynamicFields() {
+    const provider = selectedProvider();
+    const description = document.getElementById("providerDescription");
+    const fieldsTarget = document.getElementById("destinationDynamicFields");
+    if (!provider) {
+        description.textContent = "No provider selected.";
+        fieldsTarget.innerHTML = "";
+        return;
+    }
+
+    const guardrails = (provider.guardrails || []).length
+        ? ` Guardrails: ${(provider.guardrails || []).join(", ")}.`
+        : "";
+    description.textContent = `${provider.description || ""} Capabilities: ${(provider.capabilities || []).join(", ") || "none"}.${guardrails}`;
+
+    fieldsTarget.innerHTML = providerFields(provider).map((field) => `
+        <input
+            class="input-v2"
+            name="${escapeHtml(field.name)}"
+            type="${escapeHtml(field.type || "text")}"
+            value="${escapeHtml(field.default || "")}"
+            placeholder="${escapeHtml(field.label || field.name)}${field.required ? " *" : ""}"
+            ${field.required ? "required" : ""}
+            autocomplete="off">
+    `).join("");
+}
+
+function destinationFieldsPayload() {
+    const provider = selectedProvider();
+    const fields = {};
+    const form = document.getElementById("destinationForm");
+    for (const field of providerFields(provider)) {
+        fields[field.name] = form.elements[field.name]?.value || "";
+    }
+    return fields;
+}
+
 function renderProjectDestinationOptions(destinations) {
     const select = document.getElementById("projectDestinationSelect");
     const options = [`<option value="">No destination yet</option>`]
@@ -143,8 +246,10 @@ async function loadWork() {
     const response = await fetch("/admin/work/state");
     const payload = await response.json();
     const state = payload.state || {};
+    currentWorkState = state;
 
     renderWorkState(state);
+    renderDestinationProviderOptions(state.providers || []);
     renderProjectDestinationOptions(state.destinations || []);
 
     renderCollection(
@@ -220,7 +325,8 @@ document.getElementById("projectForm").addEventListener("submit", async (event) 
     const payload = Object.fromEntries(formData.entries());
     payload.default_destination_id = payload.default_destination_id ? Number(payload.default_destination_id) : null;
     payload.priority = Number(payload.priority || 50);
-    payload.allowed_skills = ["wordpress"];
+    const destination = (currentWorkState.destinations || []).find((item) => Number(item.id) === payload.default_destination_id);
+    payload.allowed_skills = destination?.provider_key ? [destination.provider_key] : [];
 
     const response = await fetch("/admin/work/projects", {
         method: "POST",
@@ -233,6 +339,59 @@ document.getElementById("projectForm").addEventListener("submit", async (event) 
         return;
     }
     form.reset();
+    await loadWork();
+});
+
+document.getElementById("destinationProviderSelect").addEventListener("change", renderDestinationDynamicFields);
+
+document.getElementById("testDestinationButton").addEventListener("click", async () => {
+    const provider = selectedProvider();
+    const status = document.getElementById("destinationFormStatus");
+    if (!provider) {
+        status.textContent = "Select a provider first.";
+        return;
+    }
+    status.textContent = "Testing destination...";
+    const response = await fetch("/admin/work/destinations/test", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            provider_key: provider.provider_key,
+            fields: destinationFieldsPayload()
+        })
+    });
+    const result = await response.json();
+    status.textContent = result.result?.message || result.error || (result.success ? "Connection OK." : "Connection failed.");
+});
+
+document.getElementById("destinationForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const provider = selectedProvider();
+    const payload = {
+        label: formData.get("label"),
+        provider_key: provider?.provider_key || "wordpress",
+        fields: destinationFieldsPayload(),
+        default_voice_mode: formData.get("default_voice_mode") || "endojung",
+        default_delivery_mode: formData.get("default_delivery_mode") || "draft"
+    };
+
+    const status = document.getElementById("destinationFormStatus");
+    status.textContent = "Saving destination...";
+    const response = await fetch("/admin/work/destinations", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    });
+    const result = await response.json();
+    if (!result.success) {
+        status.textContent = result.error || "Could not create destination.";
+        return;
+    }
+    form.reset();
+    renderDestinationDynamicFields();
+    status.textContent = "Destination saved.";
     await loadWork();
 });
 

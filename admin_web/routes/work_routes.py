@@ -60,15 +60,21 @@ async def test_destination(request: Request, admin: Dict = Depends(require_maste
     try:
         payload = await request.json()
         engine = get_work_engine()
+        fields = payload.get("fields")
+        if fields is None:
+            fields = {
+                "base_url": payload.get("base_url", ""),
+                "username": payload.get("username", ""),
+                "application_password": payload.get("application_password", ""),
+            }
         result = await asyncio.to_thread(
-            engine.test_wordpress_connection,
-            payload.get("base_url", ""),
-            payload.get("username", ""),
-            payload.get("application_password", ""),
+            engine.test_destination_connection,
+            payload.get("provider_key", "wordpress"),
+            fields,
         )
         return {"success": bool(result.get("success")), "result": result}
     except Exception as e:
-        logger.error(f"Erro ao testar destino WordPress: {e}")
+        logger.error(f"Erro ao testar destino Work: {e}")
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 
@@ -77,18 +83,24 @@ async def create_destination(request: Request, admin: Dict = Depends(require_mas
     try:
         payload = await request.json()
         engine = get_work_engine()
+        fields = payload.get("fields")
+        if fields is None:
+            fields = {
+                "base_url": payload.get("base_url", ""),
+                "username": payload.get("username", ""),
+                "application_password": payload.get("application_password", ""),
+            }
         destination = await asyncio.to_thread(
             engine.create_destination,
             payload.get("label", ""),
-            payload.get("base_url", ""),
-            payload.get("username", ""),
-            payload.get("application_password", ""),
+            payload.get("provider_key", "wordpress"),
+            fields,
             payload.get("default_voice_mode", "endojung"),
             payload.get("default_delivery_mode", "draft"),
         )
         return {"success": True, "destination": destination}
     except Exception as e:
-        logger.error(f"Erro ao criar destino WordPress: {e}")
+        logger.error(f"Erro ao criar destino Work: {e}")
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 
@@ -103,7 +115,7 @@ async def create_project(request: Request, admin: Dict = Depends(require_master)
             payload.get("description", ""),
             payload.get("directive", ""),
             payload.get("default_destination_id"),
-            payload.get("allowed_skills") or ["wordpress"],
+            payload.get("allowed_skills") if "allowed_skills" in payload else ["wordpress"],
             payload.get("editorial_policy", ""),
             payload.get("seo_policy", ""),
             int(payload.get("priority", 50)),
