@@ -135,6 +135,7 @@ site/
 
 # Documentação de desenvolvimento (não versionada)
 docs/
+REMOTE_DB_ACCESS.md
 
 
 # IDEs
