@@ -5,6 +5,7 @@ identidade do agente e retroalimenta o modulo de ruminacao.
 """
 import json
 import logging
+import os
 import random
 import re
 import urllib.parse
@@ -16,10 +17,28 @@ from jung_rumination import RuminationEngine
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_DREAM_IMAGE_STYLE_NAME = "impressionismo"
+DEFAULT_DREAM_IMAGE_STYLE_PROMPT = (
+    "pintura impressionista, pinceladas visiveis, cor luminosa, atmosfera vibrante, "
+    "luz natural difusa, bordas suaves, textura pictorica, composicao poetica, "
+    "sensacao de instante vivido, sem fotorrealismo, sem render 3D, sem anime, "
+    "sem comic book, sem arte vetorial"
+)
+
 
 class DreamEngine:
     def __init__(self, db_manager: HybridDatabaseManager):
         self.db = db_manager
+        self.image_style_name = (
+            os.getenv("DREAM_IMAGE_STYLE")
+            or os.getenv("HOBBY_ART_STYLE")
+            or DEFAULT_DREAM_IMAGE_STYLE_NAME
+        ).strip()
+        self.image_style_prompt = (
+            os.getenv("DREAM_IMAGE_STYLE_PROMPT")
+            or os.getenv("HOBBY_ART_STYLE_PROMPT")
+            or DEFAULT_DREAM_IMAGE_STYLE_PROMPT
+        ).strip()
 
         if hasattr(self.db, "anthropic_client") and self.db.anthropic_client:
             self.llm = self.db.anthropic_client
@@ -342,9 +361,25 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
         truncated = cleaned[:317].rstrip(" ,.;:")
         return truncated + "..."
 
+    def _apply_image_style_policy(self, dream_content: str) -> str:
+        base_prompt = " ".join((dream_content or "").split()).strip()
+        style_clause = f"Estilo visual obrigatorio: {self.image_style_prompt}."
+        if self.image_style_prompt.lower() in base_prompt.lower():
+            return base_prompt
+
+        max_prompt_length = 900
+        available_base_length = max_prompt_length - len(style_clause) - 2
+        if available_base_length < 220:
+            available_base_length = 220
+
+        if len(base_prompt) > available_base_length:
+            base_prompt = base_prompt[: available_base_length - 3].rstrip(" ,.;:") + "..."
+
+        return f"{base_prompt}\n\n{style_clause}"
+
     def _generate_dream_image(self, dream_id: int, dream_content: str, symbolic_theme: str):
-        """Usa a propria narrativa do sonho como prompt imagetico, sem curadoria adicional."""
-        image_prompt = " ".join((dream_content or "").split()).strip()
+        """Usa a propria narrativa do sonho como prompt imagetico com politica visual fixa."""
+        image_prompt = self._apply_image_style_policy(dream_content)
         if not image_prompt:
             logger.warning(
                 "Dream Engine nao gerou imagem para o sonho #%s porque a narrativa estava vazia.",
@@ -352,7 +387,7 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
             )
             return
 
-        # Mantem a URL manejavel sem introduzir um segundo prompt curatorial.
+        # Mantem a URL manejavel preservando a politica visual obrigatoria.
         if len(image_prompt) > 900:
             image_prompt = image_prompt[:897].rstrip(" ,.;:") + "..."
 
