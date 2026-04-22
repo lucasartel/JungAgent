@@ -19,6 +19,18 @@
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
+                <h2 class="panel-title-v2">Pending approvals</h2>
+                <p class="panel-subtitle-v2">Review what Work composed before any external action is sent to WordPress or another destination.</p>
+            </div>
+        </div>
+        <div class="panel-body-v2">
+            <div class="scroll-list-v2" id="pendingApprovalsList"></div>
+        </div>
+    </section>
+
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
                 <h2 class="panel-title-v2">Destinations</h2>
                 <p class="panel-subtitle-v2">Concrete places where Work may act after human approval. WordPress is executable now; other providers are reserved for future skills.</p>
             </div>
@@ -242,6 +254,56 @@ function renderCollection(targetId, items, formatter, emptyText) {
         : `<div class="empty-row-v2">${escapeHtml(emptyText)}</div>`;
 }
 
+function findArtifact(artifactId) {
+    return (currentWorkState.artifacts || []).find((item) => Number(item.id) === Number(artifactId)) || {};
+}
+
+function formatJsonList(raw) {
+    try {
+        const parsed = JSON.parse(raw || "[]");
+        return Array.isArray(parsed) ? parsed.join(", ") : "";
+    } catch (_) {
+        return "";
+    }
+}
+
+function renderPendingApprovals(state) {
+    const tickets = (state.tickets || []).filter((ticket) => ticket.status === "pending");
+    renderCollection(
+        "pendingApprovalsList",
+        tickets,
+        (ticket) => {
+            const artifact = findArtifact(ticket.artifact_id);
+            const flags = artifact.review_flags || [];
+            const firecrawl = artifact.firecrawl_research || {};
+            return `
+                <article class="data-card-v2">
+                    <strong>${escapeHtml(artifact.title || ticket.artifact_title || "Pending work")}</strong>
+                    <div class="meta-line-v2">
+                        ${escapeHtml(ticket.project_name || "no project")} - ${escapeHtml(ticket.destination_label || "no destination")} - ${escapeHtml(ticket.action || "action")}
+                    </div>
+                    <div class="mono-block-v2">${escapeHtml(artifact.excerpt || "")}</div>
+                    <div class="meta-line-v2">Slug: ${escapeHtml(artifact.safe_slug || artifact.slug || "-")}</div>
+                    <div class="meta-line-v2">Tags: ${escapeHtml(formatJsonList(artifact.tags_json))}</div>
+                    <div class="meta-line-v2">Categories: ${escapeHtml(formatJsonList(artifact.categories_json))}</div>
+                    ${artifact.editorial_note ? `<div class="mono-block-v2">Editorial note: ${escapeHtml(artifact.editorial_note)}</div>` : ""}
+                    ${firecrawl.used ? `<div class="mono-block-v2">Research: ${escapeHtml(firecrawl.summary || "")}</div>` : ""}
+                    ${flags.length ? `<div class="mono-block-v2">Review warnings: ${escapeHtml(flags.join(" | "))}</div>` : ""}
+                    <details>
+                        <summary class="meta-line-v2">Read body preview</summary>
+                        <div class="mono-block-v2">${escapeHtml((artifact.body || "").slice(0, 2600))}</div>
+                    </details>
+                    <div class="dashboard-grid-v2" style="margin-top: 1rem;">
+                        <button class="button-v2 button-v2--primary" data-work-action="approve-ticket" data-ticket-id="${escapeHtml(ticket.id)}">Approve and create draft</button>
+                        <button class="button-v2" data-work-action="reject-ticket" data-ticket-id="${escapeHtml(ticket.id)}">Reject</button>
+                    </div>
+                </article>
+            `;
+        },
+        "No pending Work approval."
+    );
+}
+
 async function loadWork() {
     const response = await fetch("/admin/work/state");
     const payload = await response.json();
@@ -251,6 +313,7 @@ async function loadWork() {
     renderWorkState(state);
     renderDestinationProviderOptions(state.providers || []);
     renderProjectDestinationOptions(state.destinations || []);
+    renderPendingApprovals(state);
 
     renderCollection(
         "projectsList",
@@ -283,9 +346,10 @@ async function loadWork() {
         [...(state.tickets || []).slice(0, 5), ...(state.deliveries || []).slice(0, 5), ...(state.artifacts || []).slice(0, 4)],
         (item) => `
             <article class="data-card-v2">
-                <strong>${escapeHtml(item.status || item.delivery_status || item.title || "item")}</strong>
-                <div class="meta-line-v2">${escapeHtml(item.created_at || item.requested_at || item.updated_at || "-")}</div>
-                <div class="mono-block-v2">${escapeHtml(item.note || item.summary || item.external_id || item.url || "")}</div>
+                <strong>${escapeHtml(item.artifact_title || item.title || item.status || "item")}</strong>
+                <div class="meta-line-v2">${escapeHtml(item.project_name || item.destination_label || "-")} - ${escapeHtml(item.status || item.action || "-")} - ${escapeHtml(item.created_at || item.requested_at || item.updated_at || "-")}</div>
+                <div class="mono-block-v2">${escapeHtml(item.note || item.summary || item.external_url || item.external_id || item.url || item.editorial_note || "")}</div>
+                ${item.external_url ? `<a class="button-v2" href="${escapeHtml(item.external_url)}" target="_blank" rel="noopener">Open external draft</a>` : ""}
                 ${item.firecrawl_research?.used ? `<div class="mono-block-v2">Firecrawl influenced this artifact: ${escapeHtml(item.firecrawl_research.summary || "")}</div>` : ""}
             </article>
         `,
@@ -393,6 +457,42 @@ document.getElementById("destinationForm").addEventListener("submit", async (eve
     form.reset();
     renderDestinationDynamicFields();
     status.textContent = "Destination saved.";
+    await loadWork();
+});
+
+document.getElementById("pendingApprovalsList").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-work-action]");
+    if (!button) {
+        return;
+    }
+
+    const ticketId = button.dataset.ticketId;
+    const action = button.dataset.workAction;
+    button.disabled = true;
+    button.textContent = action === "approve-ticket" ? "Creating draft..." : "Rejecting...";
+
+    let response;
+    if (action === "approve-ticket") {
+        response = await fetch(`/admin/work/tickets/${encodeURIComponent(ticketId)}/approve`, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({})
+        });
+    } else {
+        const note = window.prompt("Optional rejection note:", "") || "";
+        response = await fetch(`/admin/work/tickets/${encodeURIComponent(ticketId)}/reject`, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({note})
+        });
+    }
+
+    const result = await response.json();
+    if (!result.success && !result.result?.success) {
+        alert(result.error || result.result?.message || "Work action failed.");
+    } else if (result.result?.external_url) {
+        alert(`Draft created: ${result.result.external_url}`);
+    }
     await loadWork();
 });
 

@@ -184,8 +184,8 @@ def _json_loads_maybe(text: str) -> Dict[str, Any]:
 def _slugify(text: str) -> str:
     normalized = unicodedata.normalize("NFKD", text or "")
     normalized = normalized.encode("ascii", "ignore").decode("ascii")
-    normalized = re.sub(r"[^a-zA-Z0-9\\s-]", "", normalized).strip().lower()
-    normalized = re.sub(r"[-\\s]+", "-", normalized)
+    normalized = re.sub(r"[^a-zA-Z0-9\s-]", "", normalized).strip().lower()
+    normalized = re.sub(r"[-\s]+", "-", normalized)
     return normalized.strip("-")[:120] or "endojung-post"
 
 
@@ -194,6 +194,30 @@ def _truncate(text: str, limit: int = 180) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip(" ,.;:") + "..."
+
+
+def _json_list(raw: Optional[str]) -> List[Any]:
+    try:
+        value = json.loads(raw or "[]")
+    except Exception:
+        return []
+    return value if isinstance(value, list) else []
+
+
+def _numeric_id_list(raw: Optional[str]) -> List[int]:
+    ids: List[int] = []
+    for item in _json_list(raw):
+        if isinstance(item, int):
+            ids.append(item)
+            continue
+        if isinstance(item, str) and item.strip().isdigit():
+            ids.append(int(item.strip()))
+    return ids
+
+
+def _has_non_numeric_terms(raw: Optional[str]) -> bool:
+    terms = _json_list(raw)
+    return any(not isinstance(item, int) and not (isinstance(item, str) and item.strip().isdigit()) for item in terms)
 
 
 def _host_is_private_or_local(hostname: str) -> bool:
@@ -273,6 +297,10 @@ class BaseSkillProvider:
             warnings.append("artifact_missing_title")
         if not (artifact.get("body") or "").strip():
             warnings.append("artifact_missing_body")
+        if _has_non_numeric_terms(artifact.get("categories_json")):
+            warnings.append("wordpress_categories_names_not_sent")
+        if _has_non_numeric_terms(artifact.get("tags_json")):
+            warnings.append("wordpress_tags_names_not_sent")
         return warnings
 
 
@@ -451,18 +479,21 @@ class WordPressSkill(BaseSkillProvider):
         if excerpt:
             excerpt = {"raw": excerpt}
 
+        slug = _slugify(artifact.get("title") or artifact.get("slug") or "")
         payload = {
             "title": artifact.get("title"),
             "content": artifact.get("body"),
             "status": status,
-            "slug": artifact.get("slug"),
+            "slug": slug,
         }
         if excerpt:
             payload["excerpt"] = excerpt
-        if artifact.get("categories_json"):
-            payload["categories"] = json.loads(artifact["categories_json"])
-        if artifact.get("tags_json"):
-            payload["tags"] = json.loads(artifact["tags_json"])
+        category_ids = _numeric_id_list(artifact.get("categories_json"))
+        tag_ids = _numeric_id_list(artifact.get("tags_json"))
+        if category_ids:
+            payload["categories"] = category_ids
+        if tag_ids:
+            payload["tags"] = tag_ids
         return payload
 
     def create_draft(self, destination: Dict[str, Any], artifact: Dict[str, Any], secret: str) -> Dict[str, Any]:
@@ -1754,6 +1785,23 @@ Responda APENAS em JSON com:
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    def _artifact_review_flags(self, artifact: Dict[str, Any]) -> List[str]:
+        flags: List[str] = []
+        title = artifact.get("title") or ""
+        stored_slug = artifact.get("slug") or ""
+        safe_slug = _slugify(title or stored_slug)
+        if stored_slug and stored_slug != safe_slug:
+            flags.append(f"Slug sera normalizado para '{safe_slug}' ao enviar.")
+        if _has_non_numeric_terms(artifact.get("categories_json")):
+            flags.append("Categorias textuais nao serao enviadas ao WordPress nesta versao; revise/adapte depois no WordPress.")
+        if _has_non_numeric_terms(artifact.get("tags_json")):
+            flags.append("Tags textuais nao serao enviadas ao WordPress nesta versao; revise/adapte depois no WordPress.")
+        if len(artifact.get("body") or "") < 600:
+            flags.append("Corpo parece curto para artigo editorial.")
+        if not (artifact.get("excerpt") or "").strip():
+            flags.append("Excerpt ausente.")
+        return flags
+
     def list_artifacts(self, limit: int = 40) -> List[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
         cursor.execute(
@@ -1773,6 +1821,8 @@ Responda APENAS em JSON com:
             payload = _json_loads_maybe(item.get("provider_payload_json") or "{}")
             item["provider_payload"] = payload
             item["firecrawl_research"] = (payload.get("package") or {}).get("firecrawl_research") or {}
+            item["safe_slug"] = _slugify(item.get("title") or item.get("slug") or "")
+            item["review_flags"] = self._artifact_review_flags(item)
             artifacts.append(item)
         return artifacts
 
@@ -1980,6 +2030,20 @@ Responda APENAS em JSON com:
             raise ValueError("Provider nao suportado")
 
         secret = self._decrypt_destination_secret(destination)
+        safe_slug = _slugify(artifact.get("title") or artifact.get("slug") or "")
+        if safe_slug and artifact.get("slug") != safe_slug:
+            artifact["slug"] = safe_slug
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                """
+                UPDATE work_artifacts
+                SET slug = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (safe_slug, _now_iso(), artifact["id"]),
+            )
+            self.db.conn.commit()
+
         if ticket["action"] == "create_draft":
             if artifact.get("external_id"):
                 provider_result = provider.update_draft(destination, artifact, secret)
