@@ -20,11 +20,21 @@ from llm_providers import get_llm_response
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_ART_STYLE_NAME = "impressionismo"
+DEFAULT_ART_STYLE_PROMPT = (
+    "pintura impressionista, pinceladas visiveis, cor luminosa, atmosfera vibrante, "
+    "luz natural difusa, bordas suaves, textura pictorica, composicao poetica, "
+    "sensacao de instante vivido, sem fotorrealismo, sem render 3D, sem anime, "
+    "sem comic book, sem arte vetorial"
+)
+
 
 class HobbyArtEngine:
     def __init__(self, db_manager):
         self.db = db_manager
         self.conversation_model = os.getenv("CONVERSATION_MODEL", "z-ai/glm-5")
+        self.art_style_name = os.getenv("HOBBY_ART_STYLE", DEFAULT_ART_STYLE_NAME).strip() or DEFAULT_ART_STYLE_NAME
+        self.art_style_prompt = os.getenv("HOBBY_ART_STYLE_PROMPT", DEFAULT_ART_STYLE_PROMPT).strip() or DEFAULT_ART_STYLE_PROMPT
 
     def _truncate(self, text: str, limit: int = 220) -> str:
         cleaned = " ".join((text or "").strip().split())
@@ -158,6 +168,13 @@ class HobbyArtEngine:
             "conversations": conversations,
         }
 
+    def _apply_art_style_policy(self, image_prompt: str) -> str:
+        base_prompt = " ".join((image_prompt or "").strip().split())
+        style_clause = f"Estilo obrigatorio: {self.art_style_prompt}."
+        if self.art_style_prompt.lower() in base_prompt.lower():
+            return base_prompt
+        return f"{base_prompt}\n\n{style_clause}"
+
     def _compose_art_payload(self, inspirations: Dict[str, Any]) -> Dict[str, Any]:
         prompt = f"""
 Voce e a imaginação estética do JungAgent.
@@ -168,6 +185,12 @@ Receba as inspirações abaixo e transforme isso em uma imagem única que sintet
 - o que o estado atual das vontades quer aproximar, compreender ou figurar
 - o que as conversas com o usuario deixaram aceso
 
+POLITICA ESTETICA OBRIGATORIA:
+- Toda peca gerada pelo orgao Art deve estar no estilo {self.art_style_name}.
+- O image_prompt deve incluir explicitamente esta linguagem visual: {self.art_style_prompt}.
+- Nao proponha outros estilos visuais concorrentes.
+- Se alguma inspiracao sugerir fotografia, render, anime, colagem digital ou outro estilo, traduza essa inspiracao para {self.art_style_name}.
+
 INSPIRACOES:
 {json.dumps(inspirations, ensure_ascii=False)}
 
@@ -175,7 +198,7 @@ Responda APENAS com JSON valido:
 {{
   "title": "titulo curto da peca",
   "summary": "uma frase curta explicando o gesto artistico",
-  "image_prompt": "prompt visual rico, concreto e imagetico para geracao de arte"
+  "image_prompt": "prompt visual rico, concreto e imagetico para geracao de arte, obedecendo a politica estetica obrigatoria"
 }}
 """
         raw = get_llm_response(prompt, temperature=0.7, max_tokens=500)
@@ -183,6 +206,7 @@ Responda APENAS com JSON valido:
         image_prompt = (data.get("image_prompt") or "").strip()
         if not image_prompt:
             raise ValueError("HobbyArtEngine nao conseguiu compor image_prompt valido")
+        image_prompt = self._apply_art_style_policy(image_prompt)
         return {
             "title": (data.get("title") or "Peca sem titulo").strip(),
             "summary": (data.get("summary") or "Sintese imagetica do ciclo recente.").strip(),
