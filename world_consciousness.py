@@ -13,7 +13,8 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 EPISTEMIC_SABER_PRESSURE_THRESHOLD = 55.0
-WORLD_STATE_VERSION = 6
+WORLD_STATE_VERSION = 7
+FIRECRAWL_MIN_SIGNAL_STRENGTH = 0.58
 
 
 SOURCE_CLASS_WEIGHTS = {
@@ -1384,6 +1385,104 @@ Contexto:
                 break
         return items
 
+    def _select_firecrawl_urls(
+        self,
+        signals: List[Dict],
+        knowledge_gap: Dict[str, Any],
+        dynamic_queries: List[Dict[str, Any]],
+    ) -> List[str]:
+        if not dynamic_queries:
+            return []
+
+        target_area = knowledge_gap.get("target_area")
+        scored = sorted(
+            signals,
+            key=lambda item: (
+                item.get("query_origin") == "will_gap_query",
+                item.get("area_key") == target_area,
+                float(item.get("signal_strength") or 0.0),
+            ),
+            reverse=True,
+        )
+        urls: List[str] = []
+        seen_domains = set()
+        for signal in scored:
+            url = (signal.get("source_url") or "").strip()
+            if not url:
+                continue
+            if signal.get("query_origin") != "will_gap_query" and float(signal.get("signal_strength") or 0.0) < FIRECRAWL_MIN_SIGNAL_STRENGTH:
+                continue
+            domain = self._safe_domain(url)
+            dedupe_key = domain or url.lower()
+            if dedupe_key in seen_domains:
+                continue
+            seen_domains.add(dedupe_key)
+            urls.append(url)
+            if len(urls) >= 3:
+                break
+        return urls
+
+    def _summarize_firecrawl_research(
+        self,
+        knowledge_gap: Dict[str, Any],
+        firecrawl_result: Dict[str, Any],
+        knowledge_probe: Dict[str, Any],
+    ) -> Dict[str, str]:
+        documents = firecrawl_result.get("documents") or []
+        if not documents:
+            return {}
+
+        compact_docs = [
+            {
+                "url": doc.get("url"),
+                "title": doc.get("title"),
+                "description": doc.get("description"),
+                "excerpt": self._truncate_text(doc.get("markdown_excerpt", ""), 1200),
+            }
+            for doc in documents[:3]
+        ]
+
+        prompt = f"""
+Voce esta sintetizando uma leitura de Firecrawl para a ConsciÃªncia de Mundo.
+Use apenas os documentos abaixo. Nao copie longos trechos. Produza uma descoberta curta, auditavel e reutilizavel.
+
+Responda APENAS em JSON valido:
+{{
+  "knowledge_findings": "descoberta principal em uma frase",
+  "knowledge_seed": "semente conceitual curta para ruminacao/work/identidade",
+  "firecrawl_findings": "resumo administrativo curto do que as paginas aprofundaram"
+}}
+
+Contexto:
+{json.dumps({
+    "knowledge_gap": knowledge_gap,
+    "latent_probe_summary": knowledge_probe.get("latent_probe_summary"),
+    "documents": compact_docs,
+}, ensure_ascii=False)}
+"""
+        try:
+            raw = get_llm_response(prompt, temperature=0.25, max_tokens=420)
+            parsed = self._extract_json_object(raw) or {}
+        except Exception as exc:
+            logger.warning("World Consciousness: falha ao sintetizar Firecrawl: %s", exc)
+            parsed = {}
+
+        fallback_finding = self._truncate_text("; ".join(firecrawl_result.get("findings") or []), 360)
+        return {
+            "knowledge_findings": self._truncate_text(
+                parsed.get("knowledge_findings") or fallback_finding or knowledge_probe.get("knowledge_findings") or "",
+                260,
+            ),
+            "knowledge_seed": self._truncate_text(
+                parsed.get("knowledge_seed") or knowledge_probe.get("knowledge_seed") or "",
+                200,
+            ),
+            "firecrawl_findings": self._truncate_text(
+                parsed.get("firecrawl_findings") or fallback_finding,
+                360,
+            ),
+        }
+
     def _render_area_digest(self, area_panels: Dict[str, Dict]) -> Dict[str, List[str]]:
         area_digest = {}
         for area_key, panel in area_panels.items():
@@ -1549,6 +1648,7 @@ Estado estruturado:
             f"Implicacao humana do tempo: {human_implication}",
             f"Vies atual das vontades: {snapshot.get('will_bias_summary', 'sem vies ativo')}",
             f"Elaboracao do saber: {snapshot.get('knowledge_resolution_summary', 'sem aprofundamento epistemico especial')}",
+            f"Leitura profunda: Firecrawl leu {len(snapshot.get('firecrawl_urls', []) or [])} fonte(s) para aprofundar a lacuna." if snapshot.get("firecrawl_used") else "Leitura profunda: Firecrawl nao foi acionado neste ciclo.",
             f"Descoberta recente do saber: {snapshot.get('knowledge_findings', 'sem descoberta sintetizada nesta janela')}",
             f"Semente conceitual ativa: {snapshot.get('knowledge_seed', 'sem semente conceitual destacada')}",
             f"Continuidade Percebida: {snapshot.get('continuity_note', 'sem memoria acumulada do mundo nesta janela')}",
@@ -1587,6 +1687,7 @@ Estado estruturado:
             f"Confianca geral: {snapshot.get('confidence_overall', 0.0):.2f} ({snapshot.get('lucidity_level', 'media')})",
             f"Vies das vontades: {snapshot.get('will_bias_summary', 'sem vies ativo')}",
             f"Leitura do saber: {snapshot.get('knowledge_resolution_summary', 'sem aprofundamento epistemico especial')}",
+            f"Firecrawl: leu {len(snapshot.get('firecrawl_urls', []) or [])} fonte(s) para aprofundar {((snapshot.get('knowledge_gap') or {}).get('gap_label') or 'a lacuna atual')}." if snapshot.get("firecrawl_used") else "Firecrawl: nao acionado neste ciclo.",
             f"Descoberta do saber: {snapshot.get('knowledge_findings', 'sem descoberta sintetizada nesta janela')}",
             f"Semente conceitual: {snapshot.get('knowledge_seed', 'sem semente conceitual destacada')}",
             f"Continuidade: {snapshot.get('continuity_note', '')}",
@@ -1628,6 +1729,14 @@ Estado estruturado:
         knowledge_gap: Dict[str, Any] = {}
         knowledge_probe: Dict[str, Any] = {}
         dynamic_queries: List[Dict[str, Any]] = []
+        firecrawl_result: Dict[str, Any] = {
+            "enabled": False,
+            "available": False,
+            "used": False,
+            "urls": [],
+            "findings": [],
+            "errors": [],
+        }
         if epistemic_active:
             knowledge_gap = self._formulate_knowledge_gap(
                 resolved_will_state,
@@ -1642,6 +1751,37 @@ Estado estruturado:
         area_items = self._merge_with_cached_areas(raw_area_digest, cached_data or {})
         stale_areas = self._collect_stale_areas(raw_area_digest, area_items)
         signals = self._build_signals(area_items, will_state=resolved_will_state)
+        if knowledge_probe.get("knowledge_source_decision") == "web_required" and dynamic_queries:
+            try:
+                from firecrawl_client import get_firecrawl_client
+
+                firecrawl_client = get_firecrawl_client()
+                selected_urls = self._select_firecrawl_urls(signals, knowledge_gap, dynamic_queries)
+                firecrawl_result = firecrawl_client.scrape_urls(
+                    selected_urls,
+                    context_label=knowledge_gap.get("gap_label") or "saber_release",
+                )
+                if firecrawl_result.get("used"):
+                    firecrawl_summary = self._summarize_firecrawl_research(
+                        knowledge_gap,
+                        firecrawl_result,
+                        knowledge_probe,
+                    )
+                    if firecrawl_summary.get("knowledge_findings"):
+                        knowledge_probe["knowledge_findings"] = firecrawl_summary["knowledge_findings"]
+                    if firecrawl_summary.get("knowledge_seed"):
+                        knowledge_probe["knowledge_seed"] = firecrawl_summary["knowledge_seed"]
+                    firecrawl_result["summary"] = firecrawl_summary.get("firecrawl_findings")
+            except Exception as exc:
+                logger.warning("World Consciousness: Firecrawl indisponivel, seguindo com RSS/snippets: %s", exc)
+                firecrawl_result = {
+                    "enabled": False,
+                    "available": False,
+                    "used": False,
+                    "urls": [],
+                    "findings": [],
+                    "errors": [str(exc)],
+                }
         history = self._load_recent_history()
         area_panels = self._build_area_panels(signals, stale_areas, history, attention_profile=attention_profile)
         source_trace = self._build_source_trace(signals)
@@ -1708,6 +1848,11 @@ Estado estruturado:
             "knowledge_source_decision": knowledge_decision,
             "latent_probe_summary": knowledge_probe.get("latent_probe_summary"),
             "dynamic_queries": dynamic_queries,
+            "firecrawl_enabled": bool(firecrawl_result.get("enabled")),
+            "firecrawl_used": bool(firecrawl_result.get("used")),
+            "firecrawl_urls": firecrawl_result.get("urls", []),
+            "firecrawl_findings": firecrawl_result.get("summary") or "; ".join(firecrawl_result.get("findings", [])[:3]),
+            "firecrawl_errors": firecrawl_result.get("errors", []),
             "knowledge_findings": knowledge_probe.get("knowledge_findings"),
             "knowledge_seed": knowledge_probe.get("knowledge_seed"),
             "knowledge_resolution_summary": knowledge_summary,

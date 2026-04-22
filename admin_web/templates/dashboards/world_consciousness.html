@@ -147,12 +147,17 @@ function renderKnowledge(state) {
             ${state.latent_probe_summary ? `<div class="mono-block-v2">Internal probe: ${escapeHtml(state.latent_probe_summary)}</div>` : ""}
             ${state.knowledge_findings ? `<div class="mono-block-v2">Main finding: ${escapeHtml(state.knowledge_findings)}</div>` : ""}
             ${state.knowledge_seed ? `<div class="mono-block-v2">Conceptual seed: ${escapeHtml(state.knowledge_seed)}</div>` : ""}
+            ${state.firecrawl_used ? `<div class="mono-block-v2">Firecrawl read ${(state.firecrawl_urls || []).length} source(s) to deepen this gap: ${escapeHtml(state.firecrawl_findings || "")}</div>` : ""}
+            ${(state.firecrawl_errors || []).length ? `<div class="mono-block-v2">Firecrawl warnings: ${escapeHtml((state.firecrawl_errors || []).join(" | "))}</div>` : ""}
             <div class="tag-list-v2">
                 ${gap.target_area ? `<span class="tag-v2">Area: ${escapeHtml(gap.target_area)}</span>` : ""}
                 ${gap.target_scope ? `<span class="tag-v2">Scope: ${escapeHtml(gap.target_scope)}</span>` : ""}
                 ${dynamicQueries.length ? `<span class="tag-v2">Dynamic queries: ${escapeHtml(dynamicQueries.length)}</span>` : ""}
+                ${state.firecrawl_enabled ? `<span class="tag-v2">Firecrawl enabled</span>` : ""}
+                ${state.firecrawl_used ? `<span class="tag-v2">Firecrawl sources: ${escapeHtml((state.firecrawl_urls || []).length)}</span>` : ""}
             </div>
             ${dynamicQueries.length ? `<div class="mono-block-v2">${escapeHtml(dynamicQueries.map((item) => item.query).join(" | "))}</div>` : ""}
+            ${state.firecrawl_used ? `<div class="mono-block-v2">${escapeHtml((state.firecrawl_urls || []).join(" | "))}</div>` : ""}
         </article>
     `;
 }

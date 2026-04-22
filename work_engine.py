@@ -1298,8 +1298,106 @@ Responda APENAS em JSON com:
             action_type="create_content",
         )
 
+    def _select_work_research_urls(self, world_state: Dict[str, Any], brief: Dict[str, Any]) -> List[str]:
+        signals = list(world_state.get("signals") or [])
+        if not signals:
+            return []
+        objective_terms = set(re.findall(r"[a-zA-ZÀ-ÿ0-9]{5,}", (brief.get("objective") or "").lower()))
+
+        def _score(signal: Dict[str, Any]) -> float:
+            headline = (signal.get("headline") or "").lower()
+            term_score = sum(1 for term in objective_terms if term in headline) * 0.08
+            gap_bonus = 0.18 if signal.get("query_origin") == "will_gap_query" else 0.0
+            return float(signal.get("signal_strength") or 0.0) + term_score + gap_bonus
+
+        urls: List[str] = []
+        seen_domains = set()
+        for signal in sorted(signals, key=_score, reverse=True):
+            url = (signal.get("source_url") or "").strip()
+            if not url:
+                continue
+            domain = (signal.get("source_domain") or url).lower()
+            if domain in seen_domains:
+                continue
+            seen_domains.add(domain)
+            urls.append(url)
+            if len(urls) >= 3:
+                break
+        return urls
+
+    def _build_firecrawl_research_for_brief(self, brief: Dict[str, Any], world_state: Dict[str, Any]) -> Dict[str, Any]:
+        if not brief.get("project_id"):
+            return {"used": False, "urls": [], "summary": "", "errors": []}
+
+        try:
+            from firecrawl_client import get_firecrawl_client
+
+            client = get_firecrawl_client()
+            urls = self._select_work_research_urls(world_state, brief)
+            result = client.scrape_urls(urls, context_label=brief.get("project_name") or "work_project")
+        except Exception as exc:
+            logger.warning("WorkEngine: Firecrawl indisponivel para pesquisa interna: %s", exc)
+            return {"used": False, "urls": [], "summary": "", "errors": [str(exc)]}
+
+        if not result.get("used"):
+            return {
+                "used": False,
+                "enabled": result.get("enabled"),
+                "urls": result.get("urls", []),
+                "summary": "",
+                "errors": result.get("errors", []),
+            }
+
+        compact_docs = [
+            {
+                "url": doc.get("url"),
+                "title": doc.get("title"),
+                "description": doc.get("description"),
+                "excerpt": _truncate(doc.get("markdown_excerpt", ""), 900),
+            }
+            for doc in (result.get("documents") or [])[:3]
+        ]
+        prompt = f"""
+Voce esta resumindo pesquisa Firecrawl para o modulo Work.
+Use apenas os documentos e o brief abaixo. Nao copie longos trechos. Produza um insumo editorial curto.
+
+Responda APENAS em JSON:
+{{
+  "summary": "resumo curto do que a pesquisa acrescenta ao trabalho",
+  "angle": "angulo editorial sugerido"
+}}
+
+Contexto:
+{json.dumps({
+    "brief": {
+        "objective": brief.get("objective"),
+        "project_name": brief.get("project_name"),
+        "destination": brief.get("destination_label"),
+    },
+    "documents": compact_docs,
+}, ensure_ascii=False)}
+"""
+        try:
+            parsed = _json_loads_maybe(get_llm_response(prompt, temperature=0.25, max_tokens=360))
+        except Exception as exc:
+            logger.warning("WorkEngine: falha ao sintetizar pesquisa Firecrawl: %s", exc)
+            parsed = {}
+
+        fallback = _truncate("; ".join(result.get("findings") or []), 520)
+        summary = _truncate(parsed.get("summary") or fallback, 520)
+        angle = _truncate(parsed.get("angle") or "", 220)
+        return {
+            "used": True,
+            "enabled": result.get("enabled"),
+            "urls": result.get("urls", []),
+            "summary": summary,
+            "angle": angle,
+            "errors": result.get("errors", []),
+        }
+
     def _build_work_package(self, brief: Dict[str, Any]) -> Dict[str, Any]:
         world_summary = ""
+        world_state: Dict[str, Any] = {}
         try:
             from world_consciousness import world_consciousness
 
@@ -1325,6 +1423,17 @@ Responda APENAS em JSON com:
                     f"Politica SEO: {project.get('seo_policy') or ''}"
                 )
 
+        firecrawl_research = self._build_firecrawl_research_for_brief(brief, world_state)
+        research_context = ""
+        if firecrawl_research.get("used"):
+            research_context = (
+                f"Pesquisa Firecrawl: {firecrawl_research.get('summary') or ''}\n"
+                f"Angulo sugerido: {firecrawl_research.get('angle') or ''}\n"
+                f"Fontes lidas: {', '.join(firecrawl_research.get('urls') or [])}"
+            )
+        elif firecrawl_research.get("errors"):
+            research_context = f"Firecrawl nao aprofundou este brief: {'; '.join(firecrawl_research.get('errors') or [])}"
+
         prompt = f"""
 Voce esta compondo um pacote editorial de trabalho para o EndoJung.
 
@@ -1345,6 +1454,9 @@ ESTADO INTERNO RELEVANTE:
 
 LUCIDEZ DO MUNDO:
 {world_summary[:2200]}
+
+PESQUISA INTERNA DE WORK:
+{research_context or 'Sem pesquisa Firecrawl aplicada a este brief.'}
 
 Responda APENAS em JSON com:
 {{
@@ -1381,6 +1493,13 @@ Responda APENAS em JSON com:
             "categories": categories[:8] if isinstance(categories, list) else [],
             "cta": cta,
             "editorial_note": editorial_note,
+            "firecrawl_research": {
+                "used": bool(firecrawl_research.get("used")),
+                "urls": firecrawl_research.get("urls", []),
+                "summary": firecrawl_research.get("summary", ""),
+                "angle": firecrawl_research.get("angle", ""),
+                "errors": firecrawl_research.get("errors", []),
+            },
         }
 
     def _create_run(self, brief: Dict[str, Any], trigger_source: str, cycle_id: Optional[str]) -> int:
@@ -1504,6 +1623,22 @@ Responda APENAS em JSON com:
             emotional_weight=0.6,
             tension_level=0.45,
         )
+        firecrawl_research = package.get("firecrawl_research") or {}
+        if firecrawl_research.get("used"):
+            self.record_work_experience(
+                event_type="work_research",
+                summary=f"Work pesquisou fontes externas para compor '{package['title']}': {_truncate(firecrawl_research.get('summary', ''), 180)}",
+                project_id=brief.get("project_id"),
+                source_table="work_artifacts",
+                source_id=artifact_id,
+                metadata={
+                    "brief_id": brief["id"],
+                    "urls": firecrawl_research.get("urls", []),
+                    "angle": firecrawl_research.get("angle"),
+                },
+                emotional_weight=0.52,
+                tension_level=0.38,
+            )
 
         ticket = self.create_approval_ticket(
             brief_id=brief["id"],
@@ -1632,7 +1767,14 @@ Responda APENAS em JSON com:
             """,
             (limit,),
         )
-        return [dict(row) for row in cursor.fetchall()]
+        artifacts = []
+        for row in cursor.fetchall():
+            item = dict(row)
+            payload = _json_loads_maybe(item.get("provider_payload_json") or "{}")
+            item["provider_payload"] = payload
+            item["firecrawl_research"] = (payload.get("package") or {}).get("firecrawl_research") or {}
+            artifacts.append(item)
+        return artifacts
 
     def list_delivery_events(self, limit: int = 40) -> List[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
@@ -1669,6 +1811,7 @@ Responda APENAS em JSON com:
             "delivery_failed": "work_failure",
             "delivery_success": "work_delivery",
             "artifact_composed": "work_expression",
+            "work_research": "work_responsibility",
             "brief_created": "work_responsibility",
             "project_created": "work_project_identity",
             "project_updated": "work_project_identity",

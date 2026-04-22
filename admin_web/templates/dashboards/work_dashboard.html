@@ -286,6 +286,7 @@ async function loadWork() {
                 <strong>${escapeHtml(item.status || item.delivery_status || item.title || "item")}</strong>
                 <div class="meta-line-v2">${escapeHtml(item.created_at || item.requested_at || item.updated_at || "-")}</div>
                 <div class="mono-block-v2">${escapeHtml(item.note || item.summary || item.external_id || item.url || "")}</div>
+                ${item.firecrawl_research?.used ? `<div class="mono-block-v2">Firecrawl influenced this artifact: ${escapeHtml(item.firecrawl_research.summary || "")}</div>` : ""}
             </article>
         `,
         "No recent ticket, delivery, or artifact."
