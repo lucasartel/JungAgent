@@ -154,6 +154,7 @@ function renderKnowledge(state) {
                 ${gap.target_scope ? `<span class="tag-v2">Scope: ${escapeHtml(gap.target_scope)}</span>` : ""}
                 ${dynamicQueries.length ? `<span class="tag-v2">Dynamic queries: ${escapeHtml(dynamicQueries.length)}</span>` : ""}
                 ${state.firecrawl_enabled ? `<span class="tag-v2">Firecrawl enabled</span>` : ""}
+                ${state.firecrawl_available ? `<span class="tag-v2">Firecrawl ready</span>` : ""}
                 ${state.firecrawl_used ? `<span class="tag-v2">Firecrawl sources: ${escapeHtml((state.firecrawl_urls || []).length)}</span>` : ""}
             </div>
             ${dynamicQueries.length ? `<div class="mono-block-v2">${escapeHtml(dynamicQueries.map((item) => item.query).join(" | "))}</div>` : ""}

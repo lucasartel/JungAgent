@@ -446,6 +446,7 @@ def query_world(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, A
         "latent_probe_summary": cache_data.get("latent_probe_summary"),
         "dynamic_queries": cache_data.get("dynamic_queries"),
         "firecrawl_enabled": cache_data.get("firecrawl_enabled"),
+        "firecrawl_available": cache_data.get("firecrawl_available"),
         "firecrawl_used": cache_data.get("firecrawl_used"),
         "firecrawl_urls": cache_data.get("firecrawl_urls"),
         "firecrawl_findings": cache_data.get("firecrawl_findings"),

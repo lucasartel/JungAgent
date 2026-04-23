@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 EPISTEMIC_SABER_PRESSURE_THRESHOLD = 55.0
-WORLD_STATE_VERSION = 7
+WORLD_STATE_VERSION = 8
 FIRECRAWL_MIN_SIGNAL_STRENGTH = 0.58
 
 
@@ -1729,6 +1729,7 @@ Estado estruturado:
         knowledge_gap: Dict[str, Any] = {}
         knowledge_probe: Dict[str, Any] = {}
         dynamic_queries: List[Dict[str, Any]] = []
+        firecrawl_client = None
         firecrawl_result: Dict[str, Any] = {
             "enabled": False,
             "available": False,
@@ -1737,6 +1738,18 @@ Estado estruturado:
             "findings": [],
             "errors": [],
         }
+        try:
+            from firecrawl_client import get_firecrawl_client
+
+            firecrawl_client = get_firecrawl_client()
+            firecrawl_result.update(
+                {
+                    "enabled": bool(getattr(firecrawl_client, "enabled", False)),
+                    "available": bool(firecrawl_client.is_available()),
+                }
+            )
+        except Exception as exc:
+            logger.warning("World Consciousness: falha ao inicializar auditoria do Firecrawl: %s", exc)
         if epistemic_active:
             knowledge_gap = self._formulate_knowledge_gap(
                 resolved_will_state,
@@ -1753,9 +1766,16 @@ Estado estruturado:
         signals = self._build_signals(area_items, will_state=resolved_will_state)
         if knowledge_probe.get("knowledge_source_decision") == "web_required" and dynamic_queries:
             try:
-                from firecrawl_client import get_firecrawl_client
+                if firecrawl_client is None:
+                    from firecrawl_client import get_firecrawl_client
 
-                firecrawl_client = get_firecrawl_client()
+                    firecrawl_client = get_firecrawl_client()
+                    firecrawl_result.update(
+                        {
+                            "enabled": bool(getattr(firecrawl_client, "enabled", False)),
+                            "available": bool(firecrawl_client.is_available()),
+                        }
+                    )
                 selected_urls = self._select_firecrawl_urls(signals, knowledge_gap, dynamic_queries)
                 firecrawl_result = firecrawl_client.scrape_urls(
                     selected_urls,
@@ -1775,8 +1795,8 @@ Estado estruturado:
             except Exception as exc:
                 logger.warning("World Consciousness: Firecrawl indisponivel, seguindo com RSS/snippets: %s", exc)
                 firecrawl_result = {
-                    "enabled": False,
-                    "available": False,
+                    "enabled": bool(getattr(firecrawl_client, "enabled", False)) if firecrawl_client else False,
+                    "available": bool(firecrawl_client.is_available()) if firecrawl_client else False,
                     "used": False,
                     "urls": [],
                     "findings": [],
@@ -1849,6 +1869,7 @@ Estado estruturado:
             "latent_probe_summary": knowledge_probe.get("latent_probe_summary"),
             "dynamic_queries": dynamic_queries,
             "firecrawl_enabled": bool(firecrawl_result.get("enabled")),
+            "firecrawl_available": bool(firecrawl_result.get("available")),
             "firecrawl_used": bool(firecrawl_result.get("used")),
             "firecrawl_urls": firecrawl_result.get("urls", []),
             "firecrawl_findings": firecrawl_result.get("summary") or "; ".join(firecrawl_result.get("findings", [])[:3]),
