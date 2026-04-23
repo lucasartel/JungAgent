@@ -1421,6 +1421,30 @@ class HybridDatabaseManager:
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setting_key TEXT NOT NULL UNIQUE,
+                value_json TEXT NOT NULL,
+                updated_by TEXT,
+                notes TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_settings_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setting_key TEXT NOT NULL,
+                old_value_json TEXT,
+                new_value_json TEXT NOT NULL,
+                updated_by TEXT,
+                notes TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # ========== WORK / INTEGRATIONS ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS work_skill_providers (
@@ -1695,6 +1719,8 @@ class HybridDatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_results_cycle ON consciousness_loop_phase_results(agent_instance, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_artifacts_cycle ON consciousness_loop_artifacts(agent_instance, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_meta_consciousness_user_cycle ON agent_meta_consciousness(agent_instance, user_id, cycle_id, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_settings_key ON agent_settings(setting_key)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_settings_history_key ON agent_settings_history(setting_key, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_will_states_user_cycle ON agent_will_states(user_id, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_will_message_signals_cycle ON agent_will_message_signals(user_id, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_will_pressure_user_cycle ON agent_will_pressure_state(user_id, cycle_id, updated_at DESC)")

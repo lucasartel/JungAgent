@@ -13,6 +13,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
+from instance_settings import get_setting_value
 from llm_providers import get_llm_response
 from instance_config import ADMIN_USER_ID
 
@@ -122,9 +123,15 @@ def load_latest_pressure_state_from_sqlite(
 
 
 class WillPressureEngine:
-    def __init__(self, db_manager, threshold: float = PRESSURE_THRESHOLD):
+    def __init__(self, db_manager, threshold: Optional[float] = None):
         self.db = db_manager
-        self.threshold = threshold
+        resolved_threshold = threshold
+        if resolved_threshold is None:
+            resolved_threshold = get_setting_value("will_pressure_threshold", db_manager)
+        self.threshold = float(resolved_threshold)
+
+    def _refractory_hours(self) -> float:
+        return float(get_setting_value("will_refractory_hours", self.db) or REFRACTORY_HOURS)
 
     def _utcnow(self) -> datetime:
         return datetime.utcnow()
@@ -642,7 +649,7 @@ ESTADO QUALITATIVO:
             f"{winner}_pressure": 8.0,
             "dominant_pressure": self._dominant_pressure(pressure_map),
             "threshold_crossed": 1 if any(value >= self.threshold for value in pressure_map.values()) else 0,
-            f"refractory_until_{winner}": (now + timedelta(hours=REFRACTORY_HOURS)).isoformat(),
+            f"refractory_until_{winner}": (now + timedelta(hours=self._refractory_hours())).isoformat(),
             "last_release_will": winner,
             "last_release_at": now.isoformat(),
             "last_action_status": "completed",

@@ -58,6 +58,20 @@
     </section>
     {% endif %}
 
+    {% if settings_saved %}
+    <section class="notice-v2 notice-v2--success">
+        <strong>Settings updated</strong>
+        <p>The instance control values were saved. Live settings affect the next relevant runtime check automatically.</p>
+    </section>
+    {% endif %}
+
+    {% if settings_error_message %}
+    <section class="notice-v2 notice-v2--warning">
+        <strong>Settings were not saved</strong>
+        <p>{{ settings_error_message }}</p>
+    </section>
+    {% endif %}
+
     <section class="metric-grid-v2 metric-grid-v2--quad">
         <article class="metric-card-v2">
             <span class="metric-label-v2">Loop phase</span>
@@ -139,6 +153,81 @@
             </div>
         </section>
     </section>
+
+    {% if settings_sections %}
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Agent controls</h2>
+                <p class="panel-subtitle-v2">First control layer for runtime rhythm, will sensitivity, and relational initiative.</p>
+            </div>
+        </div>
+        <div class="panel-body-v2 stack-v2">
+            <div class="notice-v2">
+                <strong>About this panel</strong>
+                <p>Each parameter includes a short explanation, its default value, and how the change is applied: live or next cycle.</p>
+            </div>
+            <section class="dashboard-columns-v2 dashboard-columns-v2--balanced">
+                {% for section in settings_sections %}
+                <section class="panel-v2 panel-v2--inner">
+                    <div class="panel-header-v2">
+                        <div>
+                            <h3 class="panel-title-v2">{{ section.title_en }}</h3>
+                            <p class="panel-subtitle-v2">{{ section.description_en }}</p>
+                        </div>
+                    </div>
+                    <div class="panel-body-v2 stack-v2">
+                        <form method="post" action="/admin/instance/settings" class="stack-v2">
+                            <input type="hidden" name="settings_group" value="{{ section.key }}">
+                            {% for item in section.settings %}
+                            <article class="data-card-v2">
+                                <div class="stack-compact-v2">
+                                    <strong>{{ item.label_en }}</strong>
+                                    <div class="meta-line-v2">{{ item.description_en }}</div>
+                                </div>
+                                <div class="form-grid-v2" style="margin-top: 12px;">
+                                    {% if item.control == "select" %}
+                                    <select class="input-v2" name="{{ item.key }}">
+                                        {% for option in item.safe_options %}
+                                        <option value="{{ option }}" {% if option == item.current_value %}selected{% endif %}>{{ "On" if option == True else "Off" if option == False else option }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    {% else %}
+                                    <input
+                                        class="input-v2"
+                                        type="number"
+                                        name="{{ item.key }}"
+                                        value="{{ item.current_value }}"
+                                        min="{{ item.safe_min if item.safe_min is not none else '' }}"
+                                        max="{{ item.safe_max if item.safe_max is not none else '' }}"
+                                        step="{{ item.step if item.step is not none else '1' }}"
+                                    >
+                                    {% endif %}
+                                </div>
+                                <div class="tag-list-v2" style="margin-top: 12px;">
+                                    <span class="tag-v2">Current: {{ "On" if item.current_value == True else "Off" if item.current_value == False else item.current_value }}</span>
+                                    <span class="tag-v2">Default: {{ "On" if item.default_value == True else "Off" if item.default_value == False else item.default_value }}</span>
+                                    <span class="tag-v2">Apply: {{ item.apply_mode.replace('_', ' ')|title }}</span>
+                                    {% if item.safe_options %}
+                                    <span class="tag-v2">Safe options: {{ item.safe_options | join(', ') }}</span>
+                                    {% elif item.safe_min is not none or item.safe_max is not none %}
+                                    <span class="tag-v2">Safe range: {{ item.safe_min if item.safe_min is not none else "?" }} - {{ item.safe_max if item.safe_max is not none else "?" }}</span>
+                                    {% endif %}
+                                    {% if item.is_custom %}
+                                    <span class="tag-v2">Custom</span>
+                                    {% endif %}
+                                </div>
+                            </article>
+                            {% endfor %}
+                            <button type="submit" class="button-v2">Save {{ section.title_en }}</button>
+                        </form>
+                    </div>
+                </section>
+                {% endfor %}
+            </section>
+        </div>
+    </section>
+    {% endif %}
 
     <section class="panel-v2">
         <div class="panel-header-v2">

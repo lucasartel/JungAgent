@@ -17,6 +17,7 @@ from typing import Dict
 from dotenv import load_dotenv
 from admin_web.auth.middleware import require_master
 from admin_web.template_compat import patch_jinja2_template_response
+from instance_settings import get_setting_value
 from security_config import proactive_messages_enabled, unsafe_admin_endpoints_enabled
 
 # Desabilitar telemetria do ChromaDB
@@ -298,7 +299,11 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.error(f"❌ Erro no scheduler de Pressão Psíquica: {e}")
 
-            await asyncio.sleep(PULSE_INTERVAL_HOURS * 3600)
+            try:
+                interval_hours = float(get_setting_value("will_pulse_interval_hours", bot_state.db) or PULSE_INTERVAL_HOURS)
+            except Exception:
+                interval_hours = float(PULSE_INTERVAL_HOURS)
+            await asyncio.sleep(max(0.25, interval_hours) * 3600)
 
     asyncio.create_task(will_pulse_scheduler())
     logger.info("✅ Scheduler de Pressão Psíquica / Will Pulse agendado!")

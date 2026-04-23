@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timedelta
 import json
 import re
+from urllib.parse import quote_plus
 
 # MIGRADO: Agora usa sistema session-based multi-tenant
 # Master Admin e Org Admin podem acessar (com verificação de organização)
@@ -135,7 +136,12 @@ async def test_route(admin: Dict = Depends(require_master)):
     }
 
 @router.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request, admin: Dict = Depends(require_master)):
+async def dashboard(
+    request: Request,
+    settings_saved: Optional[str] = None,
+    settings_error: Optional[str] = None,
+    admin: Dict = Depends(require_master),
+):
     """Dashboard principal - com fallback para quando jung_core não está disponível"""
     
     if not JUNG_CORE_AVAILABLE:
@@ -193,9 +199,55 @@ async def dashboard(request: Request, admin: Dict = Depends(require_master)):
         "users": sqlite_users[:5],  # Top 5 recentes
         "diagnostic_mode": False,
         "active_nav": "cockpit",
+        "settings_saved": settings_saved == "1",
+        "settings_error_message": settings_error,
     }
     payload.update(cockpit_payload)
     return templates.TemplateResponse("dashboard.html", payload)
+
+
+@router.post("/instance/settings")
+async def update_instance_settings(request: Request, admin: Dict = Depends(require_master)):
+    """Update safe runtime settings from the instance cockpit."""
+    from instance_settings import get_instance_settings_service
+
+    db = get_db()
+    service = get_instance_settings_service(db)
+    form = await request.form()
+    settings_group = str(form.get("settings_group") or "").strip().lower()
+    known_settings = service.list_settings()
+    if settings_group:
+        target_keys = [item["key"] for item in known_settings if item.get("ui_group") == settings_group]
+    else:
+        target_keys = [item["key"] for item in known_settings]
+
+    updated_by = (
+        admin.get("email")
+        or admin.get("admin_id")
+        or admin.get("full_name")
+        or "master_admin"
+    )
+
+    changed = 0
+    try:
+        for key in target_keys:
+            if key not in form:
+                continue
+            service.set_value(
+                key,
+                form.get(key),
+                updated_by=updated_by,
+                notes=f"Updated from cockpit group {settings_group or 'general'}",
+            )
+            changed += 1
+    except ValueError as exc:
+        return RedirectResponse(f"/admin?settings_error={quote_plus(str(exc))}", status_code=303)
+    except Exception:
+        return RedirectResponse("/admin?settings_error=Unable+to+save+settings", status_code=303)
+
+    if changed == 0:
+        return RedirectResponse("/admin?settings_error=No+settings+were+submitted", status_code=303)
+    return RedirectResponse("/admin?settings_saved=1", status_code=303)
 
 @router.get("/users", response_class=HTMLResponse)
 async def users_list(request: Request, admin: Dict = Depends(require_master)):

@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from instance_settings import get_instance_settings_service
 from instance_config import ADMIN_USER_ID, AGENT_INSTANCE, instance_summary
 from instance_setup import build_instance_setup_payload
 
@@ -148,6 +149,7 @@ def get_art_dashboard_payload(db) -> Dict[str, Any]:
 
 def build_instance_cockpit_payload(db) -> Dict[str, Any]:
     setup = build_instance_setup_payload(db)
+    settings_service = get_instance_settings_service(db)
     loop_state = get_latest_loop_state(db)
     world_state = _safe_world_state()
     latest_artifact = get_latest_artifact(db)
@@ -246,5 +248,6 @@ def build_instance_cockpit_payload(db) -> Dict[str, Any]:
         "recent_events": recent_events,
         "psychic_summary": psychic_summary,
         "admin_user_id": ADMIN_USER_ID,
+        "settings_sections": settings_service.build_sections(),
         "short": _truncate,
     }

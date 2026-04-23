@@ -32,6 +32,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass
 from enum import Enum
+from instance_settings import get_setting_value
 from security_config import proactive_messages_enabled
 
 # ✅ IMPORTS HÍBRIDOS v4.0
@@ -339,6 +340,7 @@ class ProactiveAdvancedSystem:
         self.cooldown_hours = COOLDOWN_HOURS
         self.min_conversations_required = MIN_CONVERSATIONS_REQUIRED
         self.max_inactivity_days = MAX_INACTIVITY_DAYS
+        self._refresh_runtime_settings()
 
         # ✅ TRI System (Fragment Detection)
         self.tri_enabled = TRI_ENABLED
@@ -359,6 +361,20 @@ class ProactiveAdvancedSystem:
         logger.info(f"   • Cooldown: {self.cooldown_hours}h")
         logger.info(f"   • Conversas mínimas: {self.min_conversations_required}")
         logger.info(f"   • TRI Habilitado: {self.tri_enabled}")
+
+    def _refresh_runtime_settings(self) -> None:
+        self.inactivity_threshold_hours = int(
+            get_setting_value("relational_inactivity_threshold_hours", self.db) or INACTIVITY_THRESHOLD_HOURS
+        )
+        self.cooldown_hours = int(
+            get_setting_value("relational_cooldown_hours", self.db) or COOLDOWN_HOURS
+        )
+        self.min_conversations_required = int(
+            get_setting_value("relational_min_conversations_required", self.db) or MIN_CONVERSATIONS_REQUIRED
+        )
+        self.max_inactivity_days = int(
+            get_setting_value("relational_max_inactivity_days", self.db) or MAX_INACTIVITY_DAYS
+        )
 
     def _clean_llm_text(self, value: Optional[str], fallback: str = "") -> str:
         """Normaliza saídas de LLM para evitar crashes por None."""
@@ -857,6 +873,7 @@ Mensagem enviada: "{message}..."
         pressure_context: Dict,
     ) -> Optional[Dict]:
         """Gera uma mensagem relacional guiada pela pressão do Will, sem enviar nem persistir."""
+        self._refresh_runtime_settings()
         if self._is_in_relational_cooldown(user_id, minimum_hours=max(6.0, self.cooldown_hours / 2)):
             logger.info("⏸️ [PROATIVO] Pulso relacional bloqueado por cooldown secundário.")
             return None
@@ -1073,6 +1090,7 @@ Tom esperado: {archetype_pair.description}
         user_name: str
     ) -> Optional[str]:
         """✅ MÉTODO PRINCIPAL - Gera mensagem proativa avançada HÍBRIDA"""
+        self._refresh_runtime_settings()
 
         if not proactive_messages_enabled():
             logger.info(f"⏸️ [PROATIVO] Kill switch ativo. Geração bloqueada para {user_name} ({user_id[:8]}...).")

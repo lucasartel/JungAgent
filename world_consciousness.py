@@ -10,6 +10,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from instance_settings import get_setting_value_with_options
 logger = logging.getLogger(__name__)
 
 EPISTEMIC_SABER_PRESSURE_THRESHOLD = 55.0
@@ -325,6 +326,13 @@ class WorldConsciousnessFetcher:
             return os.path.join(data_dir, os.path.basename(sqlite_path))
         return os.path.join(data_dir, "jung_hybrid.db")
 
+    def _setting_value(self, key: str, default: Any) -> Any:
+        try:
+            value = get_setting_value_with_options(key, sqlite_path=self._resolve_sqlite_path())
+            return default if value is None else value
+        except Exception:
+            return default
+
     def _admin_user_id(self) -> str:
         try:
             from instance_config import ADMIN_USER_ID
@@ -390,7 +398,8 @@ class WorldConsciousnessFetcher:
             saber_pressure = float(will_state.get("saber_pressure") or 0.0)
         except (TypeError, ValueError):
             saber_pressure = 0.0
-        return saber_pressure >= EPISTEMIC_SABER_PRESSURE_THRESHOLD
+        threshold = float(self._setting_value("knowledge_epistemic_threshold", EPISTEMIC_SABER_PRESSURE_THRESHOLD))
+        return saber_pressure >= threshold
 
     def _area_bias_for(self, area_key: str, will_state: Dict) -> float:
         if not will_state:
@@ -1410,7 +1419,8 @@ Contexto:
             url = (signal.get("source_url") or "").strip()
             if not url:
                 continue
-            if signal.get("query_origin") != "will_gap_query" and float(signal.get("signal_strength") or 0.0) < FIRECRAWL_MIN_SIGNAL_STRENGTH:
+            min_signal_strength = float(self._setting_value("firecrawl_min_signal_strength", FIRECRAWL_MIN_SIGNAL_STRENGTH))
+            if signal.get("query_origin") != "will_gap_query" and float(signal.get("signal_strength") or 0.0) < min_signal_strength:
                 continue
             domain = self._safe_domain(url)
             dedupe_key = domain or url.lower()
@@ -1738,10 +1748,15 @@ Estado estruturado:
             "findings": [],
             "errors": [],
         }
+        firecrawl_overrides = {
+            "enabled": self._setting_value("firecrawl_runtime_enabled", True),
+            "max_pages": self._setting_value("firecrawl_max_pages_per_release", 3),
+            "timeout_seconds": self._setting_value("firecrawl_timeout_seconds", 30),
+        }
         try:
             from firecrawl_client import get_firecrawl_client
 
-            firecrawl_client = get_firecrawl_client()
+            firecrawl_client = get_firecrawl_client(firecrawl_overrides)
             firecrawl_result.update(
                 {
                     "enabled": bool(getattr(firecrawl_client, "enabled", False)),
@@ -1769,7 +1784,7 @@ Estado estruturado:
                 if firecrawl_client is None:
                     from firecrawl_client import get_firecrawl_client
 
-                    firecrawl_client = get_firecrawl_client()
+                    firecrawl_client = get_firecrawl_client(firecrawl_overrides)
                     firecrawl_result.update(
                         {
                             "enabled": bool(getattr(firecrawl_client, "enabled", False)),
@@ -1925,6 +1940,7 @@ Estado estruturado:
         will_state: Optional[Dict] = None,
         epistemic_trigger: Optional[str] = None,
     ) -> Dict:
+        self.cache_duration_hours = float(self._setting_value("world_cache_duration_hours", 4))
         now = datetime.now()
         resolved_will_state = self._resolve_will_state(will_state)
         will_signature = self._will_signature(resolved_will_state)

@@ -24,6 +24,21 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _coerce_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _truncate(text: str, limit: int) -> str:
     cleaned = " ".join((text or "").split())
     if len(cleaned) <= limit:
@@ -78,13 +93,14 @@ def _safe_url(url: str) -> Optional[str]:
 
 
 class FirecrawlClient:
-    def __init__(self) -> None:
-        self.enabled = _env_bool("FIRECRAWL_ENABLED", False)
+    def __init__(self, overrides: Optional[Dict[str, Any]] = None) -> None:
+        overrides = overrides or {}
+        self.enabled = _coerce_bool(overrides.get("enabled"), _env_bool("FIRECRAWL_ENABLED", False))
         self.api_key = os.getenv("FIRECRAWL_API_KEY", "").strip()
-        self.max_pages = max(1, _env_int("FIRECRAWL_MAX_PAGES_PER_RELEASE", 3))
-        self.timeout_seconds = max(5, _env_int("FIRECRAWL_TIMEOUT_SECONDS", 30))
-        self.store_raw_content = _env_bool("FIRECRAWL_STORE_RAW_CONTENT", False)
-        self.max_markdown_chars = max(800, _env_int("FIRECRAWL_MAX_MARKDOWN_CHARS", 6000))
+        self.max_pages = max(1, _coerce_int(overrides.get("max_pages"), _env_int("FIRECRAWL_MAX_PAGES_PER_RELEASE", 3)))
+        self.timeout_seconds = max(5, _coerce_int(overrides.get("timeout_seconds"), _env_int("FIRECRAWL_TIMEOUT_SECONDS", 30)))
+        self.store_raw_content = _coerce_bool(overrides.get("store_raw_content"), _env_bool("FIRECRAWL_STORE_RAW_CONTENT", False))
+        self.max_markdown_chars = max(800, _coerce_int(overrides.get("max_markdown_chars"), _env_int("FIRECRAWL_MAX_MARKDOWN_CHARS", 6000)))
 
     def is_available(self) -> bool:
         return bool(self.enabled and self.api_key)
@@ -184,5 +200,5 @@ class FirecrawlClient:
         return result
 
 
-def get_firecrawl_client() -> FirecrawlClient:
-    return FirecrawlClient()
+def get_firecrawl_client(overrides: Optional[Dict[str, Any]] = None) -> FirecrawlClient:
+    return FirecrawlClient(overrides=overrides)

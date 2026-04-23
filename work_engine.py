@@ -17,6 +17,7 @@ import httpx
 
 from agent_identity_context_builder import AgentIdentityContextBuilder
 from instance_config import ADMIN_USER_ID
+from instance_settings import get_setting_value
 from integration_secrets import IntegrationSecretsError, IntegrationSecretsManager
 from llm_providers import get_llm_response
 
@@ -632,6 +633,32 @@ class WorkEngine:
             )
         self.db.conn.commit()
 
+    def _setting_value(self, key: str, default: Any) -> Any:
+        try:
+            value = get_setting_value(key, self.db)
+            return default if value is None else value
+        except Exception:
+            return default
+
+    def _work_autonomy_enabled(self) -> bool:
+        return bool(self._setting_value("work_autonomy_enabled", WORK_AUTONOMY_ENABLED))
+
+    def _work_max_actions_per_day(self) -> int:
+        return int(self._setting_value("work_max_autonomous_actions_per_day", WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY))
+
+    def _work_max_pending_tickets(self) -> int:
+        return int(self._setting_value("work_max_pending_tickets", WORK_MAX_PENDING_TICKETS))
+
+    def _work_notify_admin_on_tickets(self) -> bool:
+        return bool(self._setting_value("work_notify_admin_on_tickets", WORK_NOTIFY_ADMIN_ON_TICKETS))
+
+    def _firecrawl_overrides(self) -> Dict[str, Any]:
+        return {
+            "enabled": self._setting_value("firecrawl_runtime_enabled", True),
+            "max_pages": self._setting_value("firecrawl_max_pages_per_release", 3),
+            "timeout_seconds": self._setting_value("firecrawl_timeout_seconds", 30),
+        }
+
     def list_projects(self) -> List[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
         cursor.execute(
@@ -740,7 +767,7 @@ class WorkEngine:
                 json.dumps(
                     {
                         "external_effects_require_approval": True,
-                        "max_autonomous_actions_per_day": WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY,
+                        "max_autonomous_actions_per_day": self._work_max_actions_per_day(),
                     },
                     ensure_ascii=False,
                 ),
@@ -1593,7 +1620,7 @@ Responda APENAS em JSON com:
         try:
             from firecrawl_client import get_firecrawl_client
 
-            client = get_firecrawl_client()
+            client = get_firecrawl_client(self._firecrawl_overrides())
             destination_context = self._select_destination_research_urls(brief)
             destination_urls = destination_context.get("urls") or []
             world_urls = self._select_work_research_urls(world_state, brief)
@@ -2619,14 +2646,16 @@ Regras obrigatorias:
         return cursor.fetchone() is not None
 
     def _ensure_project_autonomous_briefs(self) -> int:
-        if not WORK_AUTONOMY_ENABLED:
+        if not self._work_autonomy_enabled():
             return 0
 
         pending_tickets = self._pending_ticket_count()
-        remaining = max(0, WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY - self._autonomous_actions_today())
-        remaining = min(remaining, max(0, WORK_MAX_PENDING_TICKETS - pending_tickets))
+        max_actions_per_day = self._work_max_actions_per_day()
+        max_pending_tickets = self._work_max_pending_tickets()
+        remaining = max(0, max_actions_per_day - self._autonomous_actions_today())
+        remaining = min(remaining, max(0, max_pending_tickets - pending_tickets))
 
-        if pending_tickets >= WORK_MAX_PENDING_TICKETS:
+        if pending_tickets >= max_pending_tickets:
             self.record_work_experience(
                 event_type="autonomy_paused_pending_tickets",
                 summary="Work adiou novas acoes autonomas porque ha tickets pendentes aguardando revisao.",
@@ -2812,7 +2841,7 @@ Regras obrigatorias:
         autonomous_briefs_created = self._ensure_project_autonomous_briefs()
         processed_results: List[Dict[str, Any]] = []
         skipped_warnings: List[str] = []
-        max_to_process = max(1, WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY)
+        max_to_process = max(1, self._work_max_actions_per_day())
 
         for _ in range(max_to_process):
             brief = self._select_next_brief()
@@ -2879,7 +2908,7 @@ Regras obrigatorias:
 
         ticket_ids = [item["ticket_id"] for item in processed_results if item.get("ticket_id")]
         new_ticket_ids = [item["ticket_id"] for item in processed_results if item.get("ticket_id") and not item.get("existing_ticket")]
-        if WORK_NOTIFY_ADMIN_ON_TICKETS and new_ticket_ids:
+        if self._work_notify_admin_on_tickets() and new_ticket_ids:
             self.notify_admin_new_tickets(new_ticket_ids)
 
         if new_ticket_ids:
@@ -2910,10 +2939,10 @@ Regras obrigatorias:
             "credentials_configured": self.credentials_available(),
             "providers": self.list_provider_specs(),
             "autonomy": {
-                "enabled": WORK_AUTONOMY_ENABLED,
-                "max_actions_per_day": WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY,
-                "max_pending_tickets": WORK_MAX_PENDING_TICKETS,
-                "notify_admin_on_tickets": WORK_NOTIFY_ADMIN_ON_TICKETS,
+                "enabled": self._work_autonomy_enabled(),
+                "max_actions_per_day": self._work_max_actions_per_day(),
+                "max_pending_tickets": self._work_max_pending_tickets(),
+                "notify_admin_on_tickets": self._work_notify_admin_on_tickets(),
                 "autonomous_actions_today": self._autonomous_actions_today(),
                 "pending_tickets": self._pending_ticket_count(),
             },
