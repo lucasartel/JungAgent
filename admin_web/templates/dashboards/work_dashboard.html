@@ -287,6 +287,10 @@ function renderPendingApprovals(state) {
             const artifact = findArtifact(ticket.artifact_id);
             const flags = artifact.review_flags || [];
             const firecrawl = artifact.firecrawl_research || {};
+            const researchSources = [
+                firecrawl.destination_used ? "destination" : "",
+                firecrawl.world_used ? "world" : ""
+            ].filter(Boolean).join(" + ");
             return `
                 <article class="data-card-v2">
                     <strong>${escapeHtml(artifact.title || ticket.artifact_title || "Pending work")}</strong>
@@ -294,11 +298,13 @@ function renderPendingApprovals(state) {
                         ${escapeHtml(ticket.project_name || "no project")} - ${escapeHtml(ticket.destination_label || "no destination")} - ${escapeHtml(ticket.action || "action")}
                     </div>
                     <div class="mono-block-v2">${escapeHtml(artifact.excerpt || "")}</div>
+                    <div class="meta-line-v2">Generation: ${escapeHtml(artifact.generation_mode || "structured")}</div>
                     <div class="meta-line-v2">Slug: ${escapeHtml(artifact.safe_slug || artifact.slug || "-")}</div>
                     <div class="meta-line-v2">Tags: ${escapeHtml(formatJsonList(artifact.tags_json))}</div>
                     <div class="meta-line-v2">Categories: ${escapeHtml(formatJsonList(artifact.categories_json))}</div>
                     ${artifact.editorial_note ? `<div class="mono-block-v2">Editorial note: ${escapeHtml(artifact.editorial_note)}</div>` : ""}
-                    ${firecrawl.used ? `<div class="mono-block-v2">Research: ${escapeHtml(firecrawl.summary || "")}</div>` : ""}
+                    ${firecrawl.used ? `<div class="mono-block-v2">Research sources: ${escapeHtml(researchSources || "unknown")} | ${escapeHtml(firecrawl.summary || "")}</div>` : ""}
+                    ${firecrawl.destination_profile ? `<div class="mono-block-v2">Destination profile: ${escapeHtml(firecrawl.destination_profile)}</div>` : ""}
                     ${flags.length ? `<div class="mono-block-v2">Review warnings: ${escapeHtml(flags.join(" | "))}</div>` : ""}
                     <details>
                         <summary class="meta-line-v2">Read body preview</summary>

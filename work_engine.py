@@ -11,7 +11,7 @@ import sqlite3
 import unicodedata
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 
@@ -194,6 +194,36 @@ def _truncate(text: str, limit: int = 180) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip(" ,.;:") + "..."
+
+
+def _strip_html(text: str) -> str:
+    cleaned = re.sub(r"<[^>]+>", " ", text or "")
+    return " ".join(cleaned.split())
+
+
+def _normalize_compare(text: str) -> str:
+    cleaned = unicodedata.normalize("NFKD", text or "")
+    cleaned = cleaned.encode("ascii", "ignore").decode("ascii")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
+    return cleaned
+
+
+def _looks_like_objective_echo(body: str, objective: str) -> bool:
+    normalized_body = _normalize_compare(body)
+    normalized_objective = _normalize_compare(objective)
+    if not normalized_body or not normalized_objective:
+        return False
+    if normalized_body == normalized_objective:
+        return True
+    if normalized_body.startswith(normalized_objective[: min(len(normalized_objective), 180)]):
+        return True
+    return "diretriz:" in normalized_body and normalized_objective[:120] in normalized_body
+
+
+def _same_host(url_a: str, url_b: str) -> bool:
+    host_a = (urlsplit(url_a).hostname or "").strip().lower()
+    host_b = (urlsplit(url_b).hostname or "").strip().lower()
+    return bool(host_a and host_a == host_b)
 
 
 def _json_list(raw: Optional[str]) -> List[Any]:
@@ -1003,6 +1033,206 @@ class WorkEngine:
         }
         return self.skill_registry["wordpress"].test_connection(destination, application_password.strip())
 
+    def _extract_candidate_links_from_html(self, base_url: str, html: str, limit: int = 8) -> List[str]:
+        links: List[str] = []
+        seen = set()
+        for raw_href in re.findall(r"""href=["']([^"'#]+)["']""", html or "", flags=re.IGNORECASE):
+            href = (raw_href or "").strip()
+            if not href or href.startswith(("mailto:", "tel:", "javascript:")):
+                continue
+            absolute = urljoin(base_url, href)
+            if not absolute.startswith(("http://", "https://")):
+                continue
+            if not _same_host(base_url, absolute):
+                continue
+
+            parsed = urlsplit(absolute)
+            path = (parsed.path or "/").strip().lower()
+            if path in {"", "/"}:
+                continue
+            if any(
+                token in path
+                for token in [
+                    "/wp-admin",
+                    "/wp-json",
+                    "/feed",
+                    "/tag/",
+                    "/category/",
+                    "/author/",
+                    "/search",
+                    "/page/",
+                    "/coment",
+                    "/comment",
+                    "/privacy",
+                    "/termos",
+                    "/terms",
+                    "/contato",
+                    "/contact",
+                    "/sobre",
+                    "/about",
+                ]
+            ):
+                continue
+
+            score = 0
+            if len([part for part in path.split("/") if part]) >= 2:
+                score += 2
+            if re.search(r"/20\d{2}/", path):
+                score += 3
+            if any(token in path for token in ["/blog/", "/artigo", "/article", "/post/"]):
+                score += 3
+            if len(path.replace("-", "").replace("/", "")) >= 18:
+                score += 1
+
+            normalized = urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            links.append((score, normalized))
+
+        ranked = [url for _score, url in sorted(links, key=lambda item: item[0], reverse=True) if _score > 0]
+        return ranked[:limit]
+
+    def _discover_destination_context_urls(self, destination: Dict[str, Any], limit: int = 3) -> Dict[str, Any]:
+        base_url = (destination.get("base_url") or "").strip()
+        if not base_url:
+            return {"urls": [], "errors": ["destino_sem_base_url"]}
+
+        probe_urls = [base_url]
+        base_root = base_url.rstrip("/")
+        for suffix in ["/blog", "/articles", "/article", "/artigos", "/posts", "/news", "/insights"]:
+            candidate = f"{base_root}{suffix}"
+            if candidate not in probe_urls:
+                probe_urls.append(candidate)
+
+        errors: List[str] = []
+        discovered: List[str] = []
+        seen = set()
+
+        with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+            for probe_url in probe_urls[:4]:
+                try:
+                    response = client.get(probe_url)
+                except Exception as exc:
+                    errors.append(f"{probe_url}: {exc}")
+                    continue
+                if response.status_code >= 400:
+                    errors.append(f"{probe_url}: HTTP {response.status_code}")
+                    continue
+
+                html = response.text or ""
+                for link in self._extract_candidate_links_from_html(str(response.url), html, limit=6):
+                    key = link.lower().rstrip("/")
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    discovered.append(link)
+                    if len(discovered) >= limit:
+                        break
+                if len(discovered) >= limit:
+                    break
+
+        urls = discovered[:limit]
+        if not urls and base_url:
+            urls = [base_url]
+        return {"urls": urls, "errors": errors}
+
+    def _fetch_wordpress_recent_posts(self, destination: Dict[str, Any], limit: int = 3) -> Dict[str, Any]:
+        provider = self.skill_registry.get("wordpress")
+        if not provider:
+            return {"posts": [], "urls": [], "errors": ["provider_wordpress_indisponivel"]}
+
+        errors: List[str] = []
+        posts: List[Dict[str, Any]] = []
+        seen_urls = set()
+
+        for candidate_base in provider._candidate_base_urls(destination):
+            api_url = f"{candidate_base.rstrip('/')}/wp-json/wp/v2/posts?per_page={max(1, min(limit, 5))}&_fields=link,title,date,slug"
+            try:
+                with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+                    response = client.get(api_url)
+            except Exception as exc:
+                errors.append(f"{candidate_base}: {exc}")
+                continue
+
+            if response.status_code >= 400:
+                errors.append(f"{candidate_base}: HTTP {response.status_code}")
+                continue
+
+            try:
+                payload = response.json()
+            except Exception as exc:
+                errors.append(f"{candidate_base}: json_invalido ({exc})")
+                continue
+
+            if not isinstance(payload, list):
+                errors.append(f"{candidate_base}: resposta_posts_inesperada")
+                continue
+
+            for item in payload:
+                url = str(item.get("link") or "").strip()
+                if not url:
+                    continue
+                key = url.lower().rstrip("/")
+                if key in seen_urls:
+                    continue
+                seen_urls.add(key)
+                posts.append(
+                    {
+                        "url": url,
+                        "title": _strip_html(((item.get("title") or {}).get("rendered") if isinstance(item.get("title"), dict) else item.get("title")) or ""),
+                        "date": item.get("date") or "",
+                        "slug": item.get("slug") or "",
+                    }
+                )
+                if len(posts) >= limit:
+                    break
+            if posts:
+                break
+
+        return {
+            "posts": posts,
+            "urls": [post["url"] for post in posts],
+            "errors": errors,
+        }
+
+    def _select_destination_research_urls(self, brief: Dict[str, Any]) -> Dict[str, Any]:
+        destination = self.get_destination(int(brief["destination_id"])) if brief.get("destination_id") else None
+        if not destination:
+            return {"destination": None, "urls": [], "sample_posts": [], "errors": ["destino_nao_encontrado"]}
+
+        generic_result = self._discover_destination_context_urls(destination, limit=3)
+        urls = list(generic_result.get("urls") or [])
+        errors = list(generic_result.get("errors") or [])
+        sample_posts: List[Dict[str, Any]] = []
+
+        if destination.get("provider_key") == "wordpress":
+            recent_posts = self._fetch_wordpress_recent_posts(destination, limit=3)
+            wordpress_urls = recent_posts.get("urls") or []
+            sample_posts = recent_posts.get("posts") or []
+            errors.extend(recent_posts.get("errors") or [])
+            if wordpress_urls:
+                merged: List[str] = []
+                for url in [*wordpress_urls, *urls]:
+                    key = url.lower().rstrip("/")
+                    if key in {item.lower().rstrip("/") for item in merged}:
+                        continue
+                    merged.append(url)
+                    if len(merged) >= 3:
+                        break
+                urls = merged
+
+        if not urls and destination.get("base_url"):
+            urls = [destination.get("base_url")]
+
+        return {
+            "destination": destination,
+            "urls": urls[:3],
+            "sample_posts": sample_posts,
+            "errors": errors,
+        }
+
     def create_destination(
         self,
         label: str,
@@ -1357,45 +1587,83 @@ Responda APENAS em JSON com:
         return urls
 
     def _build_firecrawl_research_for_brief(self, brief: Dict[str, Any], world_state: Dict[str, Any]) -> Dict[str, Any]:
-        if not brief.get("project_id"):
-            return {"used": False, "urls": [], "summary": "", "errors": []}
+        if not brief.get("destination_id"):
+            return {"used": False, "urls": [], "summary": "", "errors": ["brief_sem_destino"]}
 
         try:
             from firecrawl_client import get_firecrawl_client
 
             client = get_firecrawl_client()
-            urls = self._select_work_research_urls(world_state, brief)
-            result = client.scrape_urls(urls, context_label=brief.get("project_name") or "work_project")
+            destination_context = self._select_destination_research_urls(brief)
+            destination_urls = destination_context.get("urls") or []
+            world_urls = self._select_work_research_urls(world_state, brief)
+            destination_result = client.scrape_urls(
+                destination_urls,
+                context_label=f"{brief.get('project_name') or brief.get('destination_label') or 'work'}_destination",
+            )
+            world_result = client.scrape_urls(
+                world_urls,
+                context_label=f"{brief.get('project_name') or brief.get('destination_label') or 'work'}_world",
+            ) if world_urls else {"used": False, "urls": [], "documents": [], "findings": [], "errors": []}
         except Exception as exc:
             logger.warning("WorkEngine: Firecrawl indisponivel para pesquisa interna: %s", exc)
             return {"used": False, "urls": [], "summary": "", "errors": [str(exc)]}
 
-        if not result.get("used"):
+        combined_errors = (
+            list(destination_context.get("errors") or [])
+            + list(destination_result.get("errors") or [])
+            + list(world_result.get("errors") or [])
+        )
+        destination_used = bool(destination_result.get("used"))
+        world_used = bool(world_result.get("used"))
+
+        if not destination_used and not world_used:
             return {
                 "used": False,
-                "enabled": result.get("enabled"),
-                "urls": result.get("urls", []),
+                "enabled": destination_result.get("enabled"),
+                "urls": [],
                 "summary": "",
-                "errors": result.get("errors", []),
+                "errors": combined_errors,
+                "destination_used": False,
+                "world_used": False,
+                "destination_urls": destination_urls,
+                "world_urls": world_urls,
+                "sample_posts": destination_context.get("sample_posts") or [],
             }
 
-        compact_docs = [
+        compact_destination_docs = [
             {
                 "url": doc.get("url"),
                 "title": doc.get("title"),
                 "description": doc.get("description"),
                 "excerpt": _truncate(doc.get("markdown_excerpt", ""), 900),
             }
-            for doc in (result.get("documents") or [])[:3]
+            for doc in (destination_result.get("documents") or [])[:3]
+        ]
+        compact_world_docs = [
+            {
+                "url": doc.get("url"),
+                "title": doc.get("title"),
+                "description": doc.get("description"),
+                "excerpt": _truncate(doc.get("markdown_excerpt", ""), 700),
+            }
+            for doc in (world_result.get("documents") or [])[:2]
         ]
         prompt = f"""
 Voce esta resumindo pesquisa Firecrawl para o modulo Work.
-Use apenas os documentos e o brief abaixo. Nao copie longos trechos. Produza um insumo editorial curto.
+Use apenas os documentos e o brief abaixo. Nao copie longos trechos.
+Seu trabalho e distinguir:
+- o que o destino ja publica e como publica
+- o que o mundo oferece como tensao/gancho tematico
+- como transformar isso num novo trabalho coerente com o destino
 
 Responda APENAS em JSON:
 {{
   "summary": "resumo curto do que a pesquisa acrescenta ao trabalho",
-  "angle": "angulo editorial sugerido"
+  "angle": "angulo editorial sugerido",
+  "destination_profile": "perfil editorial observado no destino",
+  "editorial_constraints": ["restricao 1", "restricao 2"],
+  "source_mix": "destination_only | destination_plus_world | world_only"
 }}
 
 Contexto:
@@ -1405,7 +1673,9 @@ Contexto:
         "project_name": brief.get("project_name"),
         "destination": brief.get("destination_label"),
     },
-    "documents": compact_docs,
+    "destination_sample_posts": destination_context.get("sample_posts") or [],
+    "destination_documents": compact_destination_docs,
+    "world_documents": compact_world_docs,
 }, ensure_ascii=False)}
 """
         try:
@@ -1414,16 +1684,33 @@ Contexto:
             logger.warning("WorkEngine: falha ao sintetizar pesquisa Firecrawl: %s", exc)
             parsed = {}
 
-        fallback = _truncate("; ".join(result.get("findings") or []), 520)
+        destination_findings = destination_result.get("findings") or []
+        world_findings = world_result.get("findings") or []
+        fallback = _truncate("; ".join([*destination_findings, *world_findings]), 520)
         summary = _truncate(parsed.get("summary") or fallback, 520)
         angle = _truncate(parsed.get("angle") or "", 220)
+        destination_profile = _truncate(parsed.get("destination_profile") or "", 320)
+        editorial_constraints = parsed.get("editorial_constraints") or []
+        if not isinstance(editorial_constraints, list):
+            editorial_constraints = []
+        source_mix = parsed.get("source_mix") or (
+            "destination_plus_world" if destination_used and world_used else "destination_only" if destination_used else "world_only"
+        )
         return {
             "used": True,
-            "enabled": result.get("enabled"),
-            "urls": result.get("urls", []),
+            "enabled": destination_result.get("enabled"),
+            "urls": [*(destination_result.get("urls") or []), *(world_result.get("urls") or [])],
             "summary": summary,
             "angle": angle,
-            "errors": result.get("errors", []),
+            "destination_profile": destination_profile,
+            "editorial_constraints": editorial_constraints[:5],
+            "errors": combined_errors,
+            "destination_used": destination_used,
+            "world_used": world_used,
+            "destination_urls": destination_result.get("urls", []) or destination_urls,
+            "world_urls": world_result.get("urls", []) or world_urls,
+            "sample_posts": destination_context.get("sample_posts") or [],
+            "source_mix": source_mix,
         }
 
     def _build_work_package(self, brief: Dict[str, Any]) -> Dict[str, Any]:
@@ -1458,9 +1745,13 @@ Contexto:
         research_context = ""
         if firecrawl_research.get("used"):
             research_context = (
-                f"Pesquisa Firecrawl: {firecrawl_research.get('summary') or ''}\n"
+                f"Pesquisa geral: {firecrawl_research.get('summary') or ''}\n"
+                f"Perfil editorial do destino: {firecrawl_research.get('destination_profile') or 'nao identificado com clareza'}\n"
                 f"Angulo sugerido: {firecrawl_research.get('angle') or ''}\n"
-                f"Fontes lidas: {', '.join(firecrawl_research.get('urls') or [])}"
+                f"Restricoes editoriais observadas: {', '.join(firecrawl_research.get('editorial_constraints') or []) or 'nenhuma explicitada'}\n"
+                f"Origem da pesquisa: {firecrawl_research.get('source_mix') or 'desconhecida'}\n"
+                f"Fontes do destino: {', '.join(firecrawl_research.get('destination_urls') or []) or 'nenhuma'}\n"
+                f"Fontes do mundo: {', '.join(firecrawl_research.get('world_urls') or []) or 'nenhuma'}"
             )
         elif firecrawl_research.get("errors"):
             research_context = f"Firecrawl nao aprofundou este brief: {'; '.join(firecrawl_research.get('errors') or [])}"
@@ -1499,6 +1790,12 @@ Responda APENAS em JSON com:
   "cta": "cta opcional",
   "editorial_note": "nota curta explicando alinhamento com o momento"
 }}
+
+Regras obrigatorias:
+- Se houver perfil editorial do destino, alinhe idioma, densidade, tipo de artigo e tom a ele.
+- Use o mundo apenas como materia tematica complementar; o destino define a forma.
+- NUNCA copie a diretriz ou o briefing no corpo final.
+- Se nao houver material suficiente para escrever um artigo coerente com o destino, devolva "body" vazio e explique isso em "editorial_note".
 """
 
         try:
@@ -1508,10 +1805,55 @@ Responda APENAS em JSON com:
             logger.error(f"WorkEngine: falha ao gerar pacote editorial: {exc}")
             parsed = {}
 
-        title = (parsed.get("title") or brief.get("title_hint") or _truncate(brief.get("objective"), 70)).strip()
-        excerpt = (parsed.get("excerpt") or _truncate(brief.get("objective"), 160)).strip()
-        body = (parsed.get("body") or brief.get("objective") or "").strip()
-        editorial_note = (parsed.get("editorial_note") or "Pacote gerado a partir do brief atual.").strip()
+        parsed_title = str(parsed.get("title") or "").strip()
+        parsed_excerpt = str(parsed.get("excerpt") or "").strip()
+        parsed_body = str(parsed.get("body") or "").strip()
+        parsed_editorial_note = str(parsed.get("editorial_note") or "").strip()
+
+        review_flags: List[str] = []
+        generation_mode = "structured"
+        if brief.get("destination_id") and not firecrawl_research.get("destination_used"):
+            review_flags.append("Work nao conseguiu ler amostras suficientes do destino; aderencia editorial ficou fragil.")
+        if _looks_like_objective_echo(parsed_title, brief.get("objective") or ""):
+            review_flags.append("Titulo retornado pelo LLM ecoou a diretriz do projeto.")
+        if _looks_like_objective_echo(parsed_body, brief.get("objective") or ""):
+            review_flags.append("Corpo retornado pelo LLM ecoou o briefing em vez de virar artigo.")
+        if parsed_body and len(parsed_body) < 900:
+            review_flags.append("Corpo retornado ficou curto para um artigo editorial maduro.")
+
+        degraded = (
+            not parsed_body
+            or _looks_like_objective_echo(parsed_body, brief.get("objective") or "")
+            or _looks_like_objective_echo(parsed_title, brief.get("objective") or "")
+        )
+
+        if degraded:
+            generation_mode = "degraded_fallback"
+            review_flags.append("Artifact degradado: Work nao conseguiu compor um artigo confiavel a partir da pesquisa e do brief.")
+
+        title_seed = brief.get("title_hint") or brief.get("project_name") or brief.get("destination_label") or "editorial draft"
+        title = (parsed_title or _truncate(f"Review needed: {title_seed}", 90)).strip()
+        excerpt = (
+            parsed_excerpt
+            or "Work ainda nao conseguiu compor um artigo publicavel com aderencia suficiente ao destino."
+        ).strip()
+        body = parsed_body.strip()
+        editorial_note = (parsed_editorial_note or "Pacote editorial gerado a partir do brief atual.").strip()
+
+        if degraded:
+            title = _truncate(f"Review needed: {title_seed}", 90)
+            excerpt = "Work nao conseguiu transformar este brief em um artigo confiavel; revise e gere novamente."
+            body = (
+                "## Review needed\n\n"
+                "Work nao conseguiu compor um artigo publicavel com confianca nesta rodada.\n\n"
+                f"- Objetivo recebido: {brief.get('objective') or 'sem objetivo'}\n"
+                f"- Pesquisa do destino disponivel: {'sim' if firecrawl_research.get('destination_used') else 'nao'}\n"
+                f"- Pesquisa de mundo disponivel: {'sim' if firecrawl_research.get('world_used') else 'nao'}\n"
+                f"- Perfil editorial inferido: {firecrawl_research.get('destination_profile') or 'insuficiente'}\n\n"
+                "Recomendacao: rejeitar este ticket e deixar o Work tentar novamente com mais contexto editorial do destino."
+            )
+            editorial_note = "Saida degradada: o Work nao metabolizou o briefing em artigo coerente nesta rodada."
+
         tags = parsed.get("tags") or []
         categories = parsed.get("categories") or []
         cta = (parsed.get("cta") or "").strip()
@@ -1524,11 +1866,20 @@ Responda APENAS em JSON com:
             "categories": categories[:8] if isinstance(categories, list) else [],
             "cta": cta,
             "editorial_note": editorial_note,
+            "generation_mode": generation_mode,
+            "review_flags": review_flags,
             "firecrawl_research": {
                 "used": bool(firecrawl_research.get("used")),
                 "urls": firecrawl_research.get("urls", []),
                 "summary": firecrawl_research.get("summary", ""),
                 "angle": firecrawl_research.get("angle", ""),
+                "destination_profile": firecrawl_research.get("destination_profile", ""),
+                "editorial_constraints": firecrawl_research.get("editorial_constraints", []),
+                "destination_used": bool(firecrawl_research.get("destination_used")),
+                "world_used": bool(firecrawl_research.get("world_used")),
+                "destination_urls": firecrawl_research.get("destination_urls", []),
+                "world_urls": firecrawl_research.get("world_urls", []),
+                "source_mix": firecrawl_research.get("source_mix", ""),
                 "errors": firecrawl_research.get("errors", []),
             },
         }
@@ -1787,6 +2138,8 @@ Responda APENAS em JSON com:
 
     def _artifact_review_flags(self, artifact: Dict[str, Any]) -> List[str]:
         flags: List[str] = []
+        package = ((artifact.get("provider_payload") or {}).get("package") or {}) if isinstance(artifact.get("provider_payload"), dict) else {}
+        firecrawl = artifact.get("firecrawl_research") or {}
         title = artifact.get("title") or ""
         stored_slug = artifact.get("slug") or ""
         safe_slug = _slugify(title or stored_slug)
@@ -1800,6 +2153,13 @@ Responda APENAS em JSON com:
             flags.append("Corpo parece curto para artigo editorial.")
         if not (artifact.get("excerpt") or "").strip():
             flags.append("Excerpt ausente.")
+        if firecrawl and not firecrawl.get("destination_used") and artifact.get("destination_id"):
+            flags.append("Pesquisa do destino nao foi assimilada com clareza; revise se o tom realmente combina com o site.")
+        if (package.get("generation_mode") or "") == "degraded_fallback":
+            flags.append("Artifact degradado: o pacote virou um pedido de revisao, nao um artigo pronto.")
+        for item in package.get("review_flags") or []:
+            if isinstance(item, str) and item.strip():
+                flags.append(item.strip())
         return flags
 
     def list_artifacts(self, limit: int = 40) -> List[Dict[str, Any]]:
@@ -1821,6 +2181,7 @@ Responda APENAS em JSON com:
             payload = _json_loads_maybe(item.get("provider_payload_json") or "{}")
             item["provider_payload"] = payload
             item["firecrawl_research"] = (payload.get("package") or {}).get("firecrawl_research") or {}
+            item["generation_mode"] = (payload.get("package") or {}).get("generation_mode") or "structured"
             item["safe_slug"] = _slugify(item.get("title") or item.get("slug") or "")
             item["review_flags"] = self._artifact_review_flags(item)
             artifacts.append(item)
