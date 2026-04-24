@@ -757,26 +757,27 @@ class ConsciousnessLoopManager:
             caption_lines.extend(["", f"Leitura: {evaluation_summary}"])
         caption = "\n".join(caption_lines).strip()[:1024]
 
-        fallback_text = f"{caption}\n\nImagem: {image_url}".strip()
+        if image_url.startswith("data:image/"):
+            fallback_text = f"{caption}\n\nImagem gerada como data URL; falha no upload binario.".strip()
+        else:
+            fallback_text = f"{caption}\n\nImagem: {image_url}".strip()
 
         try:
             import httpx
 
             url = f"https://api.telegram.org/bot{token}/sendPhoto"
-            response = httpx.post(
-                url,
-                data={
-                    "chat_id": chat_id,
-                    "photo": image_url,
-                    "caption": caption,
-                },
-                timeout=30.0,
-            )
+            response = self._send_admin_photo(httpx, token, chat_id, image_url, caption)
             if response.status_code == 200:
                 logger.info("LOOP HOBBY NOTIFY enviado ao admin para ciclo=%s", result.get("cycle_id"))
                 return
 
             logger.warning("LOOP HOBBY NOTIFY falhou (%s): %s", response.status_code, response.text[:300])
+
+            if image_url.startswith("data:image/"):
+                message_response = self._send_admin_message(token, chat_id, fallback_text)
+                if message_response.status_code == 200:
+                    logger.info("LOOP HOBBY NOTIFY fallback em texto enviado apos falha no data URL")
+                return
 
             # Se o Telegram nao consegue buscar a URL remota, baixa a imagem localmente e faz upload binario.
             image_response = httpx.get(image_url, timeout=45.0, follow_redirects=True)

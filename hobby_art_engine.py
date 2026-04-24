@@ -14,7 +14,10 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import httpx
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover - production installs it via requirements.txt
+    OpenAI = None
 
 from llm_providers import get_llm_response
 
@@ -27,6 +30,8 @@ DEFAULT_ART_STYLE_PROMPT = (
     "sensacao de instante vivido, sem fotorrealismo, sem render 3D, sem anime, "
     "sem comic book, sem arte vetorial"
 )
+DEFAULT_ART_IMAGE_PROVIDER = "openrouter_nano_banana"
+DEFAULT_ART_IMAGE_MODEL = "google/gemini-3.1-flash-image-preview"
 
 
 class HobbyArtEngine:
@@ -35,6 +40,16 @@ class HobbyArtEngine:
         self.conversation_model = os.getenv("CONVERSATION_MODEL", "z-ai/glm-5")
         self.art_style_name = os.getenv("HOBBY_ART_STYLE", DEFAULT_ART_STYLE_NAME).strip() or DEFAULT_ART_STYLE_NAME
         self.art_style_prompt = os.getenv("HOBBY_ART_STYLE_PROMPT", DEFAULT_ART_STYLE_PROMPT).strip() or DEFAULT_ART_STYLE_PROMPT
+        self.image_provider = (
+            os.getenv("HOBBY_ART_IMAGE_PROVIDER")
+            or os.getenv("DREAM_IMAGE_PROVIDER")
+            or DEFAULT_ART_IMAGE_PROVIDER
+        ).strip().lower()
+        self.image_model = (
+            os.getenv("HOBBY_ART_IMAGE_MODEL")
+            or os.getenv("DREAM_IMAGE_MODEL")
+            or DEFAULT_ART_IMAGE_MODEL
+        ).strip()
 
     def _truncate(self, text: str, limit: int = 220) -> str:
         cleaned = " ".join((text or "").strip().split())
@@ -244,6 +259,12 @@ Responda APENAS com JSON valido:
                 "status": "not_configured",
                 "reason": "OPENROUTER_API_KEY indisponivel para avaliacao visual.",
             }
+        if OpenAI is None:
+            return {
+                "success": False,
+                "status": "not_configured",
+                "reason": "Pacote openai indisponivel para avaliacao visual.",
+            }
 
         prompt = f"""
 Voce e o proprio JungAgent avaliando uma imagem gerada a partir do seu ciclo psiquico recente.
@@ -316,6 +337,9 @@ Responda APENAS com JSON valido:
             }
 
     def _dig_for_image_url(self, value: Any) -> Optional[str]:
+        if isinstance(value, str) and value.startswith("data:image/"):
+            return value
+
         if isinstance(value, str) and value.startswith(("http://", "https://")):
             lowered = value.lower()
             if any(ext in lowered for ext in [".png", ".jpg", ".jpeg", ".webp"]) or "image" in lowered:
@@ -323,9 +347,9 @@ Responda APENAS com JSON valido:
             return value
 
         if isinstance(value, dict):
-            for key in ("image_url", "url", "download_url", "output_url"):
+            for key in ("image_url", "imageUrl", "url", "download_url", "output_url"):
                 candidate = value.get(key)
-                if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
+                if isinstance(candidate, str) and candidate.startswith(("http://", "https://", "data:image/")):
                     return candidate
             for item in value.values():
                 candidate = self._dig_for_image_url(item)
@@ -338,6 +362,89 @@ Responda APENAS com JSON valido:
                 if candidate:
                     return candidate
         return None
+
+    def _redact_image_data_urls(self, value: Any) -> Any:
+        if isinstance(value, str):
+            if value.startswith("data:image/"):
+                return "[data-url-redacted]"
+            return value
+        if isinstance(value, dict):
+            return {key: self._redact_image_data_urls(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._redact_image_data_urls(item) for item in value]
+        return value
+
+    def _generate_image_with_openrouter(self, image_prompt: str) -> Dict[str, Any]:
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key:
+            return {
+                "success": False,
+                "status": "not_configured",
+                "reason": "OPENROUTER_API_KEY indisponivel para geracao de arte.",
+            }
+
+        payload = {
+            "model": self.image_model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Crie uma imagem quadrada a partir deste material psiquico do JungAgent. "
+                        "Nao inclua texto escrito na imagem.\n\n"
+                        f"{image_prompt}"
+                    ),
+                }
+            ],
+            "modalities": ["image", "text"],
+            "image_config": {
+                "aspect_ratio": "1:1",
+            },
+            "temperature": 0.6,
+            "max_tokens": 300,
+        }
+
+        with httpx.Client(timeout=120.0) as client:
+            response = client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+
+        try:
+            response_json = response.json()
+        except Exception:
+            response_json = {"raw_text": response.text[:1000]}
+
+        if response.status_code >= 400:
+            return {
+                "success": False,
+                "status": "http_error",
+                "reason": f"OpenRouter retornou HTTP {response.status_code}",
+                "raw_response": self._redact_image_data_urls(response_json),
+                "provider": DEFAULT_ART_IMAGE_PROVIDER,
+            }
+
+        image_url = self._dig_for_image_url(response_json)
+        if not image_url:
+            return {
+                "success": False,
+                "status": "missing_image_url",
+                "reason": "OpenRouter respondeu sem data URL de imagem identificavel.",
+                "raw_response": self._redact_image_data_urls(response_json),
+                "provider": DEFAULT_ART_IMAGE_PROVIDER,
+            }
+
+        return {
+            "success": True,
+            "status": "generated",
+            "image_url": image_url,
+            "raw_response": self._redact_image_data_urls(response_json),
+            "provider": DEFAULT_ART_IMAGE_PROVIDER,
+            "model": self.image_model,
+        }
 
     def _generate_image_with_minimax(self, image_prompt: str) -> Dict[str, Any]:
         endpoint = (
@@ -399,7 +506,12 @@ Responda APENAS com JSON valido:
             "provider": "minimax",
         }
 
-    def _generate_image_with_pollinations(self, image_prompt: str, cycle_id: str) -> Dict[str, Any]:
+    def _generate_image_with_pollinations(
+        self,
+        image_prompt: str,
+        cycle_id: str,
+        fallback_reason: str = "Provider principal indisponivel ou nao configurado.",
+    ) -> Dict[str, Any]:
         seed = abs(hash(f"{cycle_id}:{image_prompt}")) % 1000000
         encoded_prompt = urllib.parse.quote(image_prompt)
         image_url = (
@@ -412,7 +524,7 @@ Responda APENAS com JSON valido:
             "image_url": image_url,
             "raw_response": {
                 "provider": "pollinations",
-                "fallback_reason": "MiniMax indisponivel ou nao configurado.",
+                "fallback_reason": fallback_reason,
             },
             "provider": "pollinations",
         }
@@ -463,17 +575,29 @@ Responda APENAS com JSON valido:
     def generate_cycle_art(self, user_id: str, cycle_id: str, world_state: Dict[str, Any]) -> Dict[str, Any]:
         inspirations = self._build_inspirations(user_id, cycle_id, world_state)
         art_payload = self._compose_art_payload(inspirations)
-        image_result = self._generate_image_with_minimax(art_payload["image_prompt"])
+
+        if self.image_provider == "minimax":
+            image_result = self._generate_image_with_minimax(art_payload["image_prompt"])
+        elif self.image_provider == "pollinations":
+            image_result = self._generate_image_with_pollinations(
+                art_payload["image_prompt"],
+                cycle_id=cycle_id,
+                fallback_reason="Pollinations configurado explicitamente.",
+            )
+        else:
+            image_result = self._generate_image_with_openrouter(art_payload["image_prompt"])
 
         if not image_result.get("success"):
             logger.info(
-                "HobbyArtEngine usando fallback Pollinations (status=%s, reason=%s)",
+                "HobbyArtEngine usando fallback Pollinations (provider=%s, status=%s, reason=%s)",
+                self.image_provider,
                 image_result.get("status"),
                 image_result.get("reason"),
             )
             image_result = self._generate_image_with_pollinations(
                 art_payload["image_prompt"],
                 cycle_id=cycle_id,
+                fallback_reason=image_result.get("reason") or "Provider principal indisponivel.",
             )
 
         evaluation_result = self._evaluate_generated_image(
@@ -498,7 +622,7 @@ Responda APENAS com JSON valido:
             image_url=image_result["image_url"],
             inspirations=inspirations,
             raw_response=image_result.get("raw_response") or {},
-            provider=image_result.get("provider") or "minimax",
+            provider=image_result.get("provider") or self.image_provider,
             critique_summary=critique_summary,
             critique_payload=critique_payload,
             evaluation_model=evaluation_model,
@@ -512,7 +636,8 @@ Responda APENAS com JSON valido:
             "image_prompt": art_payload["image_prompt"],
             "image_url": image_result["image_url"],
             "inspirations": inspirations,
-            "provider": image_result.get("provider") or "minimax",
+            "provider": image_result.get("provider") or self.image_provider,
+            "image_model": image_result.get("model"),
             "evaluation_status": evaluation_result.get("status"),
             "evaluation_summary": critique_summary,
             "evaluation_payload": critique_payload,
