@@ -708,6 +708,301 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
     }
 
 
+def _agent_setting(cursor: sqlite3.Cursor, key: str, fallback: Any) -> Any:
+    if not table_exists(cursor, "agent_settings"):
+        return fallback
+    columns = table_columns(cursor, "agent_settings")
+    value_column = "setting_value" if "setting_value" in columns else "value" if "value" in columns else None
+    if not value_column or "setting_key" not in columns:
+        return fallback
+    try:
+        cursor.execute(
+            f"""
+            SELECT {value_column} AS value
+            FROM agent_settings
+            WHERE setting_key = ?
+            LIMIT 1
+            """,
+            (key,),
+        )
+        row = cursor.fetchone()
+    except Exception:
+        return fallback
+    return row["value"] if row and row["value"] is not None else fallback
+
+
+def _json_field(row: Dict[str, Any], field: str, fallback: Any) -> None:
+    raw = row.pop(field, None)
+    row[field.replace("_json", "")] = json_or_empty(raw, fallback)
+
+
+def query_work(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
+    work_tables = [
+        "work_projects",
+        "work_destinations",
+        "work_briefs",
+        "work_artifacts",
+        "work_approval_tickets",
+        "work_delivery_events",
+        "work_experience_events",
+        "work_runs",
+    ]
+    table_counts = {
+        table: count_rows(cursor, table)
+        for table in work_tables
+        if table_exists(cursor, table)
+    }
+
+    projects: List[Dict[str, Any]] = []
+    if table_exists(cursor, "work_projects"):
+        cursor.execute(
+            """
+            SELECT
+                p.id,
+                p.name,
+                p.status,
+                p.priority,
+                p.default_destination_id,
+                d.label AS destination_label,
+                d.provider_key,
+                d.base_url,
+                p.daily_action_limit,
+                p.updated_at
+            FROM work_projects p
+            LEFT JOIN work_destinations d ON d.id = p.default_destination_id
+            ORDER BY
+                CASE WHEN p.status = 'active' THEN 0 ELSE 1 END,
+                p.priority DESC,
+                p.id ASC
+            """
+        )
+        projects = rows_to_dicts(cursor.fetchall())
+
+    pending_tickets = []
+    tickets_by_status: List[Dict[str, Any]] = []
+    if table_exists(cursor, "work_approval_tickets"):
+        cursor.execute(
+            """
+            SELECT status, COUNT(*) AS count
+            FROM work_approval_tickets
+            GROUP BY status
+            ORDER BY count DESC
+            """
+        )
+        tickets_by_status = rows_to_dicts(cursor.fetchall())
+        cursor.execute(
+            """
+            SELECT
+                t.id,
+                t.status,
+                t.action,
+                t.created_at,
+                t.reviewed_at,
+                t.executed_at,
+                t.brief_id,
+                t.artifact_id,
+                t.project_id,
+                p.name AS project_name,
+                d.label AS destination_label,
+                a.title AS artifact_title
+            FROM work_approval_tickets t
+            LEFT JOIN work_projects p ON p.id = t.project_id
+            LEFT JOIN work_destinations d ON d.id = t.destination_id
+            LEFT JOIN work_artifacts a ON a.id = t.artifact_id
+            WHERE t.status = 'pending'
+            ORDER BY t.created_at DESC, t.id DESC
+            LIMIT ?
+            """,
+            (args.limit,),
+        )
+        pending_tickets = rows_to_dicts(cursor.fetchall())
+
+    briefs_by_status: List[Dict[str, Any]] = []
+    recent_briefs: List[Dict[str, Any]] = []
+    autonomous_today = 0
+    autonomous_24h = 0
+    if table_exists(cursor, "work_briefs"):
+        cursor.execute(
+            """
+            SELECT status, origin, COUNT(*) AS count
+            FROM work_briefs
+            GROUP BY status, origin
+            ORDER BY count DESC
+            """
+        )
+        briefs_by_status = rows_to_dicts(cursor.fetchall())
+        cursor.execute(
+            """
+            SELECT
+                b.id,
+                b.origin,
+                b.status,
+                b.created_at,
+                b.updated_at,
+                b.project_id,
+                p.name AS project_name,
+                b.destination_id,
+                d.label AS destination_label,
+                b.source_seed,
+                b.action_type,
+                substr(b.objective, 1, 260) AS objective
+            FROM work_briefs b
+            LEFT JOIN work_projects p ON p.id = b.project_id
+            LEFT JOIN work_destinations d ON d.id = b.destination_id
+            ORDER BY b.created_at DESC, b.id DESC
+            LIMIT ?
+            """,
+            (args.limit,),
+        )
+        recent_briefs = rows_to_dicts(cursor.fetchall())
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM work_briefs
+            WHERE origin = 'autonomous_project'
+              AND created_at >= datetime('now', 'start of day')
+            """
+        )
+        autonomous_today = int(cursor.fetchone()["count"] or 0)
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM work_briefs
+            WHERE origin = 'autonomous_project'
+              AND created_at >= datetime('now', '-24 hours')
+            """
+        )
+        autonomous_24h = int(cursor.fetchone()["count"] or 0)
+
+    recent_runs = fetch_recent(
+        cursor,
+        "work_runs",
+        [
+            "id",
+            "cycle_id",
+            "status",
+            "trigger_source",
+            "selected_brief_id",
+            "destination_id",
+            "project_id",
+            "created_at",
+            "updated_at",
+            "input_summary",
+            "output_summary",
+            "metrics_json",
+            "errors_json",
+        ],
+        order_by="created_at DESC, id DESC",
+        limit=args.limit,
+    )
+    for row in recent_runs:
+        _json_field(row, "metrics_json", {})
+        _json_field(row, "errors_json", [])
+
+    recent_events = fetch_recent(
+        cursor,
+        "work_experience_events",
+        ["id", "event_type", "project_id", "created_at", "summary", "metadata_json", "rumination_fragment_id"],
+        order_by="created_at DESC, id DESC",
+        limit=args.limit,
+    )
+    for row in recent_events:
+        row["summary"] = (row.get("summary") or "")[:300]
+        _json_field(row, "metadata_json", {})
+
+    recent_artifacts = fetch_recent(
+        cursor,
+        "work_artifacts",
+        [
+            "id",
+            "brief_id",
+            "project_id",
+            "destination_id",
+            "status",
+            "title",
+            "slug",
+            "external_id",
+            "external_url",
+            "editorial_note",
+            "provider_payload_json",
+            "created_at",
+            "updated_at",
+        ],
+        order_by="created_at DESC, id DESC",
+        limit=args.limit,
+    )
+    for row in recent_artifacts:
+        payload = json_or_empty(row.pop("provider_payload_json", None), {})
+        package = payload.get("package") or {}
+        research = package.get("firecrawl_research") or {}
+        row["generation_mode"] = package.get("generation_mode")
+        row["research"] = {
+            "used": research.get("used"),
+            "destination_used": research.get("destination_used"),
+            "world_used": research.get("world_used"),
+            "source_mix": research.get("source_mix"),
+            "destination_urls": research.get("destination_urls"),
+            "world_urls": research.get("world_urls"),
+            "errors": research.get("errors"),
+        }
+
+    latest_work_phase = (_latest_raw_phase(cursor, "work", 1) or [None])[0]
+    active_projects = [project for project in projects if project.get("status") == "active"]
+    projects_missing_destination = [
+        project for project in active_projects
+        if not project.get("default_destination_id")
+    ]
+    pending_count = sum(int(item.get("count") or 0) for item in tickets_by_status if item.get("status") == "pending")
+    max_actions_per_day = int(_agent_setting(cursor, "work_max_autonomous_actions_per_day", 3) or 3)
+    max_pending_tickets = int(_agent_setting(cursor, "work_max_pending_tickets", 3) or 3)
+    autonomy_enabled = str(_agent_setting(cursor, "work_autonomy_enabled", "true")).strip().lower() in {"1", "true", "yes", "on"}
+
+    blockers: List[str] = []
+    if not autonomy_enabled:
+        blockers.append("work_autonomy_disabled")
+    if pending_count >= max_pending_tickets:
+        blockers.append("pending_ticket_backlog_at_limit")
+    if autonomous_today >= max_actions_per_day:
+        blockers.append("daily_autonomous_action_limit_reached_utc")
+    if projects_missing_destination:
+        blockers.append("active_projects_missing_destination")
+    if not active_projects:
+        blockers.append("no_active_projects")
+
+    assessment = {
+        "autonomy_enabled": autonomy_enabled,
+        "active_projects": len(active_projects),
+        "projects_missing_destination": len(projects_missing_destination),
+        "pending_tickets": pending_count,
+        "max_pending_tickets": max_pending_tickets,
+        "autonomous_today_utc": autonomous_today,
+        "autonomous_24h": autonomous_24h,
+        "max_actions_per_day": max_actions_per_day,
+        "blockers": blockers,
+    }
+    if not blockers and autonomous_24h == 0:
+        assessment["summary"] = "no obvious persisted blocker, inspect loop phase/logs for runtime failure"
+    elif blockers:
+        assessment["summary"] = "work autonomy is currently blocked by persisted state"
+    else:
+        assessment["summary"] = "work autonomy has produced recent autonomous briefs"
+
+    return {
+        "probe": "work",
+        "assessment": assessment,
+        "table_counts": table_counts,
+        "projects": projects,
+        "tickets_by_status": tickets_by_status,
+        "pending_tickets": pending_tickets,
+        "briefs_by_status": briefs_by_status,
+        "recent_briefs": recent_briefs,
+        "recent_artifacts": recent_artifacts,
+        "recent_work_runs": recent_runs,
+        "recent_work_events": recent_events,
+        "latest_work_phase": latest_work_phase,
+    }
+
+
 def _latest_raw_phase(cursor: sqlite3.Cursor, phase: str, limit: int = 1) -> List[Dict[str, Any]]:
     if not table_exists(cursor, "consciousness_loop_phase_results"):
         return []
@@ -845,6 +1140,7 @@ PROBES: Dict[str, Callable[[sqlite3.Cursor, argparse.Namespace], Dict[str, Any]]
     "meta": query_meta,
     "rumination": query_rumination,
     "world": query_world,
+    "work": query_work,
     "tables": query_tables,
 }
 
