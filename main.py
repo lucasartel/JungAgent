@@ -1,5 +1,7 @@
 import asyncio
 import uvicorn
+import base64
+from io import BytesIO
 from urllib.parse import urlencode
 from fastapi import Depends, FastAPI, Request
 from fastapi.exception_handlers import http_exception_handler
@@ -130,9 +132,18 @@ async def _send_will_delivery_via_telegram(bot, delivery: Dict) -> None:
 
     if image_url:
         caption = _truncate_telegram_text(text, 900) if text else None
+        photo = image_url
+        if isinstance(image_url, str) and image_url.startswith("data:image/"):
+            header, encoded = image_url.split(",", 1)
+            extension = "png"
+            content_type = header.split(";", 1)[0].replace("data:", "")
+            if "/" in content_type:
+                extension = content_type.split("/", 1)[1] or extension
+            photo = BytesIO(base64.b64decode(encoded))
+            photo.name = f"will-expression-art.{extension}"
         await bot.send_photo(
             chat_id=chat_id,
-            photo=image_url,
+            photo=photo,
             caption=caption,
         )
         if text and caption and caption != text:
