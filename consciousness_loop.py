@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import asyncio
+import base64
 import os
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
@@ -605,6 +606,34 @@ class ConsciousnessLoopManager:
             chunks.append(remaining)
         return chunks
 
+    def _send_admin_photo(self, httpx_module, token: str, chat_id: str, image_url: str, caption: str):
+        url = f"https://api.telegram.org/bot{token}/sendPhoto"
+        if image_url.startswith("data:image/"):
+            header, encoded = image_url.split(",", 1)
+            content_type = header.split(";", 1)[0].replace("data:", "") or "image/png"
+            image_bytes = base64.b64decode(encoded)
+            return httpx_module.post(
+                url,
+                data={
+                    "chat_id": chat_id,
+                    "caption": caption,
+                },
+                files={
+                    "photo": ("dream-image", image_bytes, content_type),
+                },
+                timeout=60.0,
+            )
+
+        return httpx_module.post(
+            url,
+            data={
+                "chat_id": chat_id,
+                "photo": image_url,
+                "caption": caption,
+            },
+            timeout=30.0,
+        )
+
     def _notify_admin_dream(self, dream_row: Dict) -> bool:
         token = os.getenv("TELEGRAM_BOT_TOKEN")
         chat_id = self._get_admin_chat_id()
@@ -626,6 +655,10 @@ class ConsciousnessLoopManager:
         ]
         if residue:
             header.extend(["", f"Residuo: {residue}"])
+        if dream_row.get("regulatory_function"):
+            header.append(f"Funcao reguladora: {dream_row.get('regulatory_function')}")
+        if dream_row.get("dream_mood"):
+            header.append(f"Afeto: {dream_row.get('dream_mood')}")
 
         summary_text = "\n".join(header).strip()
         full_text = summary_text
@@ -637,16 +670,7 @@ class ConsciousnessLoopManager:
 
             if image_url:
                 caption = summary_text[:1024]
-                url = f"https://api.telegram.org/bot{token}/sendPhoto"
-                response = httpx.post(
-                    url,
-                    data={
-                        "chat_id": chat_id,
-                        "photo": image_url,
-                        "caption": caption,
-                    },
-                    timeout=30.0,
-                )
+                response = self._send_admin_photo(httpx, token, chat_id, image_url, caption)
                 if response.status_code == 200:
                     logger.info("LOOP DREAM NOTIFY imagem enviada ao admin para sonho=%s", dream_id)
                     remaining_parts = self._chunk_admin_text(narrative)
@@ -679,7 +703,10 @@ class ConsciousnessLoopManager:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
-            SELECT id, dream_content, symbolic_theme, extracted_insight, image_url, status, created_at
+            SELECT id, dream_content, symbolic_theme, extracted_insight,
+                   regulatory_function, compensated_attitude, dream_mood,
+                   image_url, image_provider, image_model, image_status,
+                   status, created_at
             FROM agent_dreams
             WHERE user_id = ?
               AND extracted_insight IS NOT NULL
@@ -815,7 +842,10 @@ class ConsciousnessLoopManager:
             cursor = self.db.conn.cursor()
             cursor.execute(
                 """
-                SELECT id, dream_content, symbolic_theme, extracted_insight, image_url, status, created_at
+                SELECT id, dream_content, symbolic_theme, extracted_insight,
+                       regulatory_function, compensated_attitude, dream_mood,
+                       image_url, image_provider, image_model, image_status,
+                       status, created_at
                 FROM agent_dreams
                 WHERE user_id = ?
                 ORDER BY id DESC
@@ -836,8 +866,14 @@ class ConsciousnessLoopManager:
                     "dream_id": row["id"],
                     "dream_content": row["dream_content"],
                     "symbolic_theme": row["symbolic_theme"],
+                    "regulatory_function": row["regulatory_function"],
+                    "compensated_attitude": row["compensated_attitude"],
+                    "dream_mood": row["dream_mood"],
                     "extracted_insight": row["extracted_insight"],
                     "image_url": row["image_url"],
+                    "image_provider": row["image_provider"],
+                    "image_model": row["image_model"],
+                    "image_status": row["image_status"],
                     "status": row["status"],
                     "created_at": row["created_at"],
                 }

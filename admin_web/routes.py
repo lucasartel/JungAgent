@@ -2312,8 +2312,10 @@ async def dreams_dashboard(
     
     # Buscar todos os sonhos do banco
     cursor.execute("""
-        SELECT id, user_id, dream_content, symbolic_theme, 
+        SELECT id, user_id, dream_content, symbolic_theme,
+               regulatory_function, compensated_attitude, dream_mood,
                extracted_insight, status, image_url, image_prompt,
+               image_provider, image_model, image_status,
                datetime(created_at, 'localtime') as created_at,
                datetime(delivered_at, 'localtime') as delivered_at
         FROM agent_dreams

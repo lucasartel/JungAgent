@@ -1004,11 +1004,18 @@ class HybridDatabaseManager:
                 dream_content TEXT NOT NULL,
                 symbolic_theme TEXT,
                 extracted_insight TEXT,
+                regulatory_function TEXT,
+                compensated_attitude TEXT,
+                dream_mood TEXT,
                 
                 status TEXT DEFAULT 'pending', -- 'pending', 'faded', 'delivered'
                 
                 image_url TEXT,
                 image_prompt TEXT,
+                image_provider TEXT,
+                image_model TEXT,
+                image_status TEXT,
+                image_raw_response_json TEXT,
 
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 delivered_at DATETIME,
@@ -1050,6 +1057,20 @@ class HybridDatabaseManager:
             cursor.execute("ALTER TABLE agent_dreams ADD COLUMN image_prompt TEXT;")
         except sqlite3.OperationalError:
             pass # Coluna já existe
+
+        for column_name, column_type in (
+            ("regulatory_function", "TEXT"),
+            ("compensated_attitude", "TEXT"),
+            ("dream_mood", "TEXT"),
+            ("image_provider", "TEXT"),
+            ("image_model", "TEXT"),
+            ("image_status", "TEXT"),
+            ("image_raw_response_json", "TEXT"),
+        ):
+            try:
+                cursor.execute(f"ALTER TABLE agent_dreams ADD COLUMN {column_name} {column_type};")
+            except sqlite3.OperationalError:
+                pass
 
         try:
             cursor.execute("ALTER TABLE agent_hobby_artifacts ADD COLUMN critique_summary TEXT;")
@@ -2414,15 +2435,38 @@ Resposta: {ai_response}
     # SQLite: AGENT DREAMS (MOTOR ONÍRICO)
     # ========================================
 
-    def save_dream(self, user_id: str, dream_content: str, symbolic_theme: str) -> Optional[int]:
+    def save_dream(
+        self,
+        user_id: str,
+        dream_content: str,
+        symbolic_theme: str,
+        regulatory_function: str = "",
+        compensated_attitude: str = "",
+        dream_mood: str = "",
+    ) -> Optional[int]:
         """Salva um novo sonho gerado pelo Motor Onírico"""
         with self._lock:
             try:
                 cursor = self.conn.cursor()
                 cursor.execute("""
-                    INSERT INTO agent_dreams (user_id, dream_content, symbolic_theme, status)
-                    VALUES (?, ?, ?, 'pending')
-                """, (user_id, dream_content, symbolic_theme))
+                    INSERT INTO agent_dreams (
+                        user_id,
+                        dream_content,
+                        symbolic_theme,
+                        regulatory_function,
+                        compensated_attitude,
+                        dream_mood,
+                        status
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, 'pending')
+                """, (
+                    user_id,
+                    dream_content,
+                    symbolic_theme,
+                    regulatory_function,
+                    compensated_attitude,
+                    dream_mood,
+                ))
                 self.conn.commit()
                 return cursor.lastrowid
             except Exception as e:
@@ -2445,17 +2489,39 @@ Resposta: {ai_response}
                 logger.error(f"❌ Erro ao atualizar sonho com insight: {e}")
                 return False
 
-    def update_dream_image(self, dream_id: int, image_url: str, image_prompt: str) -> bool:
-        """Salva a URL e o Prompt da imagem gerada (DALL-E/Pollinations)"""
+    def update_dream_image(
+        self,
+        dream_id: int,
+        image_url: str,
+        image_prompt: str,
+        image_provider: str = "",
+        image_model: str = "",
+        image_status: str = "generated",
+        image_raw_response_json: str = "",
+    ) -> bool:
+        """Salva a imagem gerada e seus metadados."""
         with self._lock:
             for attempt in range(3):
                 try:
                     cursor = self.conn.cursor()
                     cursor.execute("""
                         UPDATE agent_dreams 
-                        SET image_url = ?, image_prompt = ?
+                        SET image_url = ?,
+                            image_prompt = ?,
+                            image_provider = ?,
+                            image_model = ?,
+                            image_status = ?,
+                            image_raw_response_json = ?
                         WHERE id = ?
-                    """, (image_url, image_prompt, dream_id))
+                    """, (
+                        image_url,
+                        image_prompt,
+                        image_provider,
+                        image_model,
+                        image_status,
+                        image_raw_response_json,
+                        dream_id,
+                    ))
                     self.conn.commit()
                     return cursor.rowcount > 0
                 except sqlite3.OperationalError as e:

@@ -199,6 +199,8 @@ OPENROUTER_API_KEY=your-openrouter-key
 OPENAI_API_KEY=your-openai-key
 CONVERSATION_MODEL=google/gemini-2.5-flash-lite
 INTERNAL_MODEL=google/gemini-2.5-flash-lite
+DREAM_IMAGE_PROVIDER=openrouter_nano_banana
+DREAM_IMAGE_MODEL=google/gemini-3.1-flash-image-preview
 
 QDRANT_URL=https://your-cluster.qdrant.io
 QDRANT_API_KEY=your-qdrant-api-key

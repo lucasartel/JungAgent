@@ -49,17 +49,33 @@
                         {% if dream.image_url %}
                         <img src="{{ dream.image_url }}" alt="Dream vision" class="table-cover-v2" onerror="this.style.display='none';">
                         {% endif %}
-                        <strong>Surreal metaphor</strong>
+                        <strong>Regulatory dream</strong>
                         <div class="mono-block-v2">{{ dream.dream_content }}</div>
                         {% if dream.symbolic_theme %}
                         <div class="tag-list-v2">
                             <span class="tag-v2">Theme: {{ dream.symbolic_theme }}</span>
                         </div>
                         {% endif %}
+                        {% if dream.regulatory_function or dream.compensated_attitude or dream.dream_mood %}
+                        <div class="tag-list-v2">
+                            {% if dream.regulatory_function %}
+                            <span class="tag-v2">Regulation: {{ dream.regulatory_function }}</span>
+                            {% endif %}
+                            {% if dream.compensated_attitude %}
+                            <span class="tag-v2">Compensates: {{ dream.compensated_attitude }}</span>
+                            {% endif %}
+                            {% if dream.dream_mood %}
+                            <span class="tag-v2">Mood: {{ dream.dream_mood }}</span>
+                            {% endif %}
+                        </div>
+                        {% endif %}
                     </section>
                     <section class="data-card-v2">
                         <strong>Extracted insight</strong>
                         <div class="mono-block-v2">{{ dream.extracted_insight }}</div>
+                        <div class="meta-line-v2">Image provider: {{ dream.image_provider or "-" }}</div>
+                        <div class="meta-line-v2">Image model: {{ dream.image_model or "-" }}</div>
+                        <div class="meta-line-v2">Image status: {{ dream.image_status or "-" }}</div>
                         <div class="meta-line-v2">Image prompt: {{ dream.image_prompt or "-" }}</div>
                         {% if dream.delivered_at %}
                         <div class="meta-line-v2">Delivered at {{ dream.delivered_at }}</div>

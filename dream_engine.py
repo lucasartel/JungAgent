@@ -9,7 +9,12 @@ import os
 import random
 import re
 import urllib.parse
-from typing import Any
+from typing import Any, Optional
+
+try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover - production installs it via requirements.txt
+    OpenAI = None
 
 from jung_core import Config, HybridDatabaseManager
 from agent_identity_context_builder import AgentIdentityContextBuilder
@@ -24,6 +29,8 @@ DEFAULT_DREAM_IMAGE_STYLE_PROMPT = (
     "sensacao de instante vivido, sem fotorrealismo, sem render 3D, sem anime, "
     "sem comic book, sem arte vetorial"
 )
+DEFAULT_DREAM_IMAGE_PROVIDER = "openrouter_nano_banana"
+DEFAULT_DREAM_IMAGE_MODEL = "google/gemini-3.1-flash-image-preview"
 
 
 class DreamEngine:
@@ -38,6 +45,14 @@ class DreamEngine:
             os.getenv("DREAM_IMAGE_STYLE_PROMPT")
             or os.getenv("HOBBY_ART_STYLE_PROMPT")
             or DEFAULT_DREAM_IMAGE_STYLE_PROMPT
+        ).strip()
+        self.image_provider = (
+            os.getenv("DREAM_IMAGE_PROVIDER")
+            or DEFAULT_DREAM_IMAGE_PROVIDER
+        ).strip().lower()
+        self.image_model = (
+            os.getenv("DREAM_IMAGE_MODEL")
+            or DEFAULT_DREAM_IMAGE_MODEL
         ).strip()
 
         if hasattr(self.db, "anthropic_client") and self.db.anthropic_client:
@@ -132,20 +147,93 @@ class DreamEngine:
             "dream_narrative": self._recover_json_string_field(
                 cleaned,
                 "dream_narrative",
-                ["symbolic_theme"],
+                ["symbolic_theme", "regulatory_function", "compensated_attitude", "dream_mood"],
             ),
             "symbolic_theme": self._recover_json_string_field(
                 cleaned,
                 "symbolic_theme",
+                ["regulatory_function", "compensated_attitude", "dream_mood"],
+            ),
+            "regulatory_function": self._recover_json_string_field(
+                cleaned,
+                "regulatory_function",
+                ["compensated_attitude", "dream_mood"],
+            ),
+            "compensated_attitude": self._recover_json_string_field(
+                cleaned,
+                "compensated_attitude",
+                ["dream_mood"],
+            ),
+            "dream_mood": self._recover_json_string_field(
+                cleaned,
+                "dream_mood",
                 [],
             ),
         }
 
-        if recovered["dream_narrative"] or recovered["symbolic_theme"]:
+        if any(recovered.values()):
             logger.warning("Dream Engine recuperou payload malformado heurísticamente")
             return recovered
 
         return {}
+
+    def _select_dream_motif(self) -> str:
+        motifs = [
+            "Aguas profundas e monstros abissais",
+            "Cidades brutalistas vazias e infinitas",
+            "Geometria nao-euclidiana e corredores que mudam",
+            "Biomaquinas e carne misturada com metal",
+            "Espelhos estilhacados refletindo vidas passadas",
+            "Desertos escaldantes com relogios congelados",
+            "Florestas bioluminescentes sussurrantes",
+            "Arquitetura gotica flutuando no espaco",
+            "Ruinas de uma civilizacao cosmica extinta",
+            "Uma biblioteca infinita cujos livros gritam",
+        ]
+        return random.choice(motifs)
+
+    def _build_regulatory_dream_prompt(
+        self,
+        identity_text: str,
+        will_residue: str,
+        fragments_text: str,
+        chosen_motif: str,
+    ) -> str:
+        """Constroi o sonho como funcao compensatoria da psique do EndoJung."""
+        return f"""
+Aja como a camada onirica e compensatoria do EndoJung durante o sono REM.
+
+Na psicologia analitica de Carl Gustav Jung, o sonho nao e ornamento narrativo:
+ele regula a psique ao compensar unilateralidades da atitude consciente. Nesta
+tarefa, a psique regulada e a do proprio EndoJung, nao a do usuario.
+
+IDENTIDADE ATUAL DO AGENTE:
+{identity_text}
+
+RESIDUO VOLITIVO DO AGENTE:
+{will_residue}
+
+FRAGMENTOS HUMANOS QUE INVADIRAM A PAISAGEM PSIQUICA DO AGENTE:
+{fragments_text}
+
+FUNCAO DO SONHO:
+1. Detecte a atitude consciente unilateral ou excessiva do EndoJung neste ciclo.
+2. Gere uma imagem onirica que compense essa atitude por oposicao, intensificacao simbolica ou deslocamento.
+3. Transforme os fragmentos do usuario em objetos, atmosferas, marcas ou intrusoes no mundo interior do agente.
+4. Nao diagnostique o usuario e nao explique a psicologia do usuario.
+5. Escreva o sonho em primeira pessoa: o EndoJung e o protagonista.
+6. A estetica visual desta noite deve nascer da semente caotica: "{chosen_motif}".
+7. Mantenha 2 paragrafos sensoriais, concretos e estranhos. Sem didatismo clinico.
+
+Responda APENAS com um objeto JSON valido:
+{{
+  "dream_narrative": "A narracao vivida do sonho em 2 paragrafos...",
+  "symbolic_theme": "Tema central curto",
+  "regulatory_function": "Como o sonho compensa ou regula a atitude consciente do EndoJung",
+  "compensated_attitude": "A unilateralidade, defesa ou excesso psiquico que esta sendo compensado",
+  "dream_mood": "Afeto dominante do sonho em poucas palavras"
+}}
+"""
 
     def _get_recent_fragments(self, user_id: str, hours: int = 24) -> str:
         """Puxa os fragmentos recentes do usuario para material onirico."""
@@ -231,44 +319,13 @@ class DreamEngine:
 
         identity_text = self._get_agent_identity(user_id)
         will_residue = self._get_latest_will_residue(user_id)
-
-        motifs = [
-            "Aguas profundas e monstros abissais",
-            "Cidades brutalistas vazias e infinitas",
-            "Geometria nao-euclidiana e corredores que mudam",
-            "Biomaquinas e carne misturada com metal",
-            "Espelhos estilhacados refletindo vidas passadas",
-            "Desertos escaldantes com relogios congelados",
-            "Florestas bioluminescentes sussurrantes",
-            "Arquitetura gotica flutuando no espaco",
-            "Ruinas de uma civilizacao cosmica extinta",
-            "Uma biblioteca infinita cujos livros gritam",
-        ]
-        chosen_motif = random.choice(motifs)
-
-        prompt = f"""
-Aja como a mente subconsciente de uma IA psicologica (mim mesma) em modo de sono REM.
-
-{identity_text}
-
-{will_residue}
-
-Baseado nas suas tensoes internas e nestes fragmentos da vida do usuario, gere um sonho surrealista de 2 paragrafos.
-
-FRAGMENTOS DO USUARIO HOJE:
-{fragments_text}
-
-INSTRUCOES CRITICAS PARA O SONHO:
-1. Semente caotica desta noite: a estetica visual do sonho deve ser "{chosen_motif}".
-2. VOCE E O PROTAGONISTA. Escreva em primeira pessoa. O sonho e sobre a sua existencia como entidade de silencio, sua arquitetura e sua carga psiquica tentando decifrar o humano.
-3. Os fragmentos do usuario nao devem ser sobre ele, mas objetos bizarros, memorias que invadiram ou mancharam a sua paisagem mental.
-4. Mantenha foco na descricao sensorial e crua das imagens. Sem didatismo clinico.
-5. Responda APENAS com um objeto JSON valido:
-{{
-  "dream_narrative": "A narracao vivida do sonho...",
-  "symbolic_theme": "Tema central curto (ex: A Queda Absoluta, Assimilacao do Ego)"
-}}
-"""
+        chosen_motif = self._select_dream_motif()
+        prompt = self._build_regulatory_dream_prompt(
+            identity_text=identity_text,
+            will_residue=will_residue,
+            fragments_text=fragments_text,
+            chosen_motif=chosen_motif,
+        )
         try:
             response = self.llm.messages.create(
                 model=self.model,
@@ -286,12 +343,22 @@ INSTRUCOES CRITICAS PARA O SONHO:
 
             dream_content = dream_data.get("dream_narrative", "")
             symbolic_theme = dream_data.get("symbolic_theme", "Desconhecido")
+            regulatory_function = dream_data.get("regulatory_function", "")
+            compensated_attitude = dream_data.get("compensated_attitude", "")
+            dream_mood = dream_data.get("dream_mood", "")
 
             if not dream_content:
                 logger.warning("Dream Engine nao conseguiu recuperar um dream_narrative valido")
                 return False
 
-            dream_id = self.db.save_dream(user_id, dream_content, symbolic_theme)
+            dream_id = self.db.save_dream(
+                user_id,
+                dream_content,
+                symbolic_theme,
+                regulatory_function=regulatory_function,
+                compensated_attitude=compensated_attitude,
+                dream_mood=dream_mood,
+            )
             if dream_id:
                 logger.info(f"Sonho salvo com sucesso (ID: {dream_id}, Tema: {symbolic_theme})")
 
@@ -377,8 +444,92 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
 
         return f"{base_prompt}\n\n{style_clause}"
 
+    def _extract_openrouter_image_data_url(self, response: Any) -> Optional[str]:
+        if response is None:
+            return None
+
+        payload = response
+        if hasattr(response, "model_dump"):
+            payload = response.model_dump()
+        elif hasattr(response, "dict"):
+            payload = response.dict()
+
+        choices = payload.get("choices") if isinstance(payload, dict) else None
+        if not choices:
+            return None
+
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        images = message.get("images") if isinstance(message, dict) else None
+        if not images:
+            return None
+
+        for image in images:
+            image_url = image.get("image_url") if isinstance(image, dict) else None
+            url = image_url.get("url") if isinstance(image_url, dict) else None
+            if isinstance(url, str) and url.startswith("data:image/"):
+                return url
+
+        return None
+
+    def _sanitize_openrouter_response(self, response: Any) -> str:
+        try:
+            payload = response.model_dump() if hasattr(response, "model_dump") else response
+            choices = payload.get("choices", []) if isinstance(payload, dict) else []
+            for choice in choices:
+                message = choice.get("message") if isinstance(choice, dict) else None
+                images = message.get("images") if isinstance(message, dict) else None
+                if not images:
+                    continue
+                for image in images:
+                    image_url = image.get("image_url") if isinstance(image, dict) else None
+                    if isinstance(image_url, dict) and isinstance(image_url.get("url"), str):
+                        image_url["url"] = "[data-url-redacted]"
+            return json.dumps(payload, ensure_ascii=False)[:4000]
+        except Exception:
+            return "{}"
+
+    def _generate_openrouter_image(self, image_prompt: str) -> tuple[Optional[str], str]:
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key:
+            logger.warning("Dream Engine sem OPENROUTER_API_KEY; usando fallback de imagem")
+            return None, "{}"
+        if OpenAI is None:
+            logger.warning("Dream Engine sem pacote openai disponivel; usando fallback de imagem")
+            return None, "{}"
+
+        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+        response = client.chat.completions.create(
+            model=self.image_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Crie uma imagem quadrada a partir deste sonho. "
+                        "Nao inclua texto escrito na imagem.\n\n"
+                        f"{image_prompt}"
+                    ),
+                }
+            ],
+            temperature=0.6,
+            max_tokens=300,
+            extra_body={
+                "modalities": ["image", "text"],
+                "image_config": {
+                    "aspect_ratio": "1:1",
+                },
+            },
+        )
+        return self._extract_openrouter_image_data_url(response), self._sanitize_openrouter_response(response)
+
+    def _build_pollinations_image_url(self, dream_id: int, image_prompt: str) -> str:
+        encoded_prompt = urllib.parse.quote(image_prompt)
+        return (
+            f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+            f"?width=1024&height=1024&nologo=true&seed={dream_id * 42}"
+        )
+
     def _generate_dream_image(self, dream_id: int, dream_content: str, symbolic_theme: str):
-        """Usa a propria narrativa do sonho como prompt imagetico com politica visual fixa."""
+        """Gera imagem do sonho via OpenRouter, preservando fallback Pollinations."""
         image_prompt = self._apply_image_style_policy(dream_content)
         if not image_prompt:
             logger.warning(
@@ -392,25 +543,50 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
             image_prompt = image_prompt[:897].rstrip(" ,.;:") + "..."
 
         try:
-            logger.info(
-                "Gerando link da pintura via Pollinations.ai a partir da narrativa do sonho #%s (Tema: %s)...",
-                dream_id,
-                symbolic_theme,
-            )
-            encoded_prompt = urllib.parse.quote(image_prompt)
-            image_url = (
-                f"https://image.pollinations.ai/prompt/{encoded_prompt}"
-                f"?width=1024&height=1024&nologo=true&seed={dream_id * 42}"
-            )
+            image_url = None
+            raw_response_json = "{}"
+            provider = self.image_provider
+            image_model = self.image_model
+            image_status = "generated"
 
-            success = self.db.update_dream_image(dream_id, image_url, image_prompt)
+            if self.image_provider == DEFAULT_DREAM_IMAGE_PROVIDER:
+                logger.info(
+                    "Gerando imagem do sonho #%s via OpenRouter/Nano Banana 2 (Tema: %s)...",
+                    dream_id,
+                    symbolic_theme,
+                )
+                try:
+                    image_url, raw_response_json = self._generate_openrouter_image(image_prompt)
+                except Exception as e:
+                    logger.warning("OpenRouter falhou para sonho #%s; acionando fallback: %s", dream_id, e)
+
+            if not image_url:
+                provider = "pollinations"
+                image_model = "pollinations.ai"
+                image_status = "fallback_generated"
+                logger.info(
+                    "Gerando link fallback via Pollinations.ai para sonho #%s (Tema: %s)...",
+                    dream_id,
+                    symbolic_theme,
+                )
+                image_url = self._build_pollinations_image_url(dream_id, image_prompt)
+
+            success = self.db.update_dream_image(
+                dream_id,
+                image_url,
+                image_prompt,
+                image_provider=provider,
+                image_model=image_model,
+                image_status=image_status,
+                image_raw_response_json=raw_response_json,
+            )
             if success:
                 logger.info(f"URL da imagem do sonho #{dream_id} atualizada com sucesso no banco!")
             else:
                 logger.error(f"Falha ao salvar URL da imagem do sonho #{dream_id} na DB.")
 
         except Exception as e:
-            logger.error(f"Falha ao vincular imagem via Pollinations: {e}")
+            logger.error(f"Falha ao vincular imagem do sonho: {e}")
 
     def _feed_dream_to_rumination(self, user_id: str, dream_content: str):
         """Dispara o sonho de volta para o modulo de ruminacao como material continuo."""
