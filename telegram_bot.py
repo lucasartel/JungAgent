@@ -1074,12 +1074,13 @@ O que você decide?
                 source_seed=None,
                 admin_telegram_id=str(user.id),
                 extracted=draft,
+                action_type=draft.get("action_type", "create_content"),
             )
             _clear_work_job_state(context)
             await update.message.reply_text(
                 "✅ Job enfileirado no Work.\n\n"
                 f"Brief #{brief['id']} criado para {brief.get('destination_label') or 'destino selecionado'}.\n"
-                "O loop ou o dashboard agora podem compor o pacote editorial e abrir a aprovação."
+                "O loop ou o dashboard agora podem compor o pacote de trabalho e abrir a aprovação."
             )
             return
 

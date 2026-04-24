@@ -936,6 +936,9 @@ def query_work(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
         package = payload.get("package") or {}
         research = package.get("firecrawl_research") or {}
         row["generation_mode"] = package.get("generation_mode")
+        row["daily_intent"] = package.get("daily_intent")
+        row["action_type"] = package.get("action_type") or payload.get("action_type")
+        row["content_type"] = package.get("content_type")
         row["research"] = {
             "used": research.get("used"),
             "destination_used": research.get("destination_used"),

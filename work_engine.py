@@ -1348,7 +1348,7 @@ class WorkEngine:
         if not destinations:
             return {
                 "status": "needs_clarification",
-                "clarification_question": "Cadastre primeiro um destino WordPress no dashboard do Work.",
+                "clarification_question": "Cadastre primeiro um destino no dashboard do Work.",
             }
 
         if destination is None:
@@ -1371,6 +1371,7 @@ class WorkEngine:
             delivery_mode = "draft_then_publish"
 
         priority = 80 if any(token in text_lower for token in ["urgente", "hoje", "agora"]) else 50
+        shape = self._provider_work_shape(destination.get("provider_key") or "")
         title_hint = ""
         match = re.search(r"sobre (.+?)(?: em tom| e deixar| para |$)", text, flags=re.IGNORECASE)
         if match:
@@ -1383,10 +1384,11 @@ class WorkEngine:
             "objective": text.strip(),
             "voice_mode": voice_mode,
             "delivery_mode": delivery_mode,
-            "content_type": "post",
+            "content_type": shape["content_type"],
             "priority": priority,
             "title_hint": title_hint,
             "notes": "",
+            "action_type": shape["action_type"],
         }
 
     def parse_job_text(self, text: str) -> Dict[str, Any]:
@@ -1407,10 +1409,11 @@ Responda APENAS em JSON com:
 {{
   "status": "ready" | "needs_clarification",
   "destination_label": "nome do destino",
-  "objective": "objetivo editorial em uma frase",
+  "objective": "objetivo de trabalho em uma frase",
   "voice_mode": "endojung" | "admin_brand",
   "delivery_mode": "draft" | "draft_then_publish",
-  "content_type": "post",
+  "content_type": "post | change_proposal | calendar_event_plan | document_plan | ops_check | work_proposal",
+  "action_type": "create_content | propose_repo_change | propose_calendar_event | propose_document_change | propose_operations_check | propose_work",
   "priority": 0-100,
   "title_hint": "sugestao curta",
   "notes": "observacoes adicionais",
@@ -1447,7 +1450,8 @@ Responda APENAS em JSON com:
             "objective": (parsed.get("objective") or heuristic["objective"]).strip(),
             "voice_mode": parsed.get("voice_mode") or heuristic["voice_mode"],
             "delivery_mode": parsed.get("delivery_mode") or heuristic["delivery_mode"],
-            "content_type": parsed.get("content_type") or "post",
+            "content_type": parsed.get("content_type") or heuristic.get("content_type") or "work_proposal",
+            "action_type": parsed.get("action_type") or heuristic.get("action_type") or "propose_work",
             "priority": int(parsed.get("priority") or heuristic["priority"]),
             "title_hint": (parsed.get("title_hint") or heuristic["title_hint"]).strip(),
             "notes": (parsed.get("notes") or "").strip(),
@@ -1531,7 +1535,11 @@ Responda APENAS em JSON com:
             (brief_id,),
         )
         row = cursor.fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        item = dict(row)
+        item["extracted"] = _json_loads_maybe(item.get("extracted_json") or "{}")
+        return item
 
     def list_briefs(self, limit: int = 40) -> List[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
@@ -1550,7 +1558,12 @@ Responda APENAS em JSON com:
             """,
             (limit,),
         )
-        return [dict(row) for row in cursor.fetchall()]
+        rows = []
+        for row in cursor.fetchall():
+            item = dict(row)
+            item["extracted"] = _json_loads_maybe(item.get("extracted_json") or "{}")
+            rows.append(item)
+        return rows
 
     def create_brief_from_seed(self, seed: str, destination_id: int, project_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
@@ -1680,16 +1693,16 @@ Responda APENAS em JSON com:
 Voce esta resumindo pesquisa Firecrawl para o modulo Work.
 Use apenas os documentos e o brief abaixo. Nao copie longos trechos.
 Seu trabalho e distinguir:
-- o que o destino ja publica e como publica
+- o que o destino ja faz, publica ou contem
 - o que o mundo oferece como tensao/gancho tematico
 - como transformar isso num novo trabalho coerente com o destino
 
 Responda APENAS em JSON:
 {{
   "summary": "resumo curto do que a pesquisa acrescenta ao trabalho",
-  "angle": "angulo editorial sugerido",
-  "destination_profile": "perfil editorial observado no destino",
-  "editorial_constraints": ["restricao 1", "restricao 2"],
+  "angle": "angulo de trabalho sugerido",
+  "destination_profile": "perfil operacional ou editorial observado no destino",
+  "editorial_constraints": ["restricao de forma/tom/operacao 1", "restricao 2"],
   "source_mix": "destination_only | destination_plus_world | world_only"
 }}
 
@@ -1697,8 +1710,11 @@ Contexto:
 {json.dumps({
     "brief": {
         "objective": brief.get("objective"),
+        "action_type": brief.get("action_type"),
+        "content_type": brief.get("content_type"),
         "project_name": brief.get("project_name"),
         "destination": brief.get("destination_label"),
+        "provider_key": brief.get("provider_key"),
     },
     "destination_sample_posts": destination_context.get("sample_posts") or [],
     "destination_documents": compact_destination_docs,
@@ -1757,15 +1773,26 @@ Contexto:
         except Exception as exc:
             logger.warning(f"WorkEngine: falha ao carregar identidade para composicao: {exc}")
 
+        extracted = brief.get("extracted") or _json_loads_maybe(brief.get("extracted_json") or "{}")
+        daily_intent = extracted.get("daily_intent") or {}
+        provider_key = brief.get("provider_key") or extracted.get("provider_key") or ""
+        provider_shape = daily_intent.get("provider_work_shape") or extracted.get("provider_work_shape") or self._provider_work_shape(provider_key)
+        permanent_directive = extracted.get("project_directive") or ""
+        permanent_editorial_policy = extracted.get("editorial_policy") or ""
+        permanent_seo_policy = extracted.get("seo_policy") or ""
+
         project_context = ""
         if brief.get("project_id"):
             project = self.get_project(int(brief["project_id"]))
             if project:
+                permanent_directive = permanent_directive or (project.get("directive") or project.get("description") or "")
+                permanent_editorial_policy = permanent_editorial_policy or (project.get("editorial_policy") or "")
+                permanent_seo_policy = permanent_seo_policy or (project.get("seo_policy") or "")
                 project_context = (
                     f"Nome: {project.get('name')}\n"
-                    f"Diretriz: {project.get('directive') or project.get('description') or ''}\n"
-                    f"Politica editorial: {project.get('editorial_policy') or ''}\n"
-                    f"Politica SEO: {project.get('seo_policy') or ''}"
+                    f"Diretriz permanente: {permanent_directive}\n"
+                    f"Politica editorial/voz: {permanent_editorial_policy}\n"
+                    f"Politica SEO/descoberta: {permanent_seo_policy}"
                 )
 
         firecrawl_research = self._build_firecrawl_research_for_brief(brief, world_state)
@@ -1773,9 +1800,9 @@ Contexto:
         if firecrawl_research.get("used"):
             research_context = (
                 f"Pesquisa geral: {firecrawl_research.get('summary') or ''}\n"
-                f"Perfil editorial do destino: {firecrawl_research.get('destination_profile') or 'nao identificado com clareza'}\n"
-                f"Angulo sugerido: {firecrawl_research.get('angle') or ''}\n"
-                f"Restricoes editoriais observadas: {', '.join(firecrawl_research.get('editorial_constraints') or []) or 'nenhuma explicitada'}\n"
+                f"Perfil do destino: {firecrawl_research.get('destination_profile') or 'nao identificado com clareza'}\n"
+                f"Angulo de trabalho sugerido: {firecrawl_research.get('angle') or ''}\n"
+                f"Restricoes observadas: {', '.join(firecrawl_research.get('editorial_constraints') or []) or 'nenhuma explicitada'}\n"
                 f"Origem da pesquisa: {firecrawl_research.get('source_mix') or 'desconhecida'}\n"
                 f"Fontes do destino: {', '.join(firecrawl_research.get('destination_urls') or []) or 'nenhuma'}\n"
                 f"Fontes do mundo: {', '.join(firecrawl_research.get('world_urls') or []) or 'nenhuma'}"
@@ -1784,10 +1811,15 @@ Contexto:
             research_context = f"Firecrawl nao aprofundou este brief: {'; '.join(firecrawl_research.get('errors') or [])}"
 
         prompt = f"""
-Voce esta compondo um pacote editorial de trabalho para o EndoJung.
+Voce esta compondo um pacote de trabalho para o EndoJung.
+O Work pode atuar em varios tipos de destino. WordPress e apenas um deles; no futuro podem existir GitHub, Google Calendar, Google Drive, Railway e outros providers.
 
-BRIEF:
-- objetivo: {brief.get('objective')}
+TAREFA DO DIA:
+- objetivo concreto: {brief.get('objective')}
+- action_type: {brief.get('action_type')}
+- content_type: {brief.get('content_type')}
+- provider: {provider_key or 'desconhecido'}
+- forma esperada do trabalho: {provider_shape.get('artifact_name') or 'work artifact'}
 - voz editorial: {brief.get('voice_mode')}
 - modo de entrega: {brief.get('delivery_mode')}
 - destino: {brief.get('destination_label')}
@@ -1809,9 +1841,9 @@ PESQUISA INTERNA DE WORK:
 
 Responda APENAS em JSON com:
 {{
-  "title": "titulo final",
-  "excerpt": "resumo curto",
-  "body": "texto completo em markdown simples",
+  "title": "titulo final do artifact",
+  "excerpt": "resumo curto do trabalho proposto",
+  "body": "conteudo completo em markdown simples; para WordPress e artigo, para GitHub/Calendar/Drive/Railway e proposta operacional estruturada",
   "tags": ["tag1", "tag2"],
   "categories": [],
   "cta": "cta opcional",
@@ -1819,10 +1851,13 @@ Responda APENAS em JSON com:
 }}
 
 Regras obrigatorias:
-- Se houver perfil editorial do destino, alinhe idioma, densidade, tipo de artigo e tom a ele.
-- Use o mundo apenas como materia tematica complementar; o destino define a forma.
-- NUNCA copie a diretriz ou o briefing no corpo final.
-- Se nao houver material suficiente para escrever um artigo coerente com o destino, devolva "body" vazio e explique isso em "editorial_note".
+- A diretriz permanente do projeto orienta limites e estilo; ela nao e o trabalho final.
+- A tarefa do dia e o que deve ser produzido agora.
+- Use o mundo apenas como materia tematica complementar; o destino e o provider definem a forma.
+- NUNCA copie a diretriz permanente ou o briefing no corpo final.
+- Se o provider for WordPress e content_type for post, produza um artigo publicavel coerente com o destino.
+- Se o provider nao for WordPress, produza uma proposta de acao segura compativel com o provider, nao um artigo editorial.
+- Se nao houver material suficiente para um artifact confiavel, devolva "body" vazio e explique isso em "editorial_note".
 """
 
         try:
@@ -1839,19 +1874,22 @@ Regras obrigatorias:
 
         review_flags: List[str] = []
         generation_mode = "structured"
+        is_editorial_post = provider_key == "wordpress" and (brief.get("content_type") or "") == "post"
         if brief.get("destination_id") and not firecrawl_research.get("destination_used"):
-            review_flags.append("Work nao conseguiu ler amostras suficientes do destino; aderencia editorial ficou fragil.")
-        if _looks_like_objective_echo(parsed_title, brief.get("objective") or ""):
-            review_flags.append("Titulo retornado pelo LLM ecoou a diretriz do projeto.")
-        if _looks_like_objective_echo(parsed_body, brief.get("objective") or ""):
-            review_flags.append("Corpo retornado pelo LLM ecoou o briefing em vez de virar artigo.")
-        if parsed_body and len(parsed_body) < 900:
+            review_flags.append("Work nao conseguiu ler amostras suficientes do destino; aderencia ao contexto do destino ficou fragil.")
+        if _looks_like_objective_echo(parsed_title, brief.get("objective") or "") or _looks_like_objective_echo(parsed_title, permanent_directive):
+            review_flags.append("Titulo retornado pelo LLM ecoou o briefing ou a diretriz do projeto.")
+        if _looks_like_objective_echo(parsed_body, brief.get("objective") or "") or _looks_like_objective_echo(parsed_body, permanent_directive):
+            review_flags.append("Corpo retornado pelo LLM ecoou o briefing ou a diretriz em vez de virar artifact.")
+        if parsed_body and is_editorial_post and len(parsed_body) < 900:
             review_flags.append("Corpo retornado ficou curto para um artigo editorial maduro.")
 
         degraded = (
             not parsed_body
             or _looks_like_objective_echo(parsed_body, brief.get("objective") or "")
             or _looks_like_objective_echo(parsed_title, brief.get("objective") or "")
+            or _looks_like_objective_echo(parsed_body, permanent_directive)
+            or _looks_like_objective_echo(parsed_title, permanent_directive)
         )
 
         if degraded:
@@ -1872,14 +1910,16 @@ Regras obrigatorias:
             excerpt = "Work nao conseguiu transformar este brief em um artigo confiavel; revise e gere novamente."
             body = (
                 "## Review needed\n\n"
-                "Work nao conseguiu compor um artigo publicavel com confianca nesta rodada.\n\n"
+                "Work nao conseguiu compor um artifact confiavel nesta rodada.\n\n"
                 f"- Objetivo recebido: {brief.get('objective') or 'sem objetivo'}\n"
+                f"- Provider: {provider_key or 'desconhecido'}\n"
+                f"- Action type: {brief.get('action_type') or 'desconhecida'}\n"
                 f"- Pesquisa do destino disponivel: {'sim' if firecrawl_research.get('destination_used') else 'nao'}\n"
                 f"- Pesquisa de mundo disponivel: {'sim' if firecrawl_research.get('world_used') else 'nao'}\n"
-                f"- Perfil editorial inferido: {firecrawl_research.get('destination_profile') or 'insuficiente'}\n\n"
-                "Recomendacao: rejeitar este ticket e deixar o Work tentar novamente com mais contexto editorial do destino."
+                f"- Perfil do destino inferido: {firecrawl_research.get('destination_profile') or 'insuficiente'}\n\n"
+                "Recomendacao: rejeitar este ticket e deixar o Work tentar novamente com mais contexto do destino."
             )
-            editorial_note = "Saida degradada: o Work nao metabolizou o briefing em artigo coerente nesta rodada."
+            editorial_note = "Saida degradada: o Work nao metabolizou o briefing em artifact coerente nesta rodada."
 
         tags = parsed.get("tags") or []
         categories = parsed.get("categories") or []
@@ -1895,6 +1935,10 @@ Regras obrigatorias:
             "editorial_note": editorial_note,
             "generation_mode": generation_mode,
             "review_flags": review_flags,
+            "daily_intent": daily_intent,
+            "provider_key": provider_key,
+            "action_type": brief.get("action_type"),
+            "content_type": brief.get("content_type"),
             "firecrawl_research": {
                 "used": bool(firecrawl_research.get("used")),
                 "urls": firecrawl_research.get("urls", []),
@@ -2613,35 +2657,153 @@ Regras obrigatorias:
         cursor.execute("SELECT COUNT(*) FROM work_approval_tickets WHERE status = 'pending'")
         return int(cursor.fetchone()[0] or 0)
 
-    def _build_project_seed(self, project: Dict[str, Any], seed: str = "") -> str:
+    def _provider_work_shape(self, provider_key: str) -> Dict[str, str]:
+        provider = (provider_key or "").strip().lower()
+        if provider == "wordpress":
+            return {
+                "action_type": "create_content",
+                "content_type": "post",
+                "artifact_name": "article draft",
+                "work_verb": "create a publishable draft",
+            }
+        if provider == "github":
+            return {
+                "action_type": "propose_repo_change",
+                "content_type": "change_proposal",
+                "artifact_name": "issue or pull request proposal",
+                "work_verb": "propose a small repository improvement",
+            }
+        if provider == "google_calendar":
+            return {
+                "action_type": "propose_calendar_event",
+                "content_type": "calendar_event_plan",
+                "artifact_name": "calendar event proposal",
+                "work_verb": "propose a scheduled event",
+            }
+        if provider == "google_drive":
+            return {
+                "action_type": "propose_document_change",
+                "content_type": "document_plan",
+                "artifact_name": "document change proposal",
+                "work_verb": "propose a document action",
+            }
+        if provider == "railway":
+            return {
+                "action_type": "propose_operations_check",
+                "content_type": "ops_check",
+                "artifact_name": "operations check proposal",
+                "work_verb": "propose a safe operational check",
+            }
+        return {
+            "action_type": "propose_work",
+            "content_type": "work_proposal",
+            "artifact_name": "work proposal",
+            "work_verb": "propose a concrete action",
+        }
+
+    def _build_daily_work_intent(self, project: Dict[str, Any], seed: str = "") -> Dict[str, Any]:
+        provider_key = project.get("provider_key") or ""
+        shape = self._provider_work_shape(provider_key)
         directive = (project.get("directive") or project.get("description") or project.get("name") or "").strip()
         editorial = (project.get("editorial_policy") or "").strip()
         seo = (project.get("seo_policy") or "").strip()
-        parts = [
-            f"Projeto: {project.get('name')}",
-            f"Diretriz: {directive or 'desenvolver uma acao editorial coerente com o projeto'}",
-        ]
-        if seed:
-            parts.append(f"Semente do mundo: {seed}")
-        if editorial:
-            parts.append(f"Politica editorial: {editorial}")
-        if seo:
-            parts.append(f"SEO: {seo}")
-        return " | ".join(parts)
+        spec = self._provider_spec(provider_key) if provider_key else {"capabilities": []}
+        prompt = f"""
+Voce esta formulando a intencao diaria de trabalho autonomo do JungAgent.
+Nao escreva o trabalho final. Transforme a diretriz permanente do projeto em uma pauta concreta, curta e executavel para este ciclo.
 
-    def _has_recent_project_brief(self, project_id: int, source_seed: str, action_type: str = "create_content") -> bool:
+Responda APENAS em JSON:
+{{
+  "daily_objective": "uma tarefa concreta do dia, sem copiar a diretriz permanente",
+  "title_hint": "nome curto da pauta",
+  "operator_note": "nota curta para orientar a etapa de composicao",
+  "action_type": "{shape['action_type']}",
+  "content_type": "{shape['content_type']}"
+}}
+
+Contexto:
+{json.dumps({
+    "project": {
+        "name": project.get("name"),
+        "directive": directive,
+        "editorial_policy": editorial,
+        "seo_policy": seo,
+        "priority": project.get("priority"),
+    },
+    "destination": {
+        "label": project.get("destination_label"),
+        "provider_key": provider_key,
+        "base_url": project.get("base_url"),
+        "capabilities": spec.get("capabilities") or [],
+    },
+    "provider_work_shape": shape,
+    "world_seed": seed,
+}, ensure_ascii=False)}
+
+Regras:
+- A diretriz do projeto e permanente; nao a copie como objetivo.
+- A semente do mundo sugere tema, urgencia ou contexto, mas nao deve dominar a forma do destino.
+- A tarefa deve ser compativel com as capacidades do provider.
+- Para WordPress, formule uma pauta editorial concreta.
+- Para GitHub, Calendar, Drive ou Railway, formule uma proposta operacional segura, nao uma publicacao editorial.
+"""
+        try:
+            parsed = _json_loads_maybe(get_llm_response(prompt, temperature=0.25, max_tokens=420))
+        except Exception as exc:
+            logger.warning("WorkEngine: falha ao gerar intencao diaria de Work: %s", exc)
+            parsed = {}
+
+        daily_objective = str(parsed.get("daily_objective") or "").strip()
+        if not daily_objective or _looks_like_objective_echo(daily_objective, directive):
+            daily_objective = self._fallback_daily_objective(project, seed, shape)
+
+        action_type = str(parsed.get("action_type") or shape["action_type"]).strip() or shape["action_type"]
+        content_type = str(parsed.get("content_type") or shape["content_type"]).strip() or shape["content_type"]
+        title_hint = str(parsed.get("title_hint") or "").strip()
+        operator_note = str(parsed.get("operator_note") or "").strip()
+
+        return {
+            "daily_objective": _truncate(daily_objective, 360),
+            "title_hint": _truncate(title_hint or daily_objective, 90),
+            "operator_note": _truncate(operator_note, 320),
+            "action_type": action_type,
+            "content_type": content_type,
+            "project_directive": directive,
+            "editorial_policy": editorial,
+            "seo_policy": seo,
+            "world_seed": seed,
+            "provider_key": provider_key,
+            "provider_work_shape": shape,
+        }
+
+    def _fallback_daily_objective(self, project: Dict[str, Any], seed: str, shape: Dict[str, str]) -> str:
+        destination = project.get("destination_label") or project.get("name") or "destination"
+        project_name = project.get("name") or "Work project"
+        if seed:
+            theme = re.sub(r"^[^:]{1,80}:\s*", "", seed).strip()
+            theme = _truncate(theme, 140)
+        else:
+            theme = "uma necessidade concreta do ciclo atual"
+        return f"{shape['work_verb'].capitalize()} for {project_name} at {destination}, using '{theme}' as today's focus."
+
+    def _has_recent_project_brief(self, project_id: int, source_seed: str, action_type: Optional[str] = None) -> bool:
         cursor = self.db.conn.cursor()
+        action_clause = "AND action_type = ?" if action_type else ""
+        params: List[Any] = [project_id, source_seed]
+        if action_type:
+            params.append(action_type)
         cursor.execute(
-            """
+            f"""
             SELECT id
             FROM work_briefs
             WHERE project_id = ?
-              AND action_type = ?
               AND source_seed = ?
+              {action_clause}
+              AND status NOT IN ('rejected', 'failed')
               AND created_at >= datetime('now', '-7 days')
             LIMIT 1
             """,
-            (project_id, action_type, source_seed),
+            tuple(params),
         )
         return cursor.fetchone() is not None
 
@@ -2705,7 +2867,8 @@ Regras obrigatorias:
             if self._has_recent_project_brief(int(project["id"]), source_seed):
                 continue
 
-            objective = self._build_project_seed(project, seed)
+            intent = self._build_daily_work_intent(project, seed)
+            objective = intent["daily_objective"]
             brief = self.create_brief(
                 origin="autonomous_project",
                 trigger_source="work_autonomy",
@@ -2713,10 +2876,10 @@ Regras obrigatorias:
                 objective=objective,
                 voice_mode="endojung",
                 delivery_mode="draft",
-                content_type="post",
+                content_type=intent["content_type"],
                 priority=int(project.get("priority") or 50),
-                title_hint="",
-                notes="Brief autonomo gerado pelo Work a partir da diretriz do projeto.",
+                title_hint=intent["title_hint"],
+                notes=intent.get("operator_note") or "Brief autonomo gerado pelo Work a partir da pauta diaria do projeto.",
                 raw_input=objective,
                 source_seed=source_seed,
                 extracted={
@@ -2724,9 +2887,15 @@ Regras obrigatorias:
                     "project_id": project.get("id"),
                     "project_name": project.get("name"),
                     "world_seed": seed,
+                    "daily_intent": intent,
+                    "project_directive": intent.get("project_directive"),
+                    "editorial_policy": intent.get("editorial_policy"),
+                    "seo_policy": intent.get("seo_policy"),
+                    "provider_key": intent.get("provider_key"),
+                    "provider_work_shape": intent.get("provider_work_shape"),
                 },
                 project_id=project.get("id"),
-                action_type="create_content",
+                action_type=intent["action_type"],
             )
             if brief:
                 created += 1
