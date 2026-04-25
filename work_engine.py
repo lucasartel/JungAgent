@@ -221,6 +221,24 @@ def _looks_like_objective_echo(body: str, objective: str) -> bool:
     return "diretriz:" in normalized_body and normalized_objective[:120] in normalized_body
 
 
+def _has_any_term(text: str, terms: List[str]) -> bool:
+    normalized = _normalize_compare(text)
+    return any(_normalize_compare(term) in normalized for term in terms)
+
+
+def _extract_theme_from_work_seed(seed: str, fallback: str = "uma necessidade concreta do ciclo atual") -> str:
+    cleaned = " ".join((seed or "").split())
+    if not cleaned:
+        return fallback
+    cleaned = re.sub(r"^[^:]{1,80}:\s*", "", cleaned).strip()
+    cleaned = re.split(r"\s+(?:Este eixo|Ha continuidade|Há continuidade|This axis)\b", cleaned, maxsplit=1)[0].strip()
+    cleaned = re.sub(r"^produzir\s+leitura/acao\s+sobre\s+", "", cleaned, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r"^produzir\s+leitura/ação\s+sobre\s+", "", cleaned, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r"^explorar\s+imagens,\s*simbolos\s+ou\s+atmosferas\s+ligados?\s+a\s+", "", cleaned, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r"^explorar\s+imagens,\s*símbolos\s+ou\s+atmosferas\s+ligados?\s+a\s+", "", cleaned, flags=re.IGNORECASE).strip()
+    return _truncate(cleaned or fallback, 140)
+
+
 def _same_host(url_a: str, url_b: str) -> bool:
     host_a = (urlsplit(url_a).hostname or "").strip().lower()
     host_b = (urlsplit(url_b).hostname or "").strip().lower()
@@ -1636,11 +1654,18 @@ Responda APENAS em JSON com:
             client = get_firecrawl_client(self._firecrawl_overrides())
             destination_context = self._select_destination_research_urls(brief)
             destination_urls = destination_context.get("urls") or []
-            world_urls = self._select_work_research_urls(world_state, brief)
             destination_result = client.scrape_urls(
                 destination_urls,
                 context_label=f"{brief.get('project_name') or brief.get('destination_label') or 'work'}_destination",
             )
+            provider_key = (brief.get("provider_key") or "").strip().lower()
+            destination_used = bool(destination_result.get("used"))
+            # Destination research defines the working form. For editorial destinations,
+            # broad world URLs are only thematic background and should not contaminate style.
+            if provider_key == "wordpress" and destination_used:
+                world_urls = []
+            else:
+                world_urls = self._select_work_research_urls(world_state, brief)
             world_result = client.scrape_urls(
                 world_urls,
                 context_label=f"{brief.get('project_name') or brief.get('destination_label') or 'work'}_world",
@@ -1777,6 +1802,7 @@ Contexto:
         daily_intent = extracted.get("daily_intent") or {}
         provider_key = brief.get("provider_key") or extracted.get("provider_key") or ""
         provider_shape = daily_intent.get("provider_work_shape") or extracted.get("provider_work_shape") or self._provider_work_shape(provider_key)
+        project_profile = daily_intent.get("inferred_project_profile") or {}
         permanent_directive = extracted.get("project_directive") or ""
         permanent_editorial_policy = extracted.get("editorial_policy") or ""
         permanent_seo_policy = extracted.get("seo_policy") or ""
@@ -1785,6 +1811,7 @@ Contexto:
         if brief.get("project_id"):
             project = self.get_project(int(brief["project_id"]))
             if project:
+                project_profile = project_profile or self._project_work_profile(project)
                 permanent_directive = permanent_directive or (project.get("directive") or project.get("description") or "")
                 permanent_editorial_policy = permanent_editorial_policy or (project.get("editorial_policy") or "")
                 permanent_seo_policy = permanent_seo_policy or (project.get("seo_policy") or "")
@@ -1826,6 +1853,7 @@ TAREFA DO DIA:
 - projeto: {brief.get('project_name') or 'sem projeto'}
 - hint de titulo: {brief.get('title_hint') or 'nenhum'}
 - notas: {brief.get('notes') or 'nenhuma'}
+- perfil inferido do projeto/destino: {json.dumps(project_profile, ensure_ascii=False)}
 
 PROJETO DE WORK:
 {project_context or 'Sem projeto especifico.'}
@@ -1853,7 +1881,8 @@ Responda APENAS em JSON com:
 Regras obrigatorias:
 - A diretriz permanente do projeto orienta limites e estilo; ela nao e o trabalho final.
 - A tarefa do dia e o que deve ser produzido agora.
-- Use o mundo apenas como materia tematica complementar; o destino e o provider definem a forma.
+- Use o mundo apenas como materia tematica complementar; o destino e o provider definem forma, voz, idioma e publico.
+- Nao cite fontes gerais do mundo como se fossem referencias editoriais do destino.
 - NUNCA copie a diretriz permanente ou o briefing no corpo final.
 - Se o provider for WordPress e content_type for post, produza um artigo publicavel coerente com o destino.
 - Se o provider nao for WordPress, produza uma proposta de acao segura compativel com o provider, nao um artigo editorial.
@@ -2457,6 +2486,11 @@ Regras obrigatorias:
         if not artifact or not destination:
             raise ValueError("Artifact ou destino nao encontrado")
 
+        provider_payload = _json_loads_maybe(artifact.get("provider_payload_json") or "{}")
+        package = provider_payload.get("package") or {}
+        if (package.get("generation_mode") or "") == "degraded_fallback":
+            raise ValueError("Artifact degradado: rejeite este ticket e deixe o Work tentar novamente com mais contexto.")
+
         provider = self.skill_registry.get(destination["provider_key"])
         if not provider:
             raise ValueError("Provider nao suportado")
@@ -2701,9 +2735,33 @@ Regras obrigatorias:
             "work_verb": "propose a concrete action",
         }
 
+    def _project_work_profile(self, project: Dict[str, Any]) -> Dict[str, str]:
+        combined = " ".join(
+            str(project.get(key) or "")
+            for key in ["name", "directive", "description", "editorial_policy", "seo_policy", "destination_label", "base_url"]
+        )
+        profile = {
+            "language": "Portuguese",
+            "format_hint": "article",
+            "audience_hint": "the destination audience",
+            "voice_hint": "match the destination's observed voice",
+        }
+        if _has_any_term(combined, [" english", " en ", "homilyai en", "sermon", "homily", "scripture", "bible"]):
+            profile["language"] = "English"
+        if _has_any_term(combined, ["sermon", "homily", "scripture", "bible", "outline"]):
+            profile["format_hint"] = "sermon outline"
+            profile["audience_hint"] = "preachers, pastors, and Christian communicators"
+            profile["voice_hint"] = "pastoral, structured, biblically grounded"
+        elif _has_any_term(combined, ["educador", "educadoria", "educacao", "educação", "pedagog", "sala de aula", "professor"]):
+            profile["format_hint"] = "practical education article"
+            profile["audience_hint"] = "educators, school leaders, and education professionals"
+            profile["voice_hint"] = "clear, practical, reflective, and applicable to school life"
+        return profile
+
     def _build_daily_work_intent(self, project: Dict[str, Any], seed: str = "") -> Dict[str, Any]:
         provider_key = project.get("provider_key") or ""
         shape = self._provider_work_shape(provider_key)
+        profile = self._project_work_profile(project)
         directive = (project.get("directive") or project.get("description") or project.get("name") or "").strip()
         editorial = (project.get("editorial_policy") or "").strip()
         seo = (project.get("seo_policy") or "").strip()
@@ -2736,6 +2794,7 @@ Contexto:
         "base_url": project.get("base_url"),
         "capabilities": spec.get("capabilities") or [],
     },
+    "inferred_project_profile": profile,
     "provider_work_shape": shape,
     "world_seed": seed,
 }, ensure_ascii=False)}
@@ -2745,6 +2804,7 @@ Regras:
 - A semente do mundo sugere tema, urgencia ou contexto, mas nao deve dominar a forma do destino.
 - A tarefa deve ser compativel com as capacidades do provider.
 - Para WordPress, formule uma pauta editorial concreta.
+- Para WordPress, preserve idioma, formato, publico e voz inferidos do destino/projeto.
 - Para GitHub, Calendar, Drive ou Railway, formule uma proposta operacional segura, nao uma publicacao editorial.
 """
         try:
@@ -2774,17 +2834,41 @@ Regras:
             "world_seed": seed,
             "provider_key": provider_key,
             "provider_work_shape": shape,
+            "inferred_project_profile": profile,
         }
 
     def _fallback_daily_objective(self, project: Dict[str, Any], seed: str, shape: Dict[str, str]) -> str:
         destination = project.get("destination_label") or project.get("name") or "destination"
         project_name = project.get("name") or "Work project"
-        if seed:
-            theme = re.sub(r"^[^:]{1,80}:\s*", "", seed).strip()
-            theme = _truncate(theme, 140)
-        else:
-            theme = "uma necessidade concreta do ciclo atual"
-        return f"{shape['work_verb'].capitalize()} for {project_name} at {destination}, using '{theme}' as today's focus."
+        theme = _extract_theme_from_work_seed(seed)
+        profile = self._project_work_profile(project)
+        provider_key = (project.get("provider_key") or "").strip().lower()
+
+        if provider_key == "wordpress":
+            if profile["format_hint"] == "sermon outline":
+                return (
+                    f"Write a new sermon outline in {profile['language']} for {destination} about {theme}, "
+                    "following the destination's observed outline structure and pastoral voice without copying recent posts."
+                )
+            if profile["format_hint"] == "practical education article":
+                return (
+                    f"Escrever um artigo pratico para {destination} sobre {theme}, "
+                    "voltado a educadores e coerente com o tom editorial observado nos artigos recentes."
+                )
+            return (
+                f"Write a new publishable article for {destination} about {theme}, "
+                "matching the destination's observed format, audience, and voice."
+            )
+
+        if provider_key == "github":
+            return f"Propose one small, reviewable repository improvement for {project_name}, guided by {theme}, without direct deployment."
+        if provider_key == "google_calendar":
+            return f"Propose one calendar action for {project_name} that turns {theme} into a safe scheduled commitment."
+        if provider_key == "google_drive":
+            return f"Propose one document or folder action for {project_name} that clarifies or advances {theme}."
+        if provider_key == "railway":
+            return f"Propose one safe operational check for {project_name} related to {theme}, without changing production."
+        return f"{shape['work_verb'].capitalize()} for {project_name} at {destination}, guided by {theme}."
 
     def _has_recent_project_brief(self, project_id: int, source_seed: str, action_type: Optional[str] = None) -> bool:
         cursor = self.db.conn.cursor()

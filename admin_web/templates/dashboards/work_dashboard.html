@@ -70,9 +70,9 @@
                     <select class="input-v2" name="default_destination_id" id="projectDestinationSelect"></select>
                     <input class="input-v2" name="priority" type="number" min="0" max="100" value="50" placeholder="Priority">
                 </div>
-                <textarea class="input-v2" name="directive" rows="3" placeholder="Project directive: what should the agent try to develop?"></textarea>
-                <textarea class="input-v2" name="editorial_policy" rows="2" placeholder="Editorial policy / voice"></textarea>
-                <textarea class="input-v2" name="seo_policy" rows="2" placeholder="SEO policy"></textarea>
+                <textarea class="input-v2" name="directive" rows="3" placeholder="Permanent directive: destination purpose, allowed work, target audience, and what a good daily action looks like. Do not write today's post here."></textarea>
+                <textarea class="input-v2" name="editorial_policy" rows="2" placeholder="Voice and format: language, structure, tone, examples to imitate, and things to avoid."></textarea>
+                <textarea class="input-v2" name="seo_policy" rows="2" placeholder="Discovery policy: keywords, title style, headings, slug rules, excerpt/meta rules."></textarea>
                 <button class="button-v2 button-v2--primary" type="submit">Create project</button>
             </form>
             <div class="scroll-list-v2" id="projectsList"></div>
@@ -291,6 +291,7 @@ function renderPendingApprovals(state) {
                 firecrawl.destination_used ? "destination" : "",
                 firecrawl.world_used ? "world" : ""
             ].filter(Boolean).join(" + ");
+            const isDegraded = artifact.generation_mode === "degraded_fallback";
             return `
                 <article class="data-card-v2">
                     <strong>${escapeHtml(artifact.title || ticket.artifact_title || "Pending work")}</strong>
@@ -311,7 +312,7 @@ function renderPendingApprovals(state) {
                         <div class="mono-block-v2">${escapeHtml((artifact.body || "").slice(0, 2600))}</div>
                     </details>
                     <div class="dashboard-grid-v2" style="margin-top: 1rem;">
-                        <button class="button-v2 button-v2--primary" data-work-action="approve-ticket" data-ticket-id="${escapeHtml(ticket.id)}">Approve and create draft</button>
+                        <button class="button-v2 button-v2--primary" data-work-action="approve-ticket" data-ticket-id="${escapeHtml(ticket.id)}" ${isDegraded ? "disabled title=\"Degraded artifacts must be rejected and regenerated.\"" : ""}>${isDegraded ? "Reject and regenerate first" : "Approve and create draft"}</button>
                         <button class="button-v2" data-work-action="reject-ticket" data-ticket-id="${escapeHtml(ticket.id)}">Reject</button>
                     </div>
                 </article>
@@ -352,9 +353,9 @@ async function loadWork() {
                             <input class="input-v2" name="priority" type="number" min="0" max="100" value="${escapeHtml(item.priority ?? 50)}" placeholder="Priority">
                         </div>
                         <select class="input-v2" name="default_destination_id">${destinationOptionsHtml(item.default_destination_id)}</select>
-                        <textarea class="input-v2" name="directive" rows="3" placeholder="Project directive">${escapeHtml(item.directive || "")}</textarea>
-                        <textarea class="input-v2" name="editorial_policy" rows="2" placeholder="Editorial policy / voice">${escapeHtml(item.editorial_policy || "")}</textarea>
-                        <textarea class="input-v2" name="seo_policy" rows="2" placeholder="SEO policy">${escapeHtml(item.seo_policy || "")}</textarea>
+                        <textarea class="input-v2" name="directive" rows="3" placeholder="Permanent directive: destination purpose, allowed work, target audience, and what a good daily action looks like.">${escapeHtml(item.directive || "")}</textarea>
+                        <textarea class="input-v2" name="editorial_policy" rows="2" placeholder="Voice and format: language, structure, tone, examples to imitate, and things to avoid.">${escapeHtml(item.editorial_policy || "")}</textarea>
+                        <textarea class="input-v2" name="seo_policy" rows="2" placeholder="Discovery policy: keywords, title style, headings, slug rules, excerpt/meta rules.">${escapeHtml(item.seo_policy || "")}</textarea>
                         <div class="dashboard-grid-v2">
                             <button class="button-v2 button-v2--primary" type="submit">Save project</button>
                             <span class="meta-line-v2" data-project-edit-status="${escapeHtml(item.id)}"></span>
