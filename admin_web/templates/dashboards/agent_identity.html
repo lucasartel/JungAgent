@@ -20,6 +20,18 @@
 
     <section class="dashboard-grid-v2" id="identityStats"></section>
 
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Temporal identity</h2>
+                <p class="panel-subtitle-v2">How the current self is held between inherited memory and projected becoming.</p>
+            </div>
+        </div>
+        <div class="panel-body-v2">
+            <div class="scroll-list-v2" id="temporalIdentityPanel">Loading...</div>
+        </div>
+    </section>
+
     <section class="dashboard-columns-v2">
         <section class="panel-v2">
             <div class="panel-header-v2">
@@ -141,6 +153,35 @@ function renderCollection(targetId, items, formatter, emptyText) {
         : `<div class="empty-row-v2">${escapeHtml(emptyText)}</div>`;
 }
 
+function renderTemporalIdentity(temporalIdentity) {
+    const temporal = temporalIdentity || {};
+    const sourceTags = [
+        ...(temporal.regressive_sources || []),
+        ...(temporal.progressive_sources || [])
+    ];
+    const hasTemporalReading = temporal.regressive_identity || temporal.progressive_identity || temporal.temporal_tension;
+
+    document.getElementById("temporalIdentityPanel").innerHTML = hasTemporalReading ? `
+        <article class="data-card-v2">
+            <strong>What Jung has been becoming</strong>
+            <div class="mono-block-v2">${escapeHtml(temporal.regressive_identity || "-")}</div>
+        </article>
+        <article class="data-card-v2">
+            <strong>What Jung is moving toward</strong>
+            <div class="mono-block-v2">${escapeHtml(temporal.progressive_identity || "-")}</div>
+        </article>
+        <article class="data-card-v2">
+            <strong>The living tension</strong>
+            <div class="mono-block-v2">${escapeHtml(temporal.temporal_tension || "-")}</div>
+            <div class="tag-list-v2" style="margin-top: 0.75rem;">
+                ${sourceTags.length
+                    ? sourceTags.map((item) => `<span class="tag-v2">${escapeHtml(item.source || "source")}</span>`).join("")
+                    : '<span class="tag-v2">no sources</span>'}
+            </div>
+        </article>
+    ` : '<div class="empty-row-v2">No temporal identity reading yet.</div>';
+}
+
 async function loadIdentity() {
     const [statsRes, stateRes, metaRes, contextRes, beliefsRes, contradictionsRes, narrativeRes, relationalRes] = await Promise.all([
         fetch("/admin/agent-identity/stats"),
@@ -163,7 +204,9 @@ async function loadIdentity() {
     const relationalData = await relationalRes.json();
 
     renderIdentityStats(statsData.stats || {});
-    document.getElementById("currentMindState").textContent = JSON.stringify(stateData.current_state || {}, null, 2);
+    const currentState = stateData.current_state || {};
+    document.getElementById("currentMindState").textContent = JSON.stringify(currentState, null, 2);
+    renderTemporalIdentity(currentState.temporal_identity || null);
 
     const meta = metaData.meta_consciousness || null;
     document.getElementById("metaConsciousnessPanel").innerHTML = meta ? `

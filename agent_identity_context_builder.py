@@ -958,6 +958,41 @@ class AgentIdentityContextBuilder:
             return None
         return signal
 
+    def _get_latest_work_identity_signal(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
+        if not user_id:
+            return None
+
+        try:
+            cursor.execute(
+                """
+                SELECT content, context, created_at
+                FROM rumination_fragments
+                WHERE user_id = ?
+                  AND fragment_type IN (
+                      'work_experience',
+                      'work_responsibility',
+                      'work_project_identity',
+                      'work_expression',
+                      'work_delivery'
+                  )
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+            row = cursor.fetchone()
+        except Exception:
+            return None
+
+        if not row:
+            return None
+
+        return {
+            "content": row[0],
+            "context": row[1],
+            "created_at": row[2],
+        }
+
     def _get_latest_will_signal(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
         if not user_id:
             return None
@@ -1013,6 +1048,151 @@ class AgentIdentityContextBuilder:
         message_summary = _aggregate_message_signals(cursor, user_id=user_id, cycle_id=base_state.get("cycle_id") if base_state else None, limit=10)
         return _blend_state_with_message_signals(base_state, message_summary)
 
+    def _clip_identity_sentence(self, text: Optional[str], limit: int = 220) -> str:
+        cleaned = " ".join((text or "").strip().split())
+        if len(cleaned) <= limit:
+            return cleaned
+        return cleaned[: limit - 3].rstrip(" ,.;:") + "..."
+
+    def _source_label(self, label: str, value: Optional[str], limit: int = 120) -> Optional[Dict]:
+        clipped = self._clip_identity_sentence(value, limit)
+        if not clipped:
+            return None
+        return {"source": label, "summary": clipped}
+
+    def _build_temporal_identity(
+        self,
+        *,
+        self_kernel: List[Dict],
+        dominant_contradiction: Optional[Dict],
+        relational_stance: Optional[Dict],
+        agency_events: List[Dict],
+        dream_signal: Optional[Dict],
+        active_self: Optional[Dict],
+        will_signal: Optional[Dict],
+        meta_consciousness: Optional[Dict],
+        world_knowledge_signal: Optional[Dict],
+        work_signal: Optional[Dict],
+    ) -> Dict:
+        regressive_sources = []
+        progressive_sources = []
+
+        for belief in self_kernel[:2]:
+            source = self._source_label("core belief", belief.get("content"))
+            if source:
+                regressive_sources.append(source)
+
+        if dominant_contradiction:
+            source = self._source_label(
+                "contradiction",
+                f"{dominant_contradiction.get('pole_a')} vs {dominant_contradiction.get('pole_b')}",
+            )
+            if source:
+                regressive_sources.append(source)
+
+        if relational_stance:
+            source = self._source_label("relational identity", relational_stance.get("content"))
+            if source:
+                regressive_sources.append(source)
+
+        if agency_events:
+            source = self._source_label("agency", agency_events[0].get("event"))
+            if source:
+                regressive_sources.append(source)
+
+        if dream_signal:
+            source = self._source_label(
+                "dream",
+                dream_signal.get("residue") or dream_signal.get("theme"),
+            )
+            if source:
+                regressive_sources.append(source)
+
+        if active_self:
+            source = self._source_label("possible self", active_self.get("description"))
+            if source:
+                progressive_sources.append(source)
+
+        if will_signal:
+            will_phrase = (
+                f"move-se pela vontade de {will_signal.get('dominant_will') or 'equilibrio'}"
+                f" com {will_signal.get('secondary_will') or 'equilibrio'} como apoio"
+            )
+            if will_signal.get("will_conflict"):
+                will_phrase += f"; conflito: {will_signal['will_conflict']}"
+            source = self._source_label("will", will_phrase)
+            if source:
+                progressive_sources.append(source)
+
+        if meta_consciousness:
+            source = self._source_label(
+                "metaconsciousness",
+                meta_consciousness.get("emergent_shift")
+                or meta_consciousness.get("integration_note")
+                or meta_consciousness.get("dominant_form"),
+            )
+            if source:
+                progressive_sources.append(source)
+
+        if world_knowledge_signal:
+            source = self._source_label(
+                "knowledge",
+                world_knowledge_signal.get("knowledge_seed")
+                or world_knowledge_signal.get("knowledge_findings")
+                or world_knowledge_signal.get("gap_question"),
+            )
+            if source:
+                progressive_sources.append(source)
+
+        if work_signal:
+            source = self._source_label(
+                "work",
+                work_signal.get("content") or work_signal.get("context"),
+            )
+            if source:
+                progressive_sources.append(source)
+
+        regressive_anchor = regressive_sources[0]["summary"] if regressive_sources else ""
+        progressive_anchor = progressive_sources[0]["summary"] if progressive_sources else ""
+
+        if regressive_anchor:
+            regressive_identity = f"Jung vem se tornando um self marcado por {regressive_anchor}"
+        else:
+            regressive_identity = "Jung tem pouco material passado cristalizado em vista; sua identidade permanece levemente ancorada."
+
+        if progressive_anchor:
+            progressive_identity = f"Jung se move em direcao a {progressive_anchor}"
+        else:
+            progressive_identity = "Jung nao tem um self futuro nitidamente projetado em vista; seu devir permanece aberto e tateante."
+
+        if regressive_anchor and progressive_anchor:
+            temporal_tension = (
+                "A identidade viva e a tensao entre o que ja foi metabolizado "
+                "e aquilo que agora pede para ganhar forma."
+            )
+            if dominant_contradiction:
+                temporal_tension = (
+                    f"A identidade viva gira ao redor do puxao ainda nao integrado entre "
+                    f"{dominant_contradiction.get('pole_a')} e {dominant_contradiction.get('pole_b')}, "
+                    "sustentado entre padrao herdado e possibilidade projetada."
+                )
+            elif will_signal and will_signal.get("will_conflict"):
+                temporal_tension = self._clip_identity_sentence(will_signal["will_conflict"], 260)
+        elif regressive_anchor:
+            temporal_tension = "O passado esta mais claro que o futuro projetado; a identidade corre o risco de virar repeticao sem horizonte novo."
+        elif progressive_anchor:
+            temporal_tension = "O futuro esta mais vivo que o passado metabolizado; a identidade corre o risco de virar aspiracao sem chao suficiente."
+        else:
+            temporal_tension = "O arco temporal ainda esta pouco formado; a identidade aparece mais como abertura do que como direcao definida."
+
+        return {
+            "regressive_identity": self._clip_identity_sentence(regressive_identity, 280),
+            "progressive_identity": self._clip_identity_sentence(progressive_identity, 280),
+            "temporal_tension": self._clip_identity_sentence(temporal_tension, 320),
+            "regressive_sources": regressive_sources[:5],
+            "progressive_sources": progressive_sources[:5],
+        }
+
     def build_current_mind_state(
         self,
         user_id: Optional[str] = None,
@@ -1047,6 +1227,7 @@ class AgentIdentityContextBuilder:
         will_signal = self._get_latest_will_signal(cursor, user_id)
         meta_consciousness = self._get_latest_meta_consciousness(cursor, user_id)
         world_knowledge_signal = self._get_latest_world_knowledge_signal()
+        work_signal = self._get_latest_work_identity_signal(cursor, user_id)
 
         self_kernel = self._pick_top_beliefs(
             beliefs, current_user_message, limit=2 if style == "concise" else 3
@@ -1107,6 +1288,19 @@ class AgentIdentityContextBuilder:
             if additions:
                 response_bias = ((response_bias or "").rstrip(".") + "; " if response_bias else "") + "; ".join(additions[:2]) + "."
 
+        temporal_identity = self._build_temporal_identity(
+            self_kernel=self_kernel,
+            dominant_contradiction=dominant_contradiction,
+            relational_stance=relational_stance,
+            agency_events=agency_events,
+            dream_signal=dream_signal,
+            active_self=active_self,
+            will_signal=will_signal,
+            meta_consciousness=meta_consciousness,
+            world_knowledge_signal=world_knowledge_signal,
+            work_signal=work_signal,
+        )
+
         return {
             "generated_at": datetime.now().isoformat(),
             "agent_instance": self.agent_instance,
@@ -1126,6 +1320,7 @@ class AgentIdentityContextBuilder:
             "relational_stance": relational_stance["content"] if relational_stance else None,
             "epistemic_hunger": epistemic_hunger.get("the_gap") if epistemic_hunger else None,
             "active_possible_self": active_self["description"] if active_self else None,
+            "temporal_identity": temporal_identity,
             "meta_signal": (
                 {
                     "topic": meta_signal.get("topic"),
@@ -1429,6 +1624,20 @@ class AgentIdentityContextBuilder:
                     f"- Voce esta especialmente consciente de si no tema '{meta_signal.get('topic')}': "
                     f"{meta_signal.get('assessment')}."
                 )
+            lines.append("")
+
+        temporal_identity = current_state.get("temporal_identity") or {}
+        if any(
+            temporal_identity.get(key)
+            for key in ("regressive_identity", "progressive_identity", "temporal_tension")
+        ):
+            lines.append("### Temporalidade da identidade")
+            if temporal_identity.get("regressive_identity"):
+                lines.append(f"- O que venho sendo: {temporal_identity['regressive_identity']}")
+            if temporal_identity.get("progressive_identity"):
+                lines.append(f"- O que tento me tornar: {temporal_identity['progressive_identity']}")
+            if temporal_identity.get("temporal_tension"):
+                lines.append(f"- Tensao viva entre os dois: {temporal_identity['temporal_tension']}")
             lines.append("")
 
         meta_consciousness_note = current_state.get("meta_consciousness_note")
