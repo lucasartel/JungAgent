@@ -31,6 +31,7 @@ DEFAULT_DREAM_IMAGE_STYLE_PROMPT = (
 )
 DEFAULT_DREAM_IMAGE_PROVIDER = "openrouter_nano_banana"
 DEFAULT_DREAM_IMAGE_MODEL = "google/gemini-3.1-flash-image-preview"
+DEFAULT_DREAM_TEXT_FALLBACK_MODEL = "openai/gpt-4o-mini"
 
 
 class DreamEngine:
@@ -61,6 +62,11 @@ class DreamEngine:
         else:
             logger.error("DreamEngine requer um cliente LLM inicializado no db_manager")
             self.llm = None
+            self.model = Config.INTERNAL_MODEL
+        self.text_fallback_model = (
+            os.getenv("DREAM_TEXT_FALLBACK_MODEL")
+            or DEFAULT_DREAM_TEXT_FALLBACK_MODEL
+        ).strip()
 
     def _extract_response_text(self, response: Any) -> str:
         """Extrai texto de respostas de LLM sem presumir estrutura perfeita."""
@@ -68,18 +74,101 @@ class DreamEngine:
             return ""
 
         content = getattr(response, "content", None)
+        if content is None and isinstance(response, dict):
+            content = response.get("content")
         if not content:
+            choices = getattr(response, "choices", None)
+            if choices is None and isinstance(response, dict):
+                choices = response.get("choices")
+            if choices:
+                first_choice = choices[0]
+                message = getattr(first_choice, "message", None)
+                if message is None and isinstance(first_choice, dict):
+                    message = first_choice.get("message")
+                message_content = getattr(message, "content", None)
+                if message_content is None and isinstance(message, dict):
+                    message_content = message.get("content")
+                return self._extract_text_from_content(message_content)
             return ""
 
-        first_block = content[0] if isinstance(content, list) and content else None
-        if first_block is None:
-            return ""
+        return self._extract_text_from_content(content)
 
-        text = getattr(first_block, "text", None)
-        if text is None:
+    def _extract_text_from_content(self, content: Any) -> str:
+        if content is None:
             return ""
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, str):
+                    parts.append(block)
+                    continue
+                text = getattr(block, "text", None)
+                if text:
+                    parts.append(str(text))
+                    continue
+                if isinstance(block, dict):
+                    if block.get("text"):
+                        parts.append(str(block["text"]))
+                    elif block.get("type") == "text" and block.get("content"):
+                        parts.append(str(block["content"]))
+            return "\n".join(part.strip() for part in parts if part and part.strip()).strip()
 
-        return str(text).strip()
+        text = getattr(content, "text", None)
+        if text:
+            return str(text).strip()
+        return str(content).strip()
+
+    def _call_internal_llm(self, prompt: str, *, max_tokens: int, temperature: float) -> str:
+        if not self.llm:
+            return ""
+        response = self.llm.messages.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return self._extract_response_text(response)
+
+    def _call_openrouter_text_fallback(self, prompt: str, *, max_tokens: int, temperature: float) -> str:
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key or OpenAI is None:
+            return ""
+        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+        response = client.chat.completions.create(
+            model=self.text_fallback_model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return self._extract_response_text(response)
+
+    def _generate_llm_text(self, prompt: str, *, max_tokens: int, temperature: float, purpose: str) -> str:
+        try:
+            text = self._call_internal_llm(prompt, max_tokens=max_tokens, temperature=temperature)
+        except Exception as exc:
+            logger.warning("Dream Engine falhou ao chamar LLM interno para %s: %s", purpose, exc)
+            text = ""
+
+        if text:
+            return text
+
+        logger.warning(
+            "Dream Engine recebeu payload vazio em %s com modelo %s; tentando fallback %s",
+            purpose,
+            self.model,
+            self.text_fallback_model,
+        )
+        try:
+            return self._call_openrouter_text_fallback(
+                prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        except Exception as exc:
+            logger.error("Dream Engine fallback textual falhou em %s: %s", purpose, exc)
+            return ""
 
     def _strip_code_fences(self, text: str) -> str:
         if not text:
@@ -327,14 +416,12 @@ Responda APENAS com um objeto JSON valido:
             chosen_motif=chosen_motif,
         )
         try:
-            response = self.llm.messages.create(
-                model=self.model,
+            result_text = self._generate_llm_text(
+                prompt,
                 max_tokens=800,
                 temperature=0.8,
-                messages=[{"role": "user", "content": prompt}],
+                purpose="geracao_do_sonho",
             )
-
-            result_text = self._extract_response_text(response)
             if not result_text:
                 logger.warning("Dream Engine recebeu payload vazio ao gerar sonho")
                 return False
@@ -394,13 +481,12 @@ Foque em:
 Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
 """
         try:
-            response = self.llm.messages.create(
-                model=self.model,
+            response_text = self._generate_llm_text(
+                prompt,
                 max_tokens=220,
                 temperature=0.25,
-                messages=[{"role": "user", "content": prompt}],
+                purpose="extracao_de_residuo_onirico",
             )
-            response_text = self._extract_response_text(response)
             insight_text = self._normalize_dream_residue(response_text)
 
             if insight_text:
