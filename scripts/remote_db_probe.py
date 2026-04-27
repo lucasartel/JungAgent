@@ -845,6 +845,7 @@ def query_work(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
                 d.label AS destination_label,
                 b.source_seed,
                 b.action_type,
+                b.extracted_json,
                 substr(b.objective, 1, 260) AS objective
             FROM work_briefs b
             LEFT JOIN work_projects p ON p.id = b.project_id
@@ -855,6 +856,9 @@ def query_work(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
             (args.limit,),
         )
         recent_briefs = rows_to_dicts(cursor.fetchall())
+        for row in recent_briefs:
+            extracted = json_or_empty(row.pop("extracted_json", None), {})
+            row["seed_selection"] = extracted.get("seed_selection") or {}
         cursor.execute(
             """
             SELECT COUNT(*) AS count

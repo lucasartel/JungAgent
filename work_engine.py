@@ -223,7 +223,17 @@ def _looks_like_objective_echo(body: str, objective: str) -> bool:
 
 def _has_any_term(text: str, terms: List[str]) -> bool:
     normalized = _normalize_compare(text)
-    return any(_normalize_compare(term) in normalized for term in terms)
+    for term in terms:
+        normalized_term = _normalize_compare(term)
+        if not normalized_term:
+            continue
+        if len(normalized_term) <= 3 and re.fullmatch(r"[a-z0-9]+", normalized_term):
+            if re.search(rf"\b{re.escape(normalized_term)}\b", normalized):
+                return True
+            continue
+        if normalized_term in normalized:
+            return True
+    return False
 
 
 def _extract_theme_from_work_seed(seed: str, fallback: str = "uma necessidade concreta do ciclo atual") -> str:
@@ -2891,6 +2901,40 @@ Regras:
         )
         return cursor.fetchone() is not None
 
+    def _select_fresh_project_seed(
+        self,
+        project: Dict[str, Any],
+        seeds: List[str],
+        *,
+        offset: int = 0,
+        action_type: Optional[str] = None,
+    ) -> Dict[str, str]:
+        project_id = int(project["id"])
+        project_key = project.get("project_key") or f"project-{project_id}"
+        clean_seeds = [str(seed).strip() for seed in seeds if str(seed or "").strip()]
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+
+        if not clean_seeds:
+            source_seed = f"project:{project_key}:daily:{today}"
+            if self._has_recent_project_brief(project_id, source_seed, action_type=action_type):
+                return {"seed": "", "source_seed": "", "selection": "daily_project_seed_already_used"}
+            return {"seed": "", "source_seed": source_seed, "selection": "daily_project_seed"}
+
+        start = offset % len(clean_seeds)
+        ordered_seeds = clean_seeds[start:] + clean_seeds[:start]
+        for seed in ordered_seeds:
+            if not self._has_recent_project_brief(project_id, seed, action_type=action_type):
+                return {"seed": seed, "source_seed": seed, "selection": "fresh_world_seed"}
+
+        # If every world seed is recent for this project, still allow one daily
+        # autonomous attempt. The daily suffix prevents duplicate jobs on the same day
+        # while avoiding a week-long stall after all broad seeds have been explored.
+        seed = ordered_seeds[0]
+        source_seed = f"{seed} | project:{project_key} | daily:{today}"
+        if self._has_recent_project_brief(project_id, source_seed, action_type=action_type):
+            return {"seed": "", "source_seed": "", "selection": "daily_seed_reuse_already_used"}
+        return {"seed": seed, "source_seed": source_seed, "selection": "daily_seed_reuse"}
+
     def _ensure_project_autonomous_briefs(self) -> int:
         if not self._work_autonomy_enabled():
             return 0
@@ -2929,6 +2973,7 @@ Regras:
 
         seeds = list(world_state.get("work_seeds") or [])
         created = 0
+        project_index = 0
         for project in projects:
             if created >= remaining:
                 break
@@ -2946,9 +2991,27 @@ Regras:
                 )
                 continue
 
-            seed = seeds[created % len(seeds)] if seeds else ""
-            source_seed = seed or f"project:{project.get('project_key')}"
-            if self._has_recent_project_brief(int(project["id"]), source_seed):
+            shape = self._provider_work_shape(project.get("provider_key") or "")
+            seed_selection = self._select_fresh_project_seed(
+                project,
+                seeds,
+                offset=project_index,
+                action_type=shape.get("action_type"),
+            )
+            project_index += 1
+            seed = seed_selection.get("seed") or ""
+            source_seed = seed_selection.get("source_seed") or ""
+            if not source_seed:
+                self.record_work_experience(
+                    event_type="project_blocked_no_fresh_seed",
+                    summary=f"Projeto '{project.get('name')}' nao gerou acao porque todos os seeds do ciclo ja foram usados hoje ou recentemente.",
+                    project_id=project.get("id"),
+                    source_table="work_projects",
+                    source_id=project.get("id"),
+                    metadata={"seed_count": len(seeds), "selection": seed_selection.get("selection")},
+                    emotional_weight=0.35,
+                    tension_level=0.25,
+                )
                 continue
 
             intent = self._build_daily_work_intent(project, seed)
@@ -2977,6 +3040,7 @@ Regras:
                     "seo_policy": intent.get("seo_policy"),
                     "provider_key": intent.get("provider_key"),
                     "provider_work_shape": intent.get("provider_work_shape"),
+                    "seed_selection": seed_selection,
                 },
                 project_id=project.get("id"),
                 action_type=intent["action_type"],
@@ -2989,7 +3053,7 @@ Regras:
                     project_id=project.get("id"),
                     source_table="work_briefs",
                     source_id=brief["id"],
-                    metadata={"world_seed": seed, "brief_id": brief["id"]},
+                    metadata={"world_seed": seed, "brief_id": brief["id"], "seed_selection": seed_selection},
                     emotional_weight=0.55,
                     tension_level=0.45,
                 )
