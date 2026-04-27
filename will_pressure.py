@@ -753,6 +753,7 @@ ESTADO QUALITATIVO:
             "payload": {
                 "world_state_snapshot": {
                     "knowledge_source_decision": knowledge_decision,
+                    "knowledge_journal_entry": world_state.get("knowledge_journal_entry"),
                     "formatted_admin_summary": world_state.get("formatted_admin_summary"),
                 }
             },

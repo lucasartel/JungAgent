@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from instance_settings import get_setting_value_with_options
+from llm_providers import get_llm_response
 logger = logging.getLogger(__name__)
 
 EPISTEMIC_SABER_PRESSURE_THRESHOLD = 55.0
@@ -1075,6 +1076,7 @@ Contexto:
                 "dominant_tensions": snapshot.get("dominant_tensions", []),
                 "confidence_overall": snapshot.get("confidence_overall"),
                 "knowledge_resolution_summary": snapshot.get("knowledge_resolution_summary"),
+                "knowledge_journal_entry": snapshot.get("knowledge_journal_entry"),
                 "consensus_map": snapshot.get("consensus_map", {}),
                 "divergence_map": snapshot.get("divergence_map", {}),
                 "work_seeds": snapshot.get("work_seeds", [])[:4],
@@ -1380,6 +1382,56 @@ Contexto:
             return ""
         return f"explorar imagens, simbolos ou atmosferas ligados a {cleaned.lower()}"
 
+    def _build_knowledge_journal_entry(
+        self,
+        knowledge_decision: str,
+        knowledge_gap: Dict[str, Any],
+        knowledge_probe: Dict[str, Any],
+        knowledge_summary: str,
+    ) -> str:
+        if knowledge_decision in (None, "", "inactive"):
+            return ""
+
+        gap_question = knowledge_gap.get("gap_question") or knowledge_gap.get("gap_label") or ""
+        payload = {
+            "knowledge_source_decision": knowledge_decision,
+            "knowledge_resolution_summary": knowledge_summary,
+            "knowledge_gap": knowledge_gap,
+            "latent_probe_summary": knowledge_probe.get("latent_probe_summary"),
+            "knowledge_findings": knowledge_probe.get("knowledge_findings"),
+            "knowledge_seed": knowledge_probe.get("knowledge_seed"),
+        }
+        fallback_source = (
+            knowledge_probe.get("knowledge_findings")
+            or knowledge_probe.get("knowledge_seed")
+            or gap_question
+            or knowledge_summary
+        )
+        fallback = self._truncate_text(f"Aprendi neste ciclo: {str(fallback_source).strip().rstrip('.')}.", 360)
+
+        prompt = f"""
+Voce esta escrevendo uma breve nota de diario interno do JungAgent apos um ciclo de saber.
+Escreva em primeira pessoa, com maturidade simples, sem linguagem tecnica de sistema.
+Capture a ideia de "o que pude aprender neste ciclo", mas sem prender a frase a uma formula fixa.
+Pode comecar de modos diferentes, como "Hoje percebi...", "Aprendi que...", "Ficou mais claro para mim..." ou outra forma natural.
+Nao transforme em poema. Nao mencione campos internos. Nao invente fatos externos.
+
+Responda APENAS com a frase final.
+
+Contexto:
+{json.dumps(payload, ensure_ascii=False)}
+"""
+        try:
+            raw = get_llm_response(prompt, temperature=0.25, max_tokens=160)
+            entry = " ".join((raw or "").strip().strip('"').split())
+        except Exception as exc:
+            logger.debug("World Consciousness: fallback no journal de saber: %s", exc)
+            entry = ""
+
+        if not entry:
+            return fallback
+        return self._truncate_text(entry, 360)
+
     def _flatten_headlines(self, signals: List[Dict]) -> List[str]:
         items = []
         seen = set()
@@ -1661,6 +1713,7 @@ Estado estruturado:
             f"Leitura profunda: Firecrawl leu {len(snapshot.get('firecrawl_urls', []) or [])} fonte(s) para aprofundar a lacuna." if snapshot.get("firecrawl_used") else "Leitura profunda: Firecrawl nao foi acionado neste ciclo.",
             f"Descoberta recente do saber: {snapshot.get('knowledge_findings', 'sem descoberta sintetizada nesta janela')}",
             f"Semente conceitual ativa: {snapshot.get('knowledge_seed', 'sem semente conceitual destacada')}",
+            f"Diario de aprendizado: {snapshot.get('knowledge_journal_entry', 'sem nota de aprendizado neste ciclo')}",
             f"Continuidade Percebida: {snapshot.get('continuity_note', 'sem memoria acumulada do mundo nesta janela')}",
             "",
             "Leituras dominantes do momento:",
@@ -1700,6 +1753,7 @@ Estado estruturado:
             f"Firecrawl: leu {len(snapshot.get('firecrawl_urls', []) or [])} fonte(s) para aprofundar {((snapshot.get('knowledge_gap') or {}).get('gap_label') or 'a lacuna atual')}." if snapshot.get("firecrawl_used") else "Firecrawl: nao acionado neste ciclo.",
             f"Descoberta do saber: {snapshot.get('knowledge_findings', 'sem descoberta sintetizada nesta janela')}",
             f"Semente conceitual: {snapshot.get('knowledge_seed', 'sem semente conceitual destacada')}",
+            f"Diario de aprendizado: {snapshot.get('knowledge_journal_entry', 'sem nota de aprendizado neste ciclo')}",
             f"Continuidade: {snapshot.get('continuity_note', '')}",
             "",
             "Areas nucleares:",
@@ -1846,6 +1900,12 @@ Estado estruturado:
             knowledge_summary = "o saber deste ciclo apareceu mais como reintegracao do que ja vinha sendo metabolizado"
         else:
             knowledge_summary = "o saber seguiu a leitura ampla do mundo, sem aprofundamento epistemico especial"
+        knowledge_journal_entry = self._build_knowledge_journal_entry(
+            knowledge_decision,
+            knowledge_gap,
+            knowledge_probe,
+            knowledge_summary,
+        )
 
         world_state = {
             "state_version": WORLD_STATE_VERSION,
@@ -1892,6 +1952,7 @@ Estado estruturado:
             "knowledge_findings": knowledge_probe.get("knowledge_findings"),
             "knowledge_seed": knowledge_probe.get("knowledge_seed"),
             "knowledge_resolution_summary": knowledge_summary,
+            "knowledge_journal_entry": knowledge_journal_entry,
             "world_seeds": world_seeds,
             "work_seeds": world_seeds["work"],
             "hobby_seeds": world_seeds["hobby"],

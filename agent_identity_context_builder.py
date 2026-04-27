@@ -946,6 +946,7 @@ class AgentIdentityContextBuilder:
             "knowledge_resolution_summary": world_state.get("knowledge_resolution_summary"),
             "knowledge_findings": world_state.get("knowledge_findings"),
             "knowledge_seed": world_state.get("knowledge_seed"),
+            "knowledge_journal_entry": world_state.get("knowledge_journal_entry"),
             "gap_label": knowledge_gap.get("gap_label"),
             "gap_question": knowledge_gap.get("gap_question"),
         }
@@ -953,6 +954,7 @@ class AgentIdentityContextBuilder:
             signal["knowledge_source_decision"] == "inactive"
             and not signal["knowledge_findings"]
             and not signal["knowledge_seed"]
+            and not signal["knowledge_journal_entry"]
             and not signal["gap_question"]
         ):
             return None
@@ -1696,6 +1698,8 @@ class AgentIdentityContextBuilder:
                 lines.append(f"- O que isso parece ter ensinado em voce: {world_knowledge_signal['knowledge_findings']}")
             if world_knowledge_signal.get("knowledge_seed"):
                 lines.append(f"- Semente conceitual ainda ativa: {world_knowledge_signal['knowledge_seed']}")
+            if world_knowledge_signal.get("knowledge_journal_entry"):
+                lines.append(f"- Nota interna de aprendizado: {world_knowledge_signal['knowledge_journal_entry']}")
             lines.append("")
 
         if current_state.get("recent_shift"):

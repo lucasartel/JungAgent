@@ -453,6 +453,7 @@ def query_world(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, A
         "firecrawl_errors": cache_data.get("firecrawl_errors"),
         "knowledge_findings": cache_data.get("knowledge_findings"),
         "knowledge_seed": cache_data.get("knowledge_seed"),
+        "knowledge_journal_entry": cache_data.get("knowledge_journal_entry"),
         "work_seeds": cache_data.get("work_seeds"),
         "hobby_seeds": cache_data.get("hobby_seeds"),
     }
@@ -1121,6 +1122,7 @@ def query_integration(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[
             "knowledge_gap": world_payload.get("knowledge_gap"),
             "knowledge_findings": world_payload.get("knowledge_findings"),
             "knowledge_seed": world_payload.get("knowledge_seed"),
+            "knowledge_journal_entry": world_payload.get("knowledge_journal_entry"),
             "dynamic_queries": world_payload.get("dynamic_queries"),
         },
         "rumination_summary": {

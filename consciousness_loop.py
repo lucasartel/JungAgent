@@ -431,13 +431,15 @@ class ConsciousnessLoopManager:
                 knowledge_gap = (world_state.get("knowledge_gap") or {}).get("gap_question")
                 knowledge_findings = world_state.get("knowledge_findings")
                 knowledge_seed = world_state.get("knowledge_seed")
-                if any([knowledge_gap, knowledge_findings, knowledge_seed]) and knowledge_decision != "inactive":
+                knowledge_journal = world_state.get("knowledge_journal_entry")
+                if any([knowledge_gap, knowledge_findings, knowledge_seed, knowledge_journal]) and knowledge_decision != "inactive":
                     epistemic_summary = (
                         f"[ELABORACAO DE SABER DO CICLO {cycle_id}] "
                         f"Lacuna cognitiva: {knowledge_gap or 'sem pergunta explicitada'}. "
                         f"Resolucao atual: {world_state.get('knowledge_resolution_summary') or 'sem resolucao nomeada'}. "
                         f"Descoberta principal: {knowledge_findings or 'sem descoberta resumida'}. "
-                        f"Semente conceitual: {knowledge_seed or 'sem semente conceitual ativa'}."
+                        f"Semente conceitual: {knowledge_seed or 'sem semente conceitual ativa'}. "
+                        f"Diario interno: {knowledge_journal or 'sem nota de aprendizado formulada'}."
                     )
                     _ingest_material(epistemic_summary, 0.76, 0.51, 0.86)
             except Exception as exc:
@@ -454,6 +456,7 @@ class ConsciousnessLoopManager:
                     f"Leitura do saber: {world_state.get('knowledge_resolution_summary') or 'sem aprofundamento epistemico especial'}. "
                     f"Descoberta: {world_state.get('knowledge_findings') or 'sem descoberta principal resumida'}. "
                     f"Semente conceitual: {world_state.get('knowledge_seed') or 'sem semente conceitual ativa'}. "
+                    f"Diario interno: {world_state.get('knowledge_journal_entry') or 'sem nota de aprendizado formulada'}. "
                     f"Seeds de hobby: {'; '.join(world_state.get('hobby_seeds', [])[:2]) or 'sem seed simbolico forte'}."
                 )
                 _ingest_material(world_summary, 0.74, 0.52, 0.71)
@@ -828,6 +831,51 @@ class ConsciousnessLoopManager:
             except Exception as fallback_exc:
                 logger.warning("LOOP HOBBY NOTIFY fallback final tambem falhou: %s", fallback_exc)
 
+    def _notify_admin_knowledge_journal(self, result: Dict):
+        token = os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = self._get_admin_chat_id()
+
+        if not token or not chat_id:
+            logger.warning("LOOP KNOWLEDGE NOTIFY skipped: token ou chat_id do admin indisponivel")
+            return
+
+        world_state = (result.get("raw_result") or {}).get("world_state") or {}
+        journal = (world_state.get("knowledge_journal_entry") or "").strip()
+        if not journal:
+            return
+
+        gap = world_state.get("knowledge_gap") or {}
+        decision = world_state.get("knowledge_source_decision") or "inactive"
+        source_map = {
+            "latent_sufficient": "elaboracao interna",
+            "web_required": "atualizacao externa",
+            "already_integrated": "integracao do que ja estava sendo metabolizado",
+            "inactive": "sem aprofundamento especial",
+        }
+        text_lines = [
+            "Knowledge journal",
+            f"Ciclo: {result.get('cycle_id')}",
+            f"Fonte do saber: {source_map.get(decision, decision)}",
+        ]
+        if gap.get("target_area"):
+            text_lines.append(f"Area: {gap.get('target_area')}")
+        if gap.get("gap_question"):
+            text_lines.extend(["", f"Lacuna: {gap.get('gap_question')}"])
+        text_lines.extend(["", journal])
+        if world_state.get("knowledge_seed"):
+            text_lines.extend(["", f"Seed: {world_state.get('knowledge_seed')}"])
+
+        try:
+            text = "\n".join(text_lines).strip()
+            for part in self._chunk_admin_text(text):
+                response = self._send_admin_message(token, chat_id, part)
+                if response.status_code != 200:
+                    logger.warning("LOOP KNOWLEDGE NOTIFY falhou (%s): %s", response.status_code, response.text[:300])
+                    return
+            logger.info("LOOP KNOWLEDGE NOTIFY enviado ao admin para ciclo=%s", result.get("cycle_id"))
+        except Exception as exc:
+            logger.warning("LOOP KNOWLEDGE NOTIFY erro ao enviar diario de saber ao admin: %s", exc)
+
     def _run_dream_phase(self, result: Dict) -> Dict:
         from dream_engine import DreamEngine
 
@@ -1008,6 +1056,13 @@ class ConsciousnessLoopManager:
             "hobby_seeds": world_state.get("hobby_seeds", []),
             "attention_profile": world_state.get("attention_profile", {}),
             "will_bias_summary": world_state.get("will_bias_summary"),
+            "knowledge_gap": world_state.get("knowledge_gap"),
+            "knowledge_source_decision": world_state.get("knowledge_source_decision"),
+            "knowledge_resolution_summary": world_state.get("knowledge_resolution_summary"),
+            "knowledge_findings": world_state.get("knowledge_findings"),
+            "knowledge_seed": world_state.get("knowledge_seed"),
+            "knowledge_journal_entry": world_state.get("knowledge_journal_entry"),
+            "dynamic_queries": world_state.get("dynamic_queries", []),
         }
         result["metrics"]["world_areas_loaded"] = len([k for k, v in (world_state.get("area_panels", {}) or {}).items() if v.get("signal_count", 0) > 0])
         result["metrics"]["stale_area_count"] = len(world_state.get("stale_areas", []) or [])
@@ -1377,6 +1432,8 @@ class ConsciousnessLoopManager:
 
         if notify_admin:
             self._notify_admin(result)
+            if result["phase"] == "world" and result["status"] != "failed":
+                self._notify_admin_knowledge_journal(result)
             if result["phase"] == "hobby" and result["status"] != "failed":
                 self._notify_admin_hobby_art(result)
 

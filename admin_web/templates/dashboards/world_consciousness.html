@@ -147,6 +147,7 @@ function renderKnowledge(state) {
             ${state.latent_probe_summary ? `<div class="mono-block-v2">Internal probe: ${escapeHtml(state.latent_probe_summary)}</div>` : ""}
             ${state.knowledge_findings ? `<div class="mono-block-v2">Main finding: ${escapeHtml(state.knowledge_findings)}</div>` : ""}
             ${state.knowledge_seed ? `<div class="mono-block-v2">Conceptual seed: ${escapeHtml(state.knowledge_seed)}</div>` : ""}
+            ${state.knowledge_journal_entry ? `<div class="mono-block-v2">Learning journal: ${escapeHtml(state.knowledge_journal_entry)}</div>` : ""}
             ${state.firecrawl_used ? `<div class="mono-block-v2">Firecrawl read ${(state.firecrawl_urls || []).length} source(s) to deepen this gap: ${escapeHtml(state.firecrawl_findings || "")}</div>` : ""}
             ${(state.firecrawl_errors || []).length ? `<div class="mono-block-v2">Firecrawl warnings: ${escapeHtml((state.firecrawl_errors || []).join(" | "))}</div>` : ""}
             <div class="tag-list-v2">
@@ -188,6 +189,7 @@ function renderHistory(history) {
                 <div class="meta-line-v2">${escapeHtml(item.lucidity_level || "-")} · confianca ${escapeHtml(item.confidence_overall ?? "-")}</div>
                 <div class="mono-block-v2">${escapeHtml(item.atmosphere || "")}</div>
                 ${item.knowledge_resolution_summary ? `<div class="mono-block-v2">${escapeHtml(item.knowledge_resolution_summary)}</div>` : ""}
+                ${item.knowledge_journal_entry ? `<div class="mono-block-v2">${escapeHtml(item.knowledge_journal_entry)}</div>` : ""}
                 <div class="mono-block-v2">${escapeHtml((item.dominant_tensions || []).join(" | "))}</div>
             </article>
         `).join("")
