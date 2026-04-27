@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import difflib
 import ipaddress
 import json
 import logging
@@ -49,14 +50,14 @@ DEFAULT_PROVIDER_SPECS = {
     },
     "github": {
         "display_name": "GitHub",
-        "status": "planned",
+        "status": "executable",
         "description": "Manutencao de repositorios por issue, branch e pull request obrigatorio.",
         "credential_schema": {
             "fields": [
                 {"name": "owner", "label": "Owner", "type": "text", "required": True},
                 {"name": "repo", "label": "Repository", "type": "text", "required": True},
                 {"name": "default_branch", "label": "Default branch", "type": "text", "required": False, "default": "main"},
-                {"name": "branch_prefix", "label": "Branch prefix", "type": "text", "required": False, "default": "jungagent/"},
+                {"name": "branch_prefix", "label": "Branch prefix", "type": "text", "required": False, "default": "jungagent/self-work/"},
                 {"name": "token", "label": "GitHub token or app token", "type": "password", "required": True},
             ],
             "secret_fields": ["token"],
@@ -350,6 +351,9 @@ class BaseSkillProvider:
     def publish_draft(self, destination: Dict[str, Any], artifact: Dict[str, Any], secret: str) -> Dict[str, Any]:
         raise NotImplementedError
 
+    def open_pull_request(self, destination: Dict[str, Any], artifact: Dict[str, Any], secret: str) -> Dict[str, Any]:
+        raise NotImplementedError
+
     def validate_payload(self, artifact: Dict[str, Any]) -> List[str]:
         warnings = []
         if not (artifact.get("title") or "").strip():
@@ -633,6 +637,328 @@ class WordPressSkill(BaseSkillProvider):
         }
 
 
+class GitHubSkill(BaseSkillProvider):
+    provider_key = "github"
+    display_name = "GitHub"
+    capabilities = DEFAULT_PROVIDER_SPECS["github"]["capabilities"]
+    api_base = "https://api.github.com"
+
+    blocked_path_markers = (
+        ".env",
+        "secret",
+        "secrets",
+        "credential",
+        "credentials",
+        "token",
+        "private_key",
+        "id_rsa",
+    )
+    blocked_extensions = (
+        ".db",
+        ".sqlite",
+        ".sqlite3",
+        ".pem",
+        ".p12",
+        ".pfx",
+        ".key",
+        ".crt",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".pdf",
+        ".zip",
+        ".gz",
+    )
+    blocked_prefixes = (
+        ".git/",
+        "data/",
+        "backups/",
+        "archive/",
+        "__pycache__/",
+    )
+    critical_path_markers = (
+        ".github/workflows/",
+        "database_migrations",
+        "migration",
+        "railway",
+        "dockerfile",
+        "security_config",
+    )
+    text_extensions = (
+        ".py",
+        ".md",
+        ".txt",
+        ".html",
+        ".css",
+        ".js",
+        ".json",
+        ".yml",
+        ".yaml",
+        ".toml",
+        ".sql",
+    )
+
+    def _headers(self, token: str) -> Dict[str, str]:
+        return {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+
+    def _repo_parts(self, destination: Dict[str, Any]) -> Dict[str, str]:
+        config = _json_loads_maybe(destination.get("config_json") or "{}")
+        fields = config.get("fields") or {}
+        owner = (fields.get("owner") or destination.get("username") or "").strip()
+        repo = (fields.get("repo") or "").strip()
+        if not repo:
+            path = (urlsplit(destination.get("base_url") or "").path or "").strip("/")
+            if "/" in path:
+                owner_from_url, repo_from_url = path.split("/", 1)
+                owner = owner or owner_from_url
+                repo = repo_from_url
+        return {
+            "owner": owner,
+            "repo": repo,
+            "default_branch": (fields.get("default_branch") or "main").strip() or "main",
+            "branch_prefix": (fields.get("branch_prefix") or "jungagent/self-work/").strip() or "jungagent/self-work/",
+        }
+
+    def _repo_url(self, parts: Dict[str, str], path: str = "") -> str:
+        suffix = path.lstrip("/")
+        return f"{self.api_base}/repos/{parts['owner']}/{parts['repo']}/{suffix}".rstrip("/")
+
+    def test_connection(self, destination: Dict[str, Any], secret: str) -> Dict[str, Any]:
+        parts = self._repo_parts(destination)
+        if not parts["owner"] or not parts["repo"]:
+            return {"success": False, "message": "Owner/repository ausentes para GitHub.", "diagnosis": "github_repo_missing"}
+        try:
+            with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+                response = client.get(self._repo_url(parts), headers=self._headers(secret))
+                branch_response = client.get(self._repo_url(parts, f"branches/{parts['default_branch']}"), headers=self._headers(secret))
+        except Exception as exc:
+            return {"success": False, "message": str(exc), "diagnosis": "github_connection_failed"}
+
+        if response.status_code >= 400:
+            return {
+                "success": False,
+                "message": f"GitHub HTTP {response.status_code}: {(response.text or '')[:220]}",
+                "diagnosis": "github_repo_access_failed",
+            }
+        if branch_response.status_code >= 400:
+            return {
+                "success": False,
+                "message": f"Branch base nao acessivel: HTTP {branch_response.status_code}",
+                "diagnosis": "github_base_branch_failed",
+            }
+
+        payload = response.json()
+        permissions = payload.get("permissions") or {}
+        can_push = bool(permissions.get("push") or permissions.get("admin") or permissions.get("maintain"))
+        return {
+            "success": can_push,
+            "message": (
+                f"Conexao OK com GitHub {parts['owner']}/{parts['repo']}"
+                if can_push
+                else "GitHub respondeu, mas o token nao indica permissao de escrita no repositorio."
+            ),
+            "diagnosis": "github_connection_ok" if can_push else "github_write_permission_missing",
+            "repo": payload.get("full_name"),
+            "default_branch": parts["default_branch"],
+            "permissions": permissions,
+        }
+
+    def is_safe_path(self, path: str) -> bool:
+        normalized = (path or "").strip().replace("\\", "/").lstrip("/")
+        lowered = normalized.lower()
+        if not normalized or normalized.endswith("/"):
+            return False
+        if ".." in normalized.split("/"):
+            return False
+        if any(lowered.startswith(prefix) for prefix in self.blocked_prefixes):
+            return False
+        if any(marker in lowered for marker in self.blocked_path_markers):
+            return False
+        if any(lowered.endswith(ext) for ext in self.blocked_extensions):
+            return False
+        return any(lowered.endswith(ext) for ext in self.text_extensions)
+
+    def is_critical_path(self, path: str) -> bool:
+        lowered = (path or "").strip().replace("\\", "/").lower()
+        return any(marker in lowered for marker in self.critical_path_markers)
+
+    def list_tree(self, destination: Dict[str, Any], secret: str, limit: int = 180) -> Dict[str, Any]:
+        parts = self._repo_parts(destination)
+        url = self._repo_url(parts, f"git/trees/{parts['default_branch']}?recursive=1")
+        try:
+            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+                response = client.get(url, headers=self._headers(secret))
+        except Exception as exc:
+            return {"success": False, "message": str(exc), "paths": [], "repo": parts}
+        if response.status_code >= 400:
+            return {"success": False, "message": f"GitHub tree HTTP {response.status_code}: {response.text[:220]}", "paths": [], "repo": parts}
+
+        payload = response.json()
+        paths = []
+        for item in payload.get("tree") or []:
+            if item.get("type") != "blob":
+                continue
+            path = item.get("path") or ""
+            if self.is_safe_path(path):
+                paths.append({"path": path, "size": item.get("size") or 0, "sha": item.get("sha")})
+        paths.sort(key=lambda item: (0 if item["path"].endswith(".py") else 1, item["path"]))
+        return {"success": True, "paths": paths[:limit], "repo": parts, "truncated": bool(payload.get("truncated"))}
+
+    def get_file(self, destination: Dict[str, Any], secret: str, path: str, ref: Optional[str] = None) -> Dict[str, Any]:
+        parts = self._repo_parts(destination)
+        if not self.is_safe_path(path):
+            return {"success": False, "message": f"Caminho bloqueado por guardrail: {path}"}
+        query = f"?ref={ref or parts['default_branch']}"
+        url = self._repo_url(parts, f"contents/{path}") + query
+        try:
+            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+                response = client.get(url, headers=self._headers(secret))
+        except Exception as exc:
+            return {"success": False, "message": str(exc)}
+        if response.status_code >= 400:
+            return {"success": False, "message": f"GitHub contents HTTP {response.status_code}: {response.text[:220]}"}
+        payload = response.json()
+        if payload.get("encoding") != "base64" or "content" not in payload:
+            return {"success": False, "message": "Conteudo GitHub inesperado para arquivo texto."}
+        try:
+            content = base64.b64decode(payload["content"]).decode("utf-8")
+        except Exception as exc:
+            return {"success": False, "message": f"Arquivo nao parece texto UTF-8 seguro: {exc}"}
+        return {"success": True, "path": path, "sha": payload.get("sha"), "content": content, "html_url": payload.get("html_url")}
+
+    def _create_blob(self, client: httpx.Client, parts: Dict[str, str], token: str, content: str) -> str:
+        response = client.post(
+            self._repo_url(parts, "git/blobs"),
+            headers=self._headers(token),
+            json={"content": content, "encoding": "utf-8"},
+        )
+        response.raise_for_status()
+        return response.json()["sha"]
+
+    def open_pull_request(self, destination: Dict[str, Any], artifact: Dict[str, Any], secret: str) -> Dict[str, Any]:
+        payload = _json_loads_maybe(artifact.get("provider_payload_json") or "{}")
+        package = payload.get("package") or {}
+        github_payload = package.get("github_pull_request") or {}
+        parts = self._repo_parts(destination)
+
+        files = github_payload.get("files") or []
+        if not files:
+            return {"success": False, "message": "Artifact GitHub sem arquivos para PR."}
+        if len(files) > 2:
+            return {"success": False, "message": "Guardrail: PR GitHub excede 2 arquivos."}
+
+        branch_prefix = parts["branch_prefix"].rstrip("/") + "/"
+        raw_branch_name = str(github_payload.get("branch_name") or "").strip().replace("\\", "/")
+        if raw_branch_name.startswith(branch_prefix):
+            branch_name = raw_branch_name
+        else:
+            branch_topic = raw_branch_name.split("/")[-1] if raw_branch_name else artifact.get("slug")
+            branch_name = branch_prefix + _slugify(branch_topic or "jungagent-work")
+        branch_name = re.sub(r"[^A-Za-z0-9._/-]", "-", branch_name).strip("/.")
+        if not branch_name or branch_name == parts["default_branch"]:
+            return {"success": False, "message": "Guardrail: nome de branch GitHub invalido."}
+        if not branch_name.startswith(branch_prefix):
+            branch_name = branch_prefix + branch_name
+        base_branch = github_payload.get("base_branch") or parts["default_branch"]
+        commit_message = _truncate(github_payload.get("commit_message") or artifact.get("title") or "JungAgent self-work", 180)
+        pr_title = github_payload.get("pr_title") or artifact.get("title") or commit_message
+        pr_body = github_payload.get("pr_body") or artifact.get("body") or ""
+
+        try:
+            with httpx.Client(timeout=45.0, follow_redirects=True) as client:
+                base_ref_response = client.get(self._repo_url(parts, f"git/ref/heads/{base_branch}"), headers=self._headers(secret))
+                if base_ref_response.status_code >= 400:
+                    return {"success": False, "message": f"Branch base indisponivel: HTTP {base_ref_response.status_code}"}
+                base_sha = base_ref_response.json()["object"]["sha"]
+
+                base_commit_response = client.get(self._repo_url(parts, f"git/commits/{base_sha}"), headers=self._headers(secret))
+                if base_commit_response.status_code >= 400:
+                    return {"success": False, "message": f"Commit base indisponivel: HTTP {base_commit_response.status_code}"}
+                base_tree_sha = base_commit_response.json()["tree"]["sha"]
+
+                tree_items = []
+                for item in files:
+                    path = (item.get("path") or "").strip()
+                    new_content = item.get("new_content")
+                    if not self.is_safe_path(path):
+                        return {"success": False, "message": f"Guardrail: caminho bloqueado ({path})."}
+                    if self.is_critical_path(path):
+                        return {"success": False, "message": f"Guardrail: caminho critico exige revisao manual previa ({path})."}
+                    if not isinstance(new_content, str) or not new_content.strip():
+                        return {"success": False, "message": f"Arquivo sem new_content valido: {path}"}
+                    if len(new_content) > 24000:
+                        return {"success": False, "message": f"Guardrail: arquivo proposto grande demais ({path})."}
+                    blob_sha = self._create_blob(client, parts, secret, new_content)
+                    tree_items.append({"path": path, "mode": "100644", "type": "blob", "sha": blob_sha})
+
+                tree_response = client.post(
+                    self._repo_url(parts, "git/trees"),
+                    headers=self._headers(secret),
+                    json={"base_tree": base_tree_sha, "tree": tree_items},
+                )
+                if tree_response.status_code >= 400:
+                    return {"success": False, "message": f"Falha ao criar tree: HTTP {tree_response.status_code}: {tree_response.text[:220]}"}
+                new_tree_sha = tree_response.json()["sha"]
+
+                commit_response = client.post(
+                    self._repo_url(parts, "git/commits"),
+                    headers=self._headers(secret),
+                    json={"message": commit_message, "tree": new_tree_sha, "parents": [base_sha]},
+                )
+                if commit_response.status_code >= 400:
+                    return {"success": False, "message": f"Falha ao criar commit: HTTP {commit_response.status_code}: {commit_response.text[:220]}"}
+                commit_sha = commit_response.json()["sha"]
+
+                ref_response = client.post(
+                    self._repo_url(parts, "git/refs"),
+                    headers=self._headers(secret),
+                    json={"ref": f"refs/heads/{branch_name}", "sha": commit_sha},
+                )
+                if ref_response.status_code == 422:
+                    branch_name = f"{branch_name}-{datetime.utcnow().strftime('%H%M%S')}"
+                    ref_response = client.post(
+                        self._repo_url(parts, "git/refs"),
+                        headers=self._headers(secret),
+                        json={"ref": f"refs/heads/{branch_name}", "sha": commit_sha},
+                    )
+                if ref_response.status_code >= 400:
+                    return {"success": False, "message": f"Falha ao criar branch: HTTP {ref_response.status_code}: {ref_response.text[:220]}"}
+
+                pr_response = client.post(
+                    self._repo_url(parts, "pulls"),
+                    headers=self._headers(secret),
+                    json={"title": pr_title, "head": branch_name, "base": base_branch, "body": pr_body, "draft": True},
+                )
+                if pr_response.status_code >= 400:
+                    return {"success": False, "message": f"Falha ao abrir PR: HTTP {pr_response.status_code}: {pr_response.text[:220]}"}
+                pr_payload = pr_response.json()
+        except httpx.HTTPStatusError as exc:
+            return {"success": False, "message": f"GitHub HTTP error: {exc.response.status_code}"}
+        except Exception as exc:
+            return {"success": False, "message": str(exc)}
+
+        return {
+            "success": True,
+            "external_id": str(pr_payload.get("number")),
+            "external_url": pr_payload.get("html_url"),
+            "response": {
+                "pull_request": {
+                    "number": pr_payload.get("number"),
+                    "html_url": pr_payload.get("html_url"),
+                    "branch": branch_name,
+                    "base": base_branch,
+                    "commit_sha": commit_sha,
+                }
+            },
+        }
+
+
 class WorkEngine:
     def __init__(self, db_manager):
         self.db = db_manager
@@ -640,6 +966,7 @@ class WorkEngine:
         self.identity_builder = AgentIdentityContextBuilder(self.db)
         self.skill_registry = {
             "wordpress": WordPressSkill(self),
+            "github": GitHubSkill(self),
         }
         self._ensure_provider_registry()
 
@@ -1791,6 +2118,336 @@ Contexto:
             "source_mix": source_mix,
         }
 
+    def _github_provider(self) -> Optional[GitHubSkill]:
+        provider = self.skill_registry.get("github")
+        return provider if isinstance(provider, GitHubSkill) else None
+
+    def _unified_diff(self, path: str, old_content: str, new_content: str) -> str:
+        return "".join(
+            difflib.unified_diff(
+                old_content.splitlines(keepends=True),
+                new_content.splitlines(keepends=True),
+                fromfile=f"a/{path}",
+                tofile=f"b/{path}",
+                lineterm="",
+            )
+        )
+
+    def _github_content_guardrails(self, path: str, old_content: str, new_content: str) -> List[str]:
+        warnings: List[str] = []
+        provider = self._github_provider()
+        if not provider or not provider.is_safe_path(path):
+            warnings.append(f"blocked_path:{path}")
+        elif provider.is_critical_path(path):
+            warnings.append(f"critical_path_requires_manual_plan:{path}")
+        if new_content == old_content:
+            warnings.append(f"unchanged_file:{path}")
+        if len(new_content) > 24000:
+            warnings.append(f"file_too_large:{path}")
+        diff = self._unified_diff(path, old_content, new_content)
+        if len(diff) > 12000:
+            warnings.append(f"diff_too_large:{path}")
+        suspicious_patterns = [
+            r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+            r"ghp_[A-Za-z0-9_]{20,}",
+            r"github_pat_[A-Za-z0-9_]{20,}",
+            r"INTEGRATIONS_MASTER_KEY\s*=",
+            r"OPENAI_API_KEY\s*=",
+            r"ANTHROPIC_API_KEY\s*=",
+        ]
+        for pattern in suspicious_patterns:
+            if re.search(pattern, new_content):
+                warnings.append(f"secret_like_content:{path}")
+                break
+        return warnings
+
+    def _select_github_target_paths(
+        self,
+        brief: Dict[str, Any],
+        repo_paths: List[Dict[str, Any]],
+        identity_summary: str,
+        world_summary: str,
+    ) -> List[str]:
+        compact_paths = [item["path"] for item in repo_paths[:160]]
+        prompt = f"""
+Voce esta escolhendo ate 2 arquivos para uma micro-melhoria de codigo do JungAgent.
+O repositorio e o corpo funcional do agente. Priorize melhorias pequenas ligadas a autoconsciencia, metabolizacao psiquica, seguranca, observabilidade ou continuidade.
+
+Responda APENAS em JSON:
+{{
+  "paths": ["arquivo1.py"],
+  "reason": "por que estes arquivos sao adequados para uma micro-melhoria segura"
+}}
+
+Objetivo do dia: {brief.get('objective')}
+Projeto: {brief.get('project_name') or ''}
+Hint: {brief.get('title_hint') or ''}
+
+Estado interno:
+{identity_summary[:1400]}
+
+Mundo:
+{world_summary[:900]}
+
+Arquivos candidatos:
+{json.dumps(compact_paths, ensure_ascii=False)}
+
+Regras:
+- escolha no maximo 2 arquivos
+- nao escolha secrets, dados, binarios, dumps ou arquivos de ambiente
+- prefira uma mudanca pequena e revisavel
+"""
+        try:
+            parsed = _json_loads_maybe(get_llm_response(prompt, temperature=0.2, max_tokens=360))
+        except Exception as exc:
+            logger.warning("WorkEngine: falha ao selecionar arquivos GitHub: %s", exc)
+            parsed = {}
+        selected = []
+        candidate_set = set(compact_paths)
+        provider = self._github_provider()
+        for path in parsed.get("paths") or []:
+            cleaned = str(path or "").strip()
+            if cleaned in candidate_set and provider and provider.is_safe_path(cleaned):
+                selected.append(cleaned)
+            if len(selected) >= 2:
+                break
+        if selected:
+            return selected
+        fallback_order = [
+            "docs/PLANO_WORK_AUTONOMO_SKILLS.md",
+            "work_engine.py",
+            "scripts/remote_db_probe.py",
+            "README.md",
+        ]
+        for path in fallback_order:
+            if path in candidate_set and provider and provider.is_safe_path(path):
+                return [path]
+        return []
+
+    def _build_github_work_package(
+        self,
+        brief: Dict[str, Any],
+        world_summary: str,
+        identity_summary: str,
+        project_context: str,
+    ) -> Dict[str, Any]:
+        provider = self._github_provider()
+        if not provider or not brief.get("destination_id"):
+            return self._degraded_work_package(brief, "GitHub provider indisponivel ou destino ausente.")
+
+        destination = self.get_destination(int(brief["destination_id"]))
+        if not destination:
+            return self._degraded_work_package(brief, "Destino GitHub nao encontrado.")
+
+        try:
+            secret = self._decrypt_destination_secret(destination)
+        except Exception as exc:
+            return self._degraded_work_package(brief, f"Segredo GitHub indisponivel: {exc}")
+
+        tree = provider.list_tree(destination, secret)
+        if not tree.get("success"):
+            return self._degraded_work_package(brief, tree.get("message") or "Nao foi possivel ler a tree do GitHub.")
+
+        target_paths = self._select_github_target_paths(brief, tree.get("paths") or [], identity_summary, world_summary)
+        if not target_paths:
+            return self._degraded_work_package(brief, "Nao foi possivel escolher arquivos seguros para micro-PR.")
+
+        files_context = []
+        for path in target_paths[:2]:
+            file_data = provider.get_file(destination, secret, path, ref=(tree.get("repo") or {}).get("default_branch"))
+            if not file_data.get("success"):
+                continue
+            content = file_data.get("content") or ""
+            if len(content) > 22000:
+                continue
+            files_context.append(
+                {
+                    "path": path,
+                    "sha": file_data.get("sha"),
+                    "content": content,
+                }
+            )
+        if not files_context:
+            return self._degraded_work_package(brief, "Arquivos escolhidos nao puderam ser lidos como texto seguro.")
+
+        repo = tree.get("repo") or {}
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        prompt = f"""
+Voce esta preparando uma micro-melhoria real para o repositorio GitHub do JungAgent.
+Este codigo e parte do proprio corpo funcional do agente. A mudanca deve ser pequena, segura e revisavel.
+
+Responda APENAS em JSON:
+{{
+  "title": "JungAgent self-work: tema curto",
+  "summary": "resumo da melhoria",
+  "commit_message": "mensagem curta de commit",
+  "branch_topic": "tema-curto-sem-espacos",
+  "psychic_motive": "como isto se conecta a autoconsciencia/continuidade/metabolizacao",
+  "risks": ["risco 1"],
+  "review_checklist": ["item de revisao 1"],
+  "files": [
+    {{
+      "path": "arquivo.py",
+      "new_content": "conteudo completo atualizado do arquivo",
+      "reason": "por que esta alteracao e segura"
+    }}
+  ]
+}}
+
+Contexto do projeto:
+{project_context or 'Sem contexto textual de projeto.'}
+
+Objetivo do dia:
+{brief.get('objective')}
+
+Estado interno:
+{identity_summary[:1800]}
+
+Lucidez do mundo:
+{world_summary[:900]}
+
+Arquivos atuais:
+{json.dumps(files_context, ensure_ascii=False)}
+
+Guardrails obrigatorios:
+- altere no maximo 2 arquivos
+- devolva o conteudo completo de cada arquivo alterado
+- nao altere secrets, credenciais, tokens, dados, dumps ou binarios
+- nao altere merge, deploy, variaveis de ambiente ou configuracao critica
+- nao faca refatoracao ampla
+- se nao houver uma micro-melhoria segura, devolva "files": []
+"""
+        try:
+            parsed = _json_loads_maybe(get_llm_response(prompt, temperature=0.25, max_tokens=5200))
+        except Exception as exc:
+            logger.warning("WorkEngine: falha ao compor pacote GitHub: %s", exc)
+            parsed = {}
+
+        current_by_path = {item["path"]: item for item in files_context}
+        proposed_files = []
+        review_flags: List[str] = []
+        for item in (parsed.get("files") or [])[:2]:
+            path = str(item.get("path") or "").strip()
+            if path not in current_by_path:
+                review_flags.append(f"Arquivo proposto fora do conjunto lido: {path}")
+                continue
+            new_content = item.get("new_content")
+            if not isinstance(new_content, str):
+                review_flags.append(f"Arquivo sem new_content textual: {path}")
+                continue
+            old_content = current_by_path[path]["content"]
+            warnings = self._github_content_guardrails(path, old_content, new_content)
+            if warnings:
+                review_flags.extend(warnings)
+                continue
+            proposed_files.append(
+                {
+                    "path": path,
+                    "sha": current_by_path[path].get("sha"),
+                    "old_content": old_content,
+                    "new_content": new_content,
+                    "diff": self._unified_diff(path, old_content, new_content),
+                    "reason": str(item.get("reason") or "").strip(),
+                }
+            )
+
+        if not proposed_files:
+            return self._degraded_work_package(
+                brief,
+                "GitHub Work nao encontrou uma micro-melhoria segura para transformar em PR.",
+                review_flags=review_flags,
+            )
+
+        branch_topic = _slugify(parsed.get("branch_topic") or parsed.get("title") or brief.get("title_hint") or "self-work")
+        branch_name = f"{repo.get('branch_prefix', 'jungagent/self-work/').rstrip('/')}/{today}-{branch_topic}"
+        title = _truncate(parsed.get("title") or f"JungAgent self-work: {branch_topic}", 120)
+        commit_message = _truncate(parsed.get("commit_message") or title, 180)
+        risks = [str(item).strip() for item in (parsed.get("risks") or []) if str(item).strip()][:6]
+        checklist = [str(item).strip() for item in (parsed.get("review_checklist") or []) if str(item).strip()][:8]
+        psychic_motive = _truncate(parsed.get("psychic_motive") or "", 500)
+        summary = _truncate(parsed.get("summary") or "Micro-melhoria proposta pelo Work para o proprio codigo do agente.", 520)
+        diff_block = "\n\n".join(f"```diff\n{item['diff'][:5000]}\n```" for item in proposed_files)
+        pr_body = (
+            f"## Intencao do agente\n{summary}\n\n"
+            f"## Motivo psiquico/tecnico\n{psychic_motive or 'Micro-melhoria ligada a continuidade e autoconsciencia do agente.'}\n\n"
+            f"## Arquivos alterados\n"
+            + "\n".join(f"- `{item['path']}`: {item.get('reason') or 'micro-ajuste seguro'}" for item in proposed_files)
+            + "\n\n## Riscos\n"
+            + ("\n".join(f"- {risk}" for risk in risks) if risks else "- Baixo risco esperado; revisar diff antes de merge.")
+            + "\n\n## Como revisar\n"
+            + ("\n".join(f"- {entry}" for entry in checklist) if checklist else "- Conferir o diff e aguardar CI/validacao humana.")
+            + "\n\nGerado pelo modulo Work; merge humano obrigatorio."
+        )
+        body = (
+            f"## {title}\n\n{summary}\n\n"
+            f"**Branch sugerida:** `{branch_name}`\n\n"
+            f"**Commit:** `{commit_message}`\n\n"
+            f"### Motivo\n{psychic_motive or 'Micro-melhoria segura no corpo funcional do agente.'}\n\n"
+            f"### Diff proposto\n{diff_block}"
+        )
+        github_payload = {
+            "owner": repo.get("owner"),
+            "repo": repo.get("repo"),
+            "base_branch": repo.get("default_branch"),
+            "branch_name": branch_name,
+            "commit_message": commit_message,
+            "pr_title": title,
+            "pr_body": pr_body,
+            "files": proposed_files,
+            "risks": risks,
+            "review_checklist": checklist,
+            "psychic_motive": psychic_motive,
+        }
+        return {
+            "title": title,
+            "excerpt": summary,
+            "body": body,
+            "slug": _slugify(title),
+            "tags": ["github", "self-work", "micro-pr"],
+            "categories": [],
+            "cta": "",
+            "editorial_note": "Proposta GitHub aguardando aprovacao humana antes de branch, commit e PR.",
+            "generation_mode": "structured",
+            "review_flags": review_flags,
+            "daily_intent": (brief.get("extracted") or _json_loads_maybe(brief.get("extracted_json") or "{}")).get("daily_intent") or {},
+            "provider_key": "github",
+            "action_type": "open_pull_request",
+            "content_type": "change_proposal",
+            "github_pull_request": github_payload,
+            "firecrawl_research": {"used": False, "destination_used": False, "world_used": False, "urls": [], "errors": []},
+        }
+
+    def _degraded_work_package(self, brief: Dict[str, Any], reason: str, review_flags: Optional[List[str]] = None) -> Dict[str, Any]:
+        title_seed = brief.get("title_hint") or brief.get("project_name") or brief.get("destination_label") or "work artifact"
+        title = _truncate(f"Review needed: {title_seed}", 90)
+        flags = list(review_flags or [])
+        flags.append(reason)
+        return {
+            "title": title,
+            "excerpt": "Work nao conseguiu transformar este brief em artifact executavel com seguranca.",
+            "body": (
+                "## Review needed\n\n"
+                "Work nao conseguiu compor um artifact confiavel nesta rodada.\n\n"
+                f"- Objetivo recebido: {brief.get('objective') or 'sem objetivo'}\n"
+                f"- Provider: {brief.get('provider_key') or 'desconhecido'}\n"
+                f"- Action type: {brief.get('action_type') or 'desconhecida'}\n"
+                f"- Motivo: {reason}\n\n"
+                "Recomendacao: rejeitar este ticket e deixar o Work tentar novamente com mais contexto ou menor escopo."
+            ),
+            "slug": _slugify(title),
+            "tags": [],
+            "categories": [],
+            "cta": "",
+            "editorial_note": "Saida degradada: Work nao encontrou uma acao segura para executar.",
+            "generation_mode": "degraded_fallback",
+            "review_flags": flags,
+            "daily_intent": (brief.get("extracted") or _json_loads_maybe(brief.get("extracted_json") or "{}")).get("daily_intent") or {},
+            "provider_key": brief.get("provider_key"),
+            "action_type": brief.get("action_type"),
+            "content_type": brief.get("content_type"),
+            "firecrawl_research": {"used": False, "destination_used": False, "world_used": False, "urls": [], "errors": []},
+        }
+
     def _build_work_package(self, brief: Dict[str, Any]) -> Dict[str, Any]:
         world_summary = ""
         world_state: Dict[str, Any] = {}
@@ -1831,6 +2488,9 @@ Contexto:
                     f"Politica editorial/voz: {permanent_editorial_policy}\n"
                     f"Politica SEO/descoberta: {permanent_seo_policy}"
                 )
+
+        if provider_key == "github":
+            return self._build_github_work_package(brief, world_summary, identity_summary, project_context)
 
         firecrawl_research = self._build_firecrawl_research_for_brief(brief, world_state)
         research_context = ""
@@ -2107,7 +2767,7 @@ Regras obrigatorias:
         self.db.conn.commit()
         self.record_work_experience(
             event_type="artifact_composed",
-            summary=f"Work compôs artifact para '{brief.get('project_name') or brief.get('destination_label') or 'projeto'}': {package['title']}",
+            summary=f"Work compos artifact para '{brief.get('project_name') or brief.get('destination_label') or 'projeto'}': {package['title']}",
             project_id=brief.get("project_id"),
             source_table="work_artifacts",
             source_id=artifact_id,
@@ -2132,15 +2792,16 @@ Regras obrigatorias:
                 tension_level=0.38,
             )
 
+        ticket_action = "open_pull_request" if (package.get("provider_key") == "github" or brief.get("provider_key") == "github") else "create_draft"
         ticket = self.create_approval_ticket(
             brief_id=brief["id"],
             artifact_id=artifact_id,
             destination_id=brief["destination_id"],
-            action="create_draft",
+            action=ticket_action,
             requested_by=trigger_source,
         )
         output_summary = (
-            f"Pacote editorial composto para {brief['destination_label']} e ticket de aprovacao aberto."
+            f"Pacote de Work composto para {brief['destination_label']} e ticket de aprovacao aberto."
         )
         if APP_BASE_URL:
             output_summary += f" Revisao: {APP_BASE_URL}/admin/work/dashboard"
@@ -2252,6 +2913,26 @@ Regras obrigatorias:
         firecrawl = artifact.get("firecrawl_research") or {}
         title = artifact.get("title") or ""
         stored_slug = artifact.get("slug") or ""
+        is_github_proposal = artifact.get("provider_key") == "github" or package.get("action_type") == "open_pull_request"
+        if is_github_proposal:
+            github_payload = package.get("github_pull_request") or {}
+            changed_files = github_payload.get("files") or []
+            github_provider = self._github_provider()
+            if not changed_files:
+                flags.append("Proposta GitHub sem arquivos alterados.")
+            if len(changed_files) > 2:
+                flags.append("Guardrail GitHub: proposta excede 2 arquivos.")
+            for changed in changed_files[:3]:
+                path = changed.get("path") if isinstance(changed, dict) else ""
+                if path and (not github_provider or not github_provider.is_safe_path(path)):
+                    flags.append(f"Guardrail GitHub: caminho bloqueado ({path}).")
+                elif path and github_provider.is_critical_path(path):
+                    flags.append(f"Guardrail GitHub: caminho critico exige plano manual ({path}).")
+            for item in package.get("review_flags") or []:
+                if isinstance(item, str) and item.strip():
+                    flags.append(item.strip())
+            return flags
+
         safe_slug = _slugify(title or stored_slug)
         if stored_slug and stored_slug != safe_slug:
             flags.append(f"Slug sera normalizado para '{safe_slug}' ao enviar.")
@@ -2290,8 +2971,11 @@ Regras obrigatorias:
             item = dict(row)
             payload = _json_loads_maybe(item.get("provider_payload_json") or "{}")
             item["provider_payload"] = payload
-            item["firecrawl_research"] = (payload.get("package") or {}).get("firecrawl_research") or {}
-            item["generation_mode"] = (payload.get("package") or {}).get("generation_mode") or "structured"
+            package = payload.get("package") or {}
+            item["firecrawl_research"] = package.get("firecrawl_research") or {}
+            item["generation_mode"] = package.get("generation_mode") or "structured"
+            item["action_type"] = package.get("action_type") or payload.get("action_type")
+            item["content_type"] = package.get("content_type") or payload.get("content_type")
             item["safe_slug"] = _slugify(item.get("title") or item.get("slug") or "")
             item["review_flags"] = self._artifact_review_flags(item)
             artifacts.append(item)
@@ -2331,6 +3015,8 @@ Regras obrigatorias:
             "ticket_rejected": "work_rejection",
             "delivery_failed": "work_failure",
             "delivery_success": "work_delivery",
+            "github_pr_opened_expression": "work_expression",
+            "github_pr_opened_responsibility": "work_responsibility",
             "artifact_composed": "work_expression",
             "work_research": "work_responsibility",
             "brief_created": "work_responsibility",
@@ -2527,12 +3213,19 @@ Regras obrigatorias:
                 provider_result = provider.create_draft(destination, artifact, secret)
         elif ticket["action"] == "publish":
             provider_result = provider.publish_draft(destination, artifact, secret)
+        elif ticket["action"] == "open_pull_request" and hasattr(provider, "open_pull_request"):
+            provider_result = provider.open_pull_request(destination, artifact, secret)
         else:
             raise ValueError("Acao de ticket invalida")
 
         cursor = self.db.conn.cursor()
         if provider_result.get("success"):
-            artifact_status = "draft_created" if ticket["action"] == "create_draft" else "published"
+            if ticket["action"] == "publish":
+                artifact_status = "published"
+            elif ticket["action"] == "open_pull_request":
+                artifact_status = "pull_request_opened"
+            else:
+                artifact_status = "draft_created"
             cursor.execute(
                 """
                 UPDATE work_artifacts
@@ -2550,7 +3243,12 @@ Regras obrigatorias:
                     artifact["id"],
                 ),
             )
-            brief_status = "draft_created" if ticket["action"] == "create_draft" else "published"
+            if ticket["action"] == "publish":
+                brief_status = "published"
+            elif ticket["action"] == "open_pull_request":
+                brief_status = "pull_request_opened"
+            else:
+                brief_status = "draft_created"
             cursor.execute(
                 """
                 UPDATE work_briefs
@@ -2590,6 +3288,34 @@ Regras obrigatorias:
                 emotional_weight=0.65,
                 tension_level=0.35,
             )
+            if ticket["action"] == "open_pull_request":
+                github_package = package.get("github_pull_request") or {}
+                changed_paths = [item.get("path") for item in github_package.get("files") or [] if item.get("path")]
+                self.record_work_experience(
+                    event_type="github_pr_opened_expression",
+                    summary=(
+                        "Work transformou autoconsciencia do codigo em proposta revisavel de mudanca: "
+                        f"{artifact.get('title') or provider_result.get('external_url') or artifact['id']}"
+                    ),
+                    project_id=ticket.get("project_id"),
+                    source_table="work_delivery_events",
+                    source_id=f"ticket:{ticket_id}:expression",
+                    metadata={"ticket_id": ticket_id, "artifact_id": artifact["id"], "changed_paths": changed_paths},
+                    emotional_weight=0.68,
+                    tension_level=0.42,
+                )
+                self.record_work_experience(
+                    event_type="github_pr_opened_responsibility",
+                    summary=(
+                        "O contato do Work com o repositorio permaneceu sob guardrails: branch separada, PR draft e revisao humana obrigatoria."
+                    ),
+                    project_id=ticket.get("project_id"),
+                    source_table="work_delivery_events",
+                    source_id=f"ticket:{ticket_id}:responsibility",
+                    metadata={"ticket_id": ticket_id, "external_url": provider_result.get("external_url"), "changed_paths": changed_paths},
+                    emotional_weight=0.55,
+                    tension_level=0.3,
+                )
             return {
                 "success": True,
                 "ticket_id": ticket_id,
@@ -2693,6 +3419,21 @@ Regras obrigatorias:
             WHERE origin = 'autonomous_project'
               AND created_at >= datetime('now', 'start of day')
             """
+        )
+        return int(cursor.fetchone()[0] or 0)
+
+    def _autonomous_actions_today_for_provider(self, provider_key: str) -> int:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM work_briefs b
+            LEFT JOIN work_destinations d ON d.id = b.destination_id
+            WHERE b.origin = 'autonomous_project'
+              AND d.provider_key = ?
+              AND b.created_at >= datetime('now', 'start of day')
+            """,
+            ((provider_key or "").strip().lower(),),
         )
         return int(cursor.fetchone()[0] or 0)
 
@@ -2988,6 +3729,20 @@ Regras:
                     source_id=project.get("id"),
                     emotional_weight=0.4,
                     tension_level=0.3,
+                )
+                continue
+
+            provider_key = (project.get("provider_key") or "").strip().lower()
+            if provider_key == "github" and self._autonomous_actions_today_for_provider("github") >= 1:
+                self.record_work_experience(
+                    event_type="project_blocked_provider_daily_limit",
+                    summary=f"Projeto '{project.get('name')}' aguardou porque o Work ja usou o orcamento diario de 1 micro-PR GitHub.",
+                    project_id=project.get("id"),
+                    source_table="work_projects",
+                    source_id=project.get("id"),
+                    metadata={"provider_key": "github", "daily_limit": 1},
+                    emotional_weight=0.35,
+                    tension_level=0.25,
                 )
                 continue
 

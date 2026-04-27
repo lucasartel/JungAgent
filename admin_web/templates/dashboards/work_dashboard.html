@@ -278,6 +278,26 @@ function formatJsonList(raw) {
     }
 }
 
+function renderGitHubProposal(artifact) {
+    const packagePayload = artifact.provider_payload?.package || {};
+    const proposal = packagePayload.github_pull_request || {};
+    if (!proposal.files?.length) {
+        return "";
+    }
+    const paths = proposal.files.map((item) => item.path).filter(Boolean).join(", ");
+    const risks = (proposal.risks || []).join(" | ");
+    const checklist = (proposal.review_checklist || []).join(" | ");
+    return `
+        <div class="mono-block-v2">
+            GitHub proposal: ${escapeHtml(proposal.pr_title || artifact.title || "Pull request")}<br>
+            Branch: ${escapeHtml(proposal.branch_name || "-")}<br>
+            Files: ${escapeHtml(paths || "-")}<br>
+            Risks: ${escapeHtml(risks || "Review the diff before merge.")}
+        </div>
+        ${checklist ? `<div class="mono-block-v2">Review checklist: ${escapeHtml(checklist)}</div>` : ""}
+    `;
+}
+
 function renderPendingApprovals(state) {
     const tickets = (state.tickets || []).filter((ticket) => ticket.status === "pending");
     renderCollection(
@@ -292,6 +312,8 @@ function renderPendingApprovals(state) {
                 firecrawl.world_used ? "world" : ""
             ].filter(Boolean).join(" + ");
             const isDegraded = artifact.generation_mode === "degraded_fallback";
+            const isGitHubPr = ticket.action === "open_pull_request" || artifact.action_type === "open_pull_request";
+            const approveLabel = isGitHubPr ? "Approve and open PR" : "Approve and create draft";
             return `
                 <article class="data-card-v2">
                     <strong>${escapeHtml(artifact.title || ticket.artifact_title || "Pending work")}</strong>
@@ -306,13 +328,14 @@ function renderPendingApprovals(state) {
                     ${artifact.editorial_note ? `<div class="mono-block-v2">Editorial note: ${escapeHtml(artifact.editorial_note)}</div>` : ""}
                     ${firecrawl.used ? `<div class="mono-block-v2">Research sources: ${escapeHtml(researchSources || "unknown")} | ${escapeHtml(firecrawl.summary || "")}</div>` : ""}
                     ${firecrawl.destination_profile ? `<div class="mono-block-v2">Destination profile: ${escapeHtml(firecrawl.destination_profile)}</div>` : ""}
+                    ${isGitHubPr ? renderGitHubProposal(artifact) : ""}
                     ${flags.length ? `<div class="mono-block-v2">Review warnings: ${escapeHtml(flags.join(" | "))}</div>` : ""}
                     <details>
                         <summary class="meta-line-v2">Read body preview</summary>
                         <div class="mono-block-v2">${escapeHtml((artifact.body || "").slice(0, 2600))}</div>
                     </details>
                     <div class="dashboard-grid-v2" style="margin-top: 1rem;">
-                        <button class="button-v2 button-v2--primary" data-work-action="approve-ticket" data-ticket-id="${escapeHtml(ticket.id)}" ${isDegraded ? "disabled title=\"Degraded artifacts must be rejected and regenerated.\"" : ""}>${isDegraded ? "Reject and regenerate first" : "Approve and create draft"}</button>
+                        <button class="button-v2 button-v2--primary" data-work-action="approve-ticket" data-ticket-kind="${isGitHubPr ? "github-pr" : "draft"}" data-ticket-id="${escapeHtml(ticket.id)}" ${isDegraded ? "disabled title=\"Degraded artifacts must be rejected and regenerated.\"" : ""}>${isDegraded ? "Reject and regenerate first" : approveLabel}</button>
                         <button class="button-v2" data-work-action="reject-ticket" data-ticket-id="${escapeHtml(ticket.id)}">Reject</button>
                     </div>
                 </article>
@@ -547,8 +570,11 @@ document.getElementById("pendingApprovalsList").addEventListener("click", async 
 
     const ticketId = button.dataset.ticketId;
     const action = button.dataset.workAction;
+    const ticketKind = button.dataset.ticketKind || "draft";
     button.disabled = true;
-    button.textContent = action === "approve-ticket" ? "Creating draft..." : "Rejecting...";
+    button.textContent = action === "approve-ticket"
+        ? (ticketKind === "github-pr" ? "Opening PR..." : "Creating draft...")
+        : "Rejecting...";
 
     let response;
     if (action === "approve-ticket") {
@@ -570,7 +596,8 @@ document.getElementById("pendingApprovalsList").addEventListener("click", async 
     if (!result.success && !result.result?.success) {
         alert(result.error || result.result?.message || "Work action failed.");
     } else if (result.result?.external_url) {
-        alert(`Draft created: ${result.result.external_url}`);
+        const createdLabel = ticketKind === "github-pr" ? "Pull request opened" : "Draft created";
+        alert(`${createdLabel}: ${result.result.external_url}`);
     }
     await loadWork();
 });

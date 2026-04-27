@@ -943,6 +943,22 @@ def query_work(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
         row["daily_intent"] = package.get("daily_intent")
         row["action_type"] = package.get("action_type") or payload.get("action_type")
         row["content_type"] = package.get("content_type")
+        github_pr = package.get("github_pull_request") or {}
+        if github_pr:
+            row["github_pull_request"] = {
+                "owner": github_pr.get("owner"),
+                "repo": github_pr.get("repo"),
+                "base_branch": github_pr.get("base_branch"),
+                "branch_name": github_pr.get("branch_name"),
+                "pr_title": github_pr.get("pr_title"),
+                "files": [
+                    item.get("path")
+                    for item in (github_pr.get("files") or [])
+                    if isinstance(item, dict) and item.get("path")
+                ],
+                "risks": github_pr.get("risks"),
+                "review_checklist": github_pr.get("review_checklist"),
+            }
         row["research"] = {
             "used": research.get("used"),
             "destination_used": research.get("destination_used"),
