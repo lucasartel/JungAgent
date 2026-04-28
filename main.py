@@ -11,11 +11,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
 import os
+import re
 import sys
 import sqlite3
 import logging
-from datetime import date
-from typing import Dict
+from datetime import date, datetime, timedelta
+from typing import Dict, List
 from dotenv import load_dotenv
 from admin_web.auth.middleware import require_master
 from admin_web.template_compat import patch_jinja2_template_response
@@ -448,6 +449,177 @@ async def root(request: Request):
     )
 
 
+def _normalize_blog_text(text: str | None, limit: int = 520) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+
+    cleaned = re.sub(r"(^|\n)\s{0,3}#{1,6}\s*", " ", raw)
+    cleaned = re.sub(r"`{1,3}", "", cleaned)
+    cleaned = re.sub(r"\*{1,2}", "", cleaned)
+    cleaned = re.sub(r"_{1,2}", "", cleaned)
+    cleaned = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3].rstrip(" ,.;:") + "..."
+
+
+def _blog_date_label(iso_timestamp: str) -> str:
+    try:
+        stamp = datetime.fromisoformat(iso_timestamp)
+        return stamp.strftime("%d %b %Y")
+    except ValueError:
+        return iso_timestamp[:10]
+
+
+def _load_blogdojung_entries(limit_days: int = 3) -> List[Dict]:
+    conn = getattr(getattr(bot_state, "db", None), "conn", None)
+    if conn is None:
+        return []
+
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT MAX(created_at) FROM (
+            SELECT MAX(created_at) AS created_at FROM agent_dreams
+            UNION ALL
+            SELECT MAX(created_at) AS created_at FROM agent_hobby_artifacts
+            UNION ALL
+            SELECT MAX(created_at) AS created_at FROM external_research
+        )
+        """
+    )
+    anchor_row = cursor.fetchone()
+    anchor_value = anchor_row[0] if anchor_row else None
+    if not anchor_value:
+        return []
+
+    try:
+        anchor_dt = datetime.fromisoformat(anchor_value)
+    except ValueError:
+        anchor_dt = datetime.now()
+
+    start_dt = datetime.combine(anchor_dt.date() - timedelta(days=max(limit_days - 1, 0)), datetime.min.time())
+    start_iso = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    entries: List[Dict] = []
+
+    cursor.execute(
+        """
+        SELECT created_at, symbolic_theme, extracted_insight, dream_content, image_url
+        FROM agent_dreams
+        WHERE datetime(created_at) >= datetime(?)
+        ORDER BY datetime(created_at) DESC
+        """,
+        (start_iso,),
+    )
+    for created_at, symbolic_theme, extracted_insight, dream_content, image_url in cursor.fetchall():
+        entries.append(
+            {
+                "type": "dream",
+                "type_label": "Dream",
+                "title": symbolic_theme or "Dream fragment",
+                "summary": _normalize_blog_text(extracted_insight or dream_content, 420),
+                "body": _normalize_blog_text(dream_content, 760),
+                "image_url": image_url,
+                "source_url": None,
+                "created_at": created_at,
+                "date_label": _blog_date_label(created_at),
+            }
+        )
+
+    cursor.execute(
+        """
+        SELECT created_at, title, summary, image_url
+        FROM agent_hobby_artifacts
+        WHERE datetime(created_at) >= datetime(?)
+        ORDER BY datetime(created_at) DESC
+        """,
+        (start_iso,),
+    )
+    for created_at, title, summary, image_url in cursor.fetchall():
+        entries.append(
+            {
+                "type": "expression",
+                "type_label": "Expression",
+                "title": title or "Expressive overflow",
+                "summary": _normalize_blog_text(summary, 420),
+                "body": "",
+                "image_url": image_url,
+                "source_url": None,
+                "created_at": created_at,
+                "date_label": _blog_date_label(created_at),
+            }
+        )
+
+    cursor.execute(
+        """
+        SELECT created_at, topic, synthesized_insight, source_url
+        FROM external_research
+        WHERE datetime(created_at) >= datetime(?)
+        ORDER BY datetime(created_at) DESC
+        """,
+        (start_iso,),
+    )
+    for created_at, topic, synthesized_insight, source_url in cursor.fetchall():
+        entries.append(
+            {
+                "type": "knowledge",
+                "type_label": "Knowledge",
+                "title": topic or "Knowledge synthesis",
+                "summary": _normalize_blog_text(synthesized_insight, 560),
+                "body": "",
+                "image_url": None,
+                "source_url": source_url if source_url and source_url != "LLM Knowledge Base" else None,
+                "created_at": created_at,
+                "date_label": _blog_date_label(created_at),
+            }
+        )
+
+    entries.sort(key=lambda item: item["created_at"], reverse=True)
+    return entries
+
+
+@app.get("/blogdojung")
+async def blogdojung(request: Request):
+    timeline = []
+    anchor_label = ""
+
+    try:
+        entries = _load_blogdojung_entries(limit_days=3)
+    except sqlite3.Error as exc:
+        logger.warning("⚠️ Erro ao montar timeline publica do Jung: %s", exc)
+        entries = []
+
+    if entries:
+        grouped: Dict[str, List[Dict]] = {}
+        for entry in entries:
+            grouped.setdefault(entry["date_label"], []).append(entry)
+
+        timeline = [
+            {
+                "date_label": date_label,
+                "entries": grouped[date_label],
+            }
+            for date_label in grouped
+        ]
+        anchor_label = timeline[0]["date_label"]
+
+    return templates.TemplateResponse(
+        "blogdojung.html",
+        {
+            "request": request,
+            "timeline": timeline,
+            "entry_count": sum(len(group["entries"]) for group in timeline),
+            "day_count": len(timeline),
+            "anchor_label": anchor_label,
+            "canonical_url": f"{PUBLIC_SITE_URL}/blogdojung",
+        },
+    )
+
+
 @app.get("/robots.txt")
 async def robots_txt():
     body = "\n".join([
@@ -470,6 +642,12 @@ async def sitemap_xml():
     <loc>{PUBLIC_SITE_URL}/</loc>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
+    <lastmod>{today}</lastmod>
+  </url>
+  <url>
+    <loc>{PUBLIC_SITE_URL}/blogdojung</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
     <lastmod>{today}</lastmod>
   </url>
 </urlset>
