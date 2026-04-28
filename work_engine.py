@@ -892,8 +892,21 @@ class GitHubSkill(BaseSkillProvider):
                         return {"success": False, "message": f"Guardrail: caminho critico exige revisao manual previa ({path})."}
                     if not isinstance(new_content, str) or not new_content.strip():
                         return {"success": False, "message": f"Arquivo sem new_content valido: {path}"}
-                    if len(new_content) > 24000:
+                    if len(new_content) > 260000:
                         return {"success": False, "message": f"Guardrail: arquivo proposto grande demais ({path})."}
+                    old_content = item.get("old_content")
+                    if isinstance(old_content, str):
+                        diff = "".join(
+                            difflib.unified_diff(
+                                old_content.splitlines(keepends=True),
+                                new_content.splitlines(keepends=True),
+                                fromfile=f"a/{path}",
+                                tofile=f"b/{path}",
+                                lineterm="",
+                            )
+                        )
+                        if len(diff) > 12000:
+                            return {"success": False, "message": f"Guardrail: diff grande demais ({path})."}
                     blob_sha = self._create_blob(client, parts, secret, new_content)
                     tree_items.append({"path": path, "mode": "100644", "type": "blob", "sha": blob_sha})
 
@@ -2142,7 +2155,7 @@ Contexto:
             warnings.append(f"critical_path_requires_manual_plan:{path}")
         if new_content == old_content:
             warnings.append(f"unchanged_file:{path}")
-        if len(new_content) > 24000:
+        if len(new_content) > 260000:
             warnings.append(f"file_too_large:{path}")
         diff = self._unified_diff(path, old_content, new_content)
         if len(diff) > 12000:
@@ -2161,21 +2174,110 @@ Contexto:
                 break
         return warnings
 
-    def _select_github_target_paths(
+    def _github_file_outline(self, path: str, content: str) -> Dict[str, Any]:
+        lines = content.splitlines()
+        symbols = []
+        imports = []
+        for index, line in enumerate(lines, start=1):
+            stripped = line.strip()
+            if len(imports) < 20 and (stripped.startswith("import ") or stripped.startswith("from ")):
+                imports.append({"line": index, "text": stripped[:140]})
+            match = re.match(r"^(class|def|async def)\s+([A-Za-z_][A-Za-z0-9_]*)", stripped)
+            if match and len(symbols) < 80:
+                symbols.append({"line": index, "kind": match.group(1), "name": match.group(2)})
+            if path.endswith((".js", ".ts")):
+                js_match = re.match(r"^(function|async function|const|let)\s+([A-Za-z_][A-Za-z0-9_]*)", stripped)
+                if js_match and len(symbols) < 80:
+                    symbols.append({"line": index, "kind": js_match.group(1), "name": js_match.group(2)})
+        return {
+            "path": path,
+            "chars": len(content),
+            "lines": len(lines),
+            "imports": imports,
+            "symbols": symbols,
+        }
+
+    def _github_focus_window(self, content: str, focus_terms: List[str], max_chars: int = 11000) -> Dict[str, Any]:
+        if len(content) <= max_chars:
+            return {"content": content, "start_line": 1, "end_line": len(content.splitlines())}
+
+        lowered = content.lower()
+        best_index = -1
+        for term in focus_terms:
+            cleaned = str(term or "").strip().lower()
+            if len(cleaned) < 3:
+                continue
+            index = lowered.find(cleaned)
+            if index >= 0:
+                best_index = index
+                break
+        if best_index < 0:
+            best_index = 0
+
+        half = max_chars // 2
+        start = max(0, best_index - half)
+        end = min(len(content), best_index + half)
+        start = content.rfind("\n", 0, start) + 1 if start > 0 else 0
+        next_newline = content.find("\n", end)
+        if next_newline >= 0:
+            end = next_newline + 1
+        window = content[start:end]
+        start_line = content[:start].count("\n") + 1
+        end_line = start_line + window.count("\n")
+        return {"content": window, "start_line": start_line, "end_line": end_line}
+
+    def _github_apply_text_edits(
+        self,
+        path: str,
+        old_content: str,
+        edits: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        new_content = old_content
+        applied = []
+        errors = []
+        for index, edit in enumerate(edits[:4], start=1):
+            find_text = edit.get("find")
+            replace_text = edit.get("replace")
+            if not isinstance(find_text, str) or not find_text:
+                errors.append(f"edit_{index}_missing_find:{path}")
+                continue
+            if not isinstance(replace_text, str):
+                errors.append(f"edit_{index}_missing_replace:{path}")
+                continue
+            if find_text not in new_content:
+                errors.append(f"edit_{index}_find_not_found:{path}")
+                continue
+            if new_content.count(find_text) > 1:
+                errors.append(f"edit_{index}_find_not_unique:{path}")
+                continue
+            new_content = new_content.replace(find_text, replace_text, 1)
+            applied.append({"index": index, "reason": str(edit.get("reason") or "").strip()})
+        return {"content": new_content, "applied": applied, "errors": errors}
+
+    def _select_github_targets(
         self,
         brief: Dict[str, Any],
         repo_paths: List[Dict[str, Any]],
         identity_summary: str,
         world_summary: str,
-    ) -> List[str]:
-        compact_paths = [item["path"] for item in repo_paths[:160]]
+    ) -> List[Dict[str, Any]]:
+        compact_paths = [
+            {
+                "path": item.get("path"),
+                "size": item.get("size") or 0,
+                "large": int(item.get("size") or 0) > 22000,
+            }
+            for item in repo_paths[:180]
+        ]
         prompt = f"""
 Voce esta escolhendo ate 2 arquivos para uma micro-melhoria de codigo do JungAgent.
 O repositorio e o corpo funcional do agente. Priorize melhorias pequenas ligadas a autoconsciencia, metabolizacao psiquica, seguranca, observabilidade ou continuidade.
 
 Responda APENAS em JSON:
 {{
-  "paths": ["arquivo1.py"],
+  "targets": [
+    {{"path": "arquivo1.py", "focus_terms": ["startup", "initialization"]}}
+  ],
   "reason": "por que estes arquivos sao adequados para uma micro-melhoria segura"
 }}
 
@@ -2194,6 +2296,7 @@ Arquivos candidatos:
 
 Regras:
 - escolha no maximo 2 arquivos
+- arquivos grandes podem ser escolhidos para observacao por trecho, mas a alteracao deve ser pequena
 - nao escolha secrets, dados, binarios, dumps ou arquivos de ambiente
 - prefira uma mudanca pequena e revisavel
 """
@@ -2202,13 +2305,21 @@ Regras:
         except Exception as exc:
             logger.warning("WorkEngine: falha ao selecionar arquivos GitHub: %s", exc)
             parsed = {}
-        selected = []
-        candidate_set = set(compact_paths)
+        selected: List[Dict[str, Any]] = []
+        candidate_set = {str(item.get("path") or "") for item in compact_paths}
         provider = self._github_provider()
-        for path in parsed.get("paths") or []:
-            cleaned = str(path or "").strip()
+        parsed_targets = parsed.get("targets")
+        if not parsed_targets and parsed.get("paths"):
+            parsed_targets = [{"path": path, "focus_terms": []} for path in parsed.get("paths") or []]
+        for target in parsed_targets or []:
+            cleaned = str((target or {}).get("path") or "").strip()
             if cleaned in candidate_set and provider and provider.is_safe_path(cleaned):
-                selected.append(cleaned)
+                focus_terms = [
+                    str(term).strip()
+                    for term in ((target or {}).get("focus_terms") or [])
+                    if str(term or "").strip()
+                ][:6]
+                selected.append({"path": cleaned, "focus_terms": focus_terms})
             if len(selected) >= 2:
                 break
         if selected:
@@ -2221,7 +2332,7 @@ Regras:
         ]
         for path in fallback_order:
             if path in candidate_set and provider and provider.is_safe_path(path):
-                return [path]
+                return [{"path": path, "focus_terms": [brief.get("objective") or "", brief.get("title_hint") or ""]}]
         return []
 
     def _build_github_work_package(
@@ -2248,27 +2359,51 @@ Regras:
         if not tree.get("success"):
             return self._degraded_work_package(brief, tree.get("message") or "Nao foi possivel ler a tree do GitHub.")
 
-        target_paths = self._select_github_target_paths(brief, tree.get("paths") or [], identity_summary, world_summary)
-        if not target_paths:
+        targets = self._select_github_targets(brief, tree.get("paths") or [], identity_summary, world_summary)
+        if not targets:
             return self._degraded_work_package(brief, "Nao foi possivel escolher arquivos seguros para micro-PR.")
 
         files_context = []
-        for path in target_paths[:2]:
+        current_by_path: Dict[str, Dict[str, Any]] = {}
+        skipped_paths = []
+        for target in targets[:2]:
+            path = str(target.get("path") or "").strip()
+            focus_terms = [str(term).strip() for term in (target.get("focus_terms") or []) if str(term or "").strip()]
             file_data = provider.get_file(destination, secret, path, ref=(tree.get("repo") or {}).get("default_branch"))
             if not file_data.get("success"):
+                skipped_paths.append({"path": path, "reason": file_data.get("message") or "read_failed"})
                 continue
             content = file_data.get("content") or ""
-            if len(content) > 22000:
-                continue
+            objective_terms = re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", str(brief.get("objective") or ""))[:8]
+            core_focus = ["startup", "initialization", "observability", "Application startup", "Inicializando", "work"]
+            combined_focus = focus_terms + core_focus + objective_terms
+            outline = self._github_file_outline(path, content)
+            window = self._github_focus_window(content, combined_focus)
+            is_large = len(content) > len(window.get("content") or "")
+            current_by_path[path] = {
+                "path": path,
+                "sha": file_data.get("sha"),
+                "content": content,
+                "outline": outline,
+                "window": window,
+                "large_file": is_large,
+            }
             files_context.append(
                 {
                     "path": path,
                     "sha": file_data.get("sha"),
-                    "content": content,
+                    "large_file": is_large,
+                    "outline": outline,
+                    "context_window": window,
+                    "editing_mode": "exact_find_replace" if is_large else "full_content_or_exact_find_replace",
                 }
             )
         if not files_context:
-            return self._degraded_work_package(brief, "Arquivos escolhidos nao puderam ser lidos como texto seguro.")
+            return self._degraded_work_package(
+                brief,
+                "Arquivos escolhidos nao puderam ser lidos como texto seguro.",
+                review_flags=[json.dumps(item, ensure_ascii=False) for item in skipped_paths[:4]],
+            )
 
         repo = tree.get("repo") or {}
         today = datetime.utcnow().strftime("%Y-%m-%d")
@@ -2288,7 +2423,14 @@ Responda APENAS em JSON:
   "files": [
     {{
       "path": "arquivo.py",
-      "new_content": "conteudo completo atualizado do arquivo",
+      "new_content": "opcional para arquivos pequenos: conteudo completo atualizado do arquivo",
+      "edits": [
+        {{
+          "find": "trecho EXATO visto na janela de contexto",
+          "replace": "trecho substituto completo",
+          "reason": "por que esta edicao e segura"
+        }}
+      ],
       "reason": "por que esta alteracao e segura"
     }}
   ]
@@ -2311,7 +2453,9 @@ Arquivos atuais:
 
 Guardrails obrigatorios:
 - altere no maximo 2 arquivos
-- devolva o conteudo completo de cada arquivo alterado
+- para arquivos grandes, use edits com find/replace exato dentro da janela de contexto
+- para arquivos pequenos, voce pode usar new_content completo ou edits
+- cada find deve ser unico e pequeno o suficiente para revisar
 - nao altere secrets, credenciais, tokens, dados, dumps ou binarios
 - nao altere merge, deploy, variaveis de ambiente ou configuracao critica
 - nao faca refatoracao ampla
@@ -2323,7 +2467,6 @@ Guardrails obrigatorios:
             logger.warning("WorkEngine: falha ao compor pacote GitHub: %s", exc)
             parsed = {}
 
-        current_by_path = {item["path"]: item for item in files_context}
         proposed_files = []
         review_flags: List[str] = []
         for item in (parsed.get("files") or [])[:2]:
@@ -2332,10 +2475,28 @@ Guardrails obrigatorios:
                 review_flags.append(f"Arquivo proposto fora do conjunto lido: {path}")
                 continue
             new_content = item.get("new_content")
-            if not isinstance(new_content, str):
-                review_flags.append(f"Arquivo sem new_content textual: {path}")
-                continue
             old_content = current_by_path[path]["content"]
+            applied_edits = []
+            edit_errors = []
+            if isinstance(new_content, str) and new_content:
+                if current_by_path[path].get("large_file"):
+                    review_flags.append(f"Arquivo grande nao aceita new_content completo; use edits: {path}")
+                    continue
+            else:
+                edits = item.get("edits") or []
+                if not isinstance(edits, list) or not edits:
+                    review_flags.append(f"Arquivo sem new_content ou edits validos: {path}")
+                    continue
+                applied = self._github_apply_text_edits(path, old_content, edits)
+                new_content = applied.get("content") or old_content
+                applied_edits = applied.get("applied") or []
+                edit_errors = applied.get("errors") or []
+                if edit_errors:
+                    review_flags.extend(edit_errors)
+                    continue
+                if not applied_edits:
+                    review_flags.append(f"Nenhuma edicao aplicada: {path}")
+                    continue
             warnings = self._github_content_guardrails(path, old_content, new_content)
             if warnings:
                 review_flags.extend(warnings)
@@ -2348,6 +2509,9 @@ Guardrails obrigatorios:
                     "new_content": new_content,
                     "diff": self._unified_diff(path, old_content, new_content),
                     "reason": str(item.get("reason") or "").strip(),
+                    "applied_edits": applied_edits,
+                    "large_file": bool(current_by_path[path].get("large_file")),
+                    "observed_window": current_by_path[path].get("window"),
                 }
             )
 
@@ -2397,6 +2561,24 @@ Guardrails obrigatorios:
             "risks": risks,
             "review_checklist": checklist,
             "psychic_motive": psychic_motive,
+            "self_observation": {
+                "mode": "repo_map_plus_context_windows",
+                "selected_targets": targets,
+                "skipped_paths": skipped_paths,
+                "observed_files": [
+                    {
+                        "path": item["path"],
+                        "large_file": item.get("large_file"),
+                        "window": item.get("context_window"),
+                        "outline": {
+                            "chars": (item.get("outline") or {}).get("chars"),
+                            "lines": (item.get("outline") or {}).get("lines"),
+                            "symbols": ((item.get("outline") or {}).get("symbols") or [])[:20],
+                        },
+                    }
+                    for item in files_context
+                ],
+            },
         }
         return {
             "title": title,

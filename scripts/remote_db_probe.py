@@ -946,6 +946,7 @@ def query_work(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
         row["content_type"] = package.get("content_type")
         github_pr = package.get("github_pull_request") or {}
         if github_pr:
+            self_observation = github_pr.get("self_observation") or {}
             row["github_pull_request"] = {
                 "owner": github_pr.get("owner"),
                 "repo": github_pr.get("repo"),
@@ -960,6 +961,25 @@ def query_work(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
                 "risks": github_pr.get("risks"),
                 "review_checklist": github_pr.get("review_checklist"),
             }
+            if self_observation:
+                row["github_self_observation"] = {
+                    "mode": self_observation.get("mode"),
+                    "selected_targets": self_observation.get("selected_targets"),
+                    "skipped_paths": self_observation.get("skipped_paths"),
+                    "observed_files": [
+                        {
+                            "path": item.get("path"),
+                            "large_file": item.get("large_file"),
+                            "window": {
+                                "start_line": ((item.get("window") or {}).get("start_line")),
+                                "end_line": ((item.get("window") or {}).get("end_line")),
+                            },
+                            "outline": item.get("outline"),
+                        }
+                        for item in (self_observation.get("observed_files") or [])
+                        if isinstance(item, dict)
+                    ],
+                }
         row["research"] = {
             "used": research.get("used"),
             "destination_used": research.get("destination_used"),
