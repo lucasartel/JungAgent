@@ -1,0 +1,40 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#04070D"/>
+      <stop offset="1" stop-color="#050816"/>
+    </linearGradient>
+    <linearGradient id="loopA" x1="286" y1="464" x2="1324" y2="426" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F472B6"/>
+      <stop offset="0.24" stop-color="#D8B4FE"/>
+      <stop offset="0.5" stop-color="#8B5CF6"/>
+      <stop offset="0.76" stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <linearGradient id="loopB" x1="320" y1="440" x2="1288" y2="474" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22D3EE"/>
+      <stop offset="0.28" stop-color="#60A5FA"/>
+      <stop offset="0.56" stop-color="#A78BFA"/>
+      <stop offset="0.8" stop-color="#E879F9"/>
+      <stop offset="1" stop-color="#F472B6"/>
+    </linearGradient>
+    <filter id="glow" x="120" y="180" width="1360" height="540" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="9" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.45 0"/>
+      <feBlend mode="screen" in2="SourceGraphic" result="shape"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+
+  <g filter="url(#glow)" opacity="0.88">
+    <path d="M287 455C287 266 539 252 799 450C1062 650 1314 634 1314 445C1314 255 1060 245 799 450C539 654 287 644 287 455Z" stroke="url(#loopA)" stroke-width="8" stroke-linecap="round"/>
+    <path d="M305 438C305 275 547 264 799 449C1045 630 1288 624 1288 444C1288 267 1046 270 799 449C551 628 305 615 305 438Z" stroke="url(#loopB)" stroke-width="5.8" stroke-linecap="round" opacity="0.88"/>
+    <path d="M276 471C276 281 533 287 800 452C1067 618 1321 611 1321 436C1321 250 1068 261 800 452C531 643 276 649 276 471Z" stroke="url(#loopA)" stroke-width="4.8" stroke-linecap="round" opacity="0.78"/>
+    <path d="M321 463C321 300 553 286 800 449C1048 613 1275 610 1275 438C1275 281 1045 282 800 449C555 618 321 627 321 463Z" stroke="url(#loopB)" stroke-width="4.2" stroke-linecap="round" opacity="0.72"/>
+    <path d="M337 425C337 294 565 303 800 448C1036 598 1259 593 1259 440C1259 289 1038 300 800 448C563 595 337 576 337 425Z" stroke="url(#loopA)" stroke-width="3.6" stroke-linecap="round" opacity="0.62"/>
+    <path d="M294 490C294 315 534 309 800 451C1068 594 1301 584 1301 426C1301 261 1067 278 800 451C531 625 294 651 294 490Z" stroke="url(#loopB)" stroke-width="3.3" stroke-linecap="round" opacity="0.58"/>
+    <path d="M354 482C354 326 570 319 799 451C1028 584 1243 581 1243 437C1243 297 1026 310 799 451C572 592 354 621 354 482Z" stroke="url(#loopA)" stroke-width="2.7" stroke-linecap="round" opacity="0.48"/>
+    <path d="M250 454C250 258 520 237 800 450C1082 665 1350 656 1350 446C1350 238 1080 231 800 450C522 667 250 650 250 454Z" stroke="url(#loopB)" stroke-width="2.1" stroke-linecap="round" opacity="0.35"/>
+  </g>
+</svg>

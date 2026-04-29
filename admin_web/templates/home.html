@@ -172,10 +172,25 @@
             grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr);
             gap: 18px;
             align-items: stretch;
+            position: relative;
+            isolation: isolate;
+            overflow: hidden;
+        }
+
+        .hero-v2::before {
+            content: "";
+            position: absolute;
+            inset: -8% -10% -6% 26%;
+            background: url("/static/loop-infinity-hero.svg") no-repeat center right / contain;
+            opacity: 0.14;
+            pointer-events: none;
+            z-index: 0;
         }
 
         .hero-copy-v2 {
             padding: 10px 0;
+            position: relative;
+            z-index: 1;
         }
 
         .hero-title-v2 {
@@ -228,6 +243,8 @@
             background: transparent;
             border: none;
             box-shadow: none;
+            position: relative;
+            z-index: 1;
         }
 
         .hero-proof-v2 {
@@ -593,6 +610,14 @@
 
             .hero-panel-v2 {
                 padding: 0;
+            }
+
+            .hero-v2::before {
+                inset: 8% -26% auto 6%;
+                height: 74%;
+                background-position: center top;
+                background-size: 118% auto;
+                opacity: 0.11;
             }
 
             .public-nav-v2 {
