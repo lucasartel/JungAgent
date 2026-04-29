@@ -90,10 +90,7 @@
         }
 
         .blog-hero {
-            display: grid;
-            grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
-            gap: 24px;
-            align-items: end;
+            display: block;
             margin-bottom: 26px;
         }
 
@@ -124,15 +121,16 @@
             line-height: 1.75;
         }
 
-        .blog-summary {
-            padding: 22px;
+        .living-state {
+            margin-bottom: 28px;
+            padding: 20px 22px 22px;
             border-radius: 24px;
             border: 1px solid var(--shell-border);
             background: linear-gradient(180deg, rgba(14, 19, 36, 0.94), rgba(7, 11, 23, 0.96));
             box-shadow: var(--shell-shadow);
         }
 
-        .blog-summary-label {
+        .living-state-label {
             color: var(--shell-accent);
             font-size: 0.78rem;
             letter-spacing: 0.24em;
@@ -140,33 +138,106 @@
             font-weight: 700;
         }
 
-        .blog-summary-grid {
+        .living-state-intro {
+            margin: 10px 0 0;
+            color: var(--shell-muted);
+            font-size: 0.93rem;
+            line-height: 1.65;
+            max-width: 780px;
+        }
+
+        .living-state-grid {
             display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 14px;
             margin-top: 18px;
         }
 
-        .blog-stat {
-            padding: 16px;
+        .living-card {
+            padding: 16px 16px 15px;
             border-radius: 18px;
             border: 1px solid rgba(148, 163, 184, 0.14);
             background: rgba(10, 14, 28, 0.82);
         }
 
-        .blog-stat-label {
+        .living-card-label {
             color: var(--shell-muted);
-            font-size: 0.8rem;
+            font-size: 0.72rem;
             text-transform: uppercase;
             letter-spacing: 0.18em;
+            font-weight: 700;
         }
 
-        .blog-stat-value {
+        .living-card-value {
             margin-top: 10px;
             color: #f8fafc;
-            font-size: 1.8rem;
+            font-size: 1.15rem;
             font-weight: 700;
             letter-spacing: -0.03em;
+        }
+
+        .living-card-copy,
+        .living-card-list,
+        .living-card-meta {
+            color: var(--shell-muted);
+            font-size: 0.86rem;
+            line-height: 1.6;
+        }
+
+        .living-card-copy {
+            margin-top: 10px;
+        }
+
+        .living-card-list {
+            list-style: none;
+            margin: 10px 0 0;
+            padding: 0;
+            display: grid;
+            gap: 6px;
+        }
+
+        .living-card-list strong,
+        .living-card-meta strong {
+            color: #f8fafc;
+            font-weight: 600;
+        }
+
+        .living-card-meta {
+            margin-top: 10px;
+        }
+
+        .living-state-bar-group {
+            margin-top: 12px;
+            display: grid;
+            gap: 10px;
+        }
+
+        .living-bar-row {
+            display: grid;
+            gap: 5px;
+        }
+
+        .living-bar-row-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            color: var(--shell-muted);
+            font-size: 0.8rem;
+        }
+
+        .living-bar-track {
+            width: 100%;
+            height: 6px;
+            border-radius: 999px;
+            background: rgba(148, 163, 184, 0.12);
+            overflow: hidden;
+        }
+
+        .living-bar-fill {
+            height: 100%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, rgba(216, 180, 254, 0.9), rgba(96, 165, 250, 0.92));
         }
 
         .timeline {
@@ -316,8 +387,8 @@
         }
 
         @media (max-width: 960px) {
-            .blog-hero {
-                grid-template-columns: 1fr;
+            .living-state-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
             }
         }
 
@@ -396,7 +467,7 @@
                 padding: 18px 0;
             }
 
-            .blog-summary-grid {
+            .living-state-grid {
                 grid-template-columns: 1fr;
             }
 
@@ -440,27 +511,106 @@
                     This page surfaces the visible traces of the agent's inner day without exposing the entire machine.
                 </p>
             </div>
-            <aside class="blog-summary" aria-label="Timeline summary">
-                <div class="blog-summary-label">Current slice</div>
-                <div class="blog-summary-grid">
-                    <div class="blog-stat">
-                        <div class="blog-stat-label">Days</div>
-                        <div class="blog-stat-value">{{ day_count }}</div>
+        </section>
+
+        <section class="living-state" aria-label="Living state">
+            <div class="living-state-label">Living state</div>
+            <p class="living-state-intro">
+                A compact reading of JungAgent's current inner state: where the loop is, what tensions remain active,
+                how identity is crystallizing, and which drive is exerting the most pressure.
+            </p>
+            <div class="living-state-grid">
+                <article class="living-card">
+                    <div class="living-card-label">Current slice</div>
+                    <div class="living-card-value">{{ living_state.slice.day_count }} days · {{ living_state.slice.entry_count }} entries</div>
+                    <p class="living-card-copy">Latest visible day: {{ living_state.slice.anchor_label }}. Sources: dreams, art, and knowledge.</p>
+                </article>
+
+                <article class="living-card">
+                    <div class="living-card-label">Loop now</div>
+                    <div class="living-card-value">{{ living_state.loop.current_phase or "Unavailable" }}</div>
+                    <ul class="living-card-list">
+                        <li><strong>Next:</strong> {{ living_state.loop.next_phase or "Unavailable" }}</li>
+                        <li><strong>Cycle:</strong> {{ living_state.loop.cycle_id or "Unavailable" }}</li>
+                        <li><strong>Last completed:</strong> {{ living_state.loop.last_completed_phase or "Unavailable" }}</li>
+                    </ul>
+                </article>
+
+                <article class="living-card">
+                    <div class="living-card-label">Will state</div>
+                    <div class="living-card-value">{{ living_state.will.dominant_drive or "Unavailable" }}</div>
+                    {% if living_state.will.dominant_drive %}
+                    <div class="living-state-bar-group">
+                        <div class="living-bar-row">
+                            <div class="living-bar-row-header"><span>Knowing</span><span>{{ living_state.will.knowing }}</span></div>
+                            <div class="living-bar-track"><div class="living-bar-fill" style="width: {{ living_state.will.knowing }}%;"></div></div>
+                        </div>
+                        <div class="living-bar-row">
+                            <div class="living-bar-row-header"><span>Relating</span><span>{{ living_state.will.relating }}</span></div>
+                            <div class="living-bar-track"><div class="living-bar-fill" style="width: {{ living_state.will.relating }}%;"></div></div>
+                        </div>
+                        <div class="living-bar-row">
+                            <div class="living-bar-row-header"><span>Expressing</span><span>{{ living_state.will.expressing }}</span></div>
+                            <div class="living-bar-track"><div class="living-bar-fill" style="width: {{ living_state.will.expressing }}%;"></div></div>
+                        </div>
                     </div>
-                    <div class="blog-stat">
-                        <div class="blog-stat-label">Entries</div>
-                        <div class="blog-stat-value">{{ entry_count }}</div>
-                    </div>
-                    <div class="blog-stat">
-                        <div class="blog-stat-label">Latest day</div>
-                        <div class="blog-stat-value" style="font-size: 1.15rem;">{{ anchor_label or "Waiting" }}</div>
-                    </div>
-                    <div class="blog-stat">
-                        <div class="blog-stat-label">Sources</div>
-                        <div class="blog-stat-value" style="font-size: 1.05rem;">Dreams · Art · Knowledge</div>
-                    </div>
-                </div>
-            </aside>
+                    <p class="living-card-meta"><strong>Status:</strong> {{ living_state.will.threshold_crossed }}</p>
+                    {% if living_state.will.last_release %}
+                    <p class="living-card-meta"><strong>Last release:</strong> {{ living_state.will.last_release.winning_will }} · {{ living_state.will.last_release.status }}</p>
+                    {% endif %}
+                    {% else %}
+                    <p class="living-card-copy">Will telemetry is not available in this snapshot.</p>
+                    {% endif %}
+                </article>
+
+                <article class="living-card">
+                    <div class="living-card-label">Identity traits</div>
+                    <div class="living-card-value">Current crystallization</div>
+                    <ul class="living-card-list">
+                        {% for trait in living_state.identity_traits %}
+                        <li>{{ trait }}</li>
+                        {% endfor %}
+                    </ul>
+                </article>
+
+                <article class="living-card">
+                    <div class="living-card-label">Active contradiction</div>
+                    <div class="living-card-value">{{ living_state.contradiction.tension if living_state.contradiction else "Unavailable" }}</div>
+                    {% if living_state.contradiction %}
+                    <ul class="living-card-list">
+                        <li><strong>Pole A:</strong> {{ living_state.contradiction.pole_a }}</li>
+                        <li><strong>Pole B:</strong> {{ living_state.contradiction.pole_b }}</li>
+                    </ul>
+                    {% else %}
+                    <p class="living-card-copy">No unresolved contradiction is available in this snapshot.</p>
+                    {% endif %}
+                </article>
+
+                <article class="living-card">
+                    <div class="living-card-label">Possible selves</div>
+                    <div class="living-card-value">Identity horizon</div>
+                    <ul class="living-card-list">
+                        <li><strong>Ideal:</strong> {{ living_state.selves.ideal or "Unavailable" }}</li>
+                        <li><strong>Feared:</strong> {{ living_state.selves.feared or "Unavailable" }}</li>
+                    </ul>
+                </article>
+
+                <article class="living-card">
+                    <div class="living-card-label">Rumination metabolism</div>
+                    <div class="living-card-value">{{ living_state.rumination.ready or 0 }} ready</div>
+                    <ul class="living-card-list">
+                        <li><strong>Maturing:</strong> {{ living_state.rumination.maturing or 0 }}</li>
+                        <li><strong>Processed in latest pass:</strong> {{ living_state.rumination.processed or 0 }}</li>
+                        <li><strong>Dominant fragments:</strong> {{ (living_state.rumination.fragment_mix or [])|join(", ") if living_state.rumination.fragment_mix else "Unavailable" }}</li>
+                    </ul>
+                </article>
+
+                <article class="living-card">
+                    <div class="living-card-label">Relational stance</div>
+                    <div class="living-card-value">How it tends to meet the other</div>
+                    <p class="living-card-copy">{{ living_state.relational or "Unavailable" }}</p>
+                </article>
+            </div>
         </section>
 
         {% if timeline %}

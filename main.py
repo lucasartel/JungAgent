@@ -1,6 +1,7 @@
 import asyncio
 import uvicorn
 import base64
+import json
 from io import BytesIO
 from urllib.parse import urlencode
 from fastapi import Depends, FastAPI, Request
@@ -16,7 +17,7 @@ import sys
 import sqlite3
 import logging
 from datetime import date, datetime, timedelta
-from typing import Dict, List
+from typing import Any, Dict, List
 from dotenv import load_dotenv
 from admin_web.auth.middleware import require_master
 from admin_web.template_compat import patch_jinja2_template_response
@@ -474,6 +475,224 @@ def _blog_date_label(iso_timestamp: str) -> str:
         return iso_timestamp[:10]
 
 
+def _pretty_phase_name(value: str | None) -> str:
+    if not value:
+        return "Unavailable"
+    return value.replace("_", " ").strip().title()
+
+
+def _truncate_blog_line(text: str | None, limit: int = 120) -> str:
+    return _normalize_blog_text(text, limit)
+
+
+def _load_blog_living_state(entry_count: int = 0, day_count: int = 0, anchor_label: str = "") -> Dict[str, Any]:
+    conn = getattr(getattr(bot_state, "db", None), "conn", None)
+    if conn is None:
+        return {
+            "slice": {"entry_count": entry_count, "day_count": day_count, "anchor_label": anchor_label or "Waiting"},
+            "loop": {},
+            "will": {},
+            "identity_traits": [],
+            "contradiction": None,
+            "selves": {},
+            "rumination": {},
+            "relational": None,
+        }
+
+    cursor = conn.cursor()
+    living_state: Dict[str, Any] = {
+        "slice": {
+            "entry_count": entry_count,
+            "day_count": day_count,
+            "anchor_label": anchor_label or "Waiting",
+        },
+        "loop": {},
+        "will": {},
+        "identity_traits": [],
+        "contradiction": None,
+        "selves": {},
+        "rumination": {},
+        "relational": None,
+    }
+
+    try:
+        cursor.execute(
+            """
+            SELECT cycle_id, current_phase, next_phase, last_completed_phase, updated_at
+            FROM consciousness_loop_state
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+        if row:
+            living_state["loop"] = {
+                "cycle_id": row[0] or "Unavailable",
+                "current_phase": _pretty_phase_name(row[1]),
+                "next_phase": _pretty_phase_name(row[2]),
+                "last_completed_phase": _pretty_phase_name(row[3]),
+                "updated_at": row[4] or "",
+            }
+    except sqlite3.Error as exc:
+        logger.debug("Living state loop unavailable: %s", exc)
+
+    try:
+        from instance_config import ADMIN_USER_ID
+        from will_pressure import load_latest_pressure_state
+
+        pressure_state = load_latest_pressure_state(bot_state.db, ADMIN_USER_ID)
+        if pressure_state:
+            drive_map = {
+                "saber": "Knowing",
+                "relacionar": "Relating",
+                "expressar": "Expressing",
+            }
+            living_state["will"] = {
+                "dominant_drive": drive_map.get(pressure_state.get("dominant_pressure"), "Mixed"),
+                "knowing": round(float(pressure_state.get("saber_pressure") or 0.0)),
+                "relating": round(float(pressure_state.get("relacionar_pressure") or 0.0)),
+                "expressing": round(float(pressure_state.get("expressar_pressure") or 0.0)),
+                "threshold_crossed": "Crossed" if int(pressure_state.get("threshold_crossed") or 0) else "Below threshold",
+                "summary": pressure_state.get("pressure_summary") or "",
+            }
+
+            try:
+                cursor.execute(
+                    """
+                    SELECT winning_will, action_attempted, status, updated_at
+                    FROM agent_will_pulse_events
+                    ORDER BY updated_at DESC, id DESC
+                    LIMIT 1
+                    """
+                )
+                event_row = cursor.fetchone()
+                if event_row:
+                    living_state["will"]["last_release"] = {
+                        "winning_will": drive_map.get(event_row[0], "Mixed"),
+                        "action": _truncate_blog_line(event_row[1] or "No external action logged", 84),
+                        "status": (event_row[2] or "").replace("_", " ").title(),
+                        "updated_at": event_row[3] or "",
+                    }
+            except sqlite3.Error:
+                pass
+    except Exception as exc:
+        logger.debug("Living state will unavailable: %s", exc)
+
+    try:
+        cursor.execute(
+            """
+            SELECT content
+            FROM agent_identity_core
+            WHERE is_current = 1
+            ORDER BY datetime(updated_at) DESC
+            LIMIT 3
+            """
+        )
+        living_state["identity_traits"] = [
+            _truncate_blog_line(row[0], 110)
+            for row in cursor.fetchall()
+            if row and row[0]
+        ]
+    except sqlite3.Error as exc:
+        logger.debug("Living state identity traits unavailable: %s", exc)
+
+    try:
+        cursor.execute(
+            """
+            SELECT pole_a, pole_b, tension_level
+            FROM agent_identity_contradictions
+            WHERE status = 'unresolved'
+            ORDER BY COALESCE(tension_level, 0) DESC, datetime(updated_at) DESC
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+        if row:
+            living_state["contradiction"] = {
+                "pole_a": _truncate_blog_line(row[0], 92),
+                "pole_b": _truncate_blog_line(row[1], 92),
+                "tension": round(float(row[2] or 0.0), 2),
+            }
+    except sqlite3.Error as exc:
+        logger.debug("Living state contradiction unavailable: %s", exc)
+
+    try:
+        cursor.execute(
+            """
+            SELECT self_type, description
+            FROM agent_possible_selves
+            WHERE status = 'active'
+            ORDER BY COALESCE(vividness, 0) DESC, datetime(updated_at) DESC
+            """
+        )
+        ideal = None
+        feared = None
+        for self_type, description in cursor.fetchall():
+            if self_type == "ideal" and ideal is None:
+                ideal = _truncate_blog_line(description, 120)
+            elif self_type == "feared" and feared is None:
+                feared = _truncate_blog_line(description, 120)
+            if ideal and feared:
+                break
+        living_state["selves"] = {"ideal": ideal, "feared": feared}
+    except sqlite3.Error as exc:
+        logger.debug("Living state selves unavailable: %s", exc)
+
+    try:
+        cursor.execute(
+            """
+            SELECT metrics_json
+            FROM consciousness_loop_phase_results
+            WHERE phase IN ('rumination_intro', 'rumination_extro')
+            ORDER BY datetime(created_at) DESC
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+        metrics = json.loads(row[0]) if row and row[0] else {}
+
+        cursor.execute("SELECT COUNT(*) FROM rumination_tensions WHERE status = 'maturing'")
+        maturing = cursor.fetchone()[0] or 0
+
+        cursor.execute(
+            """
+            SELECT fragment_type, COUNT(*) AS count
+            FROM rumination_fragments
+            GROUP BY fragment_type
+            ORDER BY count DESC
+            LIMIT 3
+            """
+        )
+        fragment_mix = [f"{fragment_type} {count}" for fragment_type, count in cursor.fetchall()]
+
+        living_state["rumination"] = {
+            "ready": int(metrics.get("tensions_ready") or 0),
+            "maturing": int(maturing),
+            "processed": int(metrics.get("tensions_processed") or 0),
+            "fragment_mix": fragment_mix,
+        }
+    except Exception as exc:
+        logger.debug("Living state rumination unavailable: %s", exc)
+
+    try:
+        cursor.execute(
+            """
+            SELECT identity_content
+            FROM agent_relational_identity
+            WHERE is_current = 1
+            ORDER BY COALESCE(salience, 0) DESC, datetime(updated_at) DESC
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+        if row and row[0]:
+            living_state["relational"] = _truncate_blog_line(row[0], 180)
+    except sqlite3.Error as exc:
+        logger.debug("Living state relational stance unavailable: %s", exc)
+
+    return living_state
+
+
 def _load_blogdojung_entries(limit_days: int = 3) -> List[Dict]:
     conn = getattr(getattr(bot_state, "db", None), "conn", None)
     if conn is None:
@@ -607,6 +826,12 @@ async def blogdojung(request: Request):
         ]
         anchor_label = timeline[0]["date_label"]
 
+    living_state = _load_blog_living_state(
+        entry_count=sum(len(group["entries"]) for group in timeline),
+        day_count=len(timeline),
+        anchor_label=anchor_label,
+    )
+
     return templates.TemplateResponse(
         "blogdojung.html",
         {
@@ -615,6 +840,7 @@ async def blogdojung(request: Request):
             "entry_count": sum(len(group["entries"]) for group in timeline),
             "day_count": len(timeline),
             "anchor_label": anchor_label,
+            "living_state": living_state,
             "canonical_url": f"{PUBLIC_SITE_URL}/blogdojung",
         },
     )
