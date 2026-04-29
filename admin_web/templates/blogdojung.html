@@ -27,6 +27,7 @@
             --shell-text: #e2e8f0;
             --shell-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
             margin: 0;
+            font-size: 80%;
             background:
                 radial-gradient(circle at top left, rgba(76, 29, 149, 0.28), transparent 30%),
                 radial-gradient(circle at top right, rgba(14, 165, 233, 0.16), transparent 26%),
@@ -35,7 +36,7 @@
         }
 
         .blog-shell {
-            width: min(1100px, calc(100% - 40px));
+            width: min(1180px, calc(100% - 32px));
             margin: 0 auto;
         }
 
@@ -43,21 +44,21 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 18px;
-            padding: 22px 0;
+            gap: 14px;
+            padding: 18px 0;
         }
 
         .blog-brand {
             display: inline-flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
             color: inherit;
             text-decoration: none;
         }
 
         .blog-brand img {
-            width: 36px;
-            height: 36px;
+            width: 29px;
+            height: 29px;
             object-fit: contain;
             border-radius: 10px;
         }
@@ -66,7 +67,7 @@
             display: inline-flex;
             align-items: baseline;
             color: #f8fafc;
-            font-size: 1.05rem;
+            font-size: 0.84rem;
             line-height: 1;
             letter-spacing: -0.02em;
         }
@@ -86,7 +87,7 @@
         }
 
         .blog-main {
-            padding: 18px 0 72px;
+            padding: 14px 0 56px;
         }
 
         .blog-hero {
@@ -96,9 +97,9 @@
 
         .blog-kicker {
             display: inline-block;
-            margin-bottom: 14px;
+            margin-bottom: 11px;
             color: var(--shell-accent);
-            font-size: 0.82rem;
+            font-size: 0.66rem;
             letter-spacing: 0.24em;
             text-transform: uppercase;
             font-weight: 700;
@@ -106,7 +107,7 @@
 
         .blog-title {
             margin: 0;
-            font-size: clamp(2.8rem, 6vw, 4.7rem);
+            font-size: clamp(2.2rem, 4.8vw, 3.8rem);
             line-height: 0.95;
             letter-spacing: -0.05em;
             color: #f8fafc;
@@ -114,17 +115,17 @@
         }
 
         .blog-subtitle {
-            margin: 20px 0 0;
+            margin: 16px 0 0;
             max-width: 720px;
             color: var(--shell-muted);
-            font-size: 1.05rem;
-            line-height: 1.75;
+            font-size: 0.84rem;
+            line-height: 1.68;
         }
 
         .living-state {
-            margin-bottom: 28px;
-            padding: 20px 22px 22px;
-            border-radius: 24px;
+            margin-bottom: 22px;
+            padding: 16px 18px 18px;
+            border-radius: 19px;
             border: 1px solid var(--shell-border);
             background: linear-gradient(180deg, rgba(14, 19, 36, 0.94), rgba(7, 11, 23, 0.96));
             box-shadow: var(--shell-shadow);
@@ -132,46 +133,46 @@
 
         .living-state-label {
             color: var(--shell-accent);
-            font-size: 0.78rem;
+            font-size: 0.62rem;
             letter-spacing: 0.24em;
             text-transform: uppercase;
             font-weight: 700;
         }
 
         .living-state-intro {
-            margin: 10px 0 0;
+            margin: 8px 0 0;
             color: var(--shell-muted);
-            font-size: 0.93rem;
-            line-height: 1.65;
+            font-size: 0.74rem;
+            line-height: 1.58;
             max-width: 780px;
         }
 
         .living-state-grid {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 14px;
-            margin-top: 18px;
+            gap: 11px;
+            margin-top: 14px;
         }
 
         .living-card {
-            padding: 16px 16px 15px;
-            border-radius: 18px;
+            padding: 13px 13px 12px;
+            border-radius: 14px;
             border: 1px solid rgba(148, 163, 184, 0.14);
             background: rgba(10, 14, 28, 0.82);
         }
 
         .living-card-label {
             color: var(--shell-muted);
-            font-size: 0.72rem;
+            font-size: 0.58rem;
             text-transform: uppercase;
             letter-spacing: 0.18em;
             font-weight: 700;
         }
 
         .living-card-value {
-            margin-top: 10px;
+            margin-top: 8px;
             color: #f8fafc;
-            font-size: 1.15rem;
+            font-size: 0.92rem;
             font-weight: 700;
             letter-spacing: -0.03em;
         }
@@ -180,8 +181,8 @@
         .living-card-list,
         .living-card-meta {
             color: var(--shell-muted);
-            font-size: 0.86rem;
-            line-height: 1.6;
+            font-size: 0.69rem;
+            line-height: 1.55;
         }
 
         .living-card-copy {
@@ -521,12 +522,6 @@
             </p>
             <div class="living-state-grid">
                 <article class="living-card">
-                    <div class="living-card-label">Current slice</div>
-                    <div class="living-card-value">{{ living_state.slice.day_count }} days · {{ living_state.slice.entry_count }} entries</div>
-                    <p class="living-card-copy">Latest visible day: {{ living_state.slice.anchor_label }}. Sources: dreams, art, and knowledge.</p>
-                </article>
-
-                <article class="living-card">
                     <div class="living-card-label">Loop now</div>
                     <div class="living-card-value">{{ living_state.loop.current_phase or "Unavailable" }}</div>
                     <ul class="living-card-list">
@@ -561,16 +556,6 @@
                     {% else %}
                     <p class="living-card-copy">Will telemetry is not available in this snapshot.</p>
                     {% endif %}
-                </article>
-
-                <article class="living-card">
-                    <div class="living-card-label">Identity traits</div>
-                    <div class="living-card-value">Current crystallization</div>
-                    <ul class="living-card-list">
-                        {% for trait in living_state.identity_traits %}
-                        <li>{{ trait }}</li>
-                        {% endfor %}
-                    </ul>
                 </article>
 
                 <article class="living-card">

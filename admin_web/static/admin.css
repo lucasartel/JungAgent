@@ -752,6 +752,7 @@ tr:hover {
         linear-gradient(180deg, #04070d 0%, #070c14 100%);
     color: var(--shell-text);
     font-family: "Segoe UI", Inter, system-ui, sans-serif;
+    font-size: 80%;
 }
 
 .admin-topbar-v2 {
@@ -766,22 +767,22 @@ tr:hover {
 .admin-topbar-inner-v2,
 .admin-main-inner-v2,
 .admin-footer-inner-v2 {
-    width: min(1180px, calc(100% - 32px));
+    width: min(1260px, calc(100% - 28px));
     margin: 0 auto;
 }
 
 .admin-topbar-inner-v2 {
-    min-height: 72px;
+    min-height: 58px;
     display: grid;
     grid-template-columns: auto 1fr auto;
-    gap: 24px;
+    gap: 18px;
     align-items: center;
 }
 
 .admin-brand-v2 {
     display: inline-flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     text-decoration: none;
     color: var(--shell-text);
 }
@@ -791,8 +792,8 @@ tr:hover {
 }
 
 .admin-brand-v2 img {
-    width: 36px;
-    height: 36px;
+    width: 29px;
+    height: 29px;
     object-fit: contain;
 }
 
@@ -802,7 +803,7 @@ tr:hover {
     gap: 0;
     line-height: 1;
     color: #f8fafc;
-    font-size: 1.05rem;
+    font-size: 0.84rem;
     letter-spacing: -0.02em;
 }
 
@@ -817,15 +818,15 @@ tr:hover {
 .admin-nav-v2 {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
 }
 
 .admin-nav-link-v2 {
-    padding: 10px 14px;
+    padding: 8px 11px;
     border-radius: 999px;
     color: var(--shell-muted);
     text-decoration: none;
-    font-size: 0.95rem;
+    font-size: 0.76rem;
     font-weight: 600;
     transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
     border: 1px solid transparent;
@@ -843,31 +844,31 @@ tr:hover {
     display: flex;
     justify-content: flex-end;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
 }
 
 .admin-status-chip-v2 {
     display: inline-flex;
     align-items: center;
-    padding: 9px 12px;
+    padding: 7px 10px;
     border-radius: 999px;
     border: 1px solid var(--shell-border);
     background: rgba(15, 23, 42, 0.65);
     color: var(--shell-muted);
-    font-size: 0.83rem;
+    font-size: 0.66rem;
     font-weight: 600;
 }
 
 .admin-meta-link-v2 {
     display: inline-flex;
     align-items: center;
-    padding: 9px 12px;
+    padding: 7px 10px;
     border-radius: 999px;
     border: 1px solid var(--shell-border);
     background: rgba(15, 23, 42, 0.65);
     color: var(--shell-muted);
     text-decoration: none;
-    font-size: 0.83rem;
+    font-size: 0.66rem;
     font-weight: 600;
     transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
 }
@@ -880,7 +881,7 @@ tr:hover {
 
 .admin-main-v2 {
     min-height: calc(100vh - 144px);
-    padding: 32px 0 48px;
+    padding: 26px 0 38px;
 }
 
 .admin-footer-v2 {
@@ -889,40 +890,40 @@ tr:hover {
 }
 
 .admin-footer-inner-v2 {
-    padding: 18px 0 28px;
+    padding: 14px 0 22px;
 }
 
 .admin-footer-v2 p {
     margin: 0;
     color: #6e7b91;
-    font-size: 0.88rem;
+    font-size: 0.72rem;
 }
 
 .page-shell-v2 {
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 19px;
 }
 
 .page-header-v2 {
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
-    gap: 24px;
+    gap: 19px;
 }
 
 .page-kicker-v2 {
-    margin: 0 0 10px;
+    margin: 0 0 8px;
     color: var(--shell-accent);
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    font-size: 0.74rem;
+    font-size: 0.6rem;
     font-weight: 700;
 }
 
 .page-title-v2 {
     margin: 0;
-    font-size: clamp(2rem, 3vw, 2.9rem);
+    font-size: clamp(1.6rem, 2.4vw, 2.3rem);
     line-height: 0.98;
     font-weight: 700;
     letter-spacing: -0.03em;
@@ -930,24 +931,24 @@ tr:hover {
 }
 
 .page-subtitle-v2 {
-    margin: 12px 0 0;
+    margin: 10px 0 0;
     max-width: 760px;
     color: var(--shell-muted);
-    font-size: 1rem;
+    font-size: 0.8rem;
     line-height: 1.6;
 }
 
 .page-actions-v2 {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     flex-wrap: wrap;
 }
 
 .metric-grid-v2 {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 18px;
+    gap: 14px;
 }
 
 .metric-card-v2,
@@ -959,14 +960,14 @@ tr:hover {
 }
 
 .metric-card-v2 {
-    padding: 22px 22px 20px;
+    padding: 18px 18px 16px;
 }
 
 .metric-label-v2 {
     display: block;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
     color: var(--shell-muted);
-    font-size: 0.8rem;
+    font-size: 0.64rem;
     font-weight: 700;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -974,8 +975,8 @@ tr:hover {
 
 .metric-value-v2 {
     display: block;
-    margin-bottom: 8px;
-    font-size: clamp(2rem, 4vw, 3rem);
+    margin-bottom: 6px;
+    font-size: clamp(1.6rem, 3.2vw, 2.4rem);
     line-height: 1;
     font-weight: 700;
     letter-spacing: -0.04em;
@@ -986,7 +987,7 @@ tr:hover {
     margin: 0;
     color: var(--shell-muted);
     line-height: 1.55;
-    font-size: 0.95rem;
+    font-size: 0.76rem;
 }
 
 .panel-v2 {
@@ -994,13 +995,13 @@ tr:hover {
 }
 
 .panel-header-v2 {
-    padding: 22px 24px 18px;
+    padding: 18px 19px 15px;
     border-bottom: 1px solid var(--shell-border);
 }
 
 .panel-title-v2 {
     margin: 0;
-    font-size: 1.15rem;
+    font-size: 0.92rem;
     font-weight: 700;
     color: #f5f7fb;
 }
@@ -1008,7 +1009,7 @@ tr:hover {
 .panel-subtitle-v2 {
     margin: 8px 0 0;
     color: var(--shell-muted);
-    font-size: 0.95rem;
+    font-size: 0.76rem;
 }
 
 .table-shell-v2 {
@@ -1022,14 +1023,14 @@ tr:hover {
 
 .data-table-v2 th,
 .data-table-v2 td {
-    padding: 16px 20px;
+    padding: 13px 16px;
     text-align: left;
     border-bottom: 1px solid rgba(148, 163, 184, 0.12);
 }
 
 .data-table-v2 th {
     color: #9cabbe;
-    font-size: 0.78rem;
+    font-size: 0.62rem;
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -1037,7 +1038,7 @@ tr:hover {
 
 .data-table-v2 td {
     color: var(--shell-text);
-    font-size: 0.95rem;
+    font-size: 0.76rem;
     vertical-align: middle;
 }
 
@@ -1100,14 +1101,15 @@ tr:hover {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: 42px;
-    padding: 0 16px;
-    border-radius: 12px;
+    min-height: 34px;
+    padding: 0 13px;
+    border-radius: 10px;
     border: 1px solid rgba(168, 85, 247, 0.22);
     background: linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(124, 58, 237, 0.1));
     color: #eee7ff !important;
     text-decoration: none;
     font-weight: 600;
+    font-size: 0.74rem;
     transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease;
 }
 
@@ -1122,9 +1124,9 @@ tr:hover {
 }
 
 .button-v2--small {
-    min-height: 38px;
-    padding: 0 14px;
-    font-size: 0.88rem;
+    min-height: 31px;
+    padding: 0 11px;
+    font-size: 0.7rem;
 }
 
 .empty-state-v2 {
@@ -1194,13 +1196,13 @@ tr:hover {
 }
 
 .panel-body-v2 {
-    padding: 22px 24px 24px;
+    padding: 18px 19px 19px;
 }
 
 .stack-v2 {
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 14px;
 }
 
 .stack-compact-v2 {
@@ -1286,7 +1288,7 @@ tr:hover {
 .quick-grid-v2 {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 18px;
+    gap: 14px;
 }
 
 .metric-grid-v2--quad {
@@ -1294,8 +1296,8 @@ tr:hover {
 }
 
 .quick-card-v2 {
-    padding: 22px;
-    border-radius: 20px;
+    padding: 18px;
+    border-radius: 16px;
     border: 1px solid var(--shell-border);
     background: linear-gradient(180deg, rgba(12, 18, 30, 0.96), rgba(8, 13, 22, 0.9));
     color: var(--shell-text);
@@ -1315,9 +1317,9 @@ tr:hover {
 
 .quick-kicker-v2 {
     display: inline-block;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
     color: var(--shell-accent);
-    font-size: 0.78rem;
+    font-size: 0.62rem;
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -1325,9 +1327,9 @@ tr:hover {
 
 .quick-title-v2 {
     display: block;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     color: #f8fafc;
-    font-size: 1.15rem;
+    font-size: 0.92rem;
     font-weight: 700;
 }
 
@@ -1335,6 +1337,7 @@ tr:hover {
     margin: 0;
     color: var(--shell-muted);
     line-height: 1.6;
+    font-size: 0.76rem;
 }
 
 .stack-list-v2 {
@@ -1383,20 +1386,20 @@ tr:hover {
 .subnav-v2 {
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
+    gap: 8px;
 }
 
 .subnav-link-v2 {
     display: inline-flex;
     align-items: center;
-    min-height: 40px;
-    padding: 0 14px;
+    min-height: 32px;
+    padding: 0 11px;
     border-radius: 999px;
     border: 1px solid var(--shell-border);
     background: rgba(15, 23, 42, 0.52);
     color: var(--shell-muted);
     text-decoration: none;
-    font-size: 0.9rem;
+    font-size: 0.72rem;
     font-weight: 600;
 }
 
