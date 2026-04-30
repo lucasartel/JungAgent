@@ -2160,19 +2160,53 @@ Contexto:
         diff = self._unified_diff(path, old_content, new_content)
         if len(diff) > 12000:
             warnings.append(f"diff_too_large:{path}")
-        suspicious_patterns = [
+        if self._github_diff_adds_secret_like_content(diff):
+            warnings.append(f"secret_like_content:{path}")
+        return warnings
+
+    def _github_diff_adds_secret_like_content(self, diff: str) -> bool:
+        """Block newly introduced credentials without rejecting existing docs examples."""
+        strict_patterns = [
             r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
             r"ghp_[A-Za-z0-9_]{20,}",
             r"github_pat_[A-Za-z0-9_]{20,}",
-            r"INTEGRATIONS_MASTER_KEY\s*=",
-            r"OPENAI_API_KEY\s*=",
-            r"ANTHROPIC_API_KEY\s*=",
         ]
-        for pattern in suspicious_patterns:
-            if re.search(pattern, new_content):
-                warnings.append(f"secret_like_content:{path}")
-                break
-        return warnings
+        env_names = (
+            "INTEGRATIONS_MASTER_KEY",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+        )
+
+        for line in diff.splitlines():
+            if not line.startswith("+") or line.startswith("+++"):
+                continue
+            added = line[1:]
+            if any(re.search(pattern, added) for pattern in strict_patterns):
+                return True
+            match = re.search(rf"\b({'|'.join(env_names)})\s*=\s*([^\s#]+)", added)
+            if match and not self._github_secret_value_is_placeholder(match.group(2)):
+                return True
+        return False
+
+    def _github_secret_value_is_placeholder(self, value: str) -> bool:
+        cleaned = str(value or "").strip().strip("\"'").strip()
+        lowered = cleaned.lower()
+        if not lowered:
+            return True
+        placeholder_markers = [
+            "<",
+            "${",
+            "your-",
+            "your_",
+            "change-this",
+            "changeme",
+            "placeholder",
+            "example",
+            "dummy",
+            "test",
+            "...",
+        ]
+        return any(marker in lowered for marker in placeholder_markers)
 
     def _github_file_outline(self, path: str, content: str) -> Dict[str, Any]:
         lines = content.splitlines()
