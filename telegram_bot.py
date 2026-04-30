@@ -51,6 +51,11 @@ from instance_config import ADMIN_USER_ID as ACTIVE_CONSCIOUSNESS_ADMIN_USER_ID
 
 # ✅ IMPORTAR SISTEMA PROATIVO AVANÇADO
 from jung_proactive_advanced import ProactiveAdvancedSystem
+from telegram_audio import (
+    TelegramAudioTranscriber,
+    audio_input_enabled,
+    audio_max_bytes,
+)
 
 
 def _is_admin_telegram_user(telegram_user) -> bool:
@@ -311,6 +316,156 @@ def format_time_delta(dt: datetime) -> str:
         return f"{delta.seconds // 60} minuto(s) atrás"
     else:
         return "agora mesmo"
+
+
+def _record_telegram_audio_event(
+    user_id: str,
+    update: Update,
+    audio_kind: str,
+    telegram_file_id: str,
+    mime_type: Optional[str],
+    duration_seconds: Optional[int],
+    file_size_bytes: Optional[int],
+    status: str,
+    transcription_model: Optional[str] = None,
+    transcript: Optional[str] = None,
+    error_message: Optional[str] = None,
+):
+    """Persist audit metadata for Telegram audio without storing raw audio bytes."""
+    try:
+        cursor = bot_state.db.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO telegram_audio_events (
+                user_id, telegram_message_id, telegram_file_id, audio_kind,
+                mime_type, duration_seconds, file_size_bytes,
+                transcription_model, status, transcript, error_message
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                str(update.message.message_id) if update.message else None,
+                telegram_file_id,
+                audio_kind,
+                mime_type,
+                duration_seconds,
+                file_size_bytes,
+                transcription_model,
+                status,
+                transcript,
+                error_message[:1000] if error_message else None,
+            ),
+        )
+        bot_state.db.conn.commit()
+    except Exception as exc:
+        logger.warning("Falha ao registrar evento de audio Telegram: %s", exc)
+
+
+def _telegram_audio_format(mime_type: Optional[str], file_name: Optional[str] = None) -> str:
+    value = (mime_type or "").lower()
+    if "mpeg" in value or "mp3" in value:
+        return "mp3"
+    if "mp4" in value or "m4a" in value:
+        return "m4a"
+    if "wav" in value:
+        return "wav"
+    if "flac" in value:
+        return "flac"
+    if "aac" in value:
+        return "aac"
+    if file_name and "." in file_name:
+        extension = file_name.rsplit(".", 1)[-1].lower()
+        if extension in {"wav", "mp3", "aiff", "aac", "ogg", "flac", "m4a"}:
+            return extension
+    return "ogg"
+
+
+async def _transcribe_telegram_audio(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: str) -> Optional[str]:
+    if not audio_input_enabled():
+        await update.message.reply_text("A escuta de audio ainda nao esta habilitada nesta instancia.")
+        return None
+
+    voice = update.message.voice
+    audio = update.message.audio
+    media = voice or audio
+    if not media:
+        return None
+
+    audio_kind = "voice" if voice else "audio"
+    file_size = getattr(media, "file_size", None) or 0
+    file_id = getattr(media, "file_id", None)
+    mime_type = getattr(media, "mime_type", None) or ("audio/ogg" if voice else None)
+    duration = getattr(media, "duration", None)
+    file_name = getattr(media, "file_name", None)
+    model = None
+
+    if file_size and file_size > audio_max_bytes():
+        message = f"Audio grande demais para transcricao ({file_size} bytes)."
+        _record_telegram_audio_event(
+            user_id, update, audio_kind, file_id, mime_type, duration, file_size, "too_large",
+            error_message=message,
+        )
+        await update.message.reply_text("Esse audio ficou grande demais para eu processar com seguranca. Pode enviar uma versao mais curta?")
+        return None
+
+    transcriber = TelegramAudioTranscriber()
+    model = transcriber.model
+    if not transcriber.available():
+        _record_telegram_audio_event(
+            user_id, update, audio_kind, file_id, mime_type, duration, file_size, "missing_api_key",
+            transcription_model=model,
+            error_message="OPENROUTER_API_KEY ausente.",
+        )
+        await update.message.reply_text("Ainda nao tenho chave de transcricao configurada para ouvir audio.")
+        return None
+
+    try:
+        await update.message.chat.send_action(action="typing")
+        telegram_file = await context.bot.get_file(file_id)
+        audio_buffer = await telegram_file.download_as_bytearray()
+        audio_format = _telegram_audio_format(mime_type, file_name)
+        result = await asyncio.to_thread(
+            transcriber.transcribe,
+            bytes(audio_buffer),
+            audio_format,
+        )
+        transcript = result.transcript.strip()
+        _record_telegram_audio_event(
+            user_id,
+            update,
+            audio_kind,
+            file_id,
+            mime_type,
+            duration,
+            file_size or len(audio_buffer),
+            "transcribed",
+            transcription_model=result.model,
+            transcript=transcript,
+        )
+        logger.info(
+            "Audio Telegram transcrito: user_id=%s kind=%s duration=%s transcript_length=%s",
+            user_id[:8],
+            audio_kind,
+            duration,
+            len(transcript),
+        )
+        return transcript
+    except Exception as exc:
+        logger.error("Erro ao transcrever audio Telegram: %s", exc, exc_info=True)
+        _record_telegram_audio_event(
+            user_id,
+            update,
+            audio_kind,
+            file_id,
+            mime_type,
+            duration,
+            file_size,
+            "error",
+            transcription_model=model,
+            error_message=str(exc),
+        )
+        await update.message.reply_text("Eu tentei ouvir esse audio, mas a transcricao falhou. Pode reenviar ou escrever em texto?")
+        return None
 
 # ============================================================
 # COMANDOS DO BOT
@@ -817,7 +972,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply_instance_private(update)
         return
     telegram_id = user.id
-    message_text = update.message.text
+    message_text = update.message.text or update.message.caption or ""
 
     # Garantir usuário no banco
     user_id = ensure_user_in_database(user)
@@ -825,6 +980,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         Config.ACTIVE_CONSCIOUSNESS_ENABLED
         and str(user_id) == str(ACTIVE_CONSCIOUSNESS_ADMIN_USER_ID)
     )
+
+    if update.message.voice or update.message.audio:
+        transcript = await _transcribe_telegram_audio(update, context, user_id)
+        if not transcript:
+            return
+        if message_text:
+            message_text = f"{message_text}\n\n[Transcricao do audio]\n{transcript}"
+        else:
+            message_text = transcript
+        await update.message.reply_text(f"Transcricao recebida:\n\n{transcript}")
+
+    if not message_text:
+        await update.message.reply_text("Recebi uma mensagem que ainda nao consigo processar. Por enquanto, envie texto ou audio.")
+        return
 
     # ✅ RESET CRONÔMETRO PROATIVO (importante!)
     if bot_state.proactive:

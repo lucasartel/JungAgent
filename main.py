@@ -207,6 +207,7 @@ async def lifespan(app: FastAPI):
     # Vou assumir que precisamos mover a lógica de main() do telegram_bot.py para cá ou expor o handler)
     from telegram_bot import handle_message
     telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    telegram_app.add_handler(MessageHandler((filters.VOICE | filters.AUDIO) & ~filters.COMMAND, handle_message))
 
     # Iniciar bot em modo assíncrono
     await telegram_app.initialize()

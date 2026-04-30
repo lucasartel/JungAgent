@@ -1175,6 +1175,64 @@ def query_tables(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, 
     }
 
 
+def query_audio(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
+    table = "telegram_audio_events"
+    if not table_exists(cursor, table):
+        return {
+            "probe": "audio",
+            "user_id": args.user_id,
+            "available": False,
+            "assessment": "telegram_audio_events table is not available yet",
+            "status_counts": [],
+            "recent_events": [],
+        }
+
+    status_counts = grouped_counts(
+        cursor,
+        table,
+        "status",
+        where="user_id = ?",
+        params=(args.user_id,),
+    )
+    recent_events = fetch_recent(
+        cursor,
+        table,
+        [
+            "id",
+            "created_at",
+            "audio_kind",
+            "mime_type",
+            "duration_seconds",
+            "file_size_bytes",
+            "transcription_model",
+            "status",
+            "transcript",
+            "error_message",
+        ],
+        where="user_id = ?",
+        params=(args.user_id,),
+        order_by="id DESC",
+        limit=args.limit,
+    )
+    total = count_rows(cursor, table, "user_id = ?", (args.user_id,))
+    failures = sum(int(row["count"]) for row in status_counts if row.get("key") in {"error", "missing_api_key", "too_large"})
+    assessment = "no audio events found"
+    if total and failures == 0:
+        assessment = "audio transcription path has recent persisted events without recorded failures"
+    elif total:
+        assessment = "audio transcription path has persisted events with some failures to inspect"
+
+    return {
+        "probe": "audio",
+        "user_id": args.user_id,
+        "available": True,
+        "assessment": assessment,
+        "total_events": total,
+        "status_counts": status_counts,
+        "recent_events": recent_events,
+    }
+
+
 PROBES: Dict[str, Callable[[sqlite3.Cursor, argparse.Namespace], Dict[str, Any]]] = {
     "dreams": query_dreams,
     "identity": query_identity,
@@ -1187,6 +1245,7 @@ PROBES: Dict[str, Callable[[sqlite3.Cursor, argparse.Namespace], Dict[str, Any]]
     "world": query_world,
     "work": query_work,
     "tables": query_tables,
+    "audio": query_audio,
 }
 
 
