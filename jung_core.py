@@ -5871,6 +5871,7 @@ class JungianEngine:
             "will_item_count": 0,
             "history_item_count": 0,
             "self_state_count": 0,
+            "work_commitment_count": 0,
         }
 
         combined_query = f"{user_input}\n\nPrimeiro impulso: {thesis}".strip()
@@ -5912,6 +5913,7 @@ class JungianEngine:
         pattern_line = ""
         tension_line = ""
         self_state_lines: List[str] = []
+        work_lines: List[str] = []
         if self.identity_context_builder:
             try:
                 identity_context = self.identity_context_builder.build_identity_context(
@@ -5960,6 +5962,15 @@ class JungianEngine:
                     if first_question:
                         self_state_lines.append(f"Pergunta interna viva: {first_question}")
                 dossier_stats["self_state_count"] = len(self_state_lines)
+
+                work_autobiography = current_mind_state.get("work_autobiography") or {}
+                active_projects = work_autobiography.get("active_projects") or []
+                recent_artifacts = work_autobiography.get("recent_artifacts") or []
+                for project in active_projects[:4]:
+                    work_lines.append(self.identity_context_builder._format_work_project_line(project))
+                for artifact in recent_artifacts[:3]:
+                    work_lines.append(self.identity_context_builder._format_work_artifact_line(artifact))
+                dossier_stats["work_commitment_count"] = len(work_lines)
             except Exception as exc:
                 logger.warning("⚠️ [ACTIVE DOSSIER] Falha ao recuperar contradicoes/selves: %s", exc)
 
@@ -6010,12 +6021,15 @@ class JungianEngine:
         if self_state_lines:
             lines.extend(["", "[ESTADO INTERNO RELEVANTE]"])
             lines.extend(f"- {item}" for item in self_state_lines[:4])
+        if work_lines:
+            lines.extend(["", "[TRABALHOS ATUAIS DO AGENTE]"])
+            lines.extend(f"- {item}" for item in work_lines[:7])
         if history_lines:
             lines.extend(["", "[HISTORICO IMEDIATO]"])
             lines.extend(f"- {item}" for item in history_lines[:3])
 
         return {
-            "text": self._compress_prompt_context("\n".join(lines), max_tokens=900),
+            "text": self._compress_prompt_context("\n".join(lines), max_tokens=1200),
             "stats": dossier_stats,
         }
 

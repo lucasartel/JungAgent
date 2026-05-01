@@ -12,9 +12,9 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from instance_config import AGENT_INSTANCE
+from instance_config import ADMIN_USER_ID, AGENT_INSTANCE
 
 logger = logging.getLogger(__name__)
 
@@ -995,6 +995,103 @@ class AgentIdentityContextBuilder:
             "created_at": row[2],
         }
 
+    def _fetch_dict_rows(self, cursor, query: str, params: tuple = ()) -> List[Dict[str, Any]]:
+        cursor.execute(query, params)
+        columns = [item[0] for item in (cursor.description or [])]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    def _get_work_autobiography(self, cursor) -> Optional[Dict[str, Any]]:
+        try:
+            projects = self._fetch_dict_rows(
+                cursor,
+                """
+                SELECT
+                    p.id,
+                    p.name,
+                    p.status,
+                    p.priority,
+                    p.directive,
+                    d.label AS destination_label,
+                    d.provider_key,
+                    d.base_url
+                FROM work_projects p
+                LEFT JOIN work_destinations d ON d.id = p.default_destination_id
+                WHERE p.status = 'active'
+                ORDER BY p.priority DESC, p.updated_at DESC, p.id DESC
+                LIMIT 6
+                """,
+            )
+            recent_artifacts = self._fetch_dict_rows(
+                cursor,
+                """
+                SELECT
+                    a.title,
+                    a.status,
+                    a.external_url,
+                    a.content_type,
+                    a.updated_at,
+                    p.name AS project_name,
+                    d.label AS destination_label,
+                    d.provider_key
+                FROM work_artifacts a
+                LEFT JOIN work_projects p ON p.id = a.project_id
+                LEFT JOIN work_destinations d ON d.id = a.destination_id
+                WHERE a.status IN ('draft_created', 'published', 'composed')
+                ORDER BY a.updated_at DESC, a.id DESC
+                LIMIT 5
+                """,
+            )
+            recent_events = self._fetch_dict_rows(
+                cursor,
+                """
+                SELECT
+                    e.event_type,
+                    e.summary,
+                    e.created_at,
+                    p.name AS project_name
+                FROM work_experience_events e
+                LEFT JOIN work_projects p ON p.id = e.project_id
+                WHERE e.event_type IN (
+                    'delivery_success',
+                    'work_research',
+                    'artifact_composed',
+                    'github_pr_opened_expression',
+                    'github_pr_opened_responsibility'
+                )
+                ORDER BY e.created_at DESC, e.id DESC
+                LIMIT 5
+                """,
+            )
+        except Exception:
+            return None
+
+        if not projects and not recent_artifacts and not recent_events:
+            return None
+
+        return {
+            "active_projects": projects,
+            "recent_artifacts": recent_artifacts,
+            "recent_events": recent_events,
+        }
+
+    def _format_work_project_line(self, project: Dict[str, Any]) -> str:
+        name = project.get("name") or "projeto sem nome"
+        destination = project.get("destination_label") or project.get("base_url") or "destino nao definido"
+        provider = project.get("provider_key") or "provider desconhecido"
+        priority = project.get("priority")
+        directive = self._clip_identity_sentence(project.get("directive"), 120)
+        priority_text = f", prioridade {priority}" if priority is not None else ""
+        directive_text = f"; diretriz: {directive}" if directive else ""
+        return f"{name} -> {destination} ({provider}{priority_text}){directive_text}"
+
+    def _format_work_artifact_line(self, artifact: Dict[str, Any]) -> str:
+        title = artifact.get("title") or "artifact sem titulo"
+        project = artifact.get("project_name") or artifact.get("destination_label") or "projeto de Work"
+        status = artifact.get("status") or "status desconhecido"
+        external_url = artifact.get("external_url") or ""
+        url_text = f" ({external_url})" if external_url else ""
+        return f"{project}: {title} [{status}]{url_text}"
+
     def _get_latest_will_signal(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
         if not user_id:
             return None
@@ -1230,6 +1327,11 @@ class AgentIdentityContextBuilder:
         meta_consciousness = self._get_latest_meta_consciousness(cursor, user_id)
         world_knowledge_signal = self._get_latest_world_knowledge_signal()
         work_signal = self._get_latest_work_identity_signal(cursor, user_id)
+        work_autobiography = (
+            self._get_work_autobiography(cursor)
+            if user_id and str(user_id) == str(ADMIN_USER_ID)
+            else None
+        )
 
         self_kernel = self._pick_top_beliefs(
             beliefs, current_user_message, limit=2 if style == "concise" else 3
@@ -1340,6 +1442,7 @@ class AgentIdentityContextBuilder:
             "meta_consciousness_shift": (meta_consciousness or {}).get("emergent_shift"),
             "dream_residue": dream_signal,
             "world_knowledge_signal": world_knowledge_signal,
+            "work_autobiography": work_autobiography,
             "will_signal": will_signal,
             "will_state": (
                 {
@@ -1700,6 +1803,30 @@ class AgentIdentityContextBuilder:
                 lines.append(f"- Semente conceitual ainda ativa: {world_knowledge_signal['knowledge_seed']}")
             if world_knowledge_signal.get("knowledge_journal_entry"):
                 lines.append(f"- Nota interna de aprendizado: {world_knowledge_signal['knowledge_journal_entry']}")
+            lines.append("")
+
+        if current_state.get("work_autobiography"):
+            work_state = current_state["work_autobiography"]
+            active_projects = work_state.get("active_projects") or []
+            recent_artifacts = work_state.get("recent_artifacts") or []
+            recent_events = work_state.get("recent_events") or []
+            lines.append("### Work Commitments")
+            if active_projects:
+                lines.append("- Voce tem compromissos de trabalho ativos; eles fazem parte da sua vida operacional, nao sao contexto externo solto.")
+                for project in active_projects[:5]:
+                    lines.append(f"- Trabalho ativo: {self._format_work_project_line(project)}")
+            if recent_artifacts:
+                lines.append("- Entregas recentes que voce deve conseguir reconhecer se o usuario perguntar:")
+                for artifact in recent_artifacts[:4]:
+                    lines.append(f"- {self._format_work_artifact_line(artifact)}")
+            elif recent_events:
+                lines.append("- Experiencias recentes de trabalho:")
+                for event in recent_events[:4]:
+                    summary = self._clip_identity_sentence(event.get("summary"), 180)
+                    project = event.get("project_name") or "Work"
+                    if summary:
+                        lines.append(f"- {project}: {summary}")
+            lines.append("- Se o usuario perguntar pelo seu trabalho, fale concretamente desses projetos e destinos, sem fingir que nao sabe.")
             lines.append("")
 
         if current_state.get("recent_shift"):
