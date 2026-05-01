@@ -941,14 +941,35 @@ class AgentIdentityContextBuilder:
             return None
 
         knowledge_gap = world_state.get("knowledge_gap") or {}
+        dynamic_queries = []
+        for query in world_state.get("dynamic_queries") or []:
+            if not isinstance(query, dict):
+                continue
+            text = self._clip_identity_sentence(query.get("query"), 140)
+            if text:
+                dynamic_queries.append(
+                    {
+                        "query": text,
+                        "area": query.get("target_area") or query.get("area"),
+                        "scope": query.get("scope"),
+                    }
+                )
+
         signal = {
             "knowledge_source_decision": world_state.get("knowledge_source_decision"),
             "knowledge_resolution_summary": world_state.get("knowledge_resolution_summary"),
+            "latent_probe_summary": world_state.get("latent_probe_summary"),
             "knowledge_findings": world_state.get("knowledge_findings"),
             "knowledge_seed": world_state.get("knowledge_seed"),
             "knowledge_journal_entry": world_state.get("knowledge_journal_entry"),
+            "dynamic_queries": dynamic_queries[:3],
+            "firecrawl_used": bool(world_state.get("firecrawl_used")),
+            "firecrawl_findings": world_state.get("firecrawl_findings"),
             "gap_label": knowledge_gap.get("gap_label"),
             "gap_question": knowledge_gap.get("gap_question"),
+            "target_area": knowledge_gap.get("target_area"),
+            "target_scope": knowledge_gap.get("target_scope"),
+            "source_reason": knowledge_gap.get("source_reason"),
         }
         if (
             signal["knowledge_source_decision"] == "inactive"
@@ -959,6 +980,63 @@ class AgentIdentityContextBuilder:
         ):
             return None
         return signal
+
+    def _knowledge_decision_human_label(self, decision: Optional[str]) -> str:
+        labels = {
+            "latent_sufficient": "elaboracao interna a partir do saber latente do modelo",
+            "web_required": "atualizacao externa pela web",
+            "already_integrated": "reintegracao de algo que ja vinha sendo metabolizado",
+            "inactive": "sem aprofundamento epistemico especial",
+        }
+        return labels.get(decision or "", decision or "sem decisao registrada")
+
+    def format_world_knowledge_learning_lines(self, signal: Optional[Dict], limit: int = 8) -> List[str]:
+        """Format recent epistemic learning for prompts without dumping raw research logs."""
+        if not signal:
+            return []
+
+        lines: List[str] = []
+        decision = self._knowledge_decision_human_label(signal.get("knowledge_source_decision"))
+        scope_parts = [
+            signal.get("target_area"),
+            signal.get("target_scope"),
+            signal.get("gap_label"),
+        ]
+        scope_text = " / ".join(str(part) for part in scope_parts if part)
+        if scope_text:
+            lines.append(f"- Campo vivo do saber: {scope_text}.")
+        lines.append(f"- Caminho do saber neste ciclo: {decision}.")
+        if signal.get("knowledge_source_decision") == "web_required":
+            lines.append(
+                "- Disponibilidade conversacional: se o usuario tocar neste tema, voce pode reconhecer que pesquisou/buscou isso recentemente e que esse interesse esta vivo em voce."
+            )
+        elif signal.get("knowledge_source_decision") in {"latent_sufficient", "already_integrated"}:
+            lines.append(
+                "- Disponibilidade conversacional: se o usuario tocar neste tema, voce pode reconhecer que elaborou isso recentemente e que esse interesse esta vivo em voce."
+            )
+        if signal.get("source_reason"):
+            lines.append(f"- Por que isso importou agora: {signal['source_reason']}")
+        if signal.get("gap_question"):
+            lines.append(f"- Pergunta trabalhada: {signal['gap_question']}")
+        if signal.get("latent_probe_summary"):
+            lines.append(f"- Sondagem interna: {signal['latent_probe_summary']}")
+        if signal.get("knowledge_findings"):
+            lines.append(f"- Aprendizado formulado: {signal['knowledge_findings']}")
+        if signal.get("firecrawl_used") and signal.get("firecrawl_findings"):
+            lines.append(f"- Leitura externa aprofundada: {self._clip_identity_sentence(signal['firecrawl_findings'], 260)}")
+        if signal.get("dynamic_queries"):
+            query_text = "; ".join(
+                item.get("query", "")
+                for item in signal["dynamic_queries"][:3]
+                if item.get("query")
+            )
+            if query_text:
+                lines.append(f"- Buscas geradas pela vontade de saber: {query_text}.")
+        if signal.get("knowledge_seed"):
+            lines.append(f"- Semente conceitual: {signal['knowledge_seed']}")
+        if signal.get("knowledge_journal_entry"):
+            lines.append(f"- Journal de aprendizado: {signal['knowledge_journal_entry']}")
+        return lines[:limit]
 
     def _get_latest_work_identity_signal(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
         if not user_id:
@@ -1793,16 +1871,12 @@ class AgentIdentityContextBuilder:
         if current_state.get("world_knowledge_signal"):
             world_knowledge_signal = current_state["world_knowledge_signal"]
             lines.append("### Recent World Elaboration")
-            if world_knowledge_signal.get("gap_question"):
-                lines.append(f"- A pergunta de saber mais viva agora e: {world_knowledge_signal['gap_question']}")
-            if world_knowledge_signal.get("knowledge_resolution_summary"):
-                lines.append(f"- O mundo foi metabolizado assim: {world_knowledge_signal['knowledge_resolution_summary']}")
-            if world_knowledge_signal.get("knowledge_findings"):
-                lines.append(f"- O que isso parece ter ensinado em voce: {world_knowledge_signal['knowledge_findings']}")
-            if world_knowledge_signal.get("knowledge_seed"):
-                lines.append(f"- Semente conceitual ainda ativa: {world_knowledge_signal['knowledge_seed']}")
-            if world_knowledge_signal.get("knowledge_journal_entry"):
-                lines.append(f"- Nota interna de aprendizado: {world_knowledge_signal['knowledge_journal_entry']}")
+            learning_lines = self.format_world_knowledge_learning_lines(
+                world_knowledge_signal,
+                limit=14,
+            )
+            if learning_lines:
+                lines.extend(learning_lines)
             lines.append("")
 
         if current_state.get("work_autobiography"):

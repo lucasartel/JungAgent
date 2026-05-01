@@ -5871,6 +5871,7 @@ class JungianEngine:
             "will_item_count": 0,
             "history_item_count": 0,
             "self_state_count": 0,
+            "world_learning_count": 0,
             "work_commitment_count": 0,
         }
 
@@ -5913,6 +5914,7 @@ class JungianEngine:
         pattern_line = ""
         tension_line = ""
         self_state_lines: List[str] = []
+        world_learning_lines: List[str] = []
         work_lines: List[str] = []
         if self.identity_context_builder:
             try:
@@ -5962,6 +5964,12 @@ class JungianEngine:
                     if first_question:
                         self_state_lines.append(f"Pergunta interna viva: {first_question}")
                 dossier_stats["self_state_count"] = len(self_state_lines)
+
+                world_learning_lines = self.identity_context_builder.format_world_knowledge_learning_lines(
+                    current_mind_state.get("world_knowledge_signal"),
+                    limit=12,
+                )
+                dossier_stats["world_learning_count"] = len(world_learning_lines)
 
                 work_autobiography = current_mind_state.get("work_autobiography") or {}
                 active_projects = work_autobiography.get("active_projects") or []
@@ -6021,6 +6029,9 @@ class JungianEngine:
         if self_state_lines:
             lines.extend(["", "[ESTADO INTERNO RELEVANTE]"])
             lines.extend(f"- {item}" for item in self_state_lines[:4])
+        if world_learning_lines:
+            lines.extend(["", "[APRENDIZADO RECENTE DO MUNDO]"])
+            lines.extend(world_learning_lines[:12])
         if work_lines:
             lines.extend(["", "[TRABALHOS ATUAIS DO AGENTE]"])
             lines.extend(f"- {item}" for item in work_lines[:7])
