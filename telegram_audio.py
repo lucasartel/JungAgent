@@ -14,7 +14,7 @@ from typing import Optional
 import httpx
 
 
-OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_STT_URL = "https://openrouter.ai/api/v1/audio/transcriptions"
 
 
 def _truthy(value: Optional[str], default: bool = False) -> bool:
@@ -47,6 +47,10 @@ def audio_transcription_timeout() -> float:
         return 45.0
 
 
+def audio_transcription_language() -> str:
+    return os.getenv("TELEGRAM_AUDIO_LANGUAGE", "pt").strip() or "pt"
+
+
 @dataclass
 class AudioTranscriptionResult:
     transcript: str
@@ -76,55 +80,29 @@ class TelegramAudioTranscriber:
             "HTTP-Referer": os.getenv("PUBLIC_SITE_URL", "https://jungagent.org"),
             "X-Title": "JungAgent Telegram Audio",
         }
+        payload = {
+            "model": self.model,
+            "input_audio": {
+                "data": encoded_audio,
+                "format": audio_format or "ogg",
+            },
+            "language": audio_transcription_language(),
+            "temperature": 0,
+        }
 
         with httpx.Client(timeout=self.timeout) as client:
-            response = None
-            for audio_key in ("inputAudio", "input_audio"):
-                payload = self._build_payload(encoded_audio, audio_format or "ogg", audio_key)
-                response = client.post(OPENROUTER_CHAT_URL, headers=headers, json=payload)
-                if response.status_code < 400 or response.status_code not in {400, 422}:
-                    break
-            assert response is not None
-            response.raise_for_status()
+            response = client.post(OPENROUTER_STT_URL, headers=headers, json=payload)
+            if response.status_code >= 400:
+                detail = response.text[:800] if response.text else ""
+                raise RuntimeError(f"OpenRouter STT HTTP {response.status_code}: {detail}")
             data = response.json()
 
-        choices = data.get("choices") or []
-        message = choices[0].get("message", {}) if choices else {}
-        transcript = (message.get("content") or "").strip()
+        transcript = (data.get("text") or "").strip()
         if not transcript:
             raise RuntimeError("OpenRouter retornou transcricao vazia.")
 
         return AudioTranscriptionResult(
             transcript=transcript,
             model=data.get("model") or self.model,
-            raw_response_id=data.get("id"),
+            raw_response_id=data.get("id") or response.headers.get("X-Generation-Id"),
         )
-
-    def _build_payload(self, encoded_audio: str, audio_format: str, audio_key: str) -> dict:
-        return {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                "Transcreva este audio em portugues quando aplicavel. "
-                                "Retorne apenas a transcricao, sem comentarios."
-                            ),
-                        },
-                        {
-                            "type": "input_audio",
-                            audio_key: {
-                                "data": encoded_audio,
-                                "format": audio_format,
-                            },
-                        },
-                    ],
-                }
-            ],
-            "temperature": 0,
-            "max_tokens": 1200,
-            "stream": False,
-        }
