@@ -1535,7 +1535,7 @@ class ConsciousnessLoopManager:
                     target_phase.key,
                     self._now().isoformat(),
                     self._now().isoformat(),
-                    f"Transicao automatica de {previous_phase} para {target_phase.key}.",
+                    f"Metabolismo psíquico: integrando {previous_phase} e iniciando transição para {target_phase.key}.",
                     self.agent_instance,
                 ),
             )
@@ -1547,7 +1547,7 @@ class ConsciousnessLoopManager:
                 trigger_name="loop_phase_transition",
                 trigger_source=trigger_source,
                 execution_mode="automatic",
-                input_summary=f"transicao {previous_phase} -> {target_phase.key}",
+                input_summary=f"metabolização de fase: {previous_phase} -> {target_phase.key}",
                 output_summary=f"fase atual sincronizada para {target_phase.key}",
             )
             phase_result = self.execute_phase(
