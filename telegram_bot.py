@@ -24,6 +24,7 @@ Versão: 4.0.1 - HÍBRIDO PREMIUM + PROATIVO (CORRIGIDO)
 import os
 import logging
 import asyncio
+from io import BytesIO
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -52,9 +53,11 @@ from instance_config import ADMIN_USER_ID as ACTIVE_CONSCIOUSNESS_ADMIN_USER_ID
 # ✅ IMPORTAR SISTEMA PROATIVO AVANÇADO
 from jung_proactive_advanced import ProactiveAdvancedSystem
 from telegram_audio import (
+    TelegramAudioSpeaker,
     TelegramAudioTranscriber,
     audio_input_enabled,
     audio_max_bytes,
+    audio_reply_enabled,
 )
 
 
@@ -466,6 +469,40 @@ async def _transcribe_telegram_audio(update: Update, context: ContextTypes.DEFAU
         )
         await update.message.reply_text("Eu tentei ouvir esse audio, mas a transcricao falhou. Pode reenviar ou escrever em texto?")
         return None
+
+
+async def _reply_with_audio_response(update: Update, response_text: str) -> bool:
+    """Send Jung's response as audio when the user used audio in this turn."""
+    if not audio_reply_enabled():
+        return False
+
+    speaker = TelegramAudioSpeaker()
+    if not speaker.available():
+        logger.warning("Resposta em audio solicitada, mas OPENROUTER_API_KEY esta ausente.")
+        return False
+
+    try:
+        await update.message.chat.send_action(action="upload_audio")
+        result = await asyncio.to_thread(speaker.synthesize, response_text)
+        extension = "mp3" if result.response_format == "mp3" else "pcm"
+        audio_file = BytesIO(result.audio_bytes)
+        audio_file.name = f"jungagent-response.{extension}"
+        await update.message.reply_audio(
+            audio=audio_file,
+            filename=audio_file.name,
+            title="JungAgent",
+        )
+        logger.info(
+            "Resposta em audio enviada: model=%s format=%s bytes=%s generation_id=%s",
+            result.model,
+            result.response_format,
+            len(result.audio_bytes),
+            result.raw_response_id,
+        )
+        return True
+    except Exception as exc:
+        logger.error("Erro ao gerar/enviar resposta em audio: %s", exc, exc_info=True)
+        return False
 
 # ============================================================
 # COMANDOS DO BOT
@@ -973,6 +1010,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     telegram_id = user.id
     message_text = update.message.text or update.message.caption or ""
+    input_was_audio = bool(update.message.voice or update.message.audio)
 
     # Garantir usuário no banco
     user_id = ensure_user_in_database(user)
@@ -981,7 +1019,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         and str(user_id) == str(ACTIVE_CONSCIOUSNESS_ADMIN_USER_ID)
     )
 
-    if update.message.voice or update.message.audio:
+    if input_was_audio:
         transcript = await _transcribe_telegram_audio(update, context, user_id)
         if not transcript:
             return
@@ -1458,16 +1496,19 @@ O que você decide?
 
         response = str(result['response'] or "")
 
-        # Enviar resposta em partes se for muito longa (limite do Telegram: 4096 chars)
-        max_length = 4000
-        for i in range(0, len(response), max_length):
-            chunk = response[i:i+max_length]
-            try:
-                await update.message.reply_text(chunk, parse_mode=None)
-            except Exception as e:
-                logger.warning(f"⚠️ Erro ao enviar resposta no Telegram, tentando texto sanitizado: {e}")
-                safe_chunk = chunk.replace("`", "'").replace("\x00", "")
-                await update.message.reply_text(safe_chunk[:max_length], parse_mode=None)
+        if input_was_audio and await _reply_with_audio_response(update, response):
+            pass
+        else:
+            # Enviar resposta em partes se for muito longa (limite do Telegram: 4096 chars)
+            max_length = 4000
+            for i in range(0, len(response), max_length):
+                chunk = response[i:i+max_length]
+                try:
+                    await update.message.reply_text(chunk, parse_mode=None)
+                except Exception as e:
+                    logger.warning(f"⚠️ Erro ao enviar resposta no Telegram, tentando texto sanitizado: {e}")
+                    safe_chunk = chunk.replace("`", "'").replace("\x00", "")
+                    await update.message.reply_text(safe_chunk[:max_length], parse_mode=None)
 
         # ✅ TRI: Detectar fragmentos comportamentais Big Five
         tri_enabled = getattr(bot_state.proactive, 'tri_enabled', False) if bot_state.proactive else False
