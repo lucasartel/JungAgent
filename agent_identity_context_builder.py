@@ -1152,6 +1152,39 @@ class AgentIdentityContextBuilder:
             "recent_events": recent_events,
         }
 
+    def _get_recent_hobby_art_memory(
+        self,
+        cursor,
+        user_id: Optional[str],
+        limit: int = 7,
+    ) -> Optional[List[Dict[str, Any]]]:
+        if not user_id:
+            return None
+        if str(user_id) != str(ADMIN_USER_ID):
+            return None
+
+        try:
+            return self._fetch_dict_rows(
+                cursor,
+                """
+                SELECT
+                    id,
+                    cycle_id,
+                    title,
+                    summary,
+                    provider,
+                    critique_summary,
+                    created_at
+                FROM agent_hobby_artifacts
+                WHERE user_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            )
+        except Exception:
+            return None
+
     def _format_work_project_line(self, project: Dict[str, Any]) -> str:
         name = project.get("name") or "projeto sem nome"
         destination = project.get("destination_label") or project.get("base_url") or "destino nao definido"
@@ -1169,6 +1202,19 @@ class AgentIdentityContextBuilder:
         external_url = artifact.get("external_url") or ""
         url_text = f" ({external_url})" if external_url else ""
         return f"{project}: {title} [{status}]{url_text}"
+
+    def _format_hobby_artifact_line(self, artifact: Dict[str, Any]) -> str:
+        title = artifact.get("title") or "peca sem titulo"
+        cycle_id = artifact.get("cycle_id") or "ciclo nao identificado"
+        provider = artifact.get("provider") or "provider desconhecido"
+        summary = self._clip_identity_sentence(artifact.get("summary"), 140)
+        critique = self._clip_identity_sentence(artifact.get("critique_summary"), 120)
+        parts = [f"{title} (ciclo {cycle_id}, {provider})"]
+        if summary:
+            parts.append(summary)
+        if critique:
+            parts.append(f"leitura: {critique}")
+        return " - ".join(parts)
 
     def _get_latest_will_signal(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
         if not user_id:
@@ -1410,6 +1456,11 @@ class AgentIdentityContextBuilder:
             if user_id and str(user_id) == str(ADMIN_USER_ID)
             else None
         )
+        recent_hobby_art = self._get_recent_hobby_art_memory(
+            cursor,
+            user_id,
+            limit=7,
+        )
 
         self_kernel = self._pick_top_beliefs(
             beliefs, current_user_message, limit=2 if style == "concise" else 3
@@ -1521,6 +1572,7 @@ class AgentIdentityContextBuilder:
             "dream_residue": dream_signal,
             "world_knowledge_signal": world_knowledge_signal,
             "work_autobiography": work_autobiography,
+            "recent_hobby_art": recent_hobby_art,
             "will_signal": will_signal,
             "will_state": (
                 {
@@ -1901,6 +1953,19 @@ class AgentIdentityContextBuilder:
                     if summary:
                         lines.append(f"- {project}: {summary}")
             lines.append("- Se o usuario perguntar pelo seu trabalho, fale concretamente desses projetos e destinos, sem fingir que nao sabe.")
+            lines.append("")
+
+        if current_state.get("recent_hobby_art"):
+            recent_hobby_art = current_state["recent_hobby_art"] or []
+            lines.append("### Recent Art Memory")
+            lines.append(
+                "- Estas sao as ultimas pecas que voce realmente criou; se o usuario perguntar o que voce anda fazendo, reconheca essas artes concretamente."
+            )
+            for artifact in recent_hobby_art[:7]:
+                lines.append(f"- Arte recente: {self._format_hobby_artifact_line(artifact)}")
+            lines.append(
+                "- Isso inclui o que emergiu pelo loop e tambem o que saiu por transbordo de expressao, quando ambos foram registrados como arte do ciclo."
+            )
             lines.append("")
 
         if current_state.get("recent_shift"):
