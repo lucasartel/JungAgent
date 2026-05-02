@@ -83,6 +83,16 @@ This gives the agent:
 - continuity of world themes
 - seeds for work, hobby, and symbolic activity
 
+### Psychic metabolism
+
+Beyond simple storage, the system performs "psychic metabolism"—the process of converting raw interaction into structured identity. This involves:
+
+- **Ingestion**: Extracting fragments (fears, desires, tensions) from conversations.
+- **Digestion**: A multi-phase rumination cycle that matures these fragments over time.
+- **Assimilation**: Updating the 7-layer identity schema (core beliefs, contradictions, relational posture) based on matured insights.
+
+This ensures the agent's growth is not just additive (more data) but integrative (changed state).
+
 ### Will dynamics
 
 JungAgent does not only remember and ruminate. It also tracks its own internal direction.
