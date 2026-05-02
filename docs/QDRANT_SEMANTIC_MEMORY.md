@@ -8,7 +8,7 @@ SQLite is the operational source of truth. It stores conversations, users, dream
 
 Qdrant is the recommended production backend for semantic memory through `mem0`. It stores vectorized memories extracted from conversation and makes them searchable by meaning, not only by keyword.
 
-ChromaDB remains a legacy/local fallback. It is useful for development or older installations, but new production instances should use Qdrant so semantic memory survives deploys cleanly and can be managed as an external service.
+ChromaDB remains a legacy/local fallback. It is useful for development or older installations, but new production instances should use Qdrant so semantic memory survives deploys cleanly and can be managed as an external service. When `QDRANT_URL` is configured, JungAgent does not initialize ChromaDB unless `ENABLE_LEGACY_CHROMA=true` is set explicitly.
 
 ## Required Environment Variables
 
@@ -25,6 +25,7 @@ MEM0_LLM_MODEL=openai/gpt-4o-mini
 MEM0_LLM_BASE_URL=https://openrouter.ai/api/v1
 OPENAI_EMBEDDING_MODEL=openai/text-embedding-3-small
 OPENAI_EMBEDDING_BASE_URL=https://openrouter.ai/api/v1
+ENABLE_LEGACY_CHROMA=false
 ```
 
 `OPENROUTER_API_KEY` is used for embeddings by default when OpenRouter is configured. `OPENAI_API_KEY` remains a fallback for older installs that call OpenAI embeddings directly.
@@ -57,7 +58,7 @@ For Railway production installs:
 2. Create an API key with access to the cluster.
 3. Add `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION_NAME` to Railway variables.
 4. Keep `SQLITE_DB_PATH` pointed to the Railway persistent volume, for example `/data/jung_hybrid.db`.
-5. Keep `CHROMA_DB_PATH` only if you intentionally need the legacy/local fallback.
+5. Keep `ENABLE_LEGACY_CHROMA=false`; set it to `true` only if you intentionally need the legacy/local fallback.
 6. Redeploy the service.
 7. Run `python instance_healthcheck.py`.
 8. Open `/admin/instance/setup` and confirm the instance wiring.
@@ -76,7 +77,7 @@ Keep these rules:
 
 ## Failure Behavior
 
-If `QDRANT_URL` is not configured, JungAgent falls back to the existing SQLite/Chroma memory path.
+If `QDRANT_URL` is not configured, JungAgent falls back to the existing SQLite/Chroma memory path. If `QDRANT_URL` is configured, ChromaDB stays off by default to avoid duplicate vector writes and competing semantic-memory paths.
 
 If `QDRANT_URL` is configured but the Qdrant credentials, embedding key, or mem0 dependencies are invalid, semantic retrieval can fail while the rest of the agent continues to run. In that situation, check the logs for `[MEM0]` messages and validate:
 

@@ -212,6 +212,7 @@ MEM0_LLM_MODEL=openai/gpt-4o-mini
 MEM0_LLM_BASE_URL=https://openrouter.ai/api/v1
 OPENAI_EMBEDDING_MODEL=openai/text-embedding-3-small
 OPENAI_EMBEDDING_BASE_URL=https://openrouter.ai/api/v1
+ENABLE_LEGACY_CHROMA=false
 
 PROACTIVE_ENABLED=true
 ACTIVE_CONSCIOUSNESS_ENABLED=true
@@ -230,7 +231,7 @@ SQLite is the operational source of truth: conversations, dreams, rumination, id
 
 Qdrant is the recommended production backend for semantic memory through `mem0`. It stores vectorized memories that can be searched by meaning and used as long-term continuity during conversation.
 
-ChromaDB remains a legacy/local fallback for older or development installations. New production instances should prefer Qdrant.
+ChromaDB is a legacy/local fallback for older or development installations. When `QDRANT_URL` is configured, JungAgent does not initialize ChromaDB unless `ENABLE_LEGACY_CHROMA=true` is set explicitly.
 
 Use one Qdrant collection per JungAgent instance:
 
@@ -321,7 +322,7 @@ For Railway:
 2. Add a persistent volume and point `SQLITE_DB_PATH` to that volume, for example `/data/jung_hybrid.db`.
 3. Create or reuse a Qdrant Cloud cluster for semantic memory.
 4. Set `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION_NAME`.
-5. Keep `CHROMA_DB_PATH` only if you intentionally need the legacy/local fallback.
+5. Keep `ENABLE_LEGACY_CHROMA=false`; set it to `true` only if you intentionally need the legacy/local fallback.
 6. Add the same environment variables described above.
 7. Deploy the service.
 8. Create the master admin user if needed with `python setup_instance.py --master-email admin@example.com`.
@@ -334,7 +335,7 @@ For Railway:
 - Keep `QDRANT_API_KEY` out of git and treat Qdrant collections as sensitive semantic memory stores.
 - Keep `ENABLE_UNSAFE_ADMIN_ENDPOINTS=false` in production unless you are doing a short, controlled maintenance operation.
 - Use `TELEGRAM_ADMIN_IDS` to prevent non-admin Telegram users from interacting with the private instance.
-- Treat the SQLite database, Qdrant collection, and any ChromaDB fallback directory as sensitive memory stores.
+- Treat the SQLite database, Qdrant collection, and any explicitly enabled ChromaDB fallback directory as sensitive memory stores.
 - Keep a persistent backup strategy before running migrations or manual repair scripts.
 
 ## Repository layout
@@ -355,7 +356,7 @@ The repository root is intentionally kept focused on runtime code and deployment
 - **Bot:** python-telegram-bot
 - **Database:** SQLite
 - **Semantic memory:** mem0 with Qdrant as the recommended production vector store
-- **LLMs:** Anthropic Claude, OpenAI embeddings, and provider integrations through OpenRouter
+- **LLMs:** conversation and embedding provider integrations through OpenRouter, with direct-provider fallbacks
 - **Scheduling:** asynchronous recurring jobs and internal loop orchestration
 
 ## Open source

@@ -143,8 +143,8 @@ function renderLayers() {
             <p class="metric-note-v2">${mem0.error || mem0.note}</p>
         </article>
         <article class="metric-card-v2">
-            <span class="metric-label-v2">Chroma</span>
-            <strong class="cell-primary-v2">${chroma.enabled ? 'Active' : 'Disabled'}</strong>
+            <span class="metric-label-v2">Chroma legacy</span>
+            <strong class="cell-primary-v2">${chroma.enabled ? 'Legacy active' : 'Legacy off'}</strong>
             <p class="metric-note-v2">${chroma.documents ?? 0} global docs · ${chroma.error || chroma.note}</p>
         </article>
     `;

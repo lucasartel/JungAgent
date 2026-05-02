@@ -2126,7 +2126,8 @@ def _fetch_user_memory_detail(db, user_id: str) -> Dict[str, object]:
         },
         "chroma": {
             "enabled": bool(getattr(db, "chroma_enabled", False)),
-            "note": "Chroma indexa conversas e contexto semântico; ele não é a camada canônica de fatos.",
+            "legacy": True,
+            "note": "ChromaDB é legado/local fallback. Em produção com Qdrant, deve permanecer desligado.",
         },
     }
 
@@ -2261,8 +2262,9 @@ def _build_memory_metrics_payload(db) -> Dict[str, object]:
             },
             "chroma": {
                 "enabled": bool(getattr(db, "chroma_enabled", False)),
+                "legacy": True,
                 "documents": chroma_documents,
-                "note": "Chroma armazena conversas indexadas e contexto semântico, não fatos canônicos.",
+                "note": "ChromaDB é legado/local fallback. Com mem0/Qdrant configurado, fica desligado para evitar dupla memória vetorial.",
                 "error": chroma_error,
             },
         },

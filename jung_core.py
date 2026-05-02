@@ -3,8 +3,9 @@ jung_core.py - Motor Junguiano HÍBRIDO PREMIUM
 ==============================================
 
 ✅ ARQUITETURA HÍBRIDA:
-- ChromaDB: Memória semântica (busca vetorial)
-- OpenAI Embeddings: text-embedding-3-small
+- mem0/Qdrant: Memória semântica principal em produção
+- ChromaDB: Memória semântica legado/local fallback
+- OpenAI-compatible Embeddings: via OpenRouter por padrão
 - SQLite: Metadados estruturados + Desenvolvimento
 
 ✅ COMPATIBILIDADE:
@@ -117,8 +118,12 @@ class Config:
     INTERNAL_MODEL = os.getenv("INTERNAL_MODEL", "z-ai/glm-5")
     ACTIVE_CONSCIOUSNESS_ENABLED = os.getenv("ACTIVE_CONSCIOUSNESS_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 
-    # mem0 (backend de memória persistente — substituição de ChromaDB + user_facts_v2)
+    # mem0/Qdrant is the production semantic memory backend.
+    # ChromaDB remains available only as a legacy/local fallback.
     DATABASE_URL = os.getenv("DATABASE_URL")  # PostgreSQL Railway (obrigatório para mem0)
+    QDRANT_URL = os.getenv("QDRANT_URL")
+    ENABLE_LEGACY_CHROMA = os.getenv("ENABLE_LEGACY_CHROMA", "").strip().lower() in ("1", "true", "yes", "on")
+    LEGACY_CHROMA_ENABLED = (not QDRANT_URL) or ENABLE_LEGACY_CHROMA
     MEM0_LLM_PROVIDER = os.getenv("MEM0_LLM_PROVIDER", "openai")
     MEM0_LLM_MODEL = os.getenv("MEM0_LLM_MODEL", "openai/gpt-4o-mini")
     MEM0_LLM_BASE_URL = os.getenv("MEM0_LLM_BASE_URL", "https://openrouter.ai/api/v1")
@@ -533,18 +538,21 @@ Jung:"""
         if not cls.TELEGRAM_BOT_TOKEN:
             logger.warning("⚠️  TELEGRAM_BOT_TOKEN ausente (Bot Telegram não funcionará)")
         
-        if not CHROMADB_AVAILABLE:
+        if cls.LEGACY_CHROMA_ENABLED and not CHROMADB_AVAILABLE:
             logger.warning("⚠️  ChromaDB não disponível. Sistema funcionará em modo SQLite-only")
+        elif not cls.LEGACY_CHROMA_ENABLED:
+            logger.info("ℹ️ ChromaDB em modo legado desativado nesta instância")
     
     @classmethod
     def ensure_directories(cls):
         """Garante que os diretórios de dados existem"""
         os.makedirs(cls.DATA_DIR, exist_ok=True)
-        os.makedirs(cls.CHROMA_PATH, exist_ok=True)
+        if cls.LEGACY_CHROMA_ENABLED:
+            os.makedirs(cls.CHROMA_PATH, exist_ok=True)
         os.makedirs(os.path.dirname(cls.SQLITE_PATH), exist_ok=True)
 
 # ============================================================
-# HYBRID DATABASE MANAGER (SQLite + ChromaDB)
+# HYBRID DATABASE MANAGER (SQLite + mem0/Qdrant + ChromaDB legado)
 # ============================================================
 
 class OpenAICompatibleEmbeddings:
@@ -592,7 +600,8 @@ class HybridDatabaseManager:
     """
     Gerenciador HÍBRIDO de memória:
     - SQLite: Metadados estruturados, fatos, padrões, desenvolvimento
-    - ChromaDB: Memória semântica conversacional (busca vetorial)
+    - mem0/Qdrant: Memória semântica conversacional em produção
+    - ChromaDB: fallback legado/local quando Qdrant não está configurado
     """
 
     def __init__(self):
@@ -602,7 +611,9 @@ class HybridDatabaseManager:
 
         logger.info(f"🗄️  Inicializando banco HÍBRIDO...")
         logger.info(f"   SQLite: {os.path.abspath(Config.SQLITE_PATH)}")
-        logger.info(f"   ChromaDB: {os.path.abspath(Config.CHROMA_PATH)}")
+        logger.info(f"   ChromaDB legado: {'habilitado' if Config.LEGACY_CHROMA_ENABLED else 'desabilitado'}")
+        if Config.LEGACY_CHROMA_ENABLED:
+            logger.info(f"   ChromaDB path: {os.path.abspath(Config.CHROMA_PATH)}")
 
         # ===== Thread Safety =====
         self._lock = threading.RLock()  # Reentrant lock para operações SQLite
@@ -613,8 +624,16 @@ class HybridDatabaseManager:
         self.conn.execute("PRAGMA busy_timeout = 30000")
         self._init_sqlite_schema()
         
-        # ===== ChromaDB + OpenAI Embeddings =====
-        self.chroma_enabled = CHROMADB_AVAILABLE
+        # ===== mem0/Qdrant: produção =====
+        try:
+            from mem0_memory_adapter import create_mem0_adapter
+            self.mem0 = create_mem0_adapter()
+        except Exception as e:
+            self.mem0 = None
+            logger.warning(f"⚠️ [MEM0] Erro ao inicializar: {e}")
+
+        # ===== ChromaDB: legado/local fallback =====
+        self.chroma_enabled = CHROMADB_AVAILABLE and Config.LEGACY_CHROMA_ENABLED
         
         if self.chroma_enabled:
             try:
@@ -638,7 +657,10 @@ class HybridDatabaseManager:
                 logger.error(f"❌ Erro ao inicializar ChromaDB local: {e}")
                 self.chroma_enabled = False
         else:
-            logger.warning("⚠️  ChromaDB desabilitado. Usando apenas SQLite.")
+            if Config.QDRANT_URL and not Config.ENABLE_LEGACY_CHROMA:
+                logger.info("ℹ️ ChromaDB legado desabilitado: mem0/Qdrant é a memória semântica principal.")
+            else:
+                logger.warning("⚠️  ChromaDB legado desabilitado. Usando SQLite/mem0 conforme disponível.")
             
         self.openai_client = None # Removido dependência direta da OpenAI
 
@@ -694,14 +716,6 @@ class HybridDatabaseManager:
         else:
             self.fact_extractor = None
             logger.warning("⚠️ LLM Fact Extractor module não disponível (import falhou)")
-
-        # ===== mem0 (substitui ChromaDB + BM25 + user_facts_v2) =====
-        try:
-            from mem0_memory_adapter import create_mem0_adapter
-            self.mem0 = create_mem0_adapter()
-        except Exception as e:
-            self.mem0 = None
-            logger.warning(f"⚠️ [MEM0] Erro ao inicializar: {e}")
 
         logger.info("✅ Banco híbrido inicializado com sucesso")
 
@@ -2080,7 +2094,7 @@ class HybridDatabaseManager:
         return 1.0  # Default
 
     # ========================================
-    # CONVERSAS (HÍBRIDO: SQLite + ChromaDB)
+    # CONVERSAS (HÍBRIDO: SQLite + mem0/Qdrant + ChromaDB legado)
     # ========================================
 
     def save_conversation(self, user_id: str, user_name: str, user_input: str,
@@ -2096,7 +2110,8 @@ class HybridDatabaseManager:
                          platform: str = "telegram",
                          chat_history: List[Dict] = None) -> int:
         """
-        Salva conversa em AMBOS: SQLite (metadados) + ChromaDB (semântica)
+        Salva conversa em SQLite e, quando habilitado, em memória semântica.
+        Em produção a via semântica principal é mem0/Qdrant; ChromaDB é legado.
 
         Returns:
             int: ID da conversa no SQLite
@@ -2154,7 +2169,7 @@ class HybridDatabaseManager:
 
             self.conn.commit()
         
-        # 3. Salvar no ChromaDB (se habilitado)
+        # 3. Salvar no ChromaDB legado (somente se habilitado)
         if self.chroma_enabled:
             try:
                 # Construir documento completo
@@ -3230,7 +3245,7 @@ Resposta: {ai_response}
         return reranked
 
     # ========================================
-    # BUSCA SEMÂNTICA (ChromaDB)
+    # BUSCA SEMÂNTICA LEGADA (ChromaDB)
     # ========================================
 
     def semantic_search(self, user_id: str, query: str, k: int = None,
@@ -7237,7 +7252,7 @@ DatabaseManager = HybridDatabaseManager
 try:
     Config.validate()
     logger.info("✅ jung_core.py v4.0 - HÍBRIDO PREMIUM")
-    logger.info(f"   ChromaDB: {'ATIVO' if CHROMADB_AVAILABLE else 'INATIVO'}")
+    logger.info(f"   ChromaDB legado: {'ATIVO' if Config.LEGACY_CHROMA_ENABLED and CHROMADB_AVAILABLE else 'INATIVO'}")
     logger.info(f"   Embeddings: {'ATIVO' if Config.EMBEDDING_API_KEY else 'INATIVO'} ({Config.EMBEDDING_MODEL})")
 except ValueError as e:
     logger.error(f"⚠️  {e}")
