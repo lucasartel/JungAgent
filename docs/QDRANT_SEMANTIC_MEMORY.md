@@ -19,15 +19,15 @@ QDRANT_URL=https://your-cluster.qdrant.io
 QDRANT_API_KEY=your-qdrant-api-key
 QDRANT_COLLECTION_NAME=jung_memories_jung_v1
 
-OPENAI_API_KEY=your-openai-key
 OPENROUTER_API_KEY=your-openrouter-key
+OPENAI_API_KEY=optional-openai-fallback-key
 MEM0_LLM_MODEL=openai/gpt-4o-mini
 MEM0_LLM_BASE_URL=https://openrouter.ai/api/v1
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-OPENAI_EMBEDDING_BASE_URL=
+OPENAI_EMBEDDING_MODEL=openai/text-embedding-3-small
+OPENAI_EMBEDDING_BASE_URL=https://openrouter.ai/api/v1
 ```
 
-`OPENAI_API_KEY` is used for embeddings by default. `OPENROUTER_API_KEY` is used by mem0's fact extraction model when `MEM0_LLM_BASE_URL` points to OpenRouter.
+`OPENROUTER_API_KEY` is used for embeddings by default when OpenRouter is configured. `OPENAI_API_KEY` remains a fallback for older installs that call OpenAI embeddings directly.
 
 ## Collection Naming
 
@@ -83,8 +83,8 @@ If `QDRANT_URL` is configured but the Qdrant credentials, embedding key, or mem0
 - `QDRANT_URL`
 - `QDRANT_API_KEY`
 - `QDRANT_COLLECTION_NAME`
-- `OPENAI_API_KEY`
 - `OPENROUTER_API_KEY`
+- `OPENAI_API_KEY` if using OpenAI direct fallback
 - `MEM0_LLM_MODEL`
 - `OPENAI_EMBEDDING_MODEL`
 

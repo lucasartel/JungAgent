@@ -17,11 +17,13 @@ O que permanece inalterado:
 Configuração via variáveis de ambiente:
     QDRANT_URL               → URL do cluster Qdrant Cloud (ex: https://xyz.qdrant.io)
     QDRANT_API_KEY           → Chave do Qdrant Cloud
-    OPENAI_API_KEY           → Para embeddings 1536d (alinhado ao ChromaDB)
+    OPENROUTER_API_KEY      → Preferido para embeddings via OpenRouter
+    OPENAI_API_KEY           → Fallback para embeddings 1536d
     OPENROUTER_API_KEY       → Para extração de fatos via LLM (já existe)
     MEM0_LLM_MODEL           → Modelo para extração (default: openai/gpt-4o-mini)
     OPENAI_EMBEDDING_MODEL   → Modelo de embedding (default: text-embedding-3-small)
     OPENAI_EMBEDDING_BASE_URL → Base URL opcional para embeddings
+    OPENAI_EMBEDDING_API_KEY  → Chave opcional especifica para embeddings
 """
 
 import os
@@ -62,9 +64,21 @@ def _build_mem0_config() -> dict:
     if not qdrant_url or not qdrant_api_key:
         raise ValueError("QDRANT_URL e QDRANT_API_KEY são obrigatórios para mem0")
 
-    embedding_api_key = os.getenv("OPENAI_API_KEY")
+    embedding_base_url = os.getenv("OPENAI_EMBEDDING_BASE_URL")
+    if not embedding_base_url and os.getenv("OPENROUTER_API_KEY"):
+        embedding_base_url = "https://openrouter.ai/api/v1"
+
+    embedding_api_key = (
+        os.getenv("OPENAI_EMBEDDING_API_KEY")
+        or (
+            os.getenv("OPENROUTER_API_KEY")
+            if embedding_base_url and "openrouter.ai" in embedding_base_url
+            else None
+        )
+        or os.getenv("OPENAI_API_KEY")
+    )
     if not embedding_api_key:
-        raise ValueError("OPENAI_API_KEY necessário para embeddings do mem0")
+        raise ValueError("OPENROUTER_API_KEY ou OPENAI_API_KEY necessario para embeddings do mem0")
 
     # LLM para extração de fatos via OpenRouter
     llm_api_key = os.getenv("OPENROUTER_API_KEY")
@@ -74,11 +88,23 @@ def _build_mem0_config() -> dict:
     llm_model = os.getenv("MEM0_LLM_MODEL", "openai/gpt-4o-mini")
     llm_base_url = os.getenv("MEM0_LLM_BASE_URL", "https://openrouter.ai/api/v1")
 
+    default_embedding_model = (
+        "openai/text-embedding-3-small"
+        if embedding_base_url and "openrouter.ai" in embedding_base_url
+        else "text-embedding-3-small"
+    )
+    embedding_model = os.getenv("OPENAI_EMBEDDING_MODEL", default_embedding_model)
+    if (
+        embedding_base_url
+        and "openrouter.ai" in embedding_base_url
+        and embedding_model.startswith("text-embedding-")
+    ):
+        embedding_model = f"openai/{embedding_model}"
+
     embedder_config = {
-        "model": os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+        "model": embedding_model,
         "api_key": embedding_api_key,
     }
-    embedding_base_url = os.getenv("OPENAI_EMBEDDING_BASE_URL")
     if embedding_base_url:
         embedder_config["openai_base_url"] = embedding_base_url
 

@@ -196,7 +196,7 @@ ADMIN_PLATFORM_ID=123456789
 ADMIN_USER_ID=
 
 OPENROUTER_API_KEY=your-openrouter-key
-OPENAI_API_KEY=your-openai-key
+OPENAI_API_KEY=optional-openai-key
 CONVERSATION_MODEL=google/gemini-2.5-flash-lite
 INTERNAL_MODEL=google/gemini-2.5-flash-lite
 DREAM_TEXT_FALLBACK_MODEL=openai/gpt-4o-mini
@@ -210,7 +210,8 @@ QDRANT_API_KEY=your-qdrant-api-key
 QDRANT_COLLECTION_NAME=jung_memories_jung_v1
 MEM0_LLM_MODEL=openai/gpt-4o-mini
 MEM0_LLM_BASE_URL=https://openrouter.ai/api/v1
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+OPENAI_EMBEDDING_MODEL=openai/text-embedding-3-small
+OPENAI_EMBEDDING_BASE_URL=https://openrouter.ai/api/v1
 
 PROACTIVE_ENABLED=true
 ACTIVE_CONSCIOUSNESS_ENABLED=true

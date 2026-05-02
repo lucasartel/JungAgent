@@ -168,10 +168,27 @@ class Config:
     # ChromaDB
     CHROMA_COLLECTION_NAME = "jung_conversations"
     
-    # Embeddings
-    EMBEDDING_MODEL = "text-embedding-3-small"
-    EMBEDDING_DIMENSIONS = 1536
     EMBEDDING_BASE_URL = os.getenv("OPENAI_EMBEDDING_BASE_URL")
+    if not EMBEDDING_BASE_URL and OPENROUTER_API_KEY:
+        EMBEDDING_BASE_URL = "https://openrouter.ai/api/v1"
+    EMBEDDING_API_KEY = (
+        os.getenv("OPENAI_EMBEDDING_API_KEY")
+        or (OPENROUTER_API_KEY if EMBEDDING_BASE_URL and "openrouter.ai" in EMBEDDING_BASE_URL else None)
+        or OPENAI_API_KEY
+    )
+    _default_embedding_model = (
+        "openai/text-embedding-3-small"
+        if EMBEDDING_BASE_URL and "openrouter.ai" in EMBEDDING_BASE_URL
+        else "text-embedding-3-small"
+    )
+    EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", _default_embedding_model)
+    if (
+        EMBEDDING_BASE_URL
+        and "openrouter.ai" in EMBEDDING_BASE_URL
+        and EMBEDDING_MODEL.startswith("text-embedding-")
+    ):
+        EMBEDDING_MODEL = f"openai/{EMBEDDING_MODEL}"
+    EMBEDDING_DIMENSIONS = int(os.getenv("OPENAI_EMBEDDING_DIMENSIONS", "1536"))
     
     # Arquétipos
     ARCHETYPES = {
@@ -501,7 +518,7 @@ Jung:"""
     def validate(cls):
         """Valida variáveis essenciais"""
         required = {
-            "OPENAI_API_KEY": cls.OPENAI_API_KEY,
+            "EMBEDDING_API_KEY": cls.EMBEDDING_API_KEY,
             "XAI_API_KEY": cls.XAI_API_KEY
         }
         
@@ -540,7 +557,7 @@ class OpenAICompatibleEmbeddings:
     def __init__(self, api_key: str, model: str, dimensions: Optional[int] = None,
                  base_url: Optional[str] = None):
         if not api_key:
-            raise ValueError("OPENAI_API_KEY é obrigatório para embeddings vetoriais")
+            raise ValueError("EMBEDDING_API_KEY/OpenRouter ou OPENAI_API_KEY e obrigatorio para embeddings vetoriais")
 
         client_kwargs = {"api_key": api_key}
         if base_url:
@@ -602,7 +619,7 @@ class HybridDatabaseManager:
         if self.chroma_enabled:
             try:
                 self.embeddings = OpenAICompatibleEmbeddings(
-                    api_key=Config.OPENAI_API_KEY,
+                    api_key=Config.EMBEDDING_API_KEY,
                     model=Config.EMBEDDING_MODEL,
                     dimensions=Config.EMBEDDING_DIMENSIONS,
                     base_url=Config.EMBEDDING_BASE_URL,
@@ -615,7 +632,7 @@ class HybridDatabaseManager:
                 )
                 
                 logger.info(
-                    f"✅ ChromaDB + OpenAI Embeddings ({Config.EMBEDDING_MODEL}, dim={Config.EMBEDDING_DIMENSIONS}) inicializados"
+                    f"✅ ChromaDB + OpenAI-compatible Embeddings ({Config.EMBEDDING_MODEL}, dim={Config.EMBEDDING_DIMENSIONS}) inicializados"
                 )
             except Exception as e:
                 logger.error(f"❌ Erro ao inicializar ChromaDB local: {e}")
@@ -5124,11 +5141,12 @@ class JungianEngine:
 
         self.db = db if db else HybridDatabaseManager()
 
-        # Cliente OpenAI (para embeddings apenas)
+        # Cliente OpenAI-compatible para embeddings apenas, quando necessário.
         self.openai_client = OpenAI(
-            api_key=Config.OPENAI_API_KEY,
-            timeout=30.0  # 30 segundos de timeout
-        )
+            base_url=Config.EMBEDDING_BASE_URL,
+            api_key=Config.EMBEDDING_API_KEY,
+            timeout=30.0,
+        ) if Config.EMBEDDING_API_KEY else None
 
         # Cliente para tarefas internas (extração de fatos, flush, detecção de correções)
         # Prioridade: AnthropicCompatWrapper via OpenRouter; fallback: anthropic direto
@@ -7220,7 +7238,7 @@ try:
     Config.validate()
     logger.info("✅ jung_core.py v4.0 - HÍBRIDO PREMIUM")
     logger.info(f"   ChromaDB: {'ATIVO' if CHROMADB_AVAILABLE else 'INATIVO'}")
-    logger.info(f"   OpenAI Embeddings: {'ATIVO' if Config.OPENAI_API_KEY else 'INATIVO'}")
+    logger.info(f"   Embeddings: {'ATIVO' if Config.EMBEDDING_API_KEY else 'INATIVO'} ({Config.EMBEDDING_MODEL})")
 except ValueError as e:
     logger.error(f"⚠️  {e}")
 
