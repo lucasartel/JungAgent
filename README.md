@@ -23,6 +23,15 @@ The system stores memory, revisits unresolved material, generates symbolic outpu
 
 In practice, this means JungAgent is not just a retrieval layer or a persona wrapper on top of an LLM. It is an attempt to build a coherent cognitive organism.
 
+## Psychic metabolism
+
+JungAgent does not just store data; it metabolizes experience. The flow of information follows a specific psychic cycle:
+
+1.  **Ingestion**: External inputs (conversations, world events) are captured as raw fragments.
+2.  **Digestion (Rumination)**: Fragments are compared, creating tensions. These tensions are resolved into insights.
+3.  **Integration (Identity)**: Insights and patterns are woven into the persistent identity layer, changing the agent's future state.
+4.  **Expression (Will & Art)**: The changed state generates new drives (Will) and symbolic outputs (Dreams/Art).
+
 ## Core architecture
 
 ### Persistent memory
