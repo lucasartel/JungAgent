@@ -468,6 +468,10 @@ def _normalize_blog_text(text: str | None, limit: int = 520) -> str:
     return cleaned[: limit - 3].rstrip(" ,.;:") + "..."
 
 
+def _clean_blog_text(text: str | None) -> str:
+    return _normalize_blog_text(text, 4000)
+
+
 def _blog_date_label(iso_timestamp: str) -> str:
     try:
         stamp = datetime.fromisoformat(iso_timestamp)
@@ -484,6 +488,50 @@ def _pretty_phase_name(value: str | None) -> str:
 
 def _truncate_blog_line(text: str | None, limit: int = 120) -> str:
     return _normalize_blog_text(text, limit)
+
+
+def _extract_world_knowledge_trace(raw_result_json: str | None) -> Dict[str, Any] | None:
+    if not raw_result_json:
+        return None
+
+    try:
+        payload = json.loads(raw_result_json)
+    except (TypeError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    world_state = payload.get("world_state")
+    world_state = world_state if isinstance(world_state, dict) else payload
+
+    journal = _clean_blog_text(
+        world_state.get("knowledge_journal_entry") or payload.get("knowledge_journal_entry")
+    )
+    if not journal:
+        return None
+
+    knowledge_gap = world_state.get("knowledge_gap")
+    knowledge_gap = knowledge_gap if isinstance(knowledge_gap, dict) else {}
+
+    resolution = _clean_blog_text(
+        world_state.get("knowledge_resolution_summary") or payload.get("knowledge_resolution_summary")
+    )
+    seed = _clean_blog_text(world_state.get("knowledge_seed") or payload.get("knowledge_seed"))
+    gap_question = _clean_blog_text(
+        knowledge_gap.get("gap_question") or knowledge_gap.get("gap_label")
+    )
+    latent_probe = _clean_blog_text(
+        world_state.get("latent_probe_summary") or payload.get("latent_probe_summary")
+    )
+    firecrawl_urls = world_state.get("firecrawl_urls") or payload.get("firecrawl_urls") or []
+
+    return {
+        "title": seed or gap_question or resolution or "Knowledge journal",
+        "summary": resolution or latent_probe or "",
+        "body": journal,
+        "source_url": firecrawl_urls[0] if isinstance(firecrawl_urls, list) and firecrawl_urls else None,
+    }
 
 
 def _load_blog_living_state(entry_count: int = 0, day_count: int = 0, anchor_label: str = "") -> Dict[str, Any]:
@@ -707,6 +755,8 @@ def _load_blogdojung_entries(limit_days: int = 3) -> List[Dict]:
             UNION ALL
             SELECT MAX(created_at) AS created_at FROM agent_hobby_artifacts
             UNION ALL
+            SELECT MAX(created_at) AS created_at FROM consciousness_loop_phase_results WHERE phase = 'world'
+            UNION ALL
             SELECT MAX(created_at) AS created_at FROM external_research
         )
         """
@@ -774,29 +824,61 @@ def _load_blogdojung_entries(limit_days: int = 3) -> List[Dict]:
             }
         )
 
+    knowledge_entries_added = 0
     cursor.execute(
         """
-        SELECT created_at, topic, synthesized_insight, source_url
-        FROM external_research
-        WHERE datetime(created_at) >= datetime(?)
+        SELECT created_at, raw_result_json
+        FROM consciousness_loop_phase_results
+        WHERE phase = 'world'
+          AND datetime(created_at) >= datetime(?)
+          AND raw_result_json IS NOT NULL
         ORDER BY datetime(created_at) DESC
         """,
         (start_iso,),
     )
-    for created_at, topic, synthesized_insight, source_url in cursor.fetchall():
+    for created_at, raw_result_json in cursor.fetchall():
+        trace = _extract_world_knowledge_trace(raw_result_json)
+        if not trace:
+            continue
+        knowledge_entries_added += 1
         entries.append(
             {
                 "type": "knowledge",
-                "type_label": "Knowledge",
-                "title": topic or "Knowledge synthesis",
-                "summary": _normalize_blog_text(synthesized_insight, 560),
-                "body": "",
+                "type_label": "Knowledge journal",
+                "title": trace["title"],
+                "summary": _normalize_blog_text(trace["summary"], 560),
+                "body": trace["body"],
                 "image_url": None,
-                "source_url": source_url if source_url and source_url != "LLM Knowledge Base" else None,
+                "source_url": trace["source_url"],
                 "created_at": created_at,
                 "date_label": _blog_date_label(created_at),
             }
         )
+
+    if knowledge_entries_added == 0:
+        cursor.execute(
+            """
+            SELECT created_at, topic, synthesized_insight, source_url
+            FROM external_research
+            WHERE datetime(created_at) >= datetime(?)
+            ORDER BY datetime(created_at) DESC
+            """,
+            (start_iso,),
+        )
+        for created_at, topic, synthesized_insight, source_url in cursor.fetchall():
+            entries.append(
+                {
+                    "type": "knowledge",
+                    "type_label": "Knowledge",
+                    "title": topic or "Knowledge synthesis",
+                    "summary": _normalize_blog_text(synthesized_insight, 560),
+                    "body": "",
+                    "image_url": None,
+                    "source_url": source_url if source_url and source_url != "LLM Knowledge Base" else None,
+                    "created_at": created_at,
+                    "date_label": _blog_date_label(created_at),
+                }
+            )
 
     entries.sort(key=lambda item: item["created_at"], reverse=True)
     return entries
