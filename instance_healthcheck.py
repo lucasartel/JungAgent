@@ -158,6 +158,35 @@ def run_healthcheck(json_output: bool = False, db_path: str | None = None) -> in
         }
     )
 
+    # Vulnerability & Resilience Diagnostic
+    api_provider = "OpenRouter" if os.getenv("OPENROUTER_API_KEY") else "OpenAI"
+    checks.append(
+        {
+            "status": "ok" if os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") else "error",
+            "title": "LLM Provider Resilience",
+            "detail": f"Primary provider: {api_provider}",
+            "action": "Ensure a fallback provider is configured to prevent cognitive blackout.",
+        }
+    )
+    
+    disk_space = "unknown"
+    try:
+        import shutil
+        total, used, free = shutil.disk_usage(".")
+        disk_ok = (free / total) > 0.1
+        disk_space = f"{free // (2**30)}GB free"
+    except:
+        disk_ok = True
+
+    checks.append(
+        {
+            "status": "ok" if disk_ok else "warning",
+            "title": "Infrastructure Limit (Disk)",
+            "detail": disk_space,
+            "action": "Expand storage to prevent memory corruption or database lock.",
+        }
+    )
+
     summary = {
         "instance_name": INSTANCE_NAME,
         "agent_instance": AGENT_INSTANCE,
