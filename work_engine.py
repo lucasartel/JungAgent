@@ -152,6 +152,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 WORK_AUTONOMY_ENABLED = os.getenv("WORK_AUTONOMY_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY = _env_int("WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY", 3)
 WORK_MAX_PENDING_TICKETS = _env_int("WORK_MAX_PENDING_TICKETS", 3)
@@ -208,6 +215,47 @@ def _normalize_compare(text: str) -> str:
     cleaned = cleaned.encode("ascii", "ignore").decode("ascii")
     cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
     return cleaned
+
+
+def _keyword_set(text: str, limit: int = 80) -> List[str]:
+    normalized = _normalize_compare(text)
+    words = re.findall(r"[a-z0-9][a-z0-9_-]{2,}", normalized)
+    stopwords = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "this",
+        "uma",
+        "para",
+        "com",
+        "que",
+        "como",
+        "dos",
+        "das",
+        "por",
+        "sobre",
+        "jungagent",
+        "self",
+        "work",
+    }
+    seen: List[str] = []
+    for word in words:
+        if word in stopwords or word in seen:
+            continue
+        seen.append(word)
+        if len(seen) >= limit:
+            break
+    return seen
+
+
+def _keyword_overlap(a: str, b: str) -> float:
+    left = set(_keyword_set(a))
+    right = set(_keyword_set(b))
+    if not left or not right:
+        return 0.0
+    return len(left & right) / max(1, min(len(left), len(right)))
 
 
 def _looks_like_objective_echo(body: str, objective: str) -> bool:
@@ -809,6 +857,33 @@ class GitHubSkill(BaseSkillProvider):
                 paths.append({"path": path, "size": item.get("size") or 0, "sha": item.get("sha")})
         paths.sort(key=lambda item: (0 if item["path"].endswith(".py") else 1, item["path"]))
         return {"success": True, "paths": paths[:limit], "repo": parts, "truncated": bool(payload.get("truncated"))}
+
+    def list_open_pull_requests(self, destination: Dict[str, Any], secret: str, limit: int = 8) -> Dict[str, Any]:
+        parts = self._repo_parts(destination)
+        url = self._repo_url(parts, f"pulls?state=open&base={parts['default_branch']}&per_page={max(1, min(limit, 20))}")
+        try:
+            with httpx.Client(timeout=25.0, follow_redirects=True) as client:
+                response = client.get(url, headers=self._headers(secret))
+        except Exception as exc:
+            return {"success": False, "message": str(exc), "pull_requests": []}
+        if response.status_code >= 400:
+            return {"success": False, "message": f"GitHub pulls HTTP {response.status_code}: {response.text[:220]}", "pull_requests": []}
+        pull_requests = []
+        for item in response.json()[:limit]:
+            pull_requests.append(
+                {
+                    "number": item.get("number"),
+                    "title": item.get("title"),
+                    "draft": bool(item.get("draft")),
+                    "state": item.get("state"),
+                    "url": item.get("html_url"),
+                    "head": ((item.get("head") or {}).get("ref")),
+                    "base": ((item.get("base") or {}).get("ref")),
+                    "updated_at": item.get("updated_at"),
+                    "body_excerpt": _truncate(item.get("body") or "", 420),
+                }
+            )
+        return {"success": True, "pull_requests": pull_requests, "repo": parts}
 
     def get_file(self, destination: Dict[str, Any], secret: str, path: str, ref: Optional[str] = None) -> Dict[str, Any]:
         parts = self._repo_parts(destination)
@@ -2135,6 +2210,302 @@ Contexto:
         provider = self.skill_registry.get("github")
         return provider if isinstance(provider, GitHubSkill) else None
 
+    def _github_repo_map(self, repo_paths: List[Dict[str, Any]]) -> Dict[str, Any]:
+        extension_counts: Dict[str, int] = {}
+        top_level_counts: Dict[str, int] = {}
+        safe_focus_paths: List[str] = []
+        for item in repo_paths:
+            path = str(item.get("path") or "").strip()
+            if not path:
+                continue
+            top = path.split("/", 1)[0]
+            top_level_counts[top] = top_level_counts.get(top, 0) + 1
+            _, ext = os.path.splitext(path)
+            ext = ext.lower() or "(none)"
+            extension_counts[ext] = extension_counts.get(ext, 0) + 1
+            if len(safe_focus_paths) < 24 and (
+                path in {"README.md", "work_engine.py", "jung_core.py", "consciousness_loop.py", "scripts/remote_db_probe.py"}
+                or path.startswith("docs/")
+                or path.startswith("admin_web/templates/dashboards/")
+            ):
+                safe_focus_paths.append(path)
+        return {
+            "file_count_seen": len(repo_paths),
+            "top_level": sorted(top_level_counts.items(), key=lambda item: (-item[1], item[0]))[:12],
+            "extensions": sorted(extension_counts.items(), key=lambda item: (-item[1], item[0]))[:12],
+            "safe_focus_paths": safe_focus_paths,
+        }
+
+    def _recent_github_work_history(
+        self,
+        project_id: Optional[int],
+        destination_id: Optional[int],
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        cursor = self.db.conn.cursor()
+        clauses = ["(d.provider_key = 'github' OR a.provider_payload_json LIKE '%github_pull_request%')"]
+        params: List[Any] = []
+        if project_id:
+            clauses.append("a.project_id = ?")
+            params.append(project_id)
+        elif destination_id:
+            clauses.append("a.destination_id = ?")
+            params.append(destination_id)
+        params.append(limit)
+        try:
+            cursor.execute(
+                f"""
+                SELECT
+                    a.id,
+                    a.title,
+                    a.status,
+                    a.external_url,
+                    a.provider_payload_json,
+                    a.created_at,
+                    b.objective,
+                    b.source_seed,
+                    t.status AS ticket_status,
+                    t.action AS ticket_action
+                FROM work_artifacts a
+                LEFT JOIN work_briefs b ON b.id = a.brief_id
+                LEFT JOIN work_destinations d ON d.id = a.destination_id
+                LEFT JOIN work_approval_tickets t ON t.artifact_id = a.id
+                WHERE {' AND '.join(clauses)}
+                ORDER BY a.created_at DESC
+                LIMIT ?
+                """,
+                tuple(params),
+            )
+        except sqlite3.OperationalError as exc:
+            logger.warning("WorkEngine: historico GitHub indisponivel para discernimento: %s", exc)
+            return []
+
+        history: List[Dict[str, Any]] = []
+        for row in cursor.fetchall():
+            item = dict(row)
+            payload = _json_loads_maybe(item.pop("provider_payload_json", "") or "{}")
+            package = payload.get("package") or {}
+            github_pr = package.get("github_pull_request") or {}
+            files = github_pr.get("files") or []
+            history.append(
+                {
+                    "artifact_id": item.get("id"),
+                    "title": item.get("title"),
+                    "status": item.get("status"),
+                    "ticket_status": item.get("ticket_status"),
+                    "ticket_action": item.get("ticket_action"),
+                    "created_at": item.get("created_at"),
+                    "external_url": item.get("external_url"),
+                    "objective": _truncate(item.get("objective") or "", 260),
+                    "source_seed": _truncate(item.get("source_seed") or "", 180),
+                    "generation_mode": package.get("generation_mode"),
+                    "action_type": package.get("action_type"),
+                    "pr_title": github_pr.get("pr_title"),
+                    "branch_name": github_pr.get("branch_name"),
+                    "changed_paths": [changed.get("path") for changed in files if isinstance(changed, dict) and changed.get("path")],
+                    "psychic_motive": _truncate(github_pr.get("psychic_motive") or "", 260),
+                    "discernment": package.get("github_discernment") or github_pr.get("discernment") or {},
+                }
+            )
+        return history
+
+    def _github_duplicate_warnings(
+        self,
+        candidate: Dict[str, Any],
+        recent_history: List[Dict[str, Any]],
+        open_prs: List[Dict[str, Any]],
+    ) -> List[str]:
+        warnings: List[str] = []
+        candidate_text = " ".join(
+            str(candidate.get(key) or "")
+            for key in ("title", "summary", "psychic_motive", "commit_message")
+        )
+        candidate_paths = {
+            item.get("path")
+            for item in (candidate.get("files") or [])
+            if isinstance(item, dict) and item.get("path")
+        }
+        for item in recent_history:
+            prior_text = " ".join(
+                str(item.get(key) or "")
+                for key in ("title", "pr_title", "objective", "psychic_motive", "source_seed")
+            )
+            overlap = _keyword_overlap(candidate_text, prior_text)
+            prior_paths = set(item.get("changed_paths") or [])
+            if overlap >= 0.62 and (not candidate_paths or not prior_paths or candidate_paths & prior_paths):
+                warnings.append(
+                    f"Possivel repeticao de Work GitHub recente: artifact {item.get('artifact_id')} ({item.get('title') or item.get('pr_title')})."
+                )
+        for item in open_prs:
+            prior_text = " ".join(str(item.get(key) or "") for key in ("title", "body_excerpt", "head"))
+            overlap = _keyword_overlap(candidate_text, prior_text)
+            if overlap >= 0.55:
+                warnings.append(f"Possivel repeticao de PR aberto #{item.get('number')}: {item.get('title')}.")
+        return warnings[:5]
+
+    def _discern_github_work_package(
+        self,
+        brief: Dict[str, Any],
+        candidate: Dict[str, Any],
+        repo_map: Dict[str, Any],
+        recent_history: List[Dict[str, Any]],
+        open_prs: List[Dict[str, Any]],
+        identity_summary: str,
+        world_summary: str,
+    ) -> Dict[str, Any]:
+        duplicate_warnings = self._github_duplicate_warnings(candidate, recent_history, open_prs)
+        candidate_view = {
+            "title": candidate.get("title"),
+            "summary": candidate.get("summary"),
+            "commit_message": candidate.get("commit_message"),
+            "psychic_motive": candidate.get("psychic_motive"),
+            "risks": candidate.get("risks"),
+            "review_checklist": candidate.get("review_checklist"),
+            "files": [
+                {
+                    "path": item.get("path"),
+                    "diff_chars": len(item.get("diff") or ""),
+                    "reason": item.get("reason"),
+                    "diff_excerpt": (item.get("diff") or "")[:1800],
+                }
+                for item in candidate.get("files") or []
+            ],
+        }
+        prompt = f"""
+Voce e o discernimento pre-PR do Work do JungAgent.
+Julgue se esta proposta deve virar um pull request agora ou apenas um artifact de planejamento.
+
+Responda APENAS em JSON:
+{{
+  "decision": "open_pull_request | planning_artifact",
+  "axis": "observability | admin_operability | memory_metabolism | work_autonomy | safety | docs | tests | telegram | loop_health",
+  "novelty_score": 0.0,
+  "value_score": 0.0,
+  "risk_level": "low | medium | high",
+  "reason": "julgamento curto",
+  "warnings": ["alerta"],
+  "suggested_next_action": "o que fazer se nao abrir PR"
+}}
+
+Objetivo do dia:
+{brief.get('objective')}
+
+Estado interno relevante:
+{identity_summary[:1400]}
+
+Mundo:
+{world_summary[:700]}
+
+Mapa compacto do repositorio:
+{json.dumps(repo_map, ensure_ascii=False)}
+
+PRs abertos:
+{json.dumps(open_prs[:8], ensure_ascii=False)}
+
+Historico recente de Work GitHub:
+{json.dumps(recent_history[:10], ensure_ascii=False)}
+
+Proposta candidata:
+{json.dumps(candidate_view, ensure_ascii=False)}
+
+Alertas heuristicos ja detectados:
+{json.dumps(duplicate_warnings, ensure_ascii=False)}
+
+Regras:
+- se repetir um PR aberto ou artifact recente, use planning_artifact
+- se for cosmetico demais, use planning_artifact
+- se risco for medio/alto para codigo, deploy, seguranca ou migracao, use planning_artifact
+- se alterar no maximo 2 arquivos seguros, tiver novidade real e valor claro, use open_pull_request
+- prefira diversidade de eixos; nao insista sempre em README/metabolismo psiquico
+"""
+        try:
+            parsed = _json_loads_maybe(get_llm_response(prompt, temperature=0.15, max_tokens=900))
+        except Exception as exc:
+            logger.warning("WorkEngine: falha no discernimento GitHub: %s", exc)
+            parsed = {}
+        decision = str(parsed.get("decision") or "open_pull_request").strip()
+        novelty = _safe_float(parsed.get("novelty_score"), 0.7)
+        value = _safe_float(parsed.get("value_score"), 0.7)
+        risk = str(parsed.get("risk_level") or "low").strip().lower()
+        warnings = [str(item).strip() for item in (parsed.get("warnings") or []) if str(item or "").strip()]
+        warnings.extend(duplicate_warnings)
+        if duplicate_warnings or novelty < 0.55 or value < 0.45 or risk not in {"low", "baixo"}:
+            decision = "planning_artifact"
+        if decision not in {"open_pull_request", "planning_artifact"}:
+            decision = "planning_artifact"
+        return {
+            "decision": decision,
+            "axis": _truncate(parsed.get("axis") or "work_autonomy", 80),
+            "novelty_score": novelty,
+            "value_score": value,
+            "risk_level": risk,
+            "reason": _truncate(parsed.get("reason") or "Discernimento executado antes do ticket GitHub.", 600),
+            "warnings": warnings[:8],
+            "suggested_next_action": _truncate(parsed.get("suggested_next_action") or "", 420),
+            "recent_history_seen": len(recent_history),
+            "open_prs_seen": len(open_prs),
+        }
+
+    def _github_planning_work_package(
+        self,
+        brief: Dict[str, Any],
+        candidate: Dict[str, Any],
+        discernment: Dict[str, Any],
+        recent_history: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        title = _truncate(f"Planning: {candidate.get('title') or brief.get('title_hint') or 'GitHub self-work'}", 120)
+        warnings = discernment.get("warnings") or []
+        recent_lines = [
+            f"- {item.get('created_at')}: {item.get('title') or item.get('pr_title')} ({', '.join(item.get('changed_paths') or []) or 'sem arquivos'})"
+            for item in recent_history[:5]
+        ]
+        diff_lines = [
+            f"### {item.get('path')}\n```diff\n{(item.get('diff') or '')[:2600]}\n```"
+            for item in (candidate.get("files") or [])[:2]
+        ]
+        body = (
+            f"## {title}\n\n"
+            "O discernimento do Work decidiu nao abrir PR automatico nesta rodada.\n\n"
+            f"**Decisao:** {discernment.get('decision')}\n\n"
+            f"**Eixo:** {discernment.get('axis')}\n\n"
+            f"**Motivo:** {discernment.get('reason')}\n\n"
+            f"**Proxima acao sugerida:** {discernment.get('suggested_next_action') or 'Rejeitar e deixar o Work tentar outro eixo no proximo ciclo.'}\n\n"
+            "### Alertas\n"
+            + ("\n".join(f"- {item}" for item in warnings) if warnings else "- Nenhum alerta especifico.")
+            + "\n\n### Historico recente considerado\n"
+            + ("\n".join(recent_lines) if recent_lines else "- Sem historico recente.")
+            + "\n\n### Candidata que foi barrada\n"
+            + f"- Titulo: {candidate.get('title')}\n"
+            + f"- Resumo: {candidate.get('summary')}\n"
+            + f"- Motivo psiquico/tecnico: {candidate.get('psychic_motive')}\n\n"
+            + ("\n\n".join(diff_lines) if diff_lines else "Sem diff seguro candidato.")
+        )
+        return {
+            "title": title,
+            "excerpt": _truncate(discernment.get("reason") or "Discernimento GitHub gerou artifact de planejamento.", 420),
+            "body": body,
+            "slug": _slugify(title),
+            "tags": ["github", "self-work", "discernment"],
+            "categories": [],
+            "cta": "",
+            "editorial_note": "Artifact de planejamento: proposta GitHub nao deve abrir PR nesta rodada.",
+            "generation_mode": "discernment_planning",
+            "review_flags": warnings,
+            "daily_intent": (brief.get("extracted") or _json_loads_maybe(brief.get("extracted_json") or "{}")).get("daily_intent") or {},
+            "provider_key": "github",
+            "action_type": "review_plan",
+            "content_type": "work_proposal",
+            "github_discernment": discernment,
+            "github_candidate": {
+                "title": candidate.get("title"),
+                "files": [
+                    {"path": item.get("path"), "reason": item.get("reason"), "diff": (item.get("diff") or "")[:5000]}
+                    for item in (candidate.get("files") or [])[:2]
+                ],
+            },
+            "firecrawl_research": {"used": False, "destination_used": False, "world_used": False, "urls": [], "errors": []},
+        }
+
     def _unified_diff(self, path: str, old_content: str, new_content: str) -> str:
         return "".join(
             difflib.unified_diff(
@@ -2294,6 +2665,9 @@ Contexto:
         repo_paths: List[Dict[str, Any]],
         identity_summary: str,
         world_summary: str,
+        recent_history: Optional[List[Dict[str, Any]]] = None,
+        open_prs: Optional[List[Dict[str, Any]]] = None,
+        repo_map: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         compact_paths = [
             {
@@ -2325,11 +2699,19 @@ Estado interno:
 Mundo:
 {world_summary[:900]}
 
+Mapa compacto do repositorio:
+{json.dumps(repo_map or {}, ensure_ascii=False)}
+
+PRs abertos e propostas recentes que NAO devem ser repetidos:
+{json.dumps({"open_prs": (open_prs or [])[:6], "recent_history": (recent_history or [])[:8]}, ensure_ascii=False)}
+
 Arquivos candidatos:
 {json.dumps(compact_paths, ensure_ascii=False)}
 
 Regras:
 - escolha no maximo 2 arquivos
+- evite repetir arquivos/temas de PRs abertos ou propostas recentes
+- varie o eixo de melhoria entre observabilidade, operacao admin, memoria/metabolismo, autonomia do Work, seguranca, testes, Telegram e saude do loop
 - arquivos grandes podem ser escolhidos para observacao por trecho, mas a alteracao deve ser pequena
 - nao escolha secrets, dados, binarios, dumps ou arquivos de ambiente
 - prefira uma mudanca pequena e revisavel
@@ -2393,7 +2775,25 @@ Regras:
         if not tree.get("success"):
             return self._degraded_work_package(brief, tree.get("message") or "Nao foi possivel ler a tree do GitHub.")
 
-        targets = self._select_github_targets(brief, tree.get("paths") or [], identity_summary, world_summary)
+        repo_paths = tree.get("paths") or []
+        repo_map = self._github_repo_map(repo_paths)
+        open_prs_result = provider.list_open_pull_requests(destination, secret)
+        open_prs = open_prs_result.get("pull_requests") if open_prs_result.get("success") else []
+        recent_history = self._recent_github_work_history(
+            brief.get("project_id"),
+            brief.get("destination_id"),
+            limit=10,
+        )
+
+        targets = self._select_github_targets(
+            brief,
+            repo_paths,
+            identity_summary,
+            world_summary,
+            recent_history=recent_history,
+            open_prs=open_prs,
+            repo_map=repo_map,
+        )
         if not targets:
             return self._degraded_work_package(brief, "Nao foi possivel escolher arquivos seguros para micro-PR.")
 
@@ -2614,6 +3014,42 @@ Guardrails obrigatorios:
                 ],
             },
         }
+        candidate_for_discernment = {
+            "title": title,
+            "summary": summary,
+            "commit_message": commit_message,
+            "psychic_motive": psychic_motive,
+            "risks": risks,
+            "review_checklist": checklist,
+            "files": proposed_files,
+        }
+        discernment = self._discern_github_work_package(
+            brief,
+            candidate_for_discernment,
+            repo_map,
+            recent_history,
+            open_prs,
+            identity_summary,
+            world_summary,
+        )
+        github_payload["discernment"] = discernment
+        if discernment.get("decision") != "open_pull_request":
+            return self._github_planning_work_package(
+                brief,
+                candidate_for_discernment,
+                discernment,
+                recent_history,
+            )
+
+        pr_body += (
+            "\n\n## Discernimento pre-PR\n"
+            f"- Eixo: {discernment.get('axis')}\n"
+            f"- Novidade: {discernment.get('novelty_score')}\n"
+            f"- Valor: {discernment.get('value_score')}\n"
+            f"- Risco: {discernment.get('risk_level')}\n"
+            f"- Motivo: {discernment.get('reason')}"
+        )
+        github_payload["pr_body"] = pr_body
         return {
             "title": title,
             "excerpt": summary,
@@ -2630,6 +3066,7 @@ Guardrails obrigatorios:
             "action_type": "open_pull_request",
             "content_type": "change_proposal",
             "github_pull_request": github_payload,
+            "github_discernment": discernment,
             "firecrawl_research": {"used": False, "destination_used": False, "world_used": False, "urls": [], "errors": []},
         }
 
@@ -3007,8 +3444,34 @@ Regras obrigatorias:
                 emotional_weight=0.52,
                 tension_level=0.38,
             )
+        github_discernment = package.get("github_discernment")
+        if github_discernment:
+            self.record_work_experience(
+                event_type="github_self_work_discernment",
+                summary=(
+                    "Work julgou uma proposta GitHub antes do ticket: "
+                    f"{github_discernment.get('decision')} / {github_discernment.get('axis')} - "
+                    f"{_truncate(github_discernment.get('reason') or '', 180)}"
+                ),
+                project_id=brief.get("project_id"),
+                source_table="work_artifacts",
+                source_id=artifact_id,
+                metadata={
+                    "brief_id": brief["id"],
+                    "artifact_id": artifact_id,
+                    "discernment": github_discernment,
+                },
+                emotional_weight=0.58,
+                tension_level=0.42,
+            )
 
-        ticket_action = "open_pull_request" if (package.get("provider_key") == "github" or brief.get("provider_key") == "github") else "create_draft"
+        package_action = package.get("action_type") or brief.get("action_type")
+        if package_action == "open_pull_request":
+            ticket_action = "open_pull_request"
+        elif package_action == "review_plan":
+            ticket_action = "review_plan"
+        else:
+            ticket_action = "create_draft"
         ticket = self.create_approval_ticket(
             brief_id=brief["id"],
             artifact_id=artifact_id,
@@ -3131,6 +3594,15 @@ Regras obrigatorias:
         stored_slug = artifact.get("slug") or ""
         is_github_proposal = artifact.get("provider_key") == "github" or package.get("action_type") == "open_pull_request"
         if is_github_proposal:
+            if package.get("action_type") == "review_plan" or package.get("generation_mode") == "discernment_planning":
+                for item in package.get("review_flags") or []:
+                    if isinstance(item, str) and item.strip():
+                        flags.append(item.strip())
+                discernment = package.get("github_discernment") or {}
+                reason = discernment.get("reason")
+                if reason:
+                    flags.append(f"Discernimento GitHub: {reason}")
+                return flags
             github_payload = package.get("github_pull_request") or {}
             changed_files = github_payload.get("files") or []
             github_provider = self._github_provider()
@@ -3233,6 +3705,7 @@ Regras obrigatorias:
             "delivery_success": "work_delivery",
             "github_pr_opened_expression": "work_expression",
             "github_pr_opened_responsibility": "work_responsibility",
+            "github_self_work_discernment": "work_responsibility",
             "artifact_composed": "work_expression",
             "work_research": "work_responsibility",
             "brief_created": "work_responsibility",
@@ -3431,6 +3904,8 @@ Regras obrigatorias:
             provider_result = provider.publish_draft(destination, artifact, secret)
         elif ticket["action"] == "open_pull_request" and hasattr(provider, "open_pull_request"):
             provider_result = provider.open_pull_request(destination, artifact, secret)
+        elif ticket["action"] == "review_plan":
+            raise ValueError("Este ticket e apenas um artifact de planejamento; rejeite ou use como orientacao para uma proxima rodada.")
         else:
             raise ValueError("Acao de ticket invalida")
 

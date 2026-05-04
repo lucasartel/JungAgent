@@ -281,13 +281,24 @@ function formatJsonList(raw) {
 function renderGitHubProposal(artifact) {
     const packagePayload = artifact.provider_payload?.package || {};
     const proposal = packagePayload.github_pull_request || {};
+    const discernment = packagePayload.github_discernment || proposal.discernment || {};
+    const discernmentBlock = discernment.decision ? `
+        <div class="mono-block-v2">
+            GitHub discernment: ${escapeHtml(discernment.decision || "-")} | ${escapeHtml(discernment.axis || "-")}<br>
+            Novelty: ${escapeHtml(String(discernment.novelty_score ?? "-"))} |
+            Value: ${escapeHtml(String(discernment.value_score ?? "-"))} |
+            Risk: ${escapeHtml(discernment.risk_level || "-")}<br>
+            ${escapeHtml(discernment.reason || "")}
+        </div>
+    ` : "";
     if (!proposal.files?.length) {
-        return "";
+        return discernmentBlock;
     }
     const paths = proposal.files.map((item) => item.path).filter(Boolean).join(", ");
     const risks = (proposal.risks || []).join(" | ");
     const checklist = (proposal.review_checklist || []).join(" | ");
     return `
+        ${discernmentBlock}
         <div class="mono-block-v2">
             GitHub proposal: ${escapeHtml(proposal.pr_title || artifact.title || "Pull request")}<br>
             Branch: ${escapeHtml(proposal.branch_name || "-")}<br>
@@ -295,6 +306,21 @@ function renderGitHubProposal(artifact) {
             Risks: ${escapeHtml(risks || "Review the diff before merge.")}
         </div>
         ${checklist ? `<div class="mono-block-v2">Review checklist: ${escapeHtml(checklist)}</div>` : ""}
+    `;
+}
+
+function renderGitHubPlanning(artifact) {
+    const packagePayload = artifact.provider_payload?.package || {};
+    const candidate = packagePayload.github_candidate || {};
+    if (!candidate.files?.length) {
+        return "";
+    }
+    const paths = candidate.files.map((item) => item.path).filter(Boolean).join(", ");
+    return `
+        <div class="mono-block-v2">
+            Candidate held for planning: ${escapeHtml(candidate.title || artifact.title || "GitHub plan")}<br>
+            Files considered: ${escapeHtml(paths || "-")}
+        </div>
     `;
 }
 
@@ -313,7 +339,12 @@ function renderPendingApprovals(state) {
             ].filter(Boolean).join(" + ");
             const isDegraded = artifact.generation_mode === "degraded_fallback";
             const isGitHubPr = ticket.action === "open_pull_request" || artifact.action_type === "open_pull_request";
-            const approveLabel = isGitHubPr ? "Approve and open PR" : "Approve and create draft";
+            const isReviewOnly = ticket.action === "review_plan" || artifact.action_type === "review_plan" || artifact.generation_mode === "discernment_planning";
+            const approveLabel = isReviewOnly ? "Planning only" : (isGitHubPr ? "Approve and open PR" : "Approve and create draft");
+            const approveDisabled = isDegraded || isReviewOnly;
+            const approveTitle = isReviewOnly
+                ? "Discernment blocked this proposal from becoming a PR."
+                : (isDegraded ? "Degraded artifacts must be rejected and regenerated." : "");
             return `
                 <article class="data-card-v2">
                     <strong>${escapeHtml(artifact.title || ticket.artifact_title || "Pending work")}</strong>
@@ -328,14 +359,15 @@ function renderPendingApprovals(state) {
                     ${artifact.editorial_note ? `<div class="mono-block-v2">Editorial note: ${escapeHtml(artifact.editorial_note)}</div>` : ""}
                     ${firecrawl.used ? `<div class="mono-block-v2">Research sources: ${escapeHtml(researchSources || "unknown")} | ${escapeHtml(firecrawl.summary || "")}</div>` : ""}
                     ${firecrawl.destination_profile ? `<div class="mono-block-v2">Destination profile: ${escapeHtml(firecrawl.destination_profile)}</div>` : ""}
-                    ${isGitHubPr ? renderGitHubProposal(artifact) : ""}
+                    ${(isGitHubPr || isReviewOnly) ? renderGitHubProposal(artifact) : ""}
+                    ${isReviewOnly ? renderGitHubPlanning(artifact) : ""}
                     ${flags.length ? `<div class="mono-block-v2">Review warnings: ${escapeHtml(flags.join(" | "))}</div>` : ""}
                     <details>
                         <summary class="meta-line-v2">Read body preview</summary>
                         <div class="mono-block-v2">${escapeHtml((artifact.body || "").slice(0, 2600))}</div>
                     </details>
                     <div class="dashboard-grid-v2" style="margin-top: 1rem;">
-                        <button class="button-v2 button-v2--primary" data-work-action="approve-ticket" data-ticket-kind="${isGitHubPr ? "github-pr" : "draft"}" data-ticket-id="${escapeHtml(ticket.id)}" ${isDegraded ? "disabled title=\"Degraded artifacts must be rejected and regenerated.\"" : ""}>${isDegraded ? "Reject and regenerate first" : approveLabel}</button>
+                        <button class="button-v2 button-v2--primary" data-work-action="approve-ticket" data-ticket-kind="${isGitHubPr ? "github-pr" : "draft"}" data-ticket-id="${escapeHtml(ticket.id)}" ${approveDisabled ? `disabled title="${escapeHtml(approveTitle)}"` : ""}>${isDegraded ? "Reject and regenerate first" : approveLabel}</button>
                         <button class="button-v2" data-work-action="reject-ticket" data-ticket-id="${escapeHtml(ticket.id)}">Reject</button>
                     </div>
                 </article>
