@@ -140,6 +140,21 @@ async def update_project(project_id: int, request: Request, admin: Dict = Depend
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 
+@router.delete("/projects/{project_id}")
+async def delete_project(project_id: int, request: Request, admin: Dict = Depends(require_master)):
+    try:
+        engine = get_work_engine()
+        result = await asyncio.to_thread(
+            engine.delete_project,
+            project_id,
+            admin.get("email", "master_admin"),
+        )
+        return {"success": True, "result": result}
+    except Exception as e:
+        logger.error(f"Erro ao apagar projeto Work {project_id}: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
 @router.post("/briefs/manual")
 async def create_manual_brief(request: Request, admin: Dict = Depends(require_master)):
     try:

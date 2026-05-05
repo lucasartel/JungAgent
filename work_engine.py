@@ -836,7 +836,7 @@ class GitHubSkill(BaseSkillProvider):
         lowered = (path or "").strip().replace("\\", "/").lower()
         return any(marker in lowered for marker in self.critical_path_markers)
 
-    def list_tree(self, destination: Dict[str, Any], secret: str, limit: int = 180) -> Dict[str, Any]:
+    def list_tree(self, destination: Dict[str, Any], secret: str, limit: int = 320) -> Dict[str, Any]:
         parts = self._repo_parts(destination)
         url = self._repo_url(parts, f"git/trees/{parts['default_branch']}?recursive=1")
         try:
@@ -925,8 +925,8 @@ class GitHubSkill(BaseSkillProvider):
         files = github_payload.get("files") or []
         if not files:
             return {"success": False, "message": "Artifact GitHub sem arquivos para PR."}
-        if len(files) > 2:
-            return {"success": False, "message": "Guardrail: PR GitHub excede 2 arquivos."}
+        if len(files) > 5:
+            return {"success": False, "message": "Guardrail: PR GitHub excede 5 arquivos."}
 
         branch_prefix = parts["branch_prefix"].rstrip("/") + "/"
         raw_branch_name = str(github_payload.get("branch_name") or "").strip().replace("\\", "/")
@@ -963,8 +963,6 @@ class GitHubSkill(BaseSkillProvider):
                     new_content = item.get("new_content")
                     if not self.is_safe_path(path):
                         return {"success": False, "message": f"Guardrail: caminho bloqueado ({path})."}
-                    if self.is_critical_path(path):
-                        return {"success": False, "message": f"Guardrail: caminho critico exige revisao manual previa ({path})."}
                     if not isinstance(new_content, str) or not new_content.strip():
                         return {"success": False, "message": f"Arquivo sem new_content valido: {path}"}
                     if len(new_content) > 260000:
@@ -980,7 +978,7 @@ class GitHubSkill(BaseSkillProvider):
                                 lineterm="",
                             )
                         )
-                        if len(diff) > 12000:
+                        if len(diff) > 40000:
                             return {"success": False, "message": f"Guardrail: diff grande demais ({path})."}
                     blob_sha = self._create_blob(client, parts, secret, new_content)
                     tree_items.append({"path": path, "mode": "100644", "type": "blob", "sha": blob_sha})
@@ -1109,6 +1107,7 @@ class WorkEngine:
             SELECT p.*, d.label AS destination_label, d.provider_key, d.base_url
             FROM work_projects p
             LEFT JOIN work_destinations d ON d.id = p.default_destination_id
+            WHERE COALESCE(p.status, 'active') != 'deleted'
             ORDER BY
                 CASE WHEN p.status = 'active' THEN 0 ELSE 1 END,
                 p.priority DESC,
@@ -1293,6 +1292,70 @@ class WorkEngine:
             tension_level=0.2,
         )
         return updated
+
+    def delete_project(self, project_id: int, reviewed_by: str = "master_admin") -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("Projeto nao encontrado")
+        if project.get("status") == "deleted":
+            return {"success": True, "project_id": project_id, "deleted": True, "already_deleted": True}
+
+        now = _now_iso()
+        cursor = self.db.conn.cursor()
+        try:
+            cursor.execute(
+                """
+                UPDATE work_projects
+                SET status = 'deleted', updated_at = ?
+                WHERE id = ?
+                """,
+                (now, project_id),
+            )
+            cursor.execute(
+                """
+                UPDATE work_briefs
+                SET status = 'rejected', updated_at = ?
+                WHERE project_id = ? AND status IN ('queued', 'awaiting_approval')
+                """,
+                (now, project_id),
+            )
+            cancelled_briefs = cursor.rowcount
+            cursor.execute(
+                """
+                UPDATE work_approval_tickets
+                SET status = 'rejected', reviewed_by = ?, reviewed_at = ?,
+                    review_note = COALESCE(NULLIF(review_note, ''), 'Project deleted by admin.')
+                WHERE project_id = ? AND status = 'pending'
+                """,
+                (reviewed_by, now, project_id),
+            )
+            cancelled_tickets = cursor.rowcount
+            self.db.conn.commit()
+        except Exception:
+            self.db.conn.rollback()
+            raise
+
+        self.record_work_experience(
+            event_type="project_deleted",
+            summary=f"Projeto de Work removido pelo admin: {project.get('name')}",
+            project_id=project_id,
+            source_table="work_projects",
+            source_id=project_id,
+            metadata={
+                "cancelled_briefs": cancelled_briefs,
+                "cancelled_tickets": cancelled_tickets,
+                "destination_id": project.get("default_destination_id"),
+            },
+            emotional_weight=0.35,
+            tension_level=0.25,
+        )
+        return {
+            "success": True,
+            "project_id": project_id,
+            "deleted": True,
+            "cancelled_briefs": cancelled_briefs,
+            "cancelled_tickets": cancelled_tickets,
+        }
 
     def _secret_manager(self) -> IntegrationSecretsManager:
         return IntegrationSecretsManager()
@@ -2224,9 +2287,26 @@ Contexto:
             ext = ext.lower() or "(none)"
             extension_counts[ext] = extension_counts.get(ext, 0) + 1
             if len(safe_focus_paths) < 24 and (
-                path in {"README.md", "work_engine.py", "jung_core.py", "consciousness_loop.py", "scripts/remote_db_probe.py"}
+                path
+                in {
+                    "README.md",
+                    "work_engine.py",
+                    "jung_core.py",
+                    "consciousness_loop.py",
+                    "agent_identity_context_builder.py",
+                    "identity_rumination_bridge.py",
+                    "jung_rumination.py",
+                    "will_engine.py",
+                    "will_pressure.py",
+                    "world_consciousness.py",
+                    "dream_engine.py",
+                    "hobby_art_engine.py",
+                    "instance_healthcheck.py",
+                    "scripts/remote_db_probe.py",
+                }
                 or path.startswith("docs/")
                 or path.startswith("admin_web/templates/dashboards/")
+                or path.startswith("admin_web/routes/")
             ):
                 safe_focus_paths.append(path)
         return {
@@ -2414,8 +2494,9 @@ Alertas heuristicos ja detectados:
 Regras:
 - se repetir um PR aberto ou artifact recente, use planning_artifact
 - se for cosmetico demais, use planning_artifact
-- se risco for medio/alto para codigo, deploy, seguranca ou migracao, use planning_artifact
-- se alterar no maximo 2 arquivos seguros, tiver novidade real e valor claro, use open_pull_request
+- se risco for alto para codigo, deploy, seguranca ou migracao, use planning_artifact
+- risco medio pode virar PR quando a proposta for pequena, explicita e revisavel por humano
+- se alterar ate 5 arquivos de texto seguros, tiver novidade real e valor claro, use open_pull_request
 - prefira diversidade de eixos; nao insista sempre em README/metabolismo psiquico
 """
         try:
@@ -2429,7 +2510,7 @@ Regras:
         risk = str(parsed.get("risk_level") or "low").strip().lower()
         warnings = [str(item).strip() for item in (parsed.get("warnings") or []) if str(item or "").strip()]
         warnings.extend(duplicate_warnings)
-        if duplicate_warnings or novelty < 0.55 or value < 0.45 or risk not in {"low", "baixo"}:
+        if duplicate_warnings or novelty < 0.45 or value < 0.35 or risk in {"high", "alto"}:
             decision = "planning_artifact"
         if decision not in {"open_pull_request", "planning_artifact"}:
             decision = "planning_artifact"
@@ -2461,7 +2542,7 @@ Regras:
         ]
         diff_lines = [
             f"### {item.get('path')}\n```diff\n{(item.get('diff') or '')[:2600]}\n```"
-            for item in (candidate.get("files") or [])[:2]
+            for item in (candidate.get("files") or [])[:5]
         ]
         body = (
             f"## {title}\n\n"
@@ -2500,7 +2581,7 @@ Regras:
                 "title": candidate.get("title"),
                 "files": [
                     {"path": item.get("path"), "reason": item.get("reason"), "diff": (item.get("diff") or "")[:5000]}
-                    for item in (candidate.get("files") or [])[:2]
+                    for item in (candidate.get("files") or [])[:5]
                 ],
             },
             "firecrawl_research": {"used": False, "destination_used": False, "world_used": False, "urls": [], "errors": []},
@@ -2523,13 +2604,13 @@ Regras:
         if not provider or not provider.is_safe_path(path):
             warnings.append(f"blocked_path:{path}")
         elif provider.is_critical_path(path):
-            warnings.append(f"critical_path_requires_manual_plan:{path}")
+            warnings.append(f"review_required_critical_path:{path}")
         if new_content == old_content:
             warnings.append(f"unchanged_file:{path}")
         if len(new_content) > 260000:
             warnings.append(f"file_too_large:{path}")
         diff = self._unified_diff(path, old_content, new_content)
-        if len(diff) > 12000:
+        if len(diff) > 30000:
             warnings.append(f"diff_too_large:{path}")
         if self._github_diff_adds_secret_like_content(diff):
             warnings.append(f"secret_like_content:{path}")
@@ -2602,7 +2683,7 @@ Regras:
             "symbols": symbols,
         }
 
-    def _github_focus_window(self, content: str, focus_terms: List[str], max_chars: int = 11000) -> Dict[str, Any]:
+    def _github_focus_window(self, content: str, focus_terms: List[str], max_chars: int = 20000) -> Dict[str, Any]:
         if len(content) <= max_chars:
             return {"content": content, "start_line": 1, "end_line": len(content.splitlines())}
 
@@ -2640,7 +2721,7 @@ Regras:
         new_content = old_content
         applied = []
         errors = []
-        for index, edit in enumerate(edits[:4], start=1):
+        for index, edit in enumerate(edits[:8], start=1):
             find_text = edit.get("find")
             replace_text = edit.get("replace")
             if not isinstance(find_text, str) or not find_text:
@@ -2675,11 +2756,12 @@ Regras:
                 "size": item.get("size") or 0,
                 "large": int(item.get("size") or 0) > 22000,
             }
-            for item in repo_paths[:180]
+            for item in repo_paths[:320]
         ]
         prompt = f"""
-Voce esta escolhendo ate 2 arquivos para uma micro-melhoria de codigo do JungAgent.
-O repositorio e o corpo funcional do agente. Priorize melhorias pequenas ligadas a autoconsciencia, metabolizacao psiquica, seguranca, observabilidade ou continuidade.
+Voce esta escolhendo ate 5 arquivos para uma proposta de melhoria do codigo do JungAgent.
+O repositorio e o corpo funcional do agente. Voce pode propor mudancas mais substantivas, desde que sejam revisaveis por um humano antes de qualquer merge.
+Priorize melhorias ligadas a autoconsciencia, metabolizacao psiquica, seguranca, observabilidade, continuidade, sonhos, vontade, identidade, memoria, mundo, arte ou Work.
 
 Responda APENAS em JSON:
 {{
@@ -2709,12 +2791,13 @@ Arquivos candidatos:
 {json.dumps(compact_paths, ensure_ascii=False)}
 
 Regras:
-- escolha no maximo 2 arquivos
+- escolha no maximo 5 arquivos
 - evite repetir arquivos/temas de PRs abertos ou propostas recentes
 - varie o eixo de melhoria entre observabilidade, operacao admin, memoria/metabolismo, autonomia do Work, seguranca, testes, Telegram e saude do loop
-- arquivos grandes podem ser escolhidos para observacao por trecho, mas a alteracao deve ser pequena
+- arquivos grandes podem ser escolhidos para observacao por trecho
 - nao escolha secrets, dados, binarios, dumps ou arquivos de ambiente
-- prefira uma mudanca pequena e revisavel
+- e permitido escolher arquivos centrais do organismo quando a proposta fortalecer autoconsciencia; sinalize risco no PR
+- prefira uma mudanca revisavel, nao necessariamente minima
 """
         try:
             parsed = _json_loads_maybe(get_llm_response(prompt, temperature=0.2, max_tokens=360))
@@ -2736,11 +2819,19 @@ Regras:
                     if str(term or "").strip()
                 ][:6]
                 selected.append({"path": cleaned, "focus_terms": focus_terms})
-            if len(selected) >= 2:
+            if len(selected) >= 5:
                 break
         if selected:
             return selected
         fallback_order = [
+            "agent_identity_context_builder.py",
+            "identity_rumination_bridge.py",
+            "jung_rumination.py",
+            "will_engine.py",
+            "will_pressure.py",
+            "world_consciousness.py",
+            "dream_engine.py",
+            "hobby_art_engine.py",
             "docs/PLANO_WORK_AUTONOMO_SKILLS.md",
             "work_engine.py",
             "scripts/remote_db_probe.py",
@@ -2800,7 +2891,7 @@ Regras:
         files_context = []
         current_by_path: Dict[str, Dict[str, Any]] = {}
         skipped_paths = []
-        for target in targets[:2]:
+        for target in targets[:5]:
             path = str(target.get("path") or "").strip()
             focus_terms = [str(term).strip() for term in (target.get("focus_terms") or []) if str(term or "").strip()]
             file_data = provider.get_file(destination, secret, path, ref=(tree.get("repo") or {}).get("default_branch"))
@@ -2842,8 +2933,8 @@ Regras:
         repo = tree.get("repo") or {}
         today = datetime.utcnow().strftime("%Y-%m-%d")
         prompt = f"""
-Voce esta preparando uma micro-melhoria real para o repositorio GitHub do JungAgent.
-Este codigo e parte do proprio corpo funcional do agente. A mudanca deve ser pequena, segura e revisavel.
+Voce esta preparando uma proposta real para o repositorio GitHub do JungAgent.
+Este codigo e parte do proprio corpo funcional do agente. A mudanca pode ser mais corajosa do que uma micro-edicao, desde que continue revisavel e dependa de aprovacao humana antes de qualquer PR/merge.
 
 Responda APENAS em JSON:
 {{
@@ -2886,14 +2977,15 @@ Arquivos atuais:
 {json.dumps(files_context, ensure_ascii=False)}
 
 Guardrails obrigatorios:
-- altere no maximo 2 arquivos
+- altere no maximo 5 arquivos
 - para arquivos grandes, use edits com find/replace exato dentro da janela de contexto
 - para arquivos pequenos, voce pode usar new_content completo ou edits
 - cada find deve ser unico e pequeno o suficiente para revisar
 - nao altere secrets, credenciais, tokens, dados, dumps ou binarios
-- nao altere merge, deploy, variaveis de ambiente ou configuracao critica
-- nao faca refatoracao ampla
-- se nao houver uma micro-melhoria segura, devolva "files": []
+- nao altere variaveis de ambiente reais nem credenciais
+- caminhos sensiveis podem ser propostos se a mudanca for realmente importante, mas devem ser explicados como risco e checklist de revisao
+- nao faca refatoracao ampla sem explicar claramente o motivo e limitar o diff
+- se nao houver uma melhoria segura e honesta, devolva "files": []
 """
         try:
             parsed = _json_loads_maybe(get_llm_response(prompt, temperature=0.25, max_tokens=5200))
@@ -2903,7 +2995,7 @@ Guardrails obrigatorios:
 
         proposed_files = []
         review_flags: List[str] = []
-        for item in (parsed.get("files") or [])[:2]:
+        for item in (parsed.get("files") or [])[:5]:
             path = str(item.get("path") or "").strip()
             if path not in current_by_path:
                 review_flags.append(f"Arquivo proposto fora do conjunto lido: {path}")
@@ -2932,9 +3024,11 @@ Guardrails obrigatorios:
                     review_flags.append(f"Nenhuma edicao aplicada: {path}")
                     continue
             warnings = self._github_content_guardrails(path, old_content, new_content)
-            if warnings:
-                review_flags.extend(warnings)
+            fatal_warnings = [warning for warning in warnings if not str(warning).startswith("review_required_")]
+            if fatal_warnings:
+                review_flags.extend(fatal_warnings)
                 continue
+            review_flags.extend(warnings)
             proposed_files.append(
                 {
                     "path": path,
@@ -3608,14 +3702,14 @@ Regras obrigatorias:
             github_provider = self._github_provider()
             if not changed_files:
                 flags.append("Proposta GitHub sem arquivos alterados.")
-            if len(changed_files) > 2:
-                flags.append("Guardrail GitHub: proposta excede 2 arquivos.")
+            if len(changed_files) > 5:
+                flags.append("Guardrail GitHub: proposta excede 5 arquivos.")
             for changed in changed_files[:3]:
                 path = changed.get("path") if isinstance(changed, dict) else ""
                 if path and (not github_provider or not github_provider.is_safe_path(path)):
                     flags.append(f"Guardrail GitHub: caminho bloqueado ({path}).")
                 elif path and github_provider.is_critical_path(path):
-                    flags.append(f"Guardrail GitHub: caminho critico exige plano manual ({path}).")
+                    flags.append(f"Revisao reforcada GitHub: caminho sensivel ({path}).")
             for item in package.get("review_flags") or []:
                 if isinstance(item, str) and item.strip():
                     flags.append(item.strip())
@@ -3711,6 +3805,7 @@ Regras obrigatorias:
             "brief_created": "work_responsibility",
             "project_created": "work_project_identity",
             "project_updated": "work_project_identity",
+            "project_deleted": "work_project_identity",
         }
         return mapping.get(event_type, "work_experience")
 

@@ -413,6 +413,7 @@ async function loadWork() {
                         <textarea class="input-v2" name="seo_policy" rows="2" placeholder="Discovery policy: keywords, title style, headings, slug rules, excerpt/meta rules.">${escapeHtml(item.seo_policy || "")}</textarea>
                         <div class="dashboard-grid-v2">
                             <button class="button-v2 button-v2--primary" type="submit">Save project</button>
+                            <button class="button-v2" type="button" data-work-action="delete-project" data-project-id="${escapeHtml(item.id)}" data-project-name="${escapeHtml(item.name || "project")}">Delete project</button>
                             <span class="meta-line-v2" data-project-edit-status="${escapeHtml(item.id)}"></span>
                         </div>
                     </form>
@@ -537,6 +538,32 @@ document.getElementById("projectsList").addEventListener("submit", async (event)
     }
     if (statusTarget) {
         statusTarget.textContent = "Saved.";
+    }
+    await loadWork();
+});
+
+document.getElementById("projectsList").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-work-action='delete-project']");
+    if (!button) {
+        return;
+    }
+    const projectId = button.dataset.projectId;
+    const projectName = button.dataset.projectName || "this project";
+    const confirmed = window.confirm(`Delete "${projectName}" from active Work projects? Existing history is preserved, but pending tickets for this project will be rejected.`);
+    if (!confirmed) {
+        return;
+    }
+    button.disabled = true;
+    button.textContent = "Deleting...";
+    const response = await fetch(`/admin/work/projects/${encodeURIComponent(projectId)}`, {
+        method: "DELETE"
+    });
+    const result = await response.json();
+    if (!result.success) {
+        alert(result.error || "Could not delete project.");
+        button.disabled = false;
+        button.textContent = "Delete project";
+        return;
     }
     await loadWork();
 });
