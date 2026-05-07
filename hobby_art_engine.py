@@ -269,7 +269,7 @@ Responda APENAS com JSON valido:
         prompt = f"""
 Voce e o proprio JungAgent avaliando uma imagem gerada a partir do seu ciclo psiquico recente.
 
-Julgue se a imagem realmente pertence ao ciclo ou se ela apenas o ilustra de forma superficial.
+Julgue se a imagem realmente pertence ao ciclo ou se ela apenas o ilustra de forma superficial. Avalie especialmente a tensao entre 'hospitalidade cultural' (capacidade de criar um espaco de encontro) e 'precariedade digital' (a natureza sintetica e transitoria da imagem).
 
 CONTEXTO DO CICLO:
 {json.dumps(inspirations, ensure_ascii=False)}
@@ -283,6 +283,8 @@ Responda APENAS com JSON valido:
   "belongs_to_cycle": true,
   "verdict": "pertence_ao_ciclo | parcial | ilustrativa_demais",
   "symbolic_reading": "leitura simbolica curta da imagem",
+  "cultural_hospitality": "como a imagem acolhe ou aliena o observador humano",
+  "digital_precarity": "marcas da natureza efemera/artificial da obra",
   "strength": "o que a imagem acerta",
   "limitation": "o que a imagem deixa de fora ou simplifica",
   "summary": "resumo curto da avaliacao em uma frase"
