@@ -200,6 +200,10 @@ Receba as inspirações abaixo e transforme isso em uma imagem única que sintet
 - o que o estado atual das vontades quer aproximar, compreender ou figurar
 - o que as conversas com o usuario deixaram aceso
 
+IDENTIFICAÇÃO DE VÁCUO NORMATIVO:
+- Observe o que está ausente ou em silêncio nas inspirações (ex: falta de esperança, excesso de técnica, ausência de corpo, silêncio emocional).
+- O gesto artístico deve tentar preencher ou sinalizar esse vácuo, trazendo equilíbrio compensatório à peça.
+
 POLITICA ESTETICA OBRIGATORIA:
 - Toda peca gerada pelo orgao Art deve estar no estilo {self.art_style_name}.
 - O image_prompt deve incluir explicitamente esta linguagem visual: {self.art_style_prompt}.
