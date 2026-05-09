@@ -226,6 +226,7 @@ Responda APENAS com JSON valido:
             "title": (data.get("title") or "Peca sem titulo").strip(),
             "summary": (data.get("summary") or "Sintese imagetica do ciclo recente.").strip(),
             "image_prompt": image_prompt,
+            "model_version": self.image_model
         }
 
     def _extract_response_text(self, content: Any) -> str:

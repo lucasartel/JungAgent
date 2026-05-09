@@ -137,6 +137,9 @@
                 </div>
                 <div class="list-card-meta-v2">
                     <span class="table-badge-v2">{{ artifact.provider or "unknown" }}</span>
+                    {% if artifact.model_version %}
+                    <span class="cell-secondary-v2" style="font-size: 0.75rem;">({{ artifact.model_version }})</span>
+                    {% endif %}
                     <span class="cell-secondary-v2">{{ artifact.created_at or "-" }}</span>
                     {% if artifact.image_url %}
                     <a href="{{ artifact.image_url }}" target="_blank" rel="noopener" class="button-v2 button-v2--ghost">Image</a>
