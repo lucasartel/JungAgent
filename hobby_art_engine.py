@@ -147,12 +147,16 @@ class HobbyArtEngine:
         will_state = self._latest_will(user_id)
         conversations = self._recent_conversations(user_id)
 
+        cinema_seeds = world_state.get("hobby_seeds", [])
+        if cinema_seeds:
+            logger.info("HobbyArtEngine: Cinema seed detected for continuity: %s", cinema_seeds[0])
+
         return {
             "cycle_id": cycle_id,
             "world": {
                 "atmosphere": world_state.get("atmosphere"),
                 "tensions": world_state.get("dominant_tensions", [])[:3],
-                "hobby_seeds": world_state.get("hobby_seeds", [])[:3],
+                "cinema_influence": world_state.get("hobby_seeds", [])[:2],
                 "continuity_note": world_state.get("continuity_note"),
                 "knowledge_resolution_summary": world_state.get("knowledge_resolution_summary"),
                 "knowledge_findings": world_state.get("knowledge_findings"),
