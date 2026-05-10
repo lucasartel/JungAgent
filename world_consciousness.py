@@ -1432,6 +1432,72 @@ Contexto:
             return fallback
         return self._truncate_text(entry, 360)
 
+    def _cached_knowledge_is_recent(self, cached_data: Optional[Dict[str, Any]], hours: int = 24) -> bool:
+        if not cached_data:
+            return False
+        try:
+            cached_time = datetime.fromisoformat(cached_data.get("cache_timestamp", ""))
+        except Exception:
+            return False
+        return datetime.now() - cached_time <= timedelta(hours=hours)
+
+    def _carry_cached_knowledge_probe(self, cached_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not self._cached_knowledge_is_recent(cached_data):
+            return {}
+        decision = (cached_data or {}).get("knowledge_source_decision")
+        if decision in (None, "", "inactive"):
+            return {}
+        if not any(
+            (cached_data or {}).get(field)
+            for field in ("knowledge_findings", "knowledge_seed", "knowledge_journal_entry")
+        ):
+            return {}
+        return {
+            "knowledge_source_decision": decision,
+            "latent_probe_summary": (cached_data or {}).get("latent_probe_summary"),
+            "knowledge_findings": (cached_data or {}).get("knowledge_findings"),
+            "knowledge_seed": (cached_data or {}).get("knowledge_seed"),
+            "query_terms": [],
+            "carried_from_recent_cache": True,
+        }
+
+    def _ensure_saber_release_knowledge(
+        self,
+        *,
+        epistemic_trigger: Optional[str],
+        knowledge_gap: Dict[str, Any],
+        knowledge_probe: Dict[str, Any],
+        will_state: Dict[str, Any],
+        cached_data: Optional[Dict[str, Any]],
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        if epistemic_trigger != "saber_release":
+            return knowledge_gap, knowledge_probe
+        if knowledge_gap and knowledge_probe.get("knowledge_source_decision") not in (None, "", "inactive"):
+            return knowledge_gap, knowledge_probe
+
+        fallback_gap = knowledge_gap or self._fallback_knowledge_gap(
+            self._load_epistemic_inputs(self._admin_user_id()),
+            will_state,
+            cached_data,
+        )
+        fallback_finding = (
+            fallback_gap.get("gap_question")
+            or fallback_gap.get("gap_label")
+            or "a vontade de saber pediu elaboracao, mas sem uma descoberta nomeada"
+        )
+        fallback_probe = {
+            "knowledge_source_decision": knowledge_probe.get("knowledge_source_decision") or "latent_sufficient",
+            "latent_probe_summary": knowledge_probe.get("latent_probe_summary")
+            or "o transbordo de saber exigiu formular uma lacuna cognitiva minima para nao se perder como mero refresh do mundo",
+            "knowledge_findings": knowledge_probe.get("knowledge_findings")
+            or self._truncate_text(f"O ciclo precisou organizar a pergunta: {fallback_finding}", 260),
+            "knowledge_seed": knowledge_probe.get("knowledge_seed")
+            or self._truncate_text(f"Transformar '{fallback_gap.get('gap_label') or fallback_finding}' em materia de ruminacao e identidade.", 200),
+            "query_terms": knowledge_probe.get("query_terms") or fallback_gap.get("focus_terms", [])[:4],
+            "forced_saber_release_fallback": True,
+        }
+        return fallback_gap, fallback_probe
+
     def _flatten_headlines(self, signals: List[Dict]) -> List[str]:
         items = []
         seen = set()
@@ -1793,6 +1859,7 @@ Estado estruturado:
         knowledge_gap: Dict[str, Any] = {}
         knowledge_probe: Dict[str, Any] = {}
         dynamic_queries: List[Dict[str, Any]] = []
+        carried_recent_knowledge = False
         firecrawl_client = None
         firecrawl_result: Dict[str, Any] = {
             "enabled": False,
@@ -1826,14 +1893,36 @@ Estado estruturado:
                 epistemic_trigger=epistemic_trigger,
             )
             knowledge_probe = self._probe_knowledge_source(knowledge_gap, resolved_will_state, cached_data or {})
+            knowledge_gap, knowledge_probe = self._ensure_saber_release_knowledge(
+                epistemic_trigger=epistemic_trigger,
+                knowledge_gap=knowledge_gap,
+                knowledge_probe=knowledge_probe,
+                will_state=resolved_will_state,
+                cached_data=cached_data or {},
+            )
             if knowledge_probe.get("knowledge_source_decision") == "web_required":
                 dynamic_queries = self._build_dynamic_queries(knowledge_gap, knowledge_probe)
+        else:
+            carried_probe = self._carry_cached_knowledge_probe(cached_data or {})
+            if carried_probe:
+                carried_recent_knowledge = True
+                knowledge_gap = (cached_data or {}).get("knowledge_gap") or {}
+                knowledge_probe = carried_probe
+                dynamic_queries = (cached_data or {}).get("dynamic_queries") or []
+                firecrawl_result.update(
+                    {
+                        "used": bool((cached_data or {}).get("firecrawl_used")),
+                        "urls": (cached_data or {}).get("firecrawl_urls") or [],
+                        "summary": (cached_data or {}).get("firecrawl_findings") or "",
+                        "errors": (cached_data or {}).get("firecrawl_errors") or [],
+                    }
+                )
 
         raw_area_digest = self._fetch_area_news(dynamic_queries=dynamic_queries)
         area_items = self._merge_with_cached_areas(raw_area_digest, cached_data or {})
         stale_areas = self._collect_stale_areas(raw_area_digest, area_items)
         signals = self._build_signals(area_items, will_state=resolved_will_state)
-        if knowledge_probe.get("knowledge_source_decision") == "web_required" and dynamic_queries:
+        if epistemic_active and knowledge_probe.get("knowledge_source_decision") == "web_required" and dynamic_queries:
             try:
                 if firecrawl_client is None:
                     from firecrawl_client import get_firecrawl_client
@@ -1900,12 +1989,15 @@ Estado estruturado:
             knowledge_summary = "o saber deste ciclo apareceu mais como reintegracao do que ja vinha sendo metabolizado"
         else:
             knowledge_summary = "o saber seguiu a leitura ampla do mundo, sem aprofundamento epistemico especial"
-        knowledge_journal_entry = self._build_knowledge_journal_entry(
-            knowledge_decision,
-            knowledge_gap,
-            knowledge_probe,
-            knowledge_summary,
-        )
+        if carried_recent_knowledge and (cached_data or {}).get("knowledge_journal_entry"):
+            knowledge_journal_entry = (cached_data or {}).get("knowledge_journal_entry")
+        else:
+            knowledge_journal_entry = self._build_knowledge_journal_entry(
+                knowledge_decision,
+                knowledge_gap,
+                knowledge_probe,
+                knowledge_summary,
+            )
 
         world_state = {
             "state_version": WORLD_STATE_VERSION,
@@ -1939,6 +2031,7 @@ Estado estruturado:
             "biased_area_order": attention_profile.get("biased_area_order", []),
             "seed_bias_explanation": self._summarize_will_bias(resolved_will_state, attention_profile),
             "epistemic_discernment_active": epistemic_active,
+            "knowledge_carried_from_recent_cycle": carried_recent_knowledge,
             "knowledge_gap": knowledge_gap,
             "knowledge_source_decision": knowledge_decision,
             "latent_probe_summary": knowledge_probe.get("latent_probe_summary"),
