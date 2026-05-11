@@ -1152,6 +1152,43 @@ class AgentIdentityContextBuilder:
             "recent_events": recent_events,
         }
 
+    def _detect_repetition(
+        self,
+        artifacts: List[Dict[str, Any]],
+        threshold: float = 0.6,
+    ) -> List[Dict[str, Any]]:
+        """
+        Compare recent hobby artifacts and flag those with similar titles or summaries.
+        Returns a list of dicts with 'id', 'title', and 'similar_to' fields.
+        Uses simple word overlap as a lightweight similarity measure.
+        """
+        flags = []
+        for i, a in enumerate(artifacts):
+            title_a = (a.get("title") or "").lower().strip()
+            summary_a = (a.get("summary") or "").lower().strip()
+            words_a = set(title_a.split() + summary_a.split())
+            if not words_a:
+                continue
+            for j in range(i + 1, len(artifacts)):
+                b = artifacts[j]
+                title_b = (b.get("title") or "").lower().strip()
+                summary_b = (b.get("summary") or "").lower().strip()
+                words_b = set(title_b.split() + summary_b.split())
+                if not words_b:
+                    continue
+                intersection = words_a & words_b
+                union = words_a | words_b
+                similarity = len(intersection) / len(union) if union else 0.0
+                if similarity >= threshold:
+                    flags.append({
+                        "id": a.get("id"),
+                        "title": a.get("title"),
+                        "similar_to": b.get("title"),
+                        "similarity": round(similarity, 2),
+                    })
+                    break
+        return flags
+
     def _get_recent_hobby_art_memory(
         self,
         cursor,
@@ -1164,7 +1201,7 @@ class AgentIdentityContextBuilder:
             return None
 
         try:
-            return self._fetch_dict_rows(
+            artifacts = self._fetch_dict_rows(
                 cursor,
                 """
                 SELECT
@@ -1182,6 +1219,13 @@ class AgentIdentityContextBuilder:
                 """,
                 (user_id, limit),
             )
+            if artifacts:
+                repetition_flags = self._detect_repetition(artifacts)
+                for art in artifacts:
+                    art["repetition_flags"] = [
+                        f for f in repetition_flags if f["id"] == art.get("id")
+                    ]
+            return artifacts
         except Exception:
             return None
 
