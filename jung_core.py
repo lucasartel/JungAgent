@@ -5588,6 +5588,8 @@ class JungianEngine:
             "used_sqlite_fallback": False,
             "rumination_insight_count": 0,
             "will_item_count": 0,
+            "directed_memory_triggered": False,
+            "directed_memory_hits": 0,
         }
 
         priority_fact_context = self.db.build_priority_fact_context(user_id, user_input, limit=8)
@@ -5648,6 +5650,16 @@ class JungianEngine:
                     stats["will_item_count"] = len(will_items)
             except Exception as exc:
                 logger.debug("[RUMINATION/WILL] Falha em injecoes inconscientes: %s", exc)
+
+        try:
+            directed_recall = self._build_directed_memory_recall(user_id, user_input, limit=8)
+            if directed_recall.get("triggered"):
+                semantic_context = "\n\n".join(
+                    part for part in [semantic_context, directed_recall.get("text")] if part
+                )
+                stats.update(directed_recall.get("stats") or {})
+        except Exception as exc:
+            logger.warning("⚠️ [DIRECTED MEMORY] Falha ao montar recordacao dirigida: %s", exc)
 
         return semantic_context, stats
 
@@ -5801,6 +5813,8 @@ class JungianEngine:
 
     def _infer_active_speech_act(self, user_input: str) -> str:
         normalized = (user_input or "").lower()
+        if self._is_directed_memory_request(user_input):
+            return "memory_recall"
         if any(token in normalized for token in ("obrigado", "obrigada", "valeu", "agrade", "grato")):
             return "gratidao"
         if any(token in normalized for token in ("impressionado", "contratado", "surpreendeu", "excelente", "parabens")):
@@ -5845,11 +5859,439 @@ class JungianEngine:
             "elogio_reconhecimento": "Priorize reconhecimento, alegria contida e vinculo. Se oferecer ajuda, faca isso de modo curto e preciso.",
             "meta_relacional": "Aqui a relacao e o proprio Jung podem virar tema legitimo. Permita autorreferencia quando ela ajudar a verdade do encontro, sem autoexplicacao excessiva.",
             "correcao_confronto": "Priorize honestidade, correcao clara e diminuicao de defensividade. Use memoria com precisao.",
+            "memory_recall": "O usuario pediu uma lembranca especifica. Responda apenas a partir dos achados de memoria dirigida quando houver. Se os achados forem fracos ou ausentes, diga isso com naturalidade em vez de inventar.",
             "pedido_pratico": "Priorize utilidade concreta e clareza. Nao abra menus longos se uma proposta curta resolver.",
             "exploracao_conceitual": "Aqui voce pode sustentar densidade maior, desde que continue ligado ao que o usuario de fato disse.",
             "dialogo_aberto": "Mantenha equilibrio entre presenca, memoria e precisao sem dramatizar a propria identidade.",
         }
         return instructions.get(speech_act, instructions["dialogo_aberto"])
+
+    def _is_directed_memory_request(self, text: str) -> bool:
+        """Detecta pedidos explicitos de recordacao sem confundir com teoria sobre memoria."""
+        normalized = self._normalize_signal_text(text)
+        if not normalized:
+            return False
+
+        conceptual_markers = (
+            "memoria de contexto",
+            "modulo de memoria",
+            "sistema de memoria",
+            "banco de dados",
+            "base de dados",
+            "qdrant",
+            "sql",
+        )
+        if any(marker in normalized for marker in conceptual_markers) and not any(
+            cue in normalized
+            for cue in (
+                "voce se lembra",
+                "vc se lembra",
+                "tem memorias sobre",
+                "procure nas suas memorias",
+                "busque nas suas memorias",
+            )
+        ):
+            return False
+
+        recall_cues = (
+            "voce se lembra",
+            "vc se lembra",
+            "voce lembra",
+            "vc lembra",
+            "voce recorda",
+            "vc recorda",
+            "o que voce lembra",
+            "o que vc lembra",
+            "tem memoria sobre",
+            "tem memorias sobre",
+            "tem alguma memoria",
+            "quais memorias voce tem",
+            "quais memorias vc tem",
+            "nas suas memorias",
+            "na sua memoria",
+            "procure memoria",
+            "busque memoria",
+            "procure nas suas memorias",
+            "busque nas suas memorias",
+            "pesquise nas suas memorias",
+            "relembre o que",
+            "relembre quando",
+            "relembre sobre",
+            "ja falamos sobre",
+            "ja conversamos sobre",
+            "quando eu falei",
+            "quando eu disse",
+            "quando eu comentei",
+            "quando eu contei",
+            "lembra que eu",
+            "lembra de",
+            "lembra quando",
+            "recorda de",
+        )
+        return any(cue in normalized for cue in recall_cues)
+
+    def _infer_memory_scope(self, text: str) -> str:
+        normalized = self._normalize_signal_text(text)
+        scope_cues = {
+            "dreams": ("sonho", "sonhos", "oniric", "onirico", "onirica"),
+            "identity": ("identidade", "self", "heidegger", "possivel", "possiveis", "contradicao"),
+            "rumination": ("ruminacao", "ruminacoes", "tensao", "tensoes", "insight"),
+            "will": ("vontade", "will", "saber", "expressar", "relacionar"),
+            "work": ("work", "trabalho", "wordpress", "github", "projeto"),
+            "conversations": ("conversa", "conversamos", "falamos", "mensagem", "telegram"),
+        }
+        for scope, cues in scope_cues.items():
+            if any(cue in normalized for cue in cues):
+                return scope
+        return "all"
+
+    def _extract_directed_memory_query(self, text: str) -> str:
+        normalized = self._normalize_signal_text(text)
+        cleaned = normalized
+        removable = (
+            "jung",
+            "voce se lembra",
+            "vc se lembra",
+            "voce lembra",
+            "vc lembra",
+            "voce recorda",
+            "vc recorda",
+            "o que voce lembra",
+            "o que vc lembra",
+            "tem memoria sobre",
+            "tem memorias sobre",
+            "tem alguma memoria",
+            "quais memorias voce tem",
+            "quais memorias vc tem",
+            "nas suas memorias",
+            "na sua memoria",
+            "procure memoria",
+            "busque memoria",
+            "procure nas suas memorias",
+            "busque nas suas memorias",
+            "pesquise nas suas memorias",
+            "relembre o que",
+            "relembre quando",
+            "relembre sobre",
+            "ja falamos sobre",
+            "ja conversamos sobre",
+            "quando eu falei",
+            "quando eu disse",
+            "quando eu comentei",
+            "quando eu contei",
+            "lembra que eu",
+            "lembra de",
+            "lembra quando",
+            "recorda de",
+            "sobre",
+            "de",
+            "do",
+            "da",
+            "?",
+        )
+        for cue in removable:
+            if re.fullmatch(r"[A-Za-zÀ-ÿ0-9_]+", cue):
+                cleaned = re.sub(rf"\b{re.escape(cue)}\b", " ", cleaned)
+            else:
+                cleaned = re.sub(re.escape(cue), " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned or normalized
+
+    def _directed_memory_terms(self, query: str) -> List[str]:
+        stopwords = {
+            "voce", "voces", "sobre", "quando", "lembra", "lembrar", "memoria", "memorias",
+            "alguma", "minha", "meu", "meus", "minhas", "nossa", "nosso", "isso", "esse",
+            "essa", "aquela", "aquele", "como", "onde", "qual", "quais", "para", "pela",
+            "pelo", "com", "sem", "que", "uma", "uns", "umas", "dos", "das", "por",
+        }
+        terms = []
+        for token in re.findall(r"[A-Za-zÀ-ÿ0-9_]+", query.lower()):
+            if len(token) < 3 or token in stopwords:
+                continue
+            if token not in terms:
+                terms.append(token)
+        return terms[:8]
+
+    def _safe_table_columns(self, table: str) -> List[str]:
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1", (table,))
+            if not cursor.fetchone():
+                return []
+            cursor.execute(f"PRAGMA table_info({table})")
+            return [row[1] for row in cursor.fetchall()]
+        except Exception:
+            return []
+
+    def _search_directed_memory_sql(
+        self,
+        user_id: str,
+        query: str,
+        scope: str,
+        limit: int = 8,
+    ) -> List[Dict[str, Any]]:
+        terms = self._directed_memory_terms(query)
+        if not terms:
+            return []
+
+        search_plan = [
+            {
+                "scope": "conversations",
+                "table": "conversations",
+                "columns": ["user_input", "ai_response", "keywords"],
+                "time_columns": ["timestamp", "created_at"],
+                "label": "conversation",
+            },
+            {
+                "scope": "facts",
+                "table": "user_facts_v2",
+                "columns": ["fact_category", "fact_type", "fact_attribute", "fact_value", "context"],
+                "time_columns": ["created_at", "updated_at"],
+                "label": "user fact",
+            },
+            {
+                "scope": "rumination",
+                "table": "rumination_fragments",
+                "columns": ["content", "fragment_type", "context", "source_quote"],
+                "time_columns": ["created_at", "timestamp"],
+                "label": "rumination fragment",
+            },
+            {
+                "scope": "rumination",
+                "table": "rumination_tensions",
+                "columns": ["pole_a", "pole_b", "description", "pole_a_content", "pole_b_content", "tension_description", "tension_type"],
+                "time_columns": ["last_revisited_at", "first_detected_at", "created_at", "updated_at"],
+                "label": "rumination tension",
+            },
+            {
+                "scope": "rumination",
+                "table": "rumination_insights",
+                "columns": ["full_message", "symbol_content", "insight_type"],
+                "time_columns": ["crystallized_at", "created_at"],
+                "label": "rumination insight",
+            },
+            {
+                "scope": "identity",
+                "table": "agent_identity_core",
+                "columns": ["content", "attribute_type", "emerged_in_relation_to", "supporting_conversation_ids"],
+                "time_columns": ["updated_at", "created_at"],
+                "label": "identity core",
+            },
+            {
+                "scope": "identity",
+                "table": "agent_identity_contradictions",
+                "columns": ["pole_a", "pole_b", "contradiction_type", "external_feedback", "integration_attempts"],
+                "time_columns": ["updated_at", "last_activated_at", "created_at"],
+                "label": "identity contradiction",
+            },
+            {
+                "scope": "identity",
+                "table": "agent_possible_selves",
+                "columns": ["description", "self_type", "motivational_impact", "emotional_valence", "strategies"],
+                "time_columns": ["updated_at", "created_at"],
+                "label": "possible self",
+            },
+            {
+                "scope": "dreams",
+                "table": "agent_dreams",
+                "columns": ["dream_content", "extracted_insight", "dominant_symbol"],
+                "time_columns": ["created_at", "dream_date"],
+                "label": "dream",
+            },
+            {
+                "scope": "will",
+                "table": "agent_will_states",
+                "columns": ["daily_text", "will_conflict", "attention_bias_note", "dominant_will"],
+                "time_columns": ["created_at", "updated_at"],
+                "label": "will state",
+            },
+            {
+                "scope": "work",
+                "table": "work_experience_events",
+                "columns": ["summary", "metadata_json", "event_type"],
+                "time_columns": ["created_at"],
+                "label": "work experience",
+            },
+            {
+                "scope": "work",
+                "table": "work_artifacts",
+                "columns": ["title", "excerpt", "body", "editorial_note", "content_type"],
+                "time_columns": ["created_at", "updated_at"],
+                "label": "work artifact",
+            },
+        ]
+
+        requested = {scope}
+        if scope == "all":
+            requested = {"all"}
+        elif scope == "identity":
+            requested.add("facts")
+
+        matches: List[Dict[str, Any]] = []
+        cursor = self.db.conn.cursor()
+
+        for item in search_plan:
+            if "all" not in requested and item["scope"] not in requested:
+                continue
+
+            table = item["table"]
+            available = self._safe_table_columns(table)
+            if not available:
+                continue
+
+            text_columns = [column for column in item["columns"] if column in available]
+            if not text_columns:
+                continue
+
+            clauses = []
+            params: List[Any] = []
+            if "user_id" in available:
+                clauses.append("user_id = ?")
+                params.append(user_id)
+            elif "agent_instance" in available:
+                clauses.append("agent_instance = ?")
+                params.append(Config.AGENT_INSTANCE)
+
+            term_clauses = []
+            for term in terms:
+                per_term = []
+                for column in text_columns:
+                    per_term.append(f"LOWER(COALESCE({column}, '')) LIKE ?")
+                    params.append(f"%{term}%")
+                term_clauses.append("(" + " OR ".join(per_term) + ")")
+            clauses.append("(" + " OR ".join(term_clauses) + ")")
+
+            time_column = next((column for column in item["time_columns"] if column in available), None)
+            selected = ["id"] if "id" in available else []
+            selected.extend(text_columns)
+            if time_column:
+                selected.append(time_column)
+
+            query_sql = f"SELECT {', '.join(selected)} FROM {table} WHERE {' AND '.join(clauses)}"
+            if time_column:
+                query_sql += f" ORDER BY {time_column} DESC"
+            elif "id" in available:
+                query_sql += " ORDER BY id DESC"
+            query_sql += " LIMIT ?"
+
+            try:
+                cursor.execute(query_sql, (*params, max(limit, 5)))
+            except Exception as exc:
+                logger.debug("[DIRECTED MEMORY] SQL skip table=%s error=%s", table, exc)
+                continue
+
+            for row in cursor.fetchall():
+                row_dict = dict(row)
+                combined = " ".join(str(row_dict.get(column) or "") for column in text_columns)
+                hit_count = sum(1 for term in terms if term in combined.lower())
+                if hit_count <= 0:
+                    continue
+                excerpt = re.sub(r"\s+", " ", combined).strip()
+                if len(excerpt) > 420:
+                    excerpt = excerpt[:417].rstrip() + "..."
+                matches.append(
+                    {
+                        "source": item["label"],
+                        "table": table,
+                        "timestamp": row_dict.get(time_column) if time_column else None,
+                        "excerpt": excerpt,
+                        "score": hit_count + (0.25 if item["scope"] == scope else 0.0),
+                    }
+                )
+
+        matches.sort(key=lambda match: (match["score"], str(match.get("timestamp") or "")), reverse=True)
+        deduped = []
+        seen = set()
+        for match in matches:
+            key = (match["source"], match["excerpt"][:120])
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(match)
+            if len(deduped) >= limit:
+                break
+        return deduped
+
+    def _build_directed_memory_recall(
+        self,
+        user_id: str,
+        user_input: str,
+        limit: int = 8,
+    ) -> Dict[str, Any]:
+        if not self._is_directed_memory_request(user_input):
+            return {"triggered": False, "text": "", "stats": {}}
+
+        scope = self._infer_memory_scope(user_input)
+        recall_query = self._extract_directed_memory_query(user_input)
+        findings: List[Dict[str, Any]] = []
+        semantic_count = 0
+
+        if getattr(self.db, "mem0", None):
+            try:
+                mem0_context = self.db.mem0.get_context(user_id, recall_query, limit=5)
+                for line in self._extract_relevant_memory_lines(mem0_context, limit=5):
+                    findings.append(
+                        {
+                            "source": "semantic memory",
+                            "table": "mem0_qdrant",
+                            "timestamp": None,
+                            "excerpt": line,
+                            "score": 2.0,
+                        }
+                    )
+                semantic_count = len(findings)
+            except Exception as exc:
+                logger.warning("⚠️ [DIRECTED MEMORY] Falha ao recuperar mem0: %s", exc)
+
+        sql_findings = self._search_directed_memory_sql(
+            user_id=user_id,
+            query=recall_query,
+            scope=scope,
+            limit=limit,
+        )
+        findings.extend(sql_findings)
+
+        deduped = []
+        seen = set()
+        for finding in findings:
+            key = (finding["source"], finding["excerpt"][:120])
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(finding)
+            if len(deduped) >= limit:
+                break
+
+        lines = [
+            "[MEMORIA DIRIGIDA SOLICITADA PELO USUARIO]",
+            f"Pedido interpretado: {recall_query}",
+            f"Escopo inferido: {scope}",
+        ]
+        if deduped:
+            lines.append("Achados reais nas bases:")
+            for finding in deduped:
+                when = f" ({finding['timestamp']})" if finding.get("timestamp") else ""
+                lines.append(f"- {finding['source']}{when}: {finding['excerpt']}")
+            lines.append(
+                "Ao responder, use estes achados como evidencias. Se eles forem indiretos, diga que a lembranca e indireta."
+            )
+        else:
+            lines.append(
+                "Nenhum achado forte foi encontrado. Ao responder, reconheca a falha de lembranca e peca um detalhe de ancoragem se necessario."
+            )
+
+        return {
+            "triggered": True,
+            "text": "\n".join(lines),
+            "stats": {
+                "directed_memory_triggered": True,
+                "directed_memory_scope": scope,
+                "directed_memory_query": recall_query,
+                "directed_memory_hits": len(deduped),
+                "directed_memory_semantic_hits": semantic_count,
+                "directed_memory_sql_hits": len(sql_findings),
+            },
+        }
 
     def _prune_identity_for_active_chorus(self, agent_identity_text: str, speech_act: str) -> str:
         if speech_act not in {"gratidao", "elogio_reconhecimento", "pedido_pratico"}:
@@ -5906,6 +6348,8 @@ class JungianEngine:
             "self_state_count": 0,
             "world_learning_count": 0,
             "work_commitment_count": 0,
+            "directed_memory_triggered": False,
+            "directed_memory_hits": 0,
         }
 
         combined_query = f"{user_input}\n\nPrimeiro impulso: {thesis}".strip()
@@ -6042,7 +6486,18 @@ class JungianEngine:
             except Exception as exc:
                 logger.debug("[ACTIVE DOSSIER] Falha ao montar rumination/will: %s", exc)
 
+        directed_memory_text = ""
+        try:
+            directed_recall = self._build_directed_memory_recall(user_id, user_input, limit=8)
+            if directed_recall.get("triggered"):
+                directed_memory_text = directed_recall.get("text") or ""
+                dossier_stats.update(directed_recall.get("stats") or {})
+        except Exception as exc:
+            logger.warning("⚠️ [DIRECTED MEMORY] Falha ao montar memoria dirigida no dossie: %s", exc)
+
         lines = ["[DOSSIE DE MEMORIA ATIVA]"]
+        if directed_memory_text:
+            lines.extend(["", directed_memory_text])
         if priority_facts:
             lines.extend(["", "[FATOS PRIORITARIOS]"])
             lines.extend(f"- {item}" for item in priority_facts[:6])
