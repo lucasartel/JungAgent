@@ -223,7 +223,7 @@ SETTINGS_CATALOG: Dict[str, Dict[str, Any]] = {
         "group_description_en": "Controls how much autonomous project behavior is allowed each day.",
         "type": "int",
         "control": "number",
-        "default": 3,
+        "default": 6,
         "safe_min": 1,
         "safe_max": 10,
         "step": 1,

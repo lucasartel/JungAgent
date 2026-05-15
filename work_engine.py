@@ -161,7 +161,7 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 WORK_AUTONOMY_ENABLED = os.getenv("WORK_AUTONOMY_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY = _env_int("WORK_MAX_AUTONOMOUS_ACTIONS_PER_DAY", 3)
-WORK_MAX_PENDING_TICKETS = _env_int("WORK_MAX_PENDING_TICKETS", 3)
+WORK_MAX_PENDING_TICKETS = _env_int("WORK_MAX_PENDING_TICKETS", 6)
 WORK_NOTIFY_ADMIN_ON_TICKETS = os.getenv("WORK_NOTIFY_ADMIN_ON_TICKETS", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -268,6 +268,15 @@ def _looks_like_objective_echo(body: str, objective: str) -> bool:
     if normalized_body.startswith(normalized_objective[: min(len(normalized_objective), 180)]):
         return True
     return "diretriz:" in normalized_body and normalized_objective[:120] in normalized_body
+
+
+def _extract_package_text(parsed: Dict[str, Any]) -> Dict[str, str]:
+    return {
+        "title": str(parsed.get("title") or "").strip(),
+        "excerpt": str(parsed.get("excerpt") or "").strip(),
+        "body": str(parsed.get("body") or "").strip(),
+        "editorial_note": str(parsed.get("editorial_note") or "").strip(),
+    }
 
 
 def _has_any_term(text: str, terms: List[str]) -> bool:
@@ -3169,6 +3178,8 @@ Guardrails obrigatorios:
         title = _truncate(f"Review needed: {title_seed}", 90)
         flags = list(review_flags or [])
         flags.append(reason)
+        provider_key = (brief.get("provider_key") or "").strip().lower()
+        action_type = "review_plan" if provider_key == "github" or brief.get("action_type") == "propose_repo_change" else brief.get("action_type")
         return {
             "title": title,
             "excerpt": "Work nao conseguiu transformar este brief em artifact executavel com seguranca.",
@@ -3190,7 +3201,7 @@ Guardrails obrigatorios:
             "review_flags": flags,
             "daily_intent": (brief.get("extracted") or _json_loads_maybe(brief.get("extracted_json") or "{}")).get("daily_intent") or {},
             "provider_key": brief.get("provider_key"),
-            "action_type": brief.get("action_type"),
+            "action_type": action_type,
             "content_type": brief.get("content_type"),
             "firecrawl_research": {"used": False, "destination_used": False, "world_used": False, "urls": [], "errors": []},
         }
@@ -3313,10 +3324,11 @@ Regras obrigatorias:
             logger.error(f"WorkEngine: falha ao gerar pacote editorial: {exc}")
             parsed = {}
 
-        parsed_title = str(parsed.get("title") or "").strip()
-        parsed_excerpt = str(parsed.get("excerpt") or "").strip()
-        parsed_body = str(parsed.get("body") or "").strip()
-        parsed_editorial_note = str(parsed.get("editorial_note") or "").strip()
+        parsed_text = _extract_package_text(parsed)
+        parsed_title = parsed_text["title"]
+        parsed_excerpt = parsed_text["excerpt"]
+        parsed_body = parsed_text["body"]
+        parsed_editorial_note = parsed_text["editorial_note"]
 
         review_flags: List[str] = []
         generation_mode = "structured"
@@ -3337,6 +3349,47 @@ Regras obrigatorias:
             or _looks_like_objective_echo(parsed_body, permanent_directive)
             or _looks_like_objective_echo(parsed_title, permanent_directive)
         )
+
+        if degraded and is_editorial_post:
+            retry_prompt = (
+                prompt
+                + "\n\nRETENTATIVA OBRIGATORIA:\n"
+                "- A resposta anterior nao virou um artigo publicavel.\n"
+                "- Agora escreva o artigo completo no campo body, sem repetir o briefing como abertura.\n"
+                "- Comece com uma introducao editorial propria, seguida de subtitulos claros.\n"
+                "- Use a pesquisa do destino como referencia de voz e estrutura, nao como lista de fontes.\n"
+                "- O body precisa ser substancial, maduro e pronto para virar rascunho WordPress.\n"
+                "- Responda novamente apenas em JSON valido.\n"
+            )
+            try:
+                retry_raw = get_llm_response(retry_prompt, temperature=0.45, max_tokens=2800)
+                retry_parsed = _json_loads_maybe(retry_raw)
+            except Exception as exc:
+                logger.warning("WorkEngine: retentativa editorial falhou: %s", exc)
+                retry_parsed = {}
+
+            retry_text = _extract_package_text(retry_parsed)
+            retry_body = retry_text["body"]
+            retry_title = retry_text["title"]
+            retry_is_degraded = (
+                not retry_body
+                or len(retry_body) < 900
+                or _looks_like_objective_echo(retry_body, brief.get("objective") or "")
+                or _looks_like_objective_echo(retry_title, brief.get("objective") or "")
+                or _looks_like_objective_echo(retry_body, permanent_directive)
+                or _looks_like_objective_echo(retry_title, permanent_directive)
+            )
+            if not retry_is_degraded:
+                parsed = retry_parsed
+                parsed_title = retry_text["title"]
+                parsed_excerpt = retry_text["excerpt"]
+                parsed_body = retry_text["body"]
+                parsed_editorial_note = retry_text["editorial_note"]
+                review_flags = []
+                generation_mode = "structured_retry"
+                if brief.get("destination_id") and not firecrawl_research.get("destination_used"):
+                    review_flags.append("Work nao conseguiu ler amostras suficientes do destino; aderencia ao contexto do destino ficou fragil.")
+                degraded = False
 
         if degraded:
             generation_mode = "degraded_fallback"
@@ -4228,6 +4281,16 @@ Regras obrigatorias:
         cursor.execute("SELECT COUNT(*) FROM work_approval_tickets WHERE status = 'pending'")
         return int(cursor.fetchone()[0] or 0)
 
+    def _pending_ticket_count_for_project(self, project_id: Optional[int]) -> int:
+        if not project_id:
+            return 0
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM work_approval_tickets WHERE status = 'pending' AND project_id = ?",
+            (project_id,),
+        )
+        return int(cursor.fetchone()[0] or 0)
+
     def _provider_work_shape(self, provider_key: str) -> Dict[str, str]:
         provider = (provider_key or "").strip().lower()
         if provider == "wordpress":
@@ -4277,15 +4340,33 @@ Regras obrigatorias:
             str(project.get(key) or "")
             for key in ["name", "directive", "description", "editorial_policy", "seo_policy", "destination_label", "base_url"]
         )
+        portuguese_signal = _has_any_term(
+            combined,
+            [
+                "homilyaibr",
+                "homilyai br",
+                "/br",
+                "portugues",
+                "portuguese",
+                "esboco",
+                "esbocos",
+                "pregacao",
+                "pregacoes",
+                "sermao",
+                "sermoes",
+                "reformada",
+            ],
+        )
+        english_signal = _has_any_term(combined, [" english", " en ", "homilyai en"])
         profile = {
             "language": "Portuguese",
             "format_hint": "article",
             "audience_hint": "the destination audience",
             "voice_hint": "match the destination's observed voice",
         }
-        if _has_any_term(combined, [" english", " en ", "homilyai en", "sermon", "homily", "scripture", "bible"]):
+        if english_signal and not portuguese_signal:
             profile["language"] = "English"
-        if _has_any_term(combined, ["sermon", "homily", "scripture", "bible", "outline"]):
+        if _has_any_term(combined, ["sermon", "homily", "scripture", "bible", "outline", "sermao", "sermoes", "esboco", "esbocos"]):
             profile["format_hint"] = "sermon outline"
             profile["audience_hint"] = "preachers, pastors, and Christian communicators"
             profile["voice_hint"] = "pastoral, structured, biblically grounded"
@@ -4504,6 +4585,19 @@ Regras:
         for project in projects:
             if created >= remaining:
                 break
+
+            project_id = project.get("id")
+            if self._pending_ticket_count_for_project(project_id):
+                self.record_work_experience(
+                    event_type="project_paused_pending_ticket",
+                    summary=f"Projeto '{project.get('name')}' aguardou porque ja existe ticket pendente para revisao humana.",
+                    project_id=project_id,
+                    source_table="work_projects",
+                    source_id=project_id,
+                    emotional_weight=0.32,
+                    tension_level=0.22,
+                )
+                continue
 
             destination_id = project.get("default_destination_id")
             if not destination_id:
