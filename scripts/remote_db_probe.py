@@ -713,7 +713,15 @@ def _agent_setting(cursor: sqlite3.Cursor, key: str, fallback: Any) -> Any:
     if not table_exists(cursor, "agent_settings"):
         return fallback
     columns = table_columns(cursor, "agent_settings")
-    value_column = "setting_value" if "setting_value" in columns else "value" if "value" in columns else None
+    value_column = (
+        "value_json"
+        if "value_json" in columns
+        else "setting_value"
+        if "setting_value" in columns
+        else "value"
+        if "value" in columns
+        else None
+    )
     if not value_column or "setting_key" not in columns:
         return fallback
     try:
@@ -729,7 +737,14 @@ def _agent_setting(cursor: sqlite3.Cursor, key: str, fallback: Any) -> Any:
         row = cursor.fetchone()
     except Exception:
         return fallback
-    return row["value"] if row and row["value"] is not None else fallback
+    if not row or row["value"] is None:
+        return fallback
+    if value_column == "value_json":
+        try:
+            return json.loads(row["value"])
+        except Exception:
+            return fallback
+    return row["value"]
 
 
 def _json_field(row: Dict[str, Any], field: str, fallback: Any) -> None:
