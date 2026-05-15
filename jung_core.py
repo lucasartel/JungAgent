@@ -6184,7 +6184,10 @@ class JungianEngine:
             elif "id" in available:
                 query_sql += " ORDER BY id DESC"
             query_sql += " LIMIT ?"
-            broad_limit = max(limit * 10, 60)
+            # Directed recall is intentionally allowed to look deeper than the
+            # normal prompt path. Otherwise older exact memories lose to recent
+            # generic matches before reranking even runs.
+            broad_limit = max(limit * 125, 1000)
 
             try:
                 cursor.execute(query_sql, (*params, broad_limit))
