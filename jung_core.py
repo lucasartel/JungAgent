@@ -5905,6 +5905,7 @@ class JungianEngine:
             "tem memoria sobre",
             "tem memorias sobre",
             "tem alguma memoria",
+            "tem algo sobre",
             "quais memorias voce tem",
             "quais memorias vc tem",
             "nas suas memorias",
@@ -5961,6 +5962,7 @@ class JungianEngine:
             "tem memoria sobre",
             "tem memorias sobre",
             "tem alguma memoria",
+            "tem algo sobre",
             "quais memorias voce tem",
             "quais memorias vc tem",
             "nas suas memorias",
@@ -6003,6 +6005,7 @@ class JungianEngine:
             "alguma", "minha", "meu", "meus", "minhas", "nossa", "nosso", "isso", "esse",
             "essa", "aquela", "aquele", "como", "onde", "qual", "quais", "para", "pela",
             "pelo", "com", "sem", "que", "uma", "uns", "umas", "dos", "das", "por",
+            "antiga", "antigo", "aparecia", "apareciam",
         }
         terms = []
         for token in re.findall(r"[A-Za-zÀ-ÿ0-9_]+", query.lower()):
@@ -6010,7 +6013,14 @@ class JungianEngine:
                 continue
             if token not in terms:
                 terms.append(token)
-        return terms[:8]
+        return terms[:16]
+
+    def _directed_memory_anchor_terms(self, terms: List[str]) -> List[str]:
+        generic = {
+            "ruminacao", "ruminacoes", "memoria", "memorias", "desejo", "conhecer",
+            "relacionar", "relacao", "sobre", "antiga", "antigo",
+        }
+        return [term for term in terms if term not in generic and len(term) >= 4]
 
     def _safe_table_columns(self, table: str) -> List[str]:
         try:
@@ -6033,6 +6043,7 @@ class JungianEngine:
         terms = self._directed_memory_terms(query)
         if not terms:
             return []
+        anchor_terms = self._directed_memory_anchor_terms(terms)
 
         search_plan = [
             {
@@ -6173,9 +6184,10 @@ class JungianEngine:
             elif "id" in available:
                 query_sql += " ORDER BY id DESC"
             query_sql += " LIMIT ?"
+            broad_limit = max(limit * 10, 60)
 
             try:
-                cursor.execute(query_sql, (*params, max(limit, 5)))
+                cursor.execute(query_sql, (*params, broad_limit))
             except Exception as exc:
                 logger.debug("[DIRECTED MEMORY] SQL skip table=%s error=%s", table, exc)
                 continue
@@ -6183,9 +6195,11 @@ class JungianEngine:
             for row in cursor.fetchall():
                 row_dict = dict(row)
                 combined = " ".join(str(row_dict.get(column) or "") for column in text_columns)
-                hit_count = sum(1 for term in terms if term in combined.lower())
+                combined_lower = combined.lower()
+                hit_count = sum(1 for term in terms if term in combined_lower)
                 if hit_count <= 0:
                     continue
+                anchor_hit_count = sum(1 for term in anchor_terms if term in combined_lower)
                 excerpt = re.sub(r"\s+", " ", combined).strip()
                 if len(excerpt) > 420:
                     excerpt = excerpt[:417].rstrip() + "..."
@@ -6195,11 +6209,20 @@ class JungianEngine:
                         "table": table,
                         "timestamp": row_dict.get(time_column) if time_column else None,
                         "excerpt": excerpt,
-                        "score": hit_count + (0.25 if item["scope"] == scope else 0.0),
+                        "score": hit_count + (anchor_hit_count * 3) + (0.75 if item["scope"] == scope else 0.0),
+                        "anchor_hits": anchor_hit_count,
+                        "term_hits": hit_count,
                     }
                 )
 
-        matches.sort(key=lambda match: (match["score"], str(match.get("timestamp") or "")), reverse=True)
+        matches.sort(
+            key=lambda match: (
+                match.get("anchor_hits", 0),
+                match.get("score", 0),
+                str(match.get("timestamp") or ""),
+            ),
+            reverse=True,
+        )
         deduped = []
         seen = set()
         for match in matches:
@@ -6223,14 +6246,14 @@ class JungianEngine:
 
         scope = self._infer_memory_scope(user_input)
         recall_query = self._extract_directed_memory_query(user_input)
-        findings: List[Dict[str, Any]] = []
+        semantic_findings: List[Dict[str, Any]] = []
         semantic_count = 0
 
         if getattr(self.db, "mem0", None):
             try:
                 mem0_context = self.db.mem0.get_context(user_id, recall_query, limit=5)
                 for line in self._extract_relevant_memory_lines(mem0_context, limit=5):
-                    findings.append(
+                    semantic_findings.append(
                         {
                             "source": "semantic memory",
                             "table": "mem0_qdrant",
@@ -6239,7 +6262,7 @@ class JungianEngine:
                             "score": 2.0,
                         }
                     )
-                semantic_count = len(findings)
+                semantic_count = len(semantic_findings)
             except Exception as exc:
                 logger.warning("⚠️ [DIRECTED MEMORY] Falha ao recuperar mem0: %s", exc)
 
@@ -6249,7 +6272,10 @@ class JungianEngine:
             scope=scope,
             limit=limit,
         )
-        findings.extend(sql_findings)
+        findings: List[Dict[str, Any]] = list(sql_findings)
+        remaining_slots = max(0, limit - len(findings))
+        if remaining_slots:
+            findings.extend(semantic_findings[:remaining_slots])
 
         deduped = []
         seen = set()
@@ -6261,6 +6287,16 @@ class JungianEngine:
             deduped.append(finding)
             if len(deduped) >= limit:
                 break
+
+        logger.info(
+            "🧭 [DIRECTED MEMORY] scope=%s query=%r sql_hits=%s semantic_hits=%s returned=%s top=%s",
+            scope,
+            recall_query[:180],
+            len(sql_findings),
+            semantic_count,
+            len(deduped),
+            [f"{item.get('source')}:{item.get('timestamp') or '-'}" for item in deduped[:3]],
+        )
 
         lines = [
             "[MEMORIA DIRIGIDA SOLICITADA PELO USUARIO]",
