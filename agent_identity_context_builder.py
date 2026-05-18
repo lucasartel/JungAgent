@@ -1174,6 +1174,8 @@ class AgentIdentityContextBuilder:
                     summary,
                     provider,
                     critique_summary,
+                    critique_status,
+                    symbolic_theme,
                     created_at
                 FROM agent_hobby_artifacts
                 WHERE user_id = ?
@@ -1214,6 +1216,12 @@ class AgentIdentityContextBuilder:
             parts.append(summary)
         if critique:
             parts.append(f"leitura: {critique}")
+        critique_status = artifact.get("critique_status")
+        symbolic_theme = artifact.get("symbolic_theme")
+        if critique_status:
+            parts.append(f"status da critica: {critique_status}")
+        if symbolic_theme:
+            parts.append(f"tema simbolico: {symbolic_theme}")
         return " - ".join(parts)
 
     def _get_latest_will_signal(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
