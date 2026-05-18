@@ -454,6 +454,9 @@ def query_world(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, A
         "knowledge_findings": cache_data.get("knowledge_findings"),
         "knowledge_seed": cache_data.get("knowledge_seed"),
         "knowledge_journal_entry": cache_data.get("knowledge_journal_entry"),
+        "epistemic_object": cache_data.get("epistemic_object"),
+        "epistemic_receipts": cache_data.get("epistemic_receipts"),
+        "epistemic_longitudinal_summary": cache_data.get("epistemic_longitudinal_summary"),
         "work_seeds": cache_data.get("work_seeds"),
         "hobby_seeds": cache_data.get("hobby_seeds"),
     }
@@ -1121,12 +1124,15 @@ def query_integration(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[
         if isinstance(section, dict)
     )
     bridge = identity_payload.get("bridge_indicators", {})
+    epistemic_receipts = world_payload.get("epistemic_receipts") or {}
 
     assessment = {
         "saber_recently_released": latest_saber_event is not None,
         "world_epistemic_discernment_active": world_payload.get("knowledge_source_decision") not in (None, "inactive"),
         "rumination_contains_knowledge_material": rumination_knowledge_hits > 0,
         "identity_contains_knowledge_material": identity_knowledge_hits > 0,
+        "epistemic_object_present": bool(world_payload.get("epistemic_object")),
+        "epistemic_transfer_receipts_present": bool(epistemic_receipts),
         "rumination_to_identity_bridge_has_evidence": bool(
             (bridge.get("core_from_rumination") or 0) > 0
             or (bridge.get("contradictions_fed_to_rumination") or 0) > 0
@@ -1158,6 +1164,9 @@ def query_integration(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[
             "knowledge_findings": world_payload.get("knowledge_findings"),
             "knowledge_seed": world_payload.get("knowledge_seed"),
             "knowledge_journal_entry": world_payload.get("knowledge_journal_entry"),
+            "epistemic_object": world_payload.get("epistemic_object"),
+            "epistemic_receipts": world_payload.get("epistemic_receipts"),
+            "epistemic_longitudinal_summary": world_payload.get("epistemic_longitudinal_summary"),
             "dynamic_queries": world_payload.get("dynamic_queries"),
         },
         "rumination_summary": {

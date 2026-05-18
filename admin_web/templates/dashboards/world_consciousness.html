@@ -130,6 +130,9 @@ function renderNarrative(state) {
 
 function renderKnowledge(state) {
     const gap = state.knowledge_gap || {};
+    const epistemic = state.epistemic_object || {};
+    const receipts = state.epistemic_receipts || {};
+    const memory = state.epistemic_longitudinal_summary || {};
     const dynamicQueries = state.dynamic_queries || [];
     const decisionMap = {
         latent_sufficient: "internal elaboration",
@@ -148,6 +151,11 @@ function renderKnowledge(state) {
             ${state.knowledge_findings ? `<div class="mono-block-v2">Main finding: ${escapeHtml(state.knowledge_findings)}</div>` : ""}
             ${state.knowledge_seed ? `<div class="mono-block-v2">Conceptual seed: ${escapeHtml(state.knowledge_seed)}</div>` : ""}
             ${state.knowledge_journal_entry ? `<div class="mono-block-v2">Learning journal: ${escapeHtml(state.knowledge_journal_entry)}</div>` : ""}
+            ${epistemic.question ? `<div class="mono-block-v2">Epistemic object: ${escapeHtml(epistemic.question)}</div>` : ""}
+            ${epistemic.self_resonance ? `<div class="mono-block-v2">Self resonance: ${escapeHtml(epistemic.self_resonance)}</div>` : ""}
+            ${epistemic.identity_implication ? `<div class="mono-block-v2">Identity implication: ${escapeHtml(epistemic.identity_implication)}</div>` : ""}
+            ${epistemic.remaining_question ? `<div class="mono-block-v2">Remaining question: ${escapeHtml(epistemic.remaining_question)}</div>` : ""}
+            ${memory.summary ? `<div class="mono-block-v2">Longitudinal memory: ${escapeHtml(memory.summary)}</div>` : ""}
             ${state.firecrawl_used ? `<div class="mono-block-v2">Firecrawl read ${(state.firecrawl_urls || []).length} source(s) to deepen this gap: ${escapeHtml(state.firecrawl_findings || "")}</div>` : ""}
             ${(state.firecrawl_errors || []).length ? `<div class="mono-block-v2">Firecrawl warnings: ${escapeHtml((state.firecrawl_errors || []).join(" | "))}</div>` : ""}
             <div class="tag-list-v2">
@@ -157,6 +165,7 @@ function renderKnowledge(state) {
                 ${state.firecrawl_enabled ? `<span class="tag-v2">Firecrawl enabled</span>` : ""}
                 ${state.firecrawl_available ? `<span class="tag-v2">Firecrawl ready</span>` : ""}
                 ${state.firecrawl_used ? `<span class="tag-v2">Firecrawl sources: ${escapeHtml((state.firecrawl_urls || []).length)}</span>` : ""}
+                ${Object.values(receipts).some(Boolean) ? `<span class="tag-v2">Epistemic receipts: ${escapeHtml(Object.entries(receipts).filter(([, value]) => value).map(([key]) => key).join(", "))}</span>` : ""}
             </div>
             ${dynamicQueries.length ? `<div class="mono-block-v2">${escapeHtml(dynamicQueries.map((item) => item.query).join(" | "))}</div>` : ""}
             ${state.firecrawl_used ? `<div class="mono-block-v2">${escapeHtml((state.firecrawl_urls || []).join(" | "))}</div>` : ""}
@@ -190,6 +199,7 @@ function renderHistory(history) {
                 <div class="mono-block-v2">${escapeHtml(item.atmosphere || "")}</div>
                 ${item.knowledge_resolution_summary ? `<div class="mono-block-v2">${escapeHtml(item.knowledge_resolution_summary)}</div>` : ""}
                 ${item.knowledge_journal_entry ? `<div class="mono-block-v2">${escapeHtml(item.knowledge_journal_entry)}</div>` : ""}
+                ${(item.epistemic_object || {}).question ? `<div class="mono-block-v2">Epistemic object: ${escapeHtml((item.epistemic_object || {}).question)}</div>` : ""}
                 <div class="mono-block-v2">${escapeHtml((item.dominant_tensions || []).join(" | "))}</div>
             </article>
         `).join("")

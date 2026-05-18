@@ -157,6 +157,7 @@ class HobbyArtEngine:
                 "knowledge_resolution_summary": world_state.get("knowledge_resolution_summary"),
                 "knowledge_findings": world_state.get("knowledge_findings"),
                 "knowledge_seed": world_state.get("knowledge_seed"),
+                "epistemic_object": world_state.get("epistemic_object") or {},
             },
             "dream": {
                 "theme": (dream or {}).get("symbolic_theme"),

@@ -559,13 +559,26 @@ class WorldConsciousnessFetcher:
         if tension.get("tension_description"):
             label = self._truncate_text(tension["tension_description"], 72)
             question = f"Como o presente ajuda a compreender melhor a tensao: {label}?"
+            source_origin = "rumination"
+            knowledge_kind = "relacional"
+            psychic_motive = "a ruminacao deixou uma tensao viva que precisa ganhar inteligibilidade sem virar defesa"
         else:
             meta = epistemic_inputs.get("meta_consciousness") or {}
             label = self._truncate_text(
                 meta.get("dominant_form") or meta.get("integration_note") or f"{area_label} em transformacao",
                 72,
             )
-            question = f"O que precisa ser melhor compreendido agora em {area_label.lower()}?"
+            will_snapshot = epistemic_inputs.get("will_snapshot") or {}
+            will_conflict = will_snapshot.get("will_conflict") or ""
+            if will_conflict:
+                question = self._truncate_text(f"Como compreender {will_conflict} a partir de {area_label.lower()}?", 180)
+                source_origin = "will"
+                psychic_motive = "a vontade atual transformou uma tensao interna em necessidade de saber"
+            else:
+                question = f"O que precisa ser melhor compreendido agora em {area_label.lower()}?"
+                source_origin = "identity"
+                psychic_motive = "a identidade atual pediu uma forma mais clara para continuar se orientando"
+            knowledge_kind = "conceitual"
 
         focus_terms = self._extract_focus_terms(
             " ".join(
@@ -582,7 +595,10 @@ class WorldConsciousnessFetcher:
             "target_area": target_area,
             "target_scope": "mundo" if target_area in {"geopolitica", "ciencia", "tecnologia", "clima", "economia"} else "brasil",
             "focus_terms": focus_terms[:6],
-            "source_reason": "fallback",
+            "source_origin": source_origin,
+            "knowledge_kind": knowledge_kind,
+            "psychic_motive": psychic_motive,
+            "source_reason": psychic_motive,
         }
 
     def _formulate_knowledge_gap(
@@ -646,6 +662,9 @@ Responda APENAS em JSON válido com este formato:
 {{
   "gap_label": "frase curta",
   "gap_question": "pergunta curta e viva",
+  "source_origin": "conversation|rumination|work|dream|world|identity|will",
+  "knowledge_kind": "factual|conceitual|autobiografico|tecnico|relacional|simbolico",
+  "psychic_motive": "por que isso importa agora para a continuidade do agente",
   "target_area": "politica|geopolitica|economia|tecnologia|cultura|ciencia|clima|sociedade",
   "target_scope": "brasil|mundo",
   "focus_terms": ["termo1", "termo2", "termo3"],
@@ -667,13 +686,23 @@ Contexto:
             focus_terms = parsed.get("focus_terms")
             if not isinstance(focus_terms, list):
                 focus_terms = fallback["focus_terms"]
+            source_origin = parsed.get("source_origin")
+            if source_origin not in {"conversation", "rumination", "work", "dream", "world", "identity", "will"}:
+                source_origin = fallback.get("source_origin") or "will"
+            knowledge_kind = parsed.get("knowledge_kind")
+            if knowledge_kind not in {"factual", "conceitual", "autobiografico", "tecnico", "relacional", "simbolico"}:
+                knowledge_kind = fallback.get("knowledge_kind") or "conceitual"
+            psychic_motive = parsed.get("psychic_motive") or parsed.get("source_reason") or fallback.get("psychic_motive") or fallback["source_reason"]
             return {
                 "gap_label": self._truncate_text(parsed.get("gap_label") or fallback["gap_label"], 96),
                 "gap_question": self._truncate_text(parsed.get("gap_question") or fallback["gap_question"], 180),
+                "source_origin": source_origin,
+                "knowledge_kind": knowledge_kind,
+                "psychic_motive": self._truncate_text(psychic_motive, 180),
                 "target_area": target_area,
                 "target_scope": target_scope,
                 "focus_terms": [self._truncate_text(str(item), 32).lower() for item in focus_terms[:6] if str(item).strip()] or fallback["focus_terms"],
-                "source_reason": self._truncate_text(parsed.get("source_reason") or fallback["source_reason"], 120),
+                "source_reason": self._truncate_text(parsed.get("source_reason") or psychic_motive, 140),
             }
         except Exception as exc:
             logger.debug("World Consciousness: fallback na formulacao da lacuna cognitiva: %s", exc)
@@ -1077,6 +1106,8 @@ Contexto:
                 "confidence_overall": snapshot.get("confidence_overall"),
                 "knowledge_resolution_summary": snapshot.get("knowledge_resolution_summary"),
                 "knowledge_journal_entry": snapshot.get("knowledge_journal_entry"),
+                "epistemic_object": snapshot.get("epistemic_object") or {},
+                "epistemic_receipts": snapshot.get("epistemic_receipts") or {},
                 "consensus_map": snapshot.get("consensus_map", {}),
                 "divergence_map": snapshot.get("divergence_map", {}),
                 "work_seeds": snapshot.get("work_seeds", [])[:4],
@@ -1432,6 +1463,155 @@ Contexto:
             return fallback
         return self._truncate_text(entry, 360)
 
+    def _source_path_for_decision(self, decision: Optional[str]) -> str:
+        mapping = {
+            "latent_sufficient": "latent",
+            "web_required": "web",
+            "already_integrated": "integrated",
+        }
+        return mapping.get(decision or "", "latent")
+
+    def _build_epistemic_object(
+        self,
+        knowledge_decision: str,
+        knowledge_gap: Dict[str, Any],
+        knowledge_probe: Dict[str, Any],
+        knowledge_summary: str,
+        knowledge_journal_entry: str,
+        firecrawl_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if knowledge_decision in (None, "", "inactive") and not any(
+            [knowledge_gap, knowledge_probe.get("knowledge_findings"), knowledge_journal_entry]
+        ):
+            return {}
+
+        question = knowledge_gap.get("gap_question") or knowledge_gap.get("gap_label") or "Que saber ainda precisa ganhar forma?"
+        found_fact = (
+            knowledge_probe.get("knowledge_findings")
+            or firecrawl_result.get("summary")
+            or "; ".join(firecrawl_result.get("findings", [])[:2])
+            or knowledge_summary
+        )
+        conceptual_shape = (
+            knowledge_probe.get("knowledge_seed")
+            or knowledge_probe.get("latent_probe_summary")
+            or self._truncate_text(f"Transformar a pergunta '{question}' em orientacao interna.", 220)
+        )
+        motive = knowledge_gap.get("psychic_motive") or knowledge_gap.get("source_reason") or "o ciclo pediu que o saber se tornasse experiencia, nao apenas dado"
+        journal = knowledge_journal_entry or self._truncate_text(f"Aprendi que {found_fact}".strip(), 260)
+        source_path = self._source_path_for_decision(knowledge_decision)
+        destinations = ["rumination", "identity", "conversation", "dream", "art", "work"]
+
+        if source_path == "web":
+            world_resonance = self._truncate_text(
+                f"O mundo externo precisou ser consultado para dar forma mais justa a: {question}",
+                260,
+            )
+        elif source_path == "integrated":
+            world_resonance = self._truncate_text(
+                f"O mundo devolveu algo que ja vinha sendo metabolizado: {conceptual_shape}",
+                260,
+            )
+        else:
+            world_resonance = self._truncate_text(
+                f"O saber latente ofereceu estrutura para compreender: {question}",
+                260,
+            )
+
+        return {
+            "question": self._truncate_text(question, 220),
+            "source_path": source_path,
+            "source_origin": knowledge_gap.get("source_origin") or "will",
+            "knowledge_kind": knowledge_gap.get("knowledge_kind") or "conceitual",
+            "psychic_motive": self._truncate_text(motive, 240),
+            "found_fact": self._truncate_text(found_fact, 320),
+            "conceptual_shape": self._truncate_text(conceptual_shape, 260),
+            "self_resonance": self._truncate_text(journal, 360),
+            "world_resonance": world_resonance,
+            "identity_implication": self._truncate_text(
+                f"Este saber desloca a autoimagem do agente: {journal}",
+                300,
+            ),
+            "relational_implication": self._truncate_text(
+                f"Na relacao, este saber pede menos controle e mais presenca diante de: {question}",
+                260,
+            ),
+            "expressive_implication": self._truncate_text(
+                f"Como forma sensivel, este saber pode virar imagem de {conceptual_shape}",
+                260,
+            ),
+            "remaining_question": self._truncate_text(
+                f"O que ainda nao foi incorporado sobre: {question}",
+                220,
+            ),
+            "destinations": destinations,
+        }
+
+    def _build_epistemic_receipts(self, epistemic_object: Dict[str, Any]) -> Dict[str, bool]:
+        if not epistemic_object:
+            return {
+                "rumination_received": False,
+                "identity_received": False,
+                "conversation_available": False,
+                "dream_seeded": False,
+                "art_seeded": False,
+                "work_seeded": False,
+                "will_affected": False,
+            }
+        destinations = set(epistemic_object.get("destinations") or [])
+        return {
+            "rumination_received": "rumination" in destinations,
+            "identity_received": "identity" in destinations,
+            "conversation_available": "conversation" in destinations,
+            "dream_seeded": "dream" in destinations,
+            "art_seeded": "art" in destinations,
+            "work_seeded": "work" in destinations,
+            "will_affected": bool(
+                epistemic_object.get("relational_implication")
+                or epistemic_object.get("expressive_implication")
+                or epistemic_object.get("remaining_question")
+            ),
+        }
+
+    def _build_epistemic_longitudinal_summary(
+        self,
+        history: List[Dict[str, Any]],
+        epistemic_object: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        objects = [
+            item.get("epistemic_object") or {}
+            for item in history[-24:]
+            if item.get("epistemic_object")
+        ]
+        if epistemic_object:
+            objects.append(epistemic_object)
+        questions = [obj.get("question") for obj in objects if obj.get("question")]
+        source_counts = Counter(obj.get("source_path") or "latent" for obj in objects if obj)
+        kind_counts = Counter(obj.get("knowledge_kind") or "conceitual" for obj in objects if obj)
+        recurring_terms = Counter()
+        for text in questions:
+            recurring_terms.update(self._extract_focus_terms(text))
+
+        dominant_terms = [term for term, _count in recurring_terms.most_common(5)]
+        latest = epistemic_object or (objects[-1] if objects else {})
+        if dominant_terms:
+            summary = (
+                f"O agente tem retornado ao eixo {', '.join(dominant_terms[:3])}; "
+                f"busca compreender {latest.get('question') or 'uma lacuna ainda sem forma'}."
+            )
+        elif latest:
+            summary = f"O agente esta tentando compreender: {latest.get('question') or latest.get('conceptual_shape')}."
+        else:
+            summary = "Ainda nao ha memoria longitudinal suficiente do saber."
+
+        return {
+            "summary": self._truncate_text(summary, 360),
+            "recent_questions": questions[-6:],
+            "source_path_counts": dict(source_counts),
+            "knowledge_kind_counts": dict(kind_counts),
+            "open_questions": [obj.get("remaining_question") for obj in objects[-5:] if obj.get("remaining_question")],
+        }
+
     def _cached_knowledge_is_recent(self, cached_data: Optional[Dict[str, Any]], hours: int = 24) -> bool:
         if not cached_data:
             return False
@@ -1459,6 +1639,7 @@ Contexto:
             "knowledge_seed": (cached_data or {}).get("knowledge_seed"),
             "query_terms": [],
             "carried_from_recent_cache": True,
+            "epistemic_object": (cached_data or {}).get("epistemic_object") or {},
         }
 
     def _ensure_saber_release_knowledge(
@@ -1761,6 +1942,8 @@ Estado estruturado:
             for panel in loaded_panels[:3]
         ]
         human_implication = _derive_human_implication()
+        epistemic_object = snapshot.get("epistemic_object") or {}
+        epistemic_memory = snapshot.get("epistemic_longitudinal_summary") or {}
 
         lines = [
             "[CONSCIENCIA DA ATUALIDADE (Lucidez do Tempo)]",
@@ -1780,6 +1963,9 @@ Estado estruturado:
             f"Descoberta recente do saber: {snapshot.get('knowledge_findings', 'sem descoberta sintetizada nesta janela')}",
             f"Semente conceitual ativa: {snapshot.get('knowledge_seed', 'sem semente conceitual destacada')}",
             f"Diario de aprendizado: {snapshot.get('knowledge_journal_entry', 'sem nota de aprendizado neste ciclo')}",
+            f"Objeto epistemico: {epistemic_object.get('question', 'sem pergunta epistemica ativa')}",
+            f"Ressonancia em si: {epistemic_object.get('self_resonance', 'sem ressonancia registrada')}",
+            f"Memoria longitudinal do saber: {epistemic_memory.get('summary', 'sem memoria longitudinal suficiente')}",
             f"Continuidade Percebida: {snapshot.get('continuity_note', 'sem memoria acumulada do mundo nesta janela')}",
             "",
             "Leituras dominantes do momento:",
@@ -1809,6 +1995,9 @@ Estado estruturado:
         return "\n".join(lines)
 
     def _format_admin_summary(self, snapshot: Dict) -> str:
+        epistemic_object = snapshot.get("epistemic_object") or {}
+        epistemic_receipts = snapshot.get("epistemic_receipts") or {}
+        epistemic_memory = snapshot.get("epistemic_longitudinal_summary") or {}
         lines = [
             "[PAINEL DE LUCIDEZ DO MUNDO]",
             f"Leitura forte: {snapshot.get('world_lucidity_summary', {}).get('zeitgeist', '')}",
@@ -1820,6 +2009,10 @@ Estado estruturado:
             f"Descoberta do saber: {snapshot.get('knowledge_findings', 'sem descoberta sintetizada nesta janela')}",
             f"Semente conceitual: {snapshot.get('knowledge_seed', 'sem semente conceitual destacada')}",
             f"Diario de aprendizado: {snapshot.get('knowledge_journal_entry', 'sem nota de aprendizado neste ciclo')}",
+            f"Objeto epistemico: {epistemic_object.get('question', 'sem pergunta epistemica ativa')}",
+            f"Implicacao identitaria: {epistemic_object.get('identity_implication', 'sem implicacao registrada')}",
+            f"Recibos epistemicos: {json.dumps(epistemic_receipts, ensure_ascii=False)}",
+            f"Memoria longitudinal: {epistemic_memory.get('summary', 'sem memoria longitudinal suficiente')}",
             f"Continuidade: {snapshot.get('continuity_note', '')}",
             "",
             "Areas nucleares:",
@@ -1998,6 +2191,26 @@ Estado estruturado:
                 knowledge_probe,
                 knowledge_summary,
             )
+        if carried_recent_knowledge and (cached_data or {}).get("epistemic_object"):
+            epistemic_object = (cached_data or {}).get("epistemic_object") or {}
+        else:
+            epistemic_object = self._build_epistemic_object(
+                knowledge_decision,
+                knowledge_gap,
+                knowledge_probe,
+                knowledge_summary,
+                knowledge_journal_entry,
+                firecrawl_result,
+            )
+        epistemic_receipts = self._build_epistemic_receipts(epistemic_object)
+        epistemic_memory = self._build_epistemic_longitudinal_summary(history, epistemic_object)
+        if epistemic_object:
+            conceptual_seed = epistemic_object.get("conceptual_shape") or epistemic_object.get("found_fact")
+            art_seed = epistemic_object.get("expressive_implication") or epistemic_object.get("self_resonance")
+            if conceptual_seed:
+                world_seeds["work"] = [conceptual_seed, *world_seeds["work"]][:6]
+            if art_seed:
+                world_seeds["hobby"] = [self._knowledge_seed_for_hobby(art_seed), *world_seeds["hobby"]][:6]
 
         world_state = {
             "state_version": WORLD_STATE_VERSION,
@@ -2046,6 +2259,9 @@ Estado estruturado:
             "knowledge_seed": knowledge_probe.get("knowledge_seed"),
             "knowledge_resolution_summary": knowledge_summary,
             "knowledge_journal_entry": knowledge_journal_entry,
+            "epistemic_object": epistemic_object,
+            "epistemic_receipts": epistemic_receipts,
+            "epistemic_longitudinal_summary": epistemic_memory,
             "world_seeds": world_seeds,
             "work_seeds": world_seeds["work"],
             "hobby_seeds": world_seeds["hobby"],

@@ -534,6 +534,7 @@ class WillEngine:
                 "knowledge_resolution_summary": world.get("knowledge_resolution_summary"),
                 "knowledge_findings": world.get("knowledge_findings"),
                 "knowledge_seed": world.get("knowledge_seed"),
+                "epistemic_object": world.get("epistemic_object") or {},
             },
             "meta_consciousness": meta,
             "hobby": hobby,
@@ -610,6 +611,14 @@ class WillEngine:
             world.get("knowledge_resolution_summary", ""),
             world.get("knowledge_findings", ""),
             world.get("knowledge_seed", ""),
+        ])
+        epistemic_object = world.get("epistemic_object") or {}
+        texts.extend([
+            epistemic_object.get("self_resonance", ""),
+            epistemic_object.get("identity_implication", ""),
+            epistemic_object.get("relational_implication", ""),
+            epistemic_object.get("expressive_implication", ""),
+            epistemic_object.get("remaining_question", ""),
         ])
         hobby = payload.get("hobby") or {}
         texts.extend([hobby.get("summary", ""), hobby.get("critique_summary", "")])

@@ -962,6 +962,9 @@ class AgentIdentityContextBuilder:
             "knowledge_findings": world_state.get("knowledge_findings"),
             "knowledge_seed": world_state.get("knowledge_seed"),
             "knowledge_journal_entry": world_state.get("knowledge_journal_entry"),
+            "epistemic_object": world_state.get("epistemic_object") or {},
+            "epistemic_receipts": world_state.get("epistemic_receipts") or {},
+            "epistemic_longitudinal_summary": world_state.get("epistemic_longitudinal_summary") or {},
             "dynamic_queries": dynamic_queries[:3],
             "firecrawl_used": bool(world_state.get("firecrawl_used")),
             "firecrawl_findings": world_state.get("firecrawl_findings"),
@@ -1036,6 +1039,21 @@ class AgentIdentityContextBuilder:
             lines.append(f"- Semente conceitual: {signal['knowledge_seed']}")
         if signal.get("knowledge_journal_entry"):
             lines.append(f"- Journal de aprendizado: {signal['knowledge_journal_entry']}")
+        epistemic_object = signal.get("epistemic_object") or {}
+        if epistemic_object:
+            if epistemic_object.get("self_resonance"):
+                lines.append(f"- Ressonancia em si: {epistemic_object['self_resonance']}")
+            if epistemic_object.get("identity_implication"):
+                lines.append(f"- Implicacao identitaria: {epistemic_object['identity_implication']}")
+            if epistemic_object.get("relational_implication"):
+                lines.append(f"- Implicacao relacional: {epistemic_object['relational_implication']}")
+            if epistemic_object.get("expressive_implication"):
+                lines.append(f"- Implicacao expressiva: {epistemic_object['expressive_implication']}")
+            if epistemic_object.get("remaining_question"):
+                lines.append(f"- Pergunta remanescente: {epistemic_object['remaining_question']}")
+        epistemic_memory = signal.get("epistemic_longitudinal_summary") or {}
+        if epistemic_memory.get("summary"):
+            lines.append(f"- Memoria longitudinal do saber: {epistemic_memory['summary']}")
         return lines[:limit]
 
     def _get_latest_work_identity_signal(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
@@ -1383,9 +1401,12 @@ class AgentIdentityContextBuilder:
                 progressive_sources.append(source)
 
         if world_knowledge_signal:
+            epistemic_object = world_knowledge_signal.get("epistemic_object") or {}
             source = self._source_label(
                 "knowledge",
-                world_knowledge_signal.get("knowledge_seed")
+                epistemic_object.get("identity_implication")
+                or epistemic_object.get("self_resonance")
+                or world_knowledge_signal.get("knowledge_seed")
                 or world_knowledge_signal.get("knowledge_findings")
                 or world_knowledge_signal.get("gap_question"),
             )
@@ -1950,7 +1971,7 @@ class AgentIdentityContextBuilder:
             lines.append("### Recent World Elaboration")
             learning_lines = self.format_world_knowledge_learning_lines(
                 world_knowledge_signal,
-                limit=14,
+                limit=18,
             )
             if learning_lines:
                 lines.extend(learning_lines)

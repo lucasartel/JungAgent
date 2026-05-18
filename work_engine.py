@@ -4580,6 +4580,14 @@ Regras:
             return 0
 
         seeds = list(world_state.get("work_seeds") or [])
+        epistemic_object = world_state.get("epistemic_object") or {}
+        for epistemic_seed in (
+            epistemic_object.get("conceptual_shape"),
+            epistemic_object.get("found_fact"),
+            epistemic_object.get("remaining_question"),
+        ):
+            if epistemic_seed and epistemic_seed not in seeds:
+                seeds.append(epistemic_seed)
         created = 0
         project_index = 0
         for project in projects:

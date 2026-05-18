@@ -6483,7 +6483,7 @@ class JungianEngine:
 
                 world_learning_lines = self.identity_context_builder.format_world_knowledge_learning_lines(
                     current_mind_state.get("world_knowledge_signal"),
-                    limit=12,
+                    limit=18,
                 )
                 dossier_stats["world_learning_count"] = len(world_learning_lines)
 
@@ -6558,7 +6558,7 @@ class JungianEngine:
             lines.extend(f"- {item}" for item in self_state_lines[:4])
         if world_learning_lines:
             lines.extend(["", "[APRENDIZADO RECENTE DO MUNDO]"])
-            lines.extend(world_learning_lines[:12])
+            lines.extend(world_learning_lines[:18])
         if work_lines:
             lines.extend(["", "[TRABALHOS ATUAIS DO AGENTE]"])
             lines.extend(f"- {item}" for item in work_lines[:7])

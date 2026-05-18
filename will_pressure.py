@@ -754,6 +754,8 @@ ESTADO QUALITATIVO:
                 "world_state_snapshot": {
                     "knowledge_source_decision": knowledge_decision,
                     "knowledge_journal_entry": world_state.get("knowledge_journal_entry"),
+                    "epistemic_object": world_state.get("epistemic_object"),
+                    "epistemic_receipts": world_state.get("epistemic_receipts"),
                     "formatted_admin_summary": world_state.get("formatted_admin_summary"),
                 }
             },

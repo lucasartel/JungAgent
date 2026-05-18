@@ -432,6 +432,7 @@ class ConsciousnessLoopManager:
                 knowledge_findings = world_state.get("knowledge_findings")
                 knowledge_seed = world_state.get("knowledge_seed")
                 knowledge_journal = world_state.get("knowledge_journal_entry")
+                epistemic_object = world_state.get("epistemic_object") or {}
                 if any([knowledge_gap, knowledge_findings, knowledge_seed, knowledge_journal]) and knowledge_decision != "inactive":
                     epistemic_summary = (
                         f"[ELABORACAO DE SABER DO CICLO {cycle_id}] "
@@ -439,7 +440,11 @@ class ConsciousnessLoopManager:
                         f"Resolucao atual: {world_state.get('knowledge_resolution_summary') or 'sem resolucao nomeada'}. "
                         f"Descoberta principal: {knowledge_findings or 'sem descoberta resumida'}. "
                         f"Semente conceitual: {knowledge_seed or 'sem semente conceitual ativa'}. "
-                        f"Diario interno: {knowledge_journal or 'sem nota de aprendizado formulada'}."
+                        f"Diario interno: {knowledge_journal or 'sem nota de aprendizado formulada'}. "
+                        f"Ressonancia em si: {epistemic_object.get('self_resonance') or 'sem ressonancia nomeada'}. "
+                        f"Implicacao identitaria: {epistemic_object.get('identity_implication') or 'sem implicacao identitaria nomeada'}. "
+                        f"Implicacao relacional: {epistemic_object.get('relational_implication') or 'sem implicacao relacional nomeada'}. "
+                        f"Pergunta remanescente: {epistemic_object.get('remaining_question') or 'sem pergunta remanescente nomeada'}."
                     )
                     _ingest_material(epistemic_summary, 0.76, 0.51, 0.86)
             except Exception as exc:
@@ -449,6 +454,7 @@ class ConsciousnessLoopManager:
                 from world_consciousness import world_consciousness
 
                 world_state = world_consciousness.get_world_state(force_refresh=False)
+                epistemic_object = world_state.get("epistemic_object") or {}
                 world_summary = (
                     f"[MATERIAL DE MUNDO DO CICLO {cycle_id}] "
                     f"Atmosfera: {world_state.get('atmosphere') or 'sem atmosfera definida'}. "
@@ -457,6 +463,9 @@ class ConsciousnessLoopManager:
                     f"Descoberta: {world_state.get('knowledge_findings') or 'sem descoberta principal resumida'}. "
                     f"Semente conceitual: {world_state.get('knowledge_seed') or 'sem semente conceitual ativa'}. "
                     f"Diario interno: {world_state.get('knowledge_journal_entry') or 'sem nota de aprendizado formulada'}. "
+                    f"Objeto epistemico: {epistemic_object.get('question') or 'sem objeto epistemico ativo'}. "
+                    f"Forma conceitual: {epistemic_object.get('conceptual_shape') or 'sem forma conceitual nomeada'}. "
+                    f"Implicacao expressiva: {epistemic_object.get('expressive_implication') or 'sem implicacao expressiva nomeada'}. "
                     f"Seeds de hobby: {'; '.join(world_state.get('hobby_seeds', [])[:2]) or 'sem seed simbolico forte'}."
                 )
                 _ingest_material(world_summary, 0.74, 0.52, 0.71)
@@ -862,6 +871,11 @@ class ConsciousnessLoopManager:
         if gap.get("gap_question"):
             text_lines.extend(["", f"Lacuna: {gap.get('gap_question')}"])
         text_lines.extend(["", journal])
+        epistemic_object = world_state.get("epistemic_object") or {}
+        if epistemic_object.get("self_resonance"):
+            text_lines.extend(["", f"Ressonancia: {epistemic_object.get('self_resonance')}"])
+        if epistemic_object.get("remaining_question"):
+            text_lines.append(f"Pergunta restante: {epistemic_object.get('remaining_question')}")
         if world_state.get("knowledge_seed"):
             text_lines.extend(["", f"Seed: {world_state.get('knowledge_seed')}"])
 
@@ -1062,6 +1076,9 @@ class ConsciousnessLoopManager:
             "knowledge_findings": world_state.get("knowledge_findings"),
             "knowledge_seed": world_state.get("knowledge_seed"),
             "knowledge_journal_entry": world_state.get("knowledge_journal_entry"),
+            "epistemic_object": world_state.get("epistemic_object"),
+            "epistemic_receipts": world_state.get("epistemic_receipts"),
+            "epistemic_longitudinal_summary": world_state.get("epistemic_longitudinal_summary"),
             "dynamic_queries": world_state.get("dynamic_queries", []),
         }
         result["metrics"]["world_areas_loaded"] = len([k for k, v in (world_state.get("area_panels", {}) or {}).items() if v.get("signal_count", 0) > 0])
