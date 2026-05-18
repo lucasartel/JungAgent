@@ -1174,6 +1174,7 @@ class AgentIdentityContextBuilder:
                     summary,
                     provider,
                     critique_summary,
+                    critique_json,
                     created_at
                 FROM agent_hobby_artifacts
                 WHERE user_id = ?
@@ -1209,12 +1210,36 @@ class AgentIdentityContextBuilder:
         provider = artifact.get("provider") or "provider desconhecido"
         summary = self._clip_identity_sentence(artifact.get("summary"), 140)
         critique = self._clip_identity_sentence(artifact.get("critique_summary"), 120)
+        critique_payload = self._parse_json_object(artifact.get("critique_json"))
+        verdict = self._clip_identity_sentence(critique_payload.get("verdict"), 50)
+        symbolic_reading = self._clip_identity_sentence(critique_payload.get("symbolic_reading"), 100)
+        fit_score = critique_payload.get("fit_score")
         parts = [f"{title} (ciclo {cycle_id}, {provider})"]
         if summary:
             parts.append(summary)
         if critique:
             parts.append(f"leitura: {critique}")
+        if verdict:
+            parts.append(f"veredito visual: {verdict}")
+        if symbolic_reading and symbolic_reading != critique:
+            parts.append(f"tema visual: {symbolic_reading}")
+        if fit_score is not None:
+            try:
+                parts.append(f"aderencia: {float(fit_score):.2f}")
+            except (TypeError, ValueError):
+                pass
         return " - ".join(parts)
+
+    def _parse_json_object(self, value: Any) -> Dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        if not isinstance(value, str) or not value.strip():
+            return {}
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     def _get_latest_will_signal(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
         if not user_id:
