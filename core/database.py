@@ -11,11 +11,20 @@ from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime, timedelta
 from collections import Counter
 
+from openai import OpenAI
+
 from core.models import ArchetypeInsight, ArchetypeConflict
 from core.config import Config, CHROMADB_AVAILABLE
 from core.embeddings import OpenAICompatibleEmbeddings
 
 logger = logging.getLogger(__name__)
+
+if CHROMADB_AVAILABLE:
+    from langchain_chroma import Chroma
+    from langchain.schema import Document
+else:
+    Chroma = None
+    Document = None
 
 # LLM fact extractor
 try:
