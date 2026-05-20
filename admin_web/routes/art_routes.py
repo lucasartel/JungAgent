@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import Dict
+from typing import Dict, List
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -103,3 +103,38 @@ async def art_dashboard(request: Request, admin: Dict = Depends(require_master))
         }
     )
     return templates.TemplateResponse("dashboards/art_dashboard.html", payload)
+
+
+@router.get("/recent")
+async def get_recent_artworks(request: Request, admin: Dict = Depends(require_master)):
+    """Return last 5 artworks with critique status, provider, model, and fallback info."""
+    try:
+        db = get_hybrid_db()
+        cursor = db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, cycle_id, title, summary, provider, evaluation_model,
+                   critique_summary, status, evaluated_at
+            FROM agent_hobby_artifacts
+            ORDER BY id DESC
+            LIMIT 5
+            """
+        )
+        rows = cursor.fetchall()
+        artworks = []
+        for row in rows:
+            artworks.append({
+                "id": row[0],
+                "cycle_id": row[1],
+                "title": row[2],
+                "summary": row[3],
+                "provider": row[4],
+                "evaluation_model": row[5],
+                "critique_summary": row[6],
+                "status": row[7],
+                "evaluated_at": row[8],
+            })
+        return {"success": True, "artworks": artworks}
+    except Exception as exc:
+        logger.error("Erro ao obter artworks recentes: %s", exc)
+        return JSONResponse({"success": False, "error": str(exc)}, status_code=500)
