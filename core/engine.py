@@ -6,6 +6,7 @@ import time
 import logging
 import threading
 import hashlib
+import unicodedata
 from typing import List, Dict, Optional, Tuple, Any, Union
 from datetime import datetime, timedelta
 
