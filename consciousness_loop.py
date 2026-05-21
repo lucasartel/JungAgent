@@ -14,6 +14,7 @@ import logging
 import asyncio
 import base64
 import os
+import traceback
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from typing import Dict, List, Optional
@@ -28,6 +29,7 @@ try:
 except ZoneInfoNotFoundError:
     LOOP_TIMEZONE = timezone(timedelta(hours=-3))
 DEFAULT_LOOP_MODE = "24h"
+CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 3
 
 
 @dataclass(frozen=True)
@@ -138,6 +140,25 @@ class ConsciousnessLoopManager:
             "successful_runs": int((row["successful_runs"] if row and row["successful_runs"] is not None else 0) or 0),
             "last_completed_at": row["last_completed_at"] if row else None,
         }
+
+    def _count_consecutive_phase_failures(self, phase_key: str, limit: int = 10) -> int:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT status
+            FROM consciousness_loop_phase_results
+            WHERE agent_instance = ? AND phase = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (self.agent_instance, phase_key, limit),
+        )
+        consecutive = 0
+        for row in cursor.fetchall():
+            if row["status"] != "failed":
+                break
+            consecutive += 1
+        return consecutive
 
     def _ensure_phase_config(self):
         cursor = self.db.conn.cursor()
@@ -317,6 +338,15 @@ class ConsciousnessLoopManager:
                 "note": phase.placeholder_summary,
             },
         }
+
+    def _finalize_phase_result_timing(self, result: Dict):
+        completed_at = self._now()
+        result["completed_at"] = completed_at.isoformat()
+        try:
+            started_at = datetime.fromisoformat(result["started_at"])
+            result["duration_ms"] = max(1, int((completed_at - started_at).total_seconds() * 1000))
+        except Exception:
+            result["duration_ms"] = max(1, int(result.get("duration_ms") or 1))
 
     def _record_virtual_artifact(self, result: Dict, artifact_type: str, artifact_id: Optional[str], artifact_table: str, summary: str):
         result["artifacts_created"].append(
@@ -1396,22 +1426,54 @@ class ConsciousnessLoopManager:
         )
 
         result = self._build_placeholder_result(cycle_id, phase, trigger_source, execution_mode)
-        if phase.key == "dream":
-            result = self._run_dream_phase(result)
-        elif phase.key == "identity":
-            result = self._run_identity_phase(result)
-        elif phase.key == "rumination_intro":
-            result = self._run_rumination_phase(result, "intro")
-        elif phase.key == "world":
-            result = self._run_world_phase(result)
-        elif phase.key == "work":
-            result = self._run_work_phase(result)
-        elif phase.key == "hobby":
-            result = self._run_hobby_phase(result)
-        elif phase.key == "rumination_extro":
-            result = self._run_rumination_phase(result, "extro")
-        elif phase.key == "will":
-            result = self._run_will_phase(result)
+        try:
+            if phase.key == "dream":
+                result = self._run_dream_phase(result)
+            elif phase.key == "identity":
+                result = self._run_identity_phase(result)
+            elif phase.key == "rumination_intro":
+                result = self._run_rumination_phase(result, "intro")
+            elif phase.key == "world":
+                result = self._run_world_phase(result)
+            elif phase.key == "work":
+                result = self._run_work_phase(result)
+            elif phase.key == "hobby":
+                result = self._run_hobby_phase(result)
+            elif phase.key == "rumination_extro":
+                result = self._run_rumination_phase(result, "extro")
+            elif phase.key == "will":
+                result = self._run_will_phase(result)
+        except Exception as exc:
+            logger.exception(
+                "LOOP PHASE FAILED cycle_id=%s phase=%s trigger_source=%s",
+                cycle_id,
+                phase.key,
+                trigger_source,
+            )
+            result["status"] = "failed"
+            result["warnings"] = [warning for warning in result["warnings"] if warning != "placeholder_execution"]
+            result["errors"].append(f"{exc.__class__.__name__}: {exc}")
+            result["output_summary"] = f"Fase {phase.label} falhou e sera reavaliada pelo loop."
+            result["metrics"]["phase_placeholder"] = 0
+            result["metrics"]["phase_exception"] = 1
+            result["raw_result"]["exception"] = {
+                "type": exc.__class__.__name__,
+                "message": str(exc),
+                "traceback": traceback.format_exc(limit=12),
+            }
+
+        self._finalize_phase_result_timing(result)
+
+        consecutive_failures = 0
+        if result["status"] == "failed":
+            consecutive_failures = self._count_consecutive_phase_failures(phase.key) + 1
+            result["metrics"]["consecutive_failures"] = consecutive_failures
+            if consecutive_failures >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD:
+                result["warnings"].append(f"consecutive_failures_{consecutive_failures}")
+                result["output_summary"] = (
+                    f"Fase {phase.label} falhou {consecutive_failures} vezes consecutivas. "
+                    "Intervencao tecnica recomendada."
+                )
 
         phase_result_id = self._save_phase_result(result)
         self._insert_event(
@@ -1447,7 +1509,12 @@ class ConsciousnessLoopManager:
             True,
         )
 
-        if notify_admin:
+        should_alert_failure = (
+            result["status"] == "failed"
+            and consecutive_failures == CONSECUTIVE_FAILURE_ALERT_THRESHOLD
+        )
+
+        if notify_admin or should_alert_failure:
             self._notify_admin(result)
             if result["phase"] == "world" and result["status"] != "failed":
                 self._notify_admin_knowledge_journal(result)

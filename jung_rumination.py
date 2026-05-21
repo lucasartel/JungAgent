@@ -91,6 +91,7 @@ class RuminationEngine:
                 maturity_score REAL DEFAULT 0.0,
                 revisit_count INTEGER DEFAULT 0,
                 evidence_count INTEGER DEFAULT 2,
+                connection_count INTEGER DEFAULT 0,
                 connected_tension_ids TEXT,
                 first_detected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 last_revisited_at DATETIME,
@@ -169,6 +170,11 @@ class RuminationEngine:
                 cursor.execute(f"ALTER TABLE rumination_fragments ADD COLUMN {column_def}")
             except sqlite3.OperationalError:
                 pass
+
+        try:
+            cursor.execute("ALTER TABLE rumination_tensions ADD COLUMN connection_count INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
 
         self.db.conn.commit()
         logger.info("✅ Tabelas de ruminação criadas/verificadas")
@@ -691,7 +697,9 @@ class RuminationEngine:
             "tensions_processed": 0,
             "matured": 0,
             "archived": 0,
-            "ready_for_synthesis": 0
+            "ready_for_synthesis": 0,
+            "connections_found": 0,
+            "forced_ready": 0,
         }
 
         for tension_row in open_tensions:
@@ -720,6 +728,15 @@ class RuminationEngine:
                 tension['evidence_count'] += new_evidence_count
                 tension['last_evidence_at'] = datetime.now().isoformat()
 
+            related_tension_ids = self._find_related_tensions(tension)
+            if related_tension_ids:
+                tension["connected_tension_ids"] = json.dumps(related_tension_ids)
+                tension["connection_count"] = max(
+                    int(tension.get("connection_count") or 0),
+                    len(related_tension_ids),
+                )
+                stats["connections_found"] += len(related_tension_ids)
+
             # 2. Calcular maturidade
             old_maturity = tension.get('maturity_score', 0.0)
             maturity = self._calculate_maturity(tension)
@@ -740,8 +757,18 @@ class RuminationEngine:
             days_since_evidence = (datetime.now() - datetime.fromisoformat(_last_evidence)).days
 
             new_status = tension['status']
+            forced_temporal_synthesis = (
+                days_since_detection >= MAX_DAYS_FOR_SYNTHESIS
+                and int(tension.get("evidence_count") or 0) >= MIN_EVIDENCE_FOR_SYNTHESIS
+            )
 
-            if maturity >= MIN_MATURITY_FOR_SYNTHESIS and days_since_detection >= MIN_DAYS_FOR_SYNTHESIS:
+            if (
+                maturity >= MIN_MATURITY_FOR_SYNTHESIS
+                and days_since_detection >= MIN_DAYS_FOR_SYNTHESIS
+            ) or forced_temporal_synthesis:
+                if forced_temporal_synthesis and maturity < MIN_MATURITY_FOR_SYNTHESIS:
+                    maturity = MIN_MATURITY_FOR_SYNTHESIS
+                    stats["forced_ready"] += 1
                 new_status = "ready_for_synthesis"
                 stats["ready_for_synthesis"] += 1
                 logger.info(
@@ -768,7 +795,9 @@ class RuminationEngine:
                     last_revisited_at = ?,
                     status = ?,
                     evidence_count = ?,
-                    last_evidence_at = ?
+                    last_evidence_at = ?,
+                    connection_count = ?,
+                    connected_tension_ids = ?
                 WHERE id = ?
             """, (
                 maturity,
@@ -776,6 +805,8 @@ class RuminationEngine:
                 new_status,
                 tension['evidence_count'],
                 tension.get('last_evidence_at'),
+                tension.get('connection_count') or 0,
+                tension.get('connected_tension_ids'),
                 tension_id
             ))
 
@@ -911,7 +942,13 @@ class RuminationEngine:
         revisit_factor = min(1.0, tension['revisit_count'] / 4.0)  # Máximo em 4 revisitas
 
         # Conexões (por enquanto sempre 0, implementar depois)
-        connection_factor = 0.0
+        connection_count = int(tension.get('connection_count') or 0)
+        if not connection_count:
+            try:
+                connection_count = len(json.loads(tension.get('connected_tension_ids') or '[]'))
+            except Exception:
+                connection_count = 0
+        connection_factor = min(1.0, connection_count / 3.0)
 
         # Intensidade
         intensity_factor = tension['intensity']
@@ -926,6 +963,77 @@ class RuminationEngine:
         )
 
         return min(1.0, maturity)
+
+    def _tokenize_rumination_text(self, text: str) -> set:
+        stopwords = {
+            "a", "o", "as", "os", "um", "uma", "uns", "umas", "de", "da", "do",
+            "das", "dos", "em", "no", "na", "nos", "nas", "para", "por", "com",
+            "sem", "que", "e", "ou", "mas", "se", "ao", "aos", "como", "sobre",
+            "entre", "mais", "menos", "muito", "pouco", "isso", "esse", "essa",
+            "este", "esta", "ser", "estar", "ter", "ha", "há", "nao", "não",
+        }
+        normalized = (text or "").lower()
+        tokens = set(re.findall(r"[a-zA-ZÀ-ÿ0-9_]{4,}", normalized))
+        return {token for token in tokens if token not in stopwords}
+
+    def _tension_anchor_terms(self, tension: Dict) -> set:
+        return self._tokenize_rumination_text(
+            " ".join(
+                [
+                    tension.get("tension_type") or "",
+                    tension.get("pole_a_content") or "",
+                    tension.get("pole_b_content") or "",
+                    tension.get("tension_description") or "",
+                ]
+            )
+        )
+
+    def _safe_json_list(self, value) -> List:
+        try:
+            parsed = json.loads(value or "[]")
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+
+    def _find_related_tensions(self, tension: Dict, limit: int = 5) -> List[int]:
+        anchor_terms = self._tension_anchor_terms(tension)
+        if not anchor_terms:
+            return []
+
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, tension_type, pole_a_content, pole_b_content, tension_description,
+                   intensity, maturity_score
+            FROM rumination_tensions
+            WHERE user_id = ?
+              AND id != ?
+              AND status IN ('open', 'maturing', 'ready_for_synthesis')
+            ORDER BY first_detected_at DESC
+            LIMIT 80
+            """,
+            (tension["user_id"], tension["id"]),
+        )
+
+        scored = []
+        for row in cursor.fetchall():
+            other = dict(row)
+            other_terms = self._tension_anchor_terms(other)
+            overlap = anchor_terms.intersection(other_terms)
+            if len(overlap) < 2:
+                continue
+
+            type_bonus = 1.0 if other.get("tension_type") == tension.get("tension_type") else 0.0
+            score = (
+                len(overlap)
+                + type_bonus
+                + float(other.get("intensity") or 0.0)
+                + float(other.get("maturity_score") or 0.0)
+            )
+            scored.append((score, int(other["id"])))
+
+        scored.sort(reverse=True)
+        return [tension_id for _, tension_id in scored[:limit]]
 
     def _count_related_fragments(self, fragments: List, tension: Dict) -> int:
         """
@@ -954,8 +1062,8 @@ class RuminationEngine:
         relevant_types = set()
         cursor = self.db.conn.cursor()
 
-        pole_a_ids = json.loads(tension.get('pole_a_fragment_ids') or '[]')
-        pole_b_ids = json.loads(tension.get('pole_b_fragment_ids') or '[]')
+        pole_a_ids = self._safe_json_list(tension.get('pole_a_fragment_ids'))
+        pole_b_ids = self._safe_json_list(tension.get('pole_b_fragment_ids'))
         pole_fragment_ids = list(set(pole_a_ids + pole_b_ids))
 
         if pole_fragment_ids:
@@ -978,17 +1086,35 @@ class RuminationEngine:
 
         # Contar fragmentos recentes cujos tipos são relevantes para esta tensão
         id_placeholders = ','.join(['?' for _ in recent_ids])
-        type_placeholders = ','.join(['?' for _ in relevant_types])
         cursor.execute(
             f"""
-            SELECT COUNT(*) FROM rumination_fragments
+            SELECT id, fragment_type, content, context, source_quote
+            FROM rumination_fragments
             WHERE id IN ({id_placeholders})
-              AND fragment_type IN ({type_placeholders})
             """,
-            (*recent_ids, *relevant_types),
+            recent_ids,
         )
-        result = cursor.fetchone()
-        count = result[0] if result else 0
+        rows = cursor.fetchall()
+        anchor_terms = self._tension_anchor_terms(tension)
+        related_ids = set()
+
+        for row in rows:
+            row_text = " ".join(
+                [
+                    row["content"] or "",
+                    row["context"] or "",
+                    row["source_quote"] or "",
+                ]
+            )
+            lexical_overlap = anchor_terms.intersection(self._tokenize_rumination_text(row_text))
+            type_related = row["fragment_type"] in relevant_types
+
+            if type_related and len(lexical_overlap) >= 1:
+                related_ids.add(int(row["id"]))
+            elif len(lexical_overlap) >= 2:
+                related_ids.add(int(row["id"]))
+
+        count = len(related_ids)
 
         logger.debug(
             f"🧠 [RUMINATION] Fragment count tensão {tension.get('id', '?')}: "
