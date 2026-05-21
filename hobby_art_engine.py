@@ -581,7 +581,16 @@ Responda APENAS com JSON valido:
 
     def generate_cycle_art(self, user_id: str, cycle_id: str, world_state: Dict[str, Any]) -> Dict[str, Any]:
         inspirations = self._build_inspirations(user_id, cycle_id, world_state)
-        art_payload = self._compose_art_payload(inspirations)
+        try:
+            art_payload = self._compose_art_payload(inspirations)
+        except Exception as exc:
+            logger.warning("HobbyArtEngine nao conseguiu compor payload artistico: %s", exc)
+            return {
+                "success": False,
+                "status": "payload_failed",
+                "reason": str(exc) or "Hobby/Art nao conseguiu compor um prompt visual nesta passagem.",
+                "inspirations": inspirations,
+            }
 
         if self.image_provider == "minimax":
             image_result = self._generate_image_with_minimax(art_payload["image_prompt"])

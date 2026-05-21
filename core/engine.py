@@ -9,6 +9,7 @@ import hashlib
 import unicodedata
 from typing import List, Dict, Optional, Tuple, Any, Union
 from datetime import datetime, timedelta
+from collections import Counter
 
 from openai import OpenAI
 
