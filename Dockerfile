@@ -14,26 +14,24 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar todos os arquivos Python
+# Copy Python modules and package directories.
 COPY *.py .
+COPY core/ ./core/
 
-# Copiar o diretório admin_web com templates e static
+# Copy dashboard, helper scripts, and migrations.
 COPY admin_web/ ./admin_web/
 COPY scripts/ ./scripts/
-
-# CRÍTICO: Copiar pasta migrations com os SQL files
 COPY migrations/ ./migrations/
 
-# Criar diretórios necessários
+# Create runtime directories.
 RUN mkdir -p /data /app/chroma_db /app/logs
 
-# Verificar se migration file existe (debug)
+# Verify critical migration files are present in the image.
 RUN ls -la /app/migrations/ && \
     test -f /app/migrations/006_agent_identity_nuclear.sql && \
-    echo "✅ Migration file encontrado no build" || \
-    (echo "❌ Migration file NÃO encontrado no build" && exit 1)
+    echo "Migration file found in build" || \
+    (echo "Migration file NOT found in build" && exit 1)
 
 EXPOSE 8000
 
-# Rodar o main.py que gerencia bot + FastAPI
 CMD ["python", "main.py"]
