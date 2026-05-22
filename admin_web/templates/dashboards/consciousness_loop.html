@@ -80,8 +80,8 @@ function renderState(state, config) {
 
     document.getElementById("stateGrid").innerHTML = cards.map(([label, value]) => `
         <article class="metric-card-v2">
-            <span class="metric-label-v2">${label}</span>
-            <strong class="cell-primary-v2">${value}</strong>
+            <span class="metric-label-v2">${escapeHtml(label)}</span>
+            <strong class="cell-primary-v2">${escapeHtml(value)}</strong>
         </article>
     `).join("");
 }
@@ -90,9 +90,9 @@ function renderEvents(events) {
     document.getElementById("eventsList").innerHTML = events.length
         ? events.map((event) => `
             <article class="data-card-v2">
-                <strong>${event.phase}</strong> · ${event.status}
-                <div class="meta-line-v2">${event.trigger_source || "-"} · ${event.execution_mode || "-"}</div>
-                <div class="mono-block-v2">${event.output_summary || event.input_summary || ""}</div>
+                <strong>${escapeHtml(event.phase)}</strong> - ${escapeHtml(event.status)}
+                <div class="meta-line-v2">${escapeHtml(event.trigger_source || "-")} - ${escapeHtml(event.execution_mode || "-")}</div>
+                <div class="mono-block-v2">${escapeHtml(event.output_summary || event.input_summary || "")}</div>
             </article>
         `).join("")
         : '<div class="empty-row-v2">No events yet.</div>';
@@ -100,17 +100,56 @@ function renderEvents(events) {
 
 function renderResults(results) {
     document.getElementById("resultsList").innerHTML = results.length
-        ? results.map((result) => `
+        ? results.map((result) => {
+            const executive = result.executive_summary || {};
+            const warnings = result.warnings || parseJsonFallback(result.warnings_json, []);
+            const errors = result.errors || parseJsonFallback(result.errors_json, []);
+            const metrics = result.metrics || parseJsonFallback(result.metrics_json, {});
+            const signals = executive.signals || [];
+            const attentionClass = executive.needs_attention ? " table-badge-v2--warning" : "";
+            return `
             <article class="data-card-v2">
-                <strong>${result.phase}</strong> · ${result.status}
-                <div class="meta-line-v2">${result.trigger_name || "-"} · ${result.duration_ms || 0} ms</div>
-                <div class="mono-block-v2">${result.output_summary || ""}</div>
-                <div class="mono-block-v2">Warnings: ${result.warnings_json || "[]"}</div>
-                <div class="mono-block-v2">Errors: ${result.errors_json || "[]"}</div>
-                <div class="mono-block-v2">Metrics: ${result.metrics_json || "{}"}</div>
+                <div class="stack-compact-v2">
+                    <strong>${escapeHtml(result.phase)}</strong>
+                    <div class="meta-line-v2">${escapeHtml(result.trigger_name || "-")} - ${Number(result.duration_ms || 0)} ms</div>
+                </div>
+                <div class="tag-list-v2" style="margin-top: 10px;">
+                    <span class="table-badge-v2${attentionClass}">${escapeHtml(result.status || "unknown")}</span>
+                    ${renderSignalTags(signals)}
+                </div>
+                <div class="mono-block-v2">${escapeHtml(executive.headline || result.output_summary || "")}</div>
+                ${warnings.length ? `<div class="mono-block-v2">Warnings: ${escapeHtml(warnings.join(" - "))}</div>` : ""}
+                ${errors.length ? `<div class="mono-block-v2">Errors: ${escapeHtml(errors.join(" - "))}</div>` : ""}
+                <details class="details-v2">
+                    <summary>Raw metrics</summary>
+                    <pre class="code-block-v2">${escapeHtml(JSON.stringify(metrics, null, 2))}</pre>
+                </details>
             </article>
-        `).join("")
+        `;
+        }).join("")
         : '<div class="empty-row-v2">No results yet.</div>';
+}
+
+function parseJsonFallback(raw, fallback) {
+    if (!raw) return fallback;
+    try {
+        return JSON.parse(raw);
+    } catch (_) {
+        return fallback;
+    }
+}
+
+function renderSignalTags(signals) {
+    return (signals || []).map((signal) => `<span class="tag-v2">${escapeHtml(signal)}</span>`).join("");
+}
+
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
 }
 
 async function syncLoop() {

@@ -1066,6 +1066,12 @@ tr:hover {
     font-size: 0.82rem;
 }
 
+.table-badge-v2--warning {
+    border-color: rgba(245, 158, 11, 0.34);
+    background: rgba(245, 158, 11, 0.12);
+    color: #fde68a;
+}
+
 .cell-primary-v2 {
     color: #f3f6fb;
     font-weight: 600;

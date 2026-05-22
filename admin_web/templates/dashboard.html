@@ -119,6 +119,21 @@
                     <div class="meta-line-v2">{{ rumination_snapshot.fragments if rumination_snapshot else 0 }} fragments - {{ rumination_snapshot.open_tensions if rumination_snapshot else 0 }} open tensions - {{ rumination_snapshot.insights if rumination_snapshot else 0 }} insights</div>
                     <div class="mono-block-v2">{{ latest_insight.full_message or latest_insight.question_content or "No crystallized insight yet." if latest_insight else "No crystallized insight yet." }}</div>
                 </article>
+                <article class="data-card-v2">
+                    <strong>Rumination delivery</strong>
+                    <div class="meta-line-v2">
+                        {{ rumination_delivery.phase if rumination_delivery else "-" }} -
+                        {{ rumination_delivery.status if rumination_delivery else "-" }} -
+                        ready {{ rumination_delivery.ready_insights if rumination_delivery else 0 }} -
+                        delivered {{ rumination_delivery.delivered_total if rumination_delivery else 0 }}
+                    </div>
+                    <div class="mono-block-v2">{{ rumination_delivery.headline if rumination_delivery else "No rumination delivery snapshot yet." }}</div>
+                    {% if rumination_delivery and rumination_delivery.expressar_pressure_after_relief is not none %}
+                    <div class="tag-list-v2">
+                        <span class="tag-v2">Express pressure after relief: {{ rumination_delivery.expressar_pressure_after_relief }}</span>
+                    </div>
+                    {% endif %}
+                </article>
             </div>
         </section>
 

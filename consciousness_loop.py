@@ -17,7 +17,7 @@ import os
 import traceback
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from instance_config import AGENT_INSTANCE, ADMIN_USER_ID
@@ -1313,7 +1313,7 @@ class ConsciousnessLoopManager:
             bridge_metrics["contradictions_to_rumination"] = bridge.feed_contradictions_to_rumination()
 
         digest_stats = ruminator.digest(self.admin_user_id)
-        after_stats = ruminator.get_stats(self.admin_user_id)
+        after_digest_stats = ruminator.get_stats(self.admin_user_id)
 
         if phase_mode == "extro":
             bridge = IdentityRuminationBridge(self.db)
@@ -1321,7 +1321,29 @@ class ConsciousnessLoopManager:
             bridge_metrics["insights_to_core"] = bridge.sync_mature_insights_to_core()
             bridge_metrics["fragments_to_possible_selves"] = bridge.sync_fragments_to_possible_selves()
 
+        delivered_insight_id = None
+        delivery_relief_state = None
+        delivery_error = None
+        if phase_mode == "extro":
+            try:
+                delivered_insight_id = ruminator.check_and_deliver(self.admin_user_id)
+                if delivered_insight_id:
+                    from will_pressure import WillPressureEngine
+
+                    pressure_engine = WillPressureEngine(self.db)
+                    delivery_relief_state = pressure_engine.apply_rumination_delivery_relief(
+                        user_id=self.admin_user_id,
+                        cycle_id=result["cycle_id"],
+                        insight_id=delivered_insight_id,
+                    )
+            except Exception as exc:
+                delivery_error = str(exc)
+                logger.warning("LOOP RUMINATION delivery failed: %s", exc)
+
+        after_stats = ruminator.get_stats(self.admin_user_id)
+
         insights_delta = max(0, after_stats.get("insights_total", 0) - before_stats.get("insights_total", 0))
+        delivered_delta = max(0, after_stats.get("insights_delivered", 0) - before_stats.get("insights_delivered", 0))
         tensions_ready_delta = after_stats.get("tensions_ready", 0) - before_stats.get("tensions_ready", 0)
         fragments_delta = after_stats.get("fragments_total", 0) - before_stats.get("fragments_total", 0)
 
@@ -1331,10 +1353,14 @@ class ConsciousnessLoopManager:
             "phase_mode": phase_mode,
             "before_stats": before_stats,
             "digest_stats": digest_stats,
+            "after_digest_stats": after_digest_stats,
             "after_stats": after_stats,
             "bridge_metrics": bridge_metrics,
             "injected_materials": injected_materials,
-            "delivery_suppressed": True,
+            "delivery_suppressed": phase_mode != "extro",
+            "delivered_insight_id": delivered_insight_id,
+            "delivery_relief_state": delivery_relief_state,
+            "delivery_error": delivery_error,
         }
         result["metrics"].update(
             {
@@ -1347,6 +1373,8 @@ class ConsciousnessLoopManager:
                 "insights_delta": insights_delta,
                 "insights_ready": after_stats.get("insights_ready", 0),
                 "insights_delivered": after_stats.get("insights_delivered", 0),
+                "insights_delivered_delta": delivered_delta,
+                "delivered_insight_id": delivered_insight_id or 0,
                 "tensions_processed": digest_stats.get("tensions_processed", 0),
                 "injected_material_count": injected_materials["material_count"],
                 "injected_fragment_count": injected_materials["fragment_count"],
@@ -1354,11 +1382,16 @@ class ConsciousnessLoopManager:
                 "bridge_insights_to_core": bridge_metrics["insights_to_core"],
                 "bridge_fragments_synced": bridge_metrics["fragments_to_possible_selves"],
                 "bridge_contradictions_fed": bridge_metrics["contradictions_to_rumination"],
-                "delivery_suppressed": 1,
+                "delivery_suppressed": 1 if phase_mode != "extro" else 0,
             }
         )
 
-        if insights_delta > 0:
+        if delivered_insight_id:
+            result["output_summary"] = (
+                f"Ruminação {phase_mode} processou {digest_stats.get('tensions_processed', 0)} tensões, "
+                f"cristalizou {insights_delta} novos insights e entregou o insight {delivered_insight_id} ao admin."
+            )
+        elif insights_delta > 0:
             result["output_summary"] = (
                 f"Ruminação {phase_mode} processou {digest_stats.get('tensions_processed', 0)} tensões "
                 f"e cristalizou {insights_delta} novos insights."
@@ -1373,6 +1406,10 @@ class ConsciousnessLoopManager:
 
         if phase_mode == "extro" and sum(bridge_metrics.values()) == 0:
             result["warnings"].append("rumination_bridge_no_changes")
+        if delivery_error:
+            result["warnings"].append("rumination_delivery_error")
+        elif phase_mode == "extro" and after_stats.get("insights_ready", 0) > 0 and not delivered_insight_id:
+            result["warnings"].append("rumination_delivery_deferred")
         if injected_materials["material_count"] == 0:
             result["warnings"].append(f"rumination_{phase_mode}_no_external_material")
 
@@ -1771,7 +1808,113 @@ class ConsciousnessLoopManager:
             """,
             (self.agent_instance, limit),
         )
-        return [dict(row) for row in cursor.fetchall()]
+        return [self._decorate_phase_result(dict(row)) for row in cursor.fetchall()]
+
+    def _decode_json_list(self, raw_value: Optional[str]) -> List:
+        if not raw_value:
+            return []
+        try:
+            value = json.loads(raw_value)
+            return value if isinstance(value, list) else []
+        except Exception:
+            return []
+
+    def _decode_json_dict(self, raw_value: Optional[str]) -> Dict:
+        if not raw_value:
+            return {}
+        try:
+            value = json.loads(raw_value)
+            return value if isinstance(value, dict) else {}
+        except Exception:
+            return {}
+
+    def _decorate_phase_result(self, row: Dict) -> Dict:
+        metrics = self._decode_json_dict(row.get("metrics_json"))
+        warnings = self._decode_json_list(row.get("warnings_json"))
+        errors = self._decode_json_list(row.get("errors_json"))
+        raw_result = self._decode_json_dict(row.get("raw_result_json"))
+        row["metrics"] = metrics
+        row["warnings"] = warnings
+        row["errors"] = errors
+        row["executive_summary"] = self._build_phase_executive_summary(row, metrics, warnings, errors, raw_result)
+        return row
+
+    def _build_phase_executive_summary(
+        self,
+        row: Dict,
+        metrics: Dict,
+        warnings: List,
+        errors: List,
+        raw_result: Dict,
+    ) -> Dict[str, Any]:
+        phase = row.get("phase") or "unknown"
+        status = row.get("status") or "unknown"
+        signals: List[str] = []
+        headline = row.get("output_summary") or "No summary recorded."
+
+        if phase in {"rumination_intro", "rumination_extro"}:
+            insights_delta = int(metrics.get("insights_delta") or 0)
+            delivered_id = int(metrics.get("delivered_insight_id") or 0)
+            delivered_delta = int(metrics.get("insights_delivered_delta") or 0)
+            ready = int(metrics.get("insights_ready") or 0)
+            tensions_ready = int(metrics.get("tensions_ready") or 0)
+            if delivered_id:
+                headline = f"Rumination delivered insight {delivered_id} and relieved expressive pressure."
+            elif insights_delta:
+                headline = f"Rumination crystallized {insights_delta} new insight(s); delivery is still pending."
+            elif ready:
+                headline = f"Rumination has {ready} ready insight(s), but delivery was deferred."
+            else:
+                headline = "Rumination processed material without producing a new deliverable insight."
+            signals.extend(
+                [
+                    f"New insights: {insights_delta}",
+                    f"Delivered: {delivered_delta}",
+                    f"Ready insights: {ready}",
+                    f"Ready tensions: {tensions_ready}",
+                ]
+            )
+            relief_state = ((raw_result.get("rumination") or {}).get("delivery_relief_state") or {})
+            if relief_state:
+                signals.append(f"Express pressure after relief: {relief_state.get('expressar_pressure', '-')}")
+        elif phase == "will":
+            dominant = metrics.get("dominant_will") or (raw_result.get("will_result") or {}).get("dominant_will")
+            signals.extend(
+                [
+                    f"Saber pressure: {metrics.get('saber_pressure', '-')}",
+                    f"Relational pressure: {metrics.get('relacionar_pressure', '-')}",
+                    f"Express pressure: {metrics.get('expressar_pressure', '-')}",
+                ]
+            )
+            if dominant:
+                headline = f"Will oriented the organism toward {dominant}."
+        elif phase == "dream":
+            delivered = int(metrics.get("dream_deliveries") or 0)
+            fragments = int(metrics.get("dream_rumination_fragments_delta") or 0)
+            signals.extend([f"Dreams delivered: {delivered}", f"Rumination fragments: {fragments}"])
+            if delivered:
+                headline = "Dream was generated, metabolized, and delivered to the admin."
+        elif phase == "hobby":
+            generated = int(metrics.get("art_generated") or 0)
+            signals.append(f"Art generated: {generated}")
+            if generated:
+                headline = "Art produced a visible expressive artifact."
+        elif phase == "work":
+            for key in ("briefs_created", "tickets_created", "artifacts_created_count"):
+                if key in metrics:
+                    signals.append(f"{key.replace('_', ' ').title()}: {metrics.get(key)}")
+
+        if warnings:
+            signals.append(f"Warnings: {len(warnings)}")
+        if errors:
+            signals.append(f"Errors: {len(errors)}")
+
+        return {
+            "headline": headline,
+            "status": status,
+            "signals": signals[:8],
+            "needs_attention": bool(errors or status == "failed" or any("delivery_error" in str(item) for item in warnings)),
+        }
 
     def get_phase_config(self) -> List[Dict]:
         self._ensure_phase_config()

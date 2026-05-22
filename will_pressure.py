@@ -657,6 +657,37 @@ ESTADO QUALITATIVO:
         }
         return self._update_state(state["id"], **updates)
 
+    def apply_rumination_delivery_relief(
+        self,
+        user_id: str,
+        cycle_id: str,
+        insight_id: int,
+        *,
+        relief_amount: float = 12.0,
+    ) -> Optional[Dict[str, Any]]:
+        """Alivia parcialmente expressar quando uma sintese ruminada chega ao admin."""
+        state = self._get_or_create_state(user_id=user_id, cycle_id=cycle_id)
+        current_expressar = float(state.get("expressar_pressure") or 0.0)
+        lowered_expressar = _clamp_pressure(max(8.0, current_expressar - float(relief_amount)))
+        pressure_map = {
+            "saber": float(state.get("saber_pressure") or 0.0),
+            "relacionar": float(state.get("relacionar_pressure") or 0.0),
+            "expressar": lowered_expressar,
+        }
+        return self._update_state(
+            state["id"],
+            expressar_pressure=lowered_expressar,
+            dominant_pressure=self._dominant_pressure(pressure_map),
+            threshold_crossed=1 if any(value >= self.threshold for value in pressure_map.values()) else 0,
+            last_release_will="expressar",
+            last_release_at=self._utcnow().isoformat(),
+            last_action_status="completed",
+            last_action_summary=self._truncate(
+                f"Entrega de insight ruminado {insight_id} aliviou expressar parcialmente.",
+                240,
+            ),
+        )
+
     def _inject_frustration_into_rumination(self, user_id: str, winner: str, action_summary: str) -> None:
         cursor = self.db.conn.cursor()
         cursor.execute(

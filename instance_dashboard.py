@@ -49,6 +49,26 @@ def _truncate(value: str | None, limit: int = 260) -> str:
     return cleaned[: limit - 3].rstrip(" ,.;:") + "..."
 
 
+def _json_dict(raw_value: str | None) -> Dict[str, Any]:
+    if not raw_value:
+        return {}
+    try:
+        value = json.loads(raw_value)
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def _json_list(raw_value: str | None) -> List[Any]:
+    if not raw_value:
+        return []
+    try:
+        value = json.loads(raw_value)
+        return value if isinstance(value, list) else []
+    except Exception:
+        return []
+
+
 def _safe_world_state() -> Dict[str, Any]:
     cache_candidates = [
         os.path.join("data", "world_state_cache.json"),
@@ -147,6 +167,53 @@ def get_art_dashboard_payload(db) -> Dict[str, Any]:
     }
 
 
+def get_latest_rumination_delivery_snapshot(db) -> Dict[str, Any]:
+    latest_phase = _fetch_one(
+        db,
+        """
+        SELECT phase, status, output_summary, warnings_json, errors_json, metrics_json, raw_result_json, created_at
+        FROM consciousness_loop_phase_results
+        WHERE agent_instance = ? AND phase IN ('rumination_intro', 'rumination_extro')
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (AGENT_INSTANCE,),
+    ) or {}
+    metrics = _json_dict(latest_phase.get("metrics_json"))
+    raw_result = _json_dict(latest_phase.get("raw_result_json"))
+    warnings = _json_list(latest_phase.get("warnings_json"))
+    errors = _json_list(latest_phase.get("errors_json"))
+    rumination_raw = raw_result.get("rumination") or {}
+    relief_state = rumination_raw.get("delivery_relief_state") or {}
+
+    delivered_id = int(metrics.get("delivered_insight_id") or 0)
+    ready_insights = _safe_count(db, "rumination_insights", "WHERE user_id = ? AND status = 'ready'", (ADMIN_USER_ID,))
+    delivered_total = _safe_count(db, "rumination_insights", "WHERE user_id = ? AND status = 'delivered'", (ADMIN_USER_ID,))
+
+    if delivered_id:
+        headline = f"Latest rumination delivery reached the admin as insight {delivered_id}."
+    elif ready_insights:
+        headline = f"{ready_insights} ruminative insight(s) are ready, but delivery is waiting for timing or cooldown."
+    elif latest_phase:
+        headline = "Latest rumination pass did not produce an external delivery."
+    else:
+        headline = "No rumination delivery cycle has been recorded yet."
+
+    return {
+        "headline": headline,
+        "phase": latest_phase.get("phase") or "-",
+        "status": latest_phase.get("status") or "-",
+        "created_at": latest_phase.get("created_at"),
+        "ready_insights": ready_insights,
+        "delivered_total": delivered_total,
+        "last_delivered_id": delivered_id,
+        "delivery_suppressed": bool(metrics.get("delivery_suppressed")),
+        "warnings": warnings,
+        "errors": errors,
+        "expressar_pressure_after_relief": relief_state.get("expressar_pressure"),
+    }
+
+
 def build_instance_cockpit_payload(db) -> Dict[str, Any]:
     setup = build_instance_setup_payload(db)
     settings_service = get_instance_settings_service(db)
@@ -201,6 +268,7 @@ def build_instance_cockpit_payload(db) -> Dict[str, Any]:
         ),
         "insights": _safe_count(db, "rumination_insights", "WHERE user_id = ?", (ADMIN_USER_ID,)),
     }
+    rumination_delivery = get_latest_rumination_delivery_snapshot(db)
 
     recent_events = _fetch_all(
         db,
@@ -245,6 +313,7 @@ def build_instance_cockpit_payload(db) -> Dict[str, Any]:
         "artifact_count": _safe_count(db, "agent_hobby_artifacts", "WHERE user_id = ?", (ADMIN_USER_ID,)),
         "work_snapshot": work_snapshot,
         "rumination_snapshot": rumination_snapshot,
+        "rumination_delivery": rumination_delivery,
         "recent_events": recent_events,
         "psychic_summary": psychic_summary,
         "admin_user_id": ADMIN_USER_ID,

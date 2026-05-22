@@ -16,6 +16,7 @@ Data: 2025-12-04
 import logging
 import json
 import re
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import sqlite3
@@ -1478,30 +1479,27 @@ class RuminationEngine:
             cursor = self.db.conn.cursor()
             cursor.execute("SELECT platform_id FROM users WHERE user_id = ?", (user_id,))
             user_row = cursor.fetchone()
+            telegram_sent = False
             
             if user_row and user_row['platform_id']:
                 telegram_id = user_row['platform_id']
-                import requests
-                import os
-                from rumination_config import Config
+                from core.config import Config
                 
                 # Fetching token (working around different possible configs)
                 token = getattr(Config, 'TELEGRAM_BOT_TOKEN', os.getenv('TELEGRAM_BOT_TOKEN'))
                 if token:
-                    try:
-                        url = f"https://api.telegram.org/bot{token}/sendMessage"
-                        requests.post(url, json={
-                            "chat_id": telegram_id,
-                            "text": message,
-                            "parse_mode": "Markdown"
-                        }, timeout=10)
+                    telegram_sent = self._send_telegram_text_chunks(token, telegram_id, message)
+                    if telegram_sent:
                         logger.info(f"   ✅ Mensagem de insight enviada via Telegram")
-                    except Exception as e:
-                        logger.error(f"   ⚠️ Falha requisição Telegram (insight será salvo mesmo assim): {e}")
+                    else:
+                        logger.error("   ⚠️ Falha ao enviar insight via Telegram; mantendo como ready")
                 else:
                     logger.warning("   ⚠️ TELEGRAM_BOT_TOKEN incerto, notificação não enviada no Telegram.")
             else:
                 logger.warning(f"   ⚠️ platform_id não encontrado para {user_id}. Pulando notificação no Telegram.")
+
+            if not telegram_sent:
+                return None
 
             # Atualizar status
             cursor = self.db.conn.cursor()
@@ -1515,6 +1513,7 @@ class RuminationEngine:
             # Salvar na memória como conversa proativa
             self.db.save_conversation(
                 user_id=user_id,
+                user_name=(user.get('user_name') or user.get('name') or 'Admin'),
                 user_input="[INSIGHT RUMINADO - SISTEMA PROATIVO]",
                 ai_response=message,
                 platform="proactive_rumination",
@@ -1542,6 +1541,61 @@ class RuminationEngine:
         except Exception as e:
             logger.error(f"❌ Erro na entrega: {e}")
             return None
+
+    def _chunk_delivery_text(self, text: str, limit: int = 3900) -> List[str]:
+        """Divide textos longos para evitar o limite de 4096 caracteres do Telegram."""
+        raw = (text or "").strip()
+        if not raw:
+            return []
+        if len(raw) <= limit:
+            return [raw]
+
+        chunks: List[str] = []
+        remaining = raw
+        while len(remaining) > limit:
+            split_at = remaining.rfind("\n", 0, limit)
+            if split_at < int(limit * 0.5):
+                split_at = remaining.rfind(" ", 0, limit)
+            if split_at < int(limit * 0.5):
+                split_at = limit
+            chunks.append(remaining[:split_at].rstrip())
+            remaining = remaining[split_at:].lstrip()
+        if remaining:
+            chunks.append(remaining)
+        return chunks
+
+    def _send_telegram_text_chunks(self, token: str, telegram_id: str, message: str) -> bool:
+        try:
+            import requests
+
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            parts = self._chunk_delivery_text(message)
+            if not parts:
+                return False
+
+            for index, part in enumerate(parts):
+                text = part
+                if len(parts) > 1:
+                    text = f"{part}\n\n[{index + 1}/{len(parts)}]"
+                response = requests.post(
+                    url,
+                    json={
+                        "chat_id": telegram_id,
+                        "text": text,
+                    },
+                    timeout=15,
+                )
+                if response.status_code != 200:
+                    logger.error(
+                        "Falha Telegram ao entregar insight (%s): %s",
+                        response.status_code,
+                        response.text[:300],
+                    )
+                    return False
+            return True
+        except Exception as exc:
+            logger.error(f"Falha requisicao Telegram ao entregar insight: {exc}")
+            return False
 
     # ========================================
     # MÉTODOS PÚBLICOS AUXILIARES
