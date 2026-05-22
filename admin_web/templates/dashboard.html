@@ -95,6 +95,33 @@
         </article>
     </section>
 
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Loop resilience</h2>
+                <p class="panel-subtitle-v2">Failure classification, retry policy, and whether the organism needs technical attention.</p>
+            </div>
+        </div>
+        <div class="panel-body-v2">
+            <article class="data-card-v2">
+                <strong>{{ "Needs attention" if loop_failure and loop_failure.needs_attention else "Healthy failure handling" }}</strong>
+                <div class="meta-line-v2">
+                    Phase {{ loop_failure.phase if loop_failure else "-" }} -
+                    category {{ loop_failure.category if loop_failure else "-" }} -
+                    consecutive {{ loop_failure.consecutive_failures if loop_failure else 0 }}
+                </div>
+                <div class="mono-block-v2">{{ loop_failure.headline if loop_failure else "No loop failure snapshot yet." }}</div>
+                {% if loop_failure and loop_failure.errors %}
+                <div class="tag-list-v2">
+                    {% for error in loop_failure.errors %}
+                    <span class="tag-v2">{{ error }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </article>
+        </div>
+    </section>
+
     <section class="dashboard-columns-v2 dashboard-columns-v2--balanced">
         <section class="panel-v2">
             <div class="panel-header-v2">

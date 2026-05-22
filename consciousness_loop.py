@@ -30,6 +30,39 @@ except ZoneInfoNotFoundError:
     LOOP_TIMEZONE = timezone(timedelta(hours=-3))
 DEFAULT_LOOP_MODE = "24h"
 CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 3
+DEFAULT_PHASE_RETRY_LIMIT = 2
+DEFAULT_PHASE_RETRY_COOLDOWN_MINUTES = 10
+
+RECOVERABLE_EXCEPTION_HINTS = (
+    "timeout",
+    "connection",
+    "temporar",
+    "rate",
+    "429",
+    "502",
+    "503",
+    "504",
+    "serviceunavailable",
+)
+CONFIGURATION_EXCEPTION_HINTS = (
+    "api key",
+    "token",
+    "credential",
+    "secret",
+    "not configured",
+    "nao configur",
+    "não configur",
+    "missing",
+    "environment",
+)
+FATAL_EXCEPTION_TYPES = {
+    "AttributeError",
+    "ImportError",
+    "ModuleNotFoundError",
+    "NameError",
+    "SyntaxError",
+    "TypeError",
+}
 
 
 @dataclass(frozen=True)
@@ -160,6 +193,182 @@ class ConsciousnessLoopManager:
             consecutive += 1
         return consecutive
 
+    def _classify_phase_exception(self, exc: Exception) -> Dict[str, Any]:
+        exc_type = exc.__class__.__name__
+        message = str(exc)
+        lowered = f"{exc_type} {message}".lower()
+
+        if exc_type in FATAL_EXCEPTION_TYPES:
+            return {
+                "category": "fatal_code",
+                "severity": "fatal",
+                "recoverable": False,
+                "admin_action": "code_fix_required",
+                "reason": f"{exc_type} usually indicates code/import/schema mismatch.",
+            }
+        if any(hint in lowered for hint in CONFIGURATION_EXCEPTION_HINTS):
+            return {
+                "category": "configuration",
+                "severity": "needs_admin",
+                "recoverable": False,
+                "admin_action": "check_environment_or_secret",
+                "reason": "The failure looks like missing or invalid runtime configuration.",
+            }
+        if any(hint in lowered for hint in RECOVERABLE_EXCEPTION_HINTS):
+            return {
+                "category": "recoverable_external",
+                "severity": "retryable",
+                "recoverable": True,
+                "admin_action": "watch_retry",
+                "reason": "The failure looks transient or external.",
+            }
+        if exc_type in {"JSONDecodeError", "ValueError"}:
+            return {
+                "category": "data_or_parse",
+                "severity": "retryable",
+                "recoverable": True,
+                "admin_action": "watch_retry",
+                "reason": "The failure looks like malformed generated or persisted data.",
+            }
+        return {
+            "category": "unknown",
+            "severity": "retryable",
+            "recoverable": True,
+            "admin_action": "watch_retry",
+            "reason": "No fatal signature was detected.",
+        }
+
+    def _get_phase_retry_policy(self, phase_key: str) -> Dict[str, Any]:
+        self._ensure_phase_config()
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT retry_limit, cooldown_minutes
+            FROM consciousness_phase_config
+            WHERE phase = ?
+            LIMIT 1
+            """,
+            (phase_key,),
+        )
+        row = cursor.fetchone()
+        retry_limit = DEFAULT_PHASE_RETRY_LIMIT
+        cooldown_minutes = DEFAULT_PHASE_RETRY_COOLDOWN_MINUTES
+        if row:
+            try:
+                retry_limit = int(row["retry_limit"] if row["retry_limit"] is not None else retry_limit)
+            except Exception:
+                retry_limit = DEFAULT_PHASE_RETRY_LIMIT
+            try:
+                cooldown_minutes = int(row["cooldown_minutes"] if row["cooldown_minutes"] is not None else cooldown_minutes)
+            except Exception:
+                cooldown_minutes = DEFAULT_PHASE_RETRY_COOLDOWN_MINUTES
+        return {
+            "retry_limit": max(0, retry_limit),
+            "cooldown_minutes": max(0, cooldown_minutes),
+            "max_attempts": 1 + max(0, retry_limit),
+        }
+
+    def _get_latest_phase_attempt(self, cycle_id: str, phase_key: str) -> Optional[Dict[str, Any]]:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, status, completed_at, metrics_json, raw_result_json, errors_json, warnings_json
+            FROM consciousness_loop_phase_results
+            WHERE agent_instance = ? AND cycle_id = ? AND phase = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (self.agent_instance, cycle_id, phase_key),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["metrics"] = self._decode_json_dict(data.get("metrics_json"))
+        data["raw_result"] = self._decode_json_dict(data.get("raw_result_json"))
+        data["errors"] = self._decode_json_list(data.get("errors_json"))
+        data["warnings"] = self._decode_json_list(data.get("warnings_json"))
+        return data
+
+    def _assess_phase_retry(
+        self,
+        cycle_id: str,
+        phase_key: str,
+        run_stats: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        latest = self._get_latest_phase_attempt(cycle_id, phase_key)
+        policy = self._get_phase_retry_policy(phase_key)
+        if run_stats.get("successful_runs", 0) > 0:
+            return {"should_retry": False, "reason": "phase_already_succeeded", "policy": policy, "latest": latest}
+        if not latest:
+            return {"should_retry": True, "reason": "phase_never_executed", "policy": policy, "latest": latest}
+        if latest.get("status") != "failed":
+            return {"should_retry": False, "reason": "latest_attempt_not_failed", "policy": policy, "latest": latest}
+
+        failure_policy = (latest.get("raw_result") or {}).get("failure_policy") or {}
+        if failure_policy and not failure_policy.get("recoverable", True):
+            return {
+                "should_retry": False,
+                "reason": "non_recoverable_failure",
+                "policy": policy,
+                "latest": latest,
+                "failure_policy": failure_policy,
+            }
+        if run_stats.get("total_runs", 0) >= policy["max_attempts"]:
+            return {
+                "should_retry": False,
+                "reason": "retry_limit_reached",
+                "policy": policy,
+                "latest": latest,
+                "failure_policy": failure_policy,
+            }
+
+        cooldown_until = None
+        completed_at = latest.get("completed_at")
+        if completed_at and policy["cooldown_minutes"] > 0:
+            try:
+                last_completed = datetime.fromisoformat(str(completed_at))
+                cooldown_until = last_completed + timedelta(minutes=policy["cooldown_minutes"])
+                if cooldown_until > self._now():
+                    return {
+                        "should_retry": False,
+                        "reason": "cooldown_active",
+                        "cooldown_until": cooldown_until.isoformat(),
+                        "policy": policy,
+                        "latest": latest,
+                        "failure_policy": failure_policy,
+                    }
+            except Exception:
+                pass
+
+        return {
+            "should_retry": True,
+            "reason": "recoverable_failure_retry",
+            "cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
+            "policy": policy,
+            "latest": latest,
+            "failure_policy": failure_policy,
+        }
+
+    def _summarize_retry_assessment(self, retry_assessment: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not retry_assessment:
+            return None
+        latest = retry_assessment.get("latest") or {}
+        return {
+            "should_retry": bool(retry_assessment.get("should_retry")),
+            "reason": retry_assessment.get("reason"),
+            "cooldown_until": retry_assessment.get("cooldown_until"),
+            "policy": retry_assessment.get("policy"),
+            "failure_policy": retry_assessment.get("failure_policy"),
+            "latest": {
+                "id": latest.get("id"),
+                "status": latest.get("status"),
+                "completed_at": latest.get("completed_at"),
+                "errors": (latest.get("errors") or [])[:3],
+                "warnings": (latest.get("warnings") or [])[:3],
+            } if latest else None,
+        }
+
     def _ensure_phase_config(self):
         cursor = self.db.conn.cursor()
         for order_index, phase in enumerate(PHASES, start=1):
@@ -276,6 +485,27 @@ class ConsciousnessLoopManager:
         self.db.conn.commit()
         return phase_result_id
 
+    def _update_phase_result_payloads(self, phase_result_id: int, result: Dict) -> None:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            UPDATE consciousness_loop_phase_results
+            SET warnings_json = ?,
+                errors_json = ?,
+                metrics_json = ?,
+                raw_result_json = ?
+            WHERE id = ?
+            """,
+            (
+                self._serialize(result["warnings"]),
+                self._serialize(result["errors"]),
+                json.dumps(result["metrics"], ensure_ascii=False),
+                json.dumps(result["raw_result"], ensure_ascii=False),
+                phase_result_id,
+            ),
+        )
+        self.db.conn.commit()
+
     def _phase_input_summary(self, cycle_id: str, phase_key: str) -> str:
         cursor = self.db.conn.cursor()
         cursor.execute(
@@ -362,6 +592,96 @@ class ConsciousnessLoopManager:
     def _promote_from_placeholder(self, result: Dict):
         result["warnings"] = [warning for warning in result["warnings"] if warning != "placeholder_execution"]
         result["metrics"]["phase_placeholder"] = 0
+
+    def _feed_loop_failure_to_rumination(
+        self,
+        phase_result_id: int,
+        phase: LoopPhase,
+        result: Dict,
+        consecutive_failures: int,
+    ) -> Optional[int]:
+        if consecutive_failures < CONSECUTIVE_FAILURE_ALERT_THRESHOLD:
+            return None
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table' AND name = 'rumination_fragments'
+                """
+            )
+            if not cursor.fetchone():
+                return None
+
+            source_id = str(phase_result_id)
+            cursor.execute(
+                """
+                SELECT id
+                FROM rumination_fragments
+                WHERE user_id = ? AND source_kind = ? AND source_table = ? AND source_id = ?
+                LIMIT 1
+                """,
+                (self.admin_user_id, "loop_failure", "consciousness_loop_phase_results", source_id),
+            )
+            if cursor.fetchone():
+                return None
+
+            failure_policy = (result.get("raw_result") or {}).get("failure_policy") or {}
+            error_text = "; ".join(result.get("errors") or []) or "falha sem erro textual"
+            content = (
+                f"A fase {phase.label} falhou {consecutive_failures} vezes consecutivas. "
+                f"Categoria: {failure_policy.get('category', 'unknown')}. "
+                f"Isto tensiona a continuidade do loop com a necessidade de reparo técnico."
+            )
+            context = (
+                f"Loop failure in cycle {result.get('cycle_id')} / phase {phase.key}. "
+                f"Latest error: {error_text[:500]}"
+            )
+            cursor.execute(
+                """
+                INSERT INTO rumination_fragments (
+                    user_id, fragment_type, content, context,
+                    source_conversation_id, source_quote,
+                    source_kind, source_table, source_id, source_metadata_json,
+                    emotional_weight, tension_level
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    self.admin_user_id,
+                    "contradicao",
+                    content,
+                    context,
+                    None,
+                    error_text[:500],
+                    "loop_failure",
+                    "consciousness_loop_phase_results",
+                    source_id,
+                    json.dumps(
+                        {
+                            "phase": phase.key,
+                            "phase_label": phase.label,
+                            "consecutive_failures": consecutive_failures,
+                            "failure_policy": failure_policy,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    0.72,
+                    0.82,
+                ),
+            )
+            self.db.conn.commit()
+            fragment_id = cursor.lastrowid
+            logger.info(
+                "LOOP FAILURE fed to rumination phase=%s result_id=%s fragment_id=%s",
+                phase.key,
+                phase_result_id,
+                fragment_id,
+            )
+            return fragment_id
+        except Exception as exc:
+            logger.warning("LOOP FAILURE could not feed rumination: %s", exc)
+            return None
 
     def _count_rows(self, table: str, where_clause: str = "", params: tuple = ()) -> int:
         cursor = self.db.conn.cursor()
@@ -1506,24 +1826,34 @@ class ConsciousnessLoopManager:
                 phase.key,
                 trigger_source,
             )
+            failure_policy = self._classify_phase_exception(exc)
             result["status"] = "failed"
             result["warnings"] = [warning for warning in result["warnings"] if warning != "placeholder_execution"]
+            result["warnings"].append(f"failure_category_{failure_policy['category']}")
             result["errors"].append(f"{exc.__class__.__name__}: {exc}")
             result["output_summary"] = f"Fase {phase.label} falhou e sera reavaliada pelo loop."
             result["metrics"]["phase_placeholder"] = 0
             result["metrics"]["phase_exception"] = 1
+            result["metrics"]["failure_recoverable"] = 1 if failure_policy.get("recoverable") else 0
+            result["metrics"]["failure_category"] = failure_policy["category"]
+            result["metrics"]["failure_severity"] = failure_policy["severity"]
             result["raw_result"]["exception"] = {
                 "type": exc.__class__.__name__,
                 "message": str(exc),
                 "traceback": traceback.format_exc(limit=12),
             }
+            result["raw_result"]["failure_policy"] = failure_policy
 
         self._finalize_phase_result_timing(result)
 
         consecutive_failures = 0
         if result["status"] == "failed":
             consecutive_failures = self._count_consecutive_phase_failures(phase.key) + 1
+            retry_policy = self._get_phase_retry_policy(phase.key)
             result["metrics"]["consecutive_failures"] = consecutive_failures
+            result["metrics"]["retry_limit"] = retry_policy["retry_limit"]
+            result["metrics"]["retry_cooldown_minutes"] = retry_policy["cooldown_minutes"]
+            result["raw_result"]["retry_policy"] = retry_policy
             if consecutive_failures >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD:
                 result["warnings"].append(f"consecutive_failures_{consecutive_failures}")
                 result["output_summary"] = (
@@ -1532,6 +1862,17 @@ class ConsciousnessLoopManager:
                 )
 
         phase_result_id = self._save_phase_result(result)
+        if result["status"] == "failed":
+            fragment_id = self._feed_loop_failure_to_rumination(
+                phase_result_id=phase_result_id,
+                phase=phase,
+                result=result,
+                consecutive_failures=consecutive_failures,
+            )
+            if fragment_id:
+                result["metrics"]["failure_rumination_fragment_id"] = fragment_id
+                result["raw_result"]["failure_rumination_fragment_id"] = fragment_id
+                self._update_phase_result_payloads(phase_result_id, result)
         self._insert_event(
             cycle_id=cycle_id,
             phase=phase.key,
@@ -1714,20 +2055,29 @@ class ConsciousnessLoopManager:
             )
             self.db.conn.commit()
             run_stats = self._get_phase_run_stats(cycle_id, target_phase.key)
-            should_execute_missing_phase = run_stats["successful_runs"] == 0
-            if should_execute_missing_phase:
+            retry_assessment = self._assess_phase_retry(cycle_id, target_phase.key, run_stats)
+            if retry_assessment["should_retry"]:
                 notify_this_execution = notify_admin and run_stats["total_runs"] == 0
+                execution_mode = "automatic" if run_stats["total_runs"] == 0 else "automatic_retry"
                 phase_result = self.execute_phase(
                     target_phase.key,
                     cycle_id,
                     trigger_source=trigger_source,
-                    execution_mode="automatic",
+                    execution_mode=execution_mode,
                     notify_admin=notify_this_execution,
                 )
-                if should_execute_missing_phase and run_stats["total_runs"] == 0:
+                if run_stats["total_runs"] == 0:
                     action = "phase_window_first_run"
                 else:
                     action = "phase_window_retry"
+            elif (
+                run_stats["successful_runs"] == 0
+                and run_stats["total_runs"] > 0
+                and retry_assessment.get("reason") != "phase_already_succeeded"
+            ):
+                action = f"phase_retry_deferred:{retry_assessment.get('reason')}"
+            else:
+                retry_assessment = None
 
         return {
             "success": True,
@@ -1736,6 +2086,7 @@ class ConsciousnessLoopManager:
             "current_phase": target_phase.key,
             "next_phase": next_phase.key,
             "phase_result": phase_result,
+            "retry_assessment": self._summarize_retry_assessment(retry_assessment),
         }
 
     def execute_current_phase(self, trigger_source: str = "manual_admin_trigger", notify_admin: bool = False) -> Dict:
@@ -1852,7 +2203,26 @@ class ConsciousnessLoopManager:
         signals: List[str] = []
         headline = row.get("output_summary") or "No summary recorded."
 
-        if phase in {"rumination_intro", "rumination_extro"}:
+        if status == "failed":
+            failure_policy = raw_result.get("failure_policy") or {}
+            retry_policy = raw_result.get("retry_policy") or {}
+            category = failure_policy.get("category") or metrics.get("failure_category") or "unknown"
+            recoverable = failure_policy.get("recoverable")
+            headline = (
+                f"{phase} failed as {category}. "
+                f"{'Retry is allowed' if recoverable is not False else 'Retry is blocked until repair'}."
+            )
+            signals.extend(
+                [
+                    f"Category: {category}",
+                    f"Consecutive failures: {metrics.get('consecutive_failures', 1)}",
+                    f"Retry limit: {retry_policy.get('retry_limit', metrics.get('retry_limit', '-'))}",
+                    f"Cooldown: {retry_policy.get('cooldown_minutes', metrics.get('retry_cooldown_minutes', '-'))} min",
+                ]
+            )
+            if metrics.get("failure_rumination_fragment_id"):
+                signals.append(f"Rumination fragment: {metrics.get('failure_rumination_fragment_id')}")
+        elif phase in {"rumination_intro", "rumination_extro"}:
             insights_delta = int(metrics.get("insights_delta") or 0)
             delivered_id = int(metrics.get("delivered_insight_id") or 0)
             delivered_delta = int(metrics.get("insights_delivered_delta") or 0)

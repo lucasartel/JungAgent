@@ -214,6 +214,54 @@ def get_latest_rumination_delivery_snapshot(db) -> Dict[str, Any]:
     }
 
 
+def get_latest_loop_failure_snapshot(db) -> Dict[str, Any]:
+    latest_failure = _fetch_one(
+        db,
+        """
+        SELECT id, phase, status, output_summary, warnings_json, errors_json, metrics_json, raw_result_json, created_at
+        FROM consciousness_loop_phase_results
+        WHERE agent_instance = ? AND status = 'failed'
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (AGENT_INSTANCE,),
+    ) or {}
+    if not latest_failure:
+        return {
+            "headline": "No loop phase failure is currently recorded.",
+            "phase": "-",
+            "category": "-",
+            "consecutive_failures": 0,
+            "needs_attention": False,
+        }
+
+    metrics = _json_dict(latest_failure.get("metrics_json"))
+    raw_result = _json_dict(latest_failure.get("raw_result_json"))
+    warnings = _json_list(latest_failure.get("warnings_json"))
+    errors = _json_list(latest_failure.get("errors_json"))
+    failure_policy = raw_result.get("failure_policy") or {}
+    category = failure_policy.get("category") or metrics.get("failure_category") or "unknown"
+    consecutive = int(metrics.get("consecutive_failures") or 1)
+    recoverable = failure_policy.get("recoverable", True)
+    if recoverable:
+        headline = f"Latest failure in {latest_failure.get('phase')} is classified as {category}; retry policy may recover it."
+    else:
+        headline = f"Latest failure in {latest_failure.get('phase')} needs repair before retrying."
+
+    return {
+        "headline": headline,
+        "phase": latest_failure.get("phase") or "-",
+        "category": category,
+        "consecutive_failures": consecutive,
+        "created_at": latest_failure.get("created_at"),
+        "recoverable": bool(recoverable),
+        "needs_attention": bool(errors or not recoverable or consecutive >= 3),
+        "warnings": warnings,
+        "errors": errors[:3],
+        "admin_action": failure_policy.get("admin_action"),
+    }
+
+
 def build_instance_cockpit_payload(db) -> Dict[str, Any]:
     setup = build_instance_setup_payload(db)
     settings_service = get_instance_settings_service(db)
@@ -269,6 +317,7 @@ def build_instance_cockpit_payload(db) -> Dict[str, Any]:
         "insights": _safe_count(db, "rumination_insights", "WHERE user_id = ?", (ADMIN_USER_ID,)),
     }
     rumination_delivery = get_latest_rumination_delivery_snapshot(db)
+    loop_failure = get_latest_loop_failure_snapshot(db)
 
     recent_events = _fetch_all(
         db,
@@ -314,6 +363,7 @@ def build_instance_cockpit_payload(db) -> Dict[str, Any]:
         "work_snapshot": work_snapshot,
         "rumination_snapshot": rumination_snapshot,
         "rumination_delivery": rumination_delivery,
+        "loop_failure": loop_failure,
         "recent_events": recent_events,
         "psychic_summary": psychic_summary,
         "admin_user_id": ADMIN_USER_ID,
