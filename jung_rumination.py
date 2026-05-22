@@ -215,6 +215,11 @@ class RuminationEngine:
             return []
 
         user_input = conversation_data['user_input']
+        source_kind = conversation_data.get("source_kind") or "conversation"
+        source_table = conversation_data.get("source_table")
+        source_id = conversation_data.get("source_id")
+        source_metadata = conversation_data.get("source_metadata") or {}
+        source_metadata_json = json.dumps(source_metadata, ensure_ascii=False) if source_metadata else None
 
         # Montar prompt de extração
         prompt = EXTRACTION_PROMPT.format(
@@ -253,8 +258,9 @@ class RuminationEngine:
                     INSERT INTO rumination_fragments (
                         user_id, fragment_type, content, context,
                         source_conversation_id, source_quote,
+                        source_kind, source_table, source_id, source_metadata_json,
                         emotional_weight, tension_level
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     user_id,
                     frag['type'],
@@ -262,6 +268,10 @@ class RuminationEngine:
                     frag.get('context', ''),
                     conversation_data['conversation_id'],
                     frag['quote'],
+                    source_kind,
+                    source_table,
+                    str(source_id) if source_id is not None else None,
+                    source_metadata_json,
                     frag['emotional_weight'],
                     max(tension, activation_score)
                 ))

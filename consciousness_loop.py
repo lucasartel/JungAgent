@@ -371,6 +371,17 @@ class ConsciousnessLoopManager:
         cursor.execute(query, params)
         return int(cursor.fetchone()[0])
 
+    def _count_dream_rumination_fragments(self) -> int:
+        try:
+            return self._count_rows(
+                "rumination_fragments",
+                "user_id = ? AND source_kind = ?",
+                (self.admin_user_id, "dream"),
+            )
+        except Exception as exc:
+            logger.debug("LOOP DREAM sem contagem de fragmentos oniricos: %s", exc)
+            return 0
+
     def _ingest_loop_materials_to_rumination(self, ruminator, phase_mode: str, cycle_id: str) -> Dict:
         synthetic_id = -int(self._now().timestamp())
         injected_fragments: List[int] = []
@@ -925,11 +936,17 @@ class ConsciousnessLoopManager:
 
         self._promote_from_placeholder(result)
         dreams_before = self._count_rows("agent_dreams", "user_id = ?", (self.admin_user_id,))
+        dream_fragments_before = self._count_dream_rumination_fragments()
         dream_engine = DreamEngine(self.db)
         success = dream_engine.generate_dream(self.admin_user_id)
         result["raw_result"]["dream_generated"] = success
         dreams_after = self._count_rows("agent_dreams", "user_id = ?", (self.admin_user_id,))
+        dream_fragments_after = self._count_dream_rumination_fragments()
         result["metrics"]["dream_rows_delta"] = max(0, dreams_after - dreams_before)
+        result["metrics"]["dream_rumination_fragments_delta"] = max(
+            0,
+            dream_fragments_after - dream_fragments_before,
+        )
 
         if success:
             cursor = self.db.conn.cursor()
@@ -978,13 +995,15 @@ class ConsciousnessLoopManager:
                 latest_dream["status"] = "delivered"
             if delivered_ids:
                 result["output_summary"] = (
-                    "Dream Engine executado com sucesso, sonho registrado e entregue ao admin no proprio loop."
+                    "Dream Engine executado com sucesso, sonho registrado, metabolizado na ruminacao e entregue ao admin."
                 )
             else:
                 result["warnings"].append("dream_delivery_pending")
                 result["output_summary"] = (
-                    "Dream Engine executado com sucesso e ultimo sonho registrado, mas a entrega ao admin ficou pendente."
+                    "Dream Engine executado com sucesso e ultimo sonho registrado/metabolizado, mas a entrega ao admin ficou pendente."
                 )
+            if result["metrics"]["dream_rumination_fragments_delta"] <= 0:
+                result["warnings"].append("dream_no_rumination_fragments")
         else:
             result["status"] = "partial_success"
             result["warnings"].append("dream_not_generated")

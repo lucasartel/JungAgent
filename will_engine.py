@@ -420,6 +420,26 @@ class WillEngine:
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    def _active_rumination_tensions(self, user_id: str, limit: int = 4) -> List[Dict[str, Any]]:
+        cursor = self.db.conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT id, tension_type, pole_a_content, pole_b_content,
+                       tension_description, intensity, maturity_score, status
+                FROM rumination_tensions
+                WHERE user_id = ?
+                  AND status IN ('open', 'maturing', 'ready_for_synthesis')
+                ORDER BY maturity_score DESC, intensity DESC, id DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as exc:
+            logger.debug("WillEngine: sem tensoes ruminativas ativas: %s", exc)
+            return []
+
     def _latest_meta_consciousness(self, user_id: str) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
         cursor.execute(
@@ -481,6 +501,7 @@ class WillEngine:
     ) -> Dict[str, Any]:
         dream = self._latest_dream(user_id)
         rumination = self._recent_rumination(user_id)
+        active_tensions = self._active_rumination_tensions(user_id)
         meta = self._latest_meta_consciousness(user_id)
         hobby = self._latest_hobby(user_id)
         world = self._latest_world_state(world_state)
@@ -524,6 +545,19 @@ class WillEngine:
                 }
                 for item in rumination
             ],
+            "active_rumination_tensions": [
+                {
+                    "id": item.get("id"),
+                    "type": item.get("tension_type"),
+                    "pole_a": self._truncate(item.get("pole_a_content", ""), 160),
+                    "pole_b": self._truncate(item.get("pole_b_content", ""), 160),
+                    "description": self._truncate(item.get("tension_description", ""), 220),
+                    "intensity": item.get("intensity"),
+                    "maturity": item.get("maturity_score"),
+                    "status": item.get("status"),
+                }
+                for item in active_tensions
+            ],
             "world": {
                 "atmosphere": world.get("atmosphere"),
                 "dominant_tensions": world.get("dominant_tensions", [])[:3],
@@ -544,6 +578,7 @@ class WillEngine:
             "source_summary": {
                 "conversation_count": len(conversations),
                 "rumination_count": len(rumination),
+                "active_rumination_tension_count": len(active_tensions),
                 "has_dream": 1 if dream else 0,
                 "has_world": 1 if world else 0,
                 "has_meta_consciousness": 1 if meta else 0,
@@ -624,6 +659,14 @@ class WillEngine:
         texts.extend([hobby.get("summary", ""), hobby.get("critique_summary", "")])
         for insight in payload.get("rumination", []):
             texts.extend([insight.get("symbol", ""), insight.get("question", ""), insight.get("message", "")])
+        for tension in payload.get("active_rumination_tensions", []):
+            texts.extend([
+                tension.get("type", ""),
+                tension.get("pole_a", ""),
+                tension.get("pole_b", ""),
+                tension.get("description", ""),
+                tension.get("status", ""),
+            ])
 
         aggregate_scores = {key: 0.0 for key in WILL_ORDER}
         for text in texts:

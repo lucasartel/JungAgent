@@ -451,7 +451,15 @@ Responda APENAS com um objeto JSON valido:
 
                 self._extract_dream_insight(dream_id, user_id, dream_content)
                 self._generate_dream_image(dream_id, dream_content, symbolic_theme)
-                self._feed_dream_to_rumination(user_id, dream_content)
+                self._feed_dream_to_rumination(
+                    user_id=user_id,
+                    dream_id=dream_id,
+                    dream_content=dream_content,
+                    symbolic_theme=symbolic_theme,
+                    regulatory_function=regulatory_function,
+                    compensated_attitude=compensated_attitude,
+                    dream_mood=dream_mood,
+                )
 
                 return True
 
@@ -674,17 +682,43 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
         except Exception as e:
             logger.error(f"Falha ao vincular imagem do sonho: {e}")
 
-    def _feed_dream_to_rumination(self, user_id: str, dream_content: str):
+    def _feed_dream_to_rumination(
+        self,
+        user_id: str,
+        dream_id: int,
+        dream_content: str,
+        symbolic_theme: str = "",
+        regulatory_function: str = "",
+        compensated_attitude: str = "",
+        dream_mood: str = "",
+    ):
         """Dispara o sonho de volta para o modulo de ruminacao como material continuo."""
         try:
+            dream_summary = (
+                f"[MATERIAL ONIRICO GERADO #{dream_id}] "
+                f"Tema: {symbolic_theme or 'sem tema nomeado'}. "
+                f"Funcao reguladora: {regulatory_function or 'nao explicitada'}. "
+                f"Atitude compensada: {compensated_attitude or 'nao explicitada'}. "
+                f"Afeto: {dream_mood or 'nao nomeado'}. "
+                f"Narrativa: {dream_content}"
+            )
             mock_interaction = {
                 "user_id": user_id,
-                "user_input": f"[MATERIAL ONIRICO GERADO] Uma imagem veio a minha mente: {dream_content}",
+                "user_input": dream_summary,
                 "ai_response": "",
-                "conversation_id": -999,
+                "conversation_id": -int(dream_id),
                 "tension_level": 1.0,
                 "affective_charge": 1.0,
                 "existential_depth": 1.0,
+                "source_kind": "dream",
+                "source_table": "agent_dreams",
+                "source_id": dream_id,
+                "source_metadata": {
+                    "symbolic_theme": symbolic_theme,
+                    "regulatory_function": regulatory_function,
+                    "compensated_attitude": compensated_attitude,
+                    "dream_mood": dream_mood,
+                },
             }
 
             ruminator = RuminationEngine(self.db)
