@@ -11,7 +11,7 @@ epistemic hunger, and recent identity shifts.
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from instance_config import ADMIN_USER_ID, AGENT_INSTANCE
@@ -920,6 +920,13 @@ class AgentIdentityContextBuilder:
         )
         row = cursor.fetchone()
         if not row:
+            return None
+
+        try:
+            created_at = datetime.fromisoformat(str(row[3]))
+            if created_at < datetime.now() - timedelta(hours=24):
+                return None
+        except Exception:
             return None
 
         return {

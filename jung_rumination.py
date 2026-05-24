@@ -770,7 +770,6 @@ class RuminationEngine:
             new_status = tension['status']
             forced_temporal_synthesis = (
                 days_since_detection >= MAX_DAYS_FOR_SYNTHESIS
-                and int(tension.get("evidence_count") or 0) >= MIN_EVIDENCE_FOR_SYNTHESIS
             )
 
             if (

@@ -538,6 +538,7 @@ class JungianEngine:
     def _build_agent_identity_text(self, user_id: str, user_input: str) -> str:
         is_admin = str(user_id) == self._get_admin_user_id()
         identity_state_injected = False
+        development_policy = self._get_development_policy(user_id, user_input)
 
         if is_admin:
             agent_identity_text = Config.ADMIN_IDENTITY_PROMPT
@@ -574,9 +575,27 @@ class JungianEngine:
                 dream_instruction = self._build_dream_instruction(pending_dream)
                 if dream_instruction:
                     self.db.mark_dream_delivered(pending_dream["id"])
-            return agent_identity_text + dream_instruction
+            return agent_identity_text + dream_instruction + development_policy.get("prompt_block", "")
 
-        return Config.STANDARD_IDENTITY_PROMPT
+        return Config.STANDARD_IDENTITY_PROMPT + development_policy.get("prompt_block", "")
+
+    def _get_development_policy(self, user_id: str, user_input: str) -> Dict[str, Any]:
+        try:
+            from agent_development_policy import get_development_policy
+
+            return get_development_policy(self.db, user_id, current_user_message=user_input)
+        except Exception as exc:
+            logger.debug("[DEVELOPMENT POLICY] fallback sem politica executiva: %s", exc)
+            return {
+                "state": {},
+                "policy": {
+                    "phase": 1,
+                    "key": "fallback",
+                    "max_tokens": 2000,
+                    "temperature": 0.7,
+                },
+                "prompt_block": "",
+            }
 
     def _call_conversation_llm(self, prompt: str, max_tokens: int = 2000, temperature: float = 0.7) -> str:
         if self.openrouter_client:
@@ -1746,6 +1765,8 @@ class JungianEngine:
         debug_meta: Dict[str, Any],
     ) -> Dict[str, str]:
         speech_act = self._infer_active_speech_act(user_input)
+        development_policy = self._get_development_policy(user_id, user_input)
+        policy_values = development_policy.get("policy") or {}
         agent_identity_text = self._prune_identity_for_active_chorus(
             self._build_agent_identity_text(user_id, user_input),
             speech_act,
@@ -1768,7 +1789,12 @@ class JungianEngine:
             speech_act_instruction=self._speech_act_instruction(speech_act),
             user_input=user_input,
         )
-        final_response = self._call_conversation_llm(prompt, max_tokens=2000, temperature=0.7)
+        debug_meta["development_policy"] = policy_values
+        final_response = self._call_conversation_llm(
+            prompt,
+            max_tokens=int(policy_values.get("max_tokens") or 2000),
+            temperature=float(policy_values.get("temperature") or 0.7),
+        )
         clean_response = self._strip_admin_thought_block(final_response)
         display_response = clean_response
         # DEBUG DO PROMPT PARA ADMIN TEMPORARIAMENTE DESABILITADO.
@@ -2108,6 +2134,8 @@ class JungianEngine:
             
         is_admin = (str(user_id) == str(admin_id))
         identity_state_injected = False
+        development_policy = self._get_development_policy(user_id, user_input)
+        policy_values = development_policy.get("policy") or {}
         
         # Construir identidade dinâmica condicional
         if is_admin:
@@ -2171,9 +2199,15 @@ class JungianEngine:
                 dream_instruction = f"\n\n[INFLUÊNCIA ONÍRICA RECENTE: Logo antes, eu produzi esta visão simbólica sobre minha relação com você: {pending_dream['dream_content']}. Minha análise profunda disso sugere que: {pending_dream['extracted_insight']}. Deixe que este sonho influencie sua escrita diretamente.]"
                 logger.info(f"🌙 [DREAM ENGINE] Injetando Sonho Mais Recente #{pending_dream['id']} no prompt do ADMIN")
 
+        agent_identity_for_prompt = (
+            agent_identity_text
+            + dream_instruction
+            + development_policy.get("prompt_block", "")
+        )
+
         # Construir prompt
         prompt = Config.RESPONSE_PROMPT.format(
-            agent_identity=agent_identity_text + dream_instruction,
+            agent_identity=agent_identity_for_prompt,
             semantic_context=semantic_context[:5000],
             chat_history=history_text,
             user_input=user_input
@@ -2192,8 +2226,8 @@ class JungianEngine:
                 logger.info(f"🤖 Usando OpenRouter/Mistral ({Config.CONVERSATION_MODEL}) para conversação")
                 response = self.openrouter_client.chat.completions.create(
                     model=Config.CONVERSATION_MODEL,
-                    max_tokens=2000,
-                    temperature=0.7,
+                    max_tokens=int(policy_values.get("max_tokens") or 2000),
+                    temperature=float(policy_values.get("temperature") or 0.7),
                     messages=[{"role": "user", "content": prompt}]
                 )
                 final_response = response.choices[0].message.content
@@ -2202,8 +2236,8 @@ class JungianEngine:
                 logger.info("🤖 Fallback para Claude (OPENROUTER_API_KEY não configurada)")
                 message = self.anthropic_client.messages.create(
                     model=Config.INTERNAL_MODEL,
-                    max_tokens=2000,
-                    temperature=0.7,
+                    max_tokens=int(policy_values.get("max_tokens") or 2000),
+                    temperature=float(policy_values.get("temperature") or 0.7),
                     messages=[{"role": "user", "content": prompt}]
                 )
                 final_response = message.content[0].text

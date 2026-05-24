@@ -2020,14 +2020,15 @@ Resposta: {ai_response}
                 WHERE user_id = ?
                   AND COALESCE(status, 'pending') = 'pending'
                   AND extracted_insight IS NOT NULL
-                  AND created_at < datetime('now', '-72 hours')
+                  AND created_at < datetime('now', '-24 hours')
             """, (user_id,))
             cursor.execute("""
                 SELECT id, dream_content, extracted_insight, symbolic_theme 
                 FROM agent_dreams
                 WHERE user_id = ?
                   AND extracted_insight IS NOT NULL
-                  AND COALESCE(status, 'pending') != 'delivered'
+                  AND COALESCE(status, 'pending') = 'pending'
+                  AND created_at >= datetime('now', '-24 hours')
                 ORDER BY created_at DESC
                 LIMIT 1
             """, (user_id,))
