@@ -1419,6 +1419,16 @@ class RuminationEngine:
         # Entregar
         return self._deliver_insight(insight)
 
+    def _parse_delivery_datetime(self, value) -> Optional[datetime]:
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", ""))
+        except Exception:
+            return None
+
     def _should_deliver(self, user_id: str) -> bool:
         """Verifica se deve entregar insight agora"""
         user = self.db.get_user(user_id)
@@ -1427,9 +1437,9 @@ class RuminationEngine:
             return False
 
         # 1. Usuário inativo há tempo suficiente?
-        last_seen = user.get('last_seen')
+        last_seen = self._parse_delivery_datetime(user.get('last_seen'))
         if last_seen:
-            hours_inactive = (datetime.now() - datetime.fromisoformat(last_seen)).total_seconds() / 3600
+            hours_inactive = (datetime.now() - last_seen).total_seconds() / 3600
             if hours_inactive < INACTIVITY_THRESHOLD_HOURS:
                 return False
 
@@ -1445,7 +1455,10 @@ class RuminationEngine:
         last_delivery = cursor.fetchone()
 
         if last_delivery:
-            hours_since = (datetime.now() - datetime.fromisoformat(last_delivery[0])).total_seconds() / 3600
+            delivered_at = self._parse_delivery_datetime(last_delivery[0])
+            if not delivered_at:
+                return False
+            hours_since = (datetime.now() - delivered_at).total_seconds() / 3600
             if hours_since < COOLDOWN_HOURS:
                 return False
 

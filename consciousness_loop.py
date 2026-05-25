@@ -1983,6 +1983,7 @@ class ConsciousnessLoopManager:
         state = dict(state_row)
         action = "noop"
         phase_result = None
+        retry_assessment = None
 
         if state["current_phase"] != target_phase.key or state["cycle_id"] != cycle_id:
             previous_phase = state["current_phase"]
