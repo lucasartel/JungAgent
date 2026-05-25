@@ -1,4 +1,4 @@
-"""Hybrid database manager: SQLite + mem0/Qdrant + ChromaDB legacy."""
+﻿"""Hybrid database manager: SQLite + mem0/Qdrant + ChromaDB legacy."""
 import os
 import sqlite3
 import json
@@ -16,6 +16,10 @@ from openai import OpenAI
 from core.models import ArchetypeInsight, ArchetypeConflict
 from core.config import Config, CHROMADB_AVAILABLE
 from core.embeddings import OpenAICompatibleEmbeddings
+from core.db.dreams import DreamDatabaseMixin
+from core.db.knowledge_gaps import KnowledgeGapDatabaseMixin
+from core.db.psychometrics import PsychometricsDatabaseMixin
+from core.db.users import UserDatabaseMixin
 
 logger = logging.getLogger(__name__)
 
@@ -31,30 +35,30 @@ try:
     from llm_fact_extractor import LLMFactExtractor
     LLM_FACT_EXTRACTOR_AVAILABLE = True
 except ImportError as e:
-    logger.warning(f"⚠️ LLMFactExtractor não disponível: {e}")
+    logger.warning(f"âš ï¸ LLMFactExtractor nÃ£o disponÃ­vel: {e}")
     LLM_FACT_EXTRACTOR_AVAILABLE = False
 
-class HybridDatabaseManager:
+class HybridDatabaseManager(UserDatabaseMixin, DreamDatabaseMixin, KnowledgeGapDatabaseMixin, PsychometricsDatabaseMixin):
     """
-    Gerenciador HÍBRIDO de memória:
-    - SQLite: Metadados estruturados, fatos, padrões, desenvolvimento
-    - mem0/Qdrant: Memória semântica conversacional em produção
-    - ChromaDB: fallback legado/local quando Qdrant não está configurado
+    Gerenciador HÃBRIDO de memÃ³ria:
+    - SQLite: Metadados estruturados, fatos, padrÃµes, desenvolvimento
+    - mem0/Qdrant: MemÃ³ria semÃ¢ntica conversacional em produÃ§Ã£o
+    - ChromaDB: fallback legado/local quando Qdrant nÃ£o estÃ¡ configurado
     """
 
     def __init__(self):
-        """Inicializa gerenciador híbrido"""
+        """Inicializa gerenciador hÃ­brido"""
 
         Config.ensure_directories()
 
-        logger.info(f"🗄️  Inicializando banco HÍBRIDO...")
+        logger.info(f"ðŸ—„ï¸  Inicializando banco HÃBRIDO...")
         logger.info(f"   SQLite: {os.path.abspath(Config.SQLITE_PATH)}")
         logger.info(f"   ChromaDB legado: {'habilitado' if Config.LEGACY_CHROMA_ENABLED else 'desabilitado'}")
         if Config.LEGACY_CHROMA_ENABLED:
             logger.info(f"   ChromaDB path: {os.path.abspath(Config.CHROMA_PATH)}")
 
         # ===== Thread Safety =====
-        self._lock = threading.RLock()  # Reentrant lock para operações SQLite
+        self._lock = threading.RLock()  # Reentrant lock para operaÃ§Ãµes SQLite
 
         # ===== SQLite =====
         self.conn = sqlite3.connect(Config.SQLITE_PATH, check_same_thread=False, timeout=30)
@@ -62,13 +66,13 @@ class HybridDatabaseManager:
         self.conn.execute("PRAGMA busy_timeout = 30000")
         self._init_sqlite_schema()
         
-        # ===== mem0/Qdrant: produção =====
+        # ===== mem0/Qdrant: produÃ§Ã£o =====
         try:
             from mem0_memory_adapter import create_mem0_adapter
             self.mem0 = create_mem0_adapter()
         except Exception as e:
             self.mem0 = None
-            logger.warning(f"⚠️ [MEM0] Erro ao inicializar: {e}")
+            logger.warning(f"âš ï¸ [MEM0] Erro ao inicializar: {e}")
 
         # ===== ChromaDB: legado/local fallback =====
         self.chroma_enabled = CHROMADB_AVAILABLE and Config.LEGACY_CHROMA_ENABLED
@@ -89,20 +93,20 @@ class HybridDatabaseManager:
                 )
                 
                 logger.info(
-                    f"✅ ChromaDB + OpenAI-compatible Embeddings ({Config.EMBEDDING_MODEL}, dim={Config.EMBEDDING_DIMENSIONS}) inicializados"
+                    f"âœ… ChromaDB + OpenAI-compatible Embeddings ({Config.EMBEDDING_MODEL}, dim={Config.EMBEDDING_DIMENSIONS}) inicializados"
                 )
             except Exception as e:
-                logger.error(f"❌ Erro ao inicializar ChromaDB local: {e}")
+                logger.error(f"âŒ Erro ao inicializar ChromaDB local: {e}")
                 self.chroma_enabled = False
         else:
             if Config.QDRANT_URL and not Config.ENABLE_LEGACY_CHROMA:
-                logger.info("ℹ️ ChromaDB legado desabilitado: mem0/Qdrant é a memória semântica principal.")
+                logger.info("â„¹ï¸ ChromaDB legado desabilitado: mem0/Qdrant Ã© a memÃ³ria semÃ¢ntica principal.")
             else:
-                logger.warning("⚠️  ChromaDB legado desabilitado. Usando SQLite/mem0 conforme disponível.")
+                logger.warning("âš ï¸  ChromaDB legado desabilitado. Usando SQLite/mem0 conforme disponÃ­vel.")
             
-        self.openai_client = None # Removido dependência direta da OpenAI
+        self.openai_client = None # Removido dependÃªncia direta da OpenAI
 
-        # ===== LLM Client (OpenRouter primário, Anthropic fallback) =====
+        # ===== LLM Client (OpenRouter primÃ¡rio, Anthropic fallback) =====
         try:
             from llm_providers import AnthropicCompatWrapper
             if Config.OPENROUTER_API_KEY:
@@ -117,52 +121,52 @@ class HybridDatabaseManager:
                     openrouter_client=_or_client_internal,
                     model=Config.INTERNAL_MODEL,
                 )
-                logger.info(f"✅ LLM interno: OpenRouter/{Config.INTERNAL_MODEL} (via AnthropicCompatWrapper)")
+                logger.info(f"âœ… LLM interno: OpenRouter/{Config.INTERNAL_MODEL} (via AnthropicCompatWrapper)")
             else:
                 import anthropic
                 if Config.ANTHROPIC_API_KEY:
                     self.anthropic_client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY)
-                    logger.info("✅ LLM interno: Anthropic Claude (fallback — OPENROUTER_API_KEY ausente)")
+                    logger.info("âœ… LLM interno: Anthropic Claude (fallback â€” OPENROUTER_API_KEY ausente)")
                 else:
                     self.anthropic_client = None
-                    logger.warning("⚠️ Nenhuma chave de LLM interno disponível (Anthropic nem OpenRouter)")
+                    logger.warning("âš ï¸ Nenhuma chave de LLM interno disponÃ­vel (Anthropic nem OpenRouter)")
         except Exception as e:
             self.anthropic_client = None
-            logger.error(f"❌ Erro ao inicializar LLM interno: {e}")
+            logger.error(f"âŒ Erro ao inicializar LLM interno: {e}")
 
         # ===== LLM Fact Extractor =====
-        logger.info(f"🔍 [DEBUG] LLM_FACT_EXTRACTOR_AVAILABLE = {LLM_FACT_EXTRACTOR_AVAILABLE}")
-        logger.info(f"🔍 [DEBUG] anthropic_client = {self.anthropic_client is not None}")
+        logger.info(f"ðŸ” [DEBUG] LLM_FACT_EXTRACTOR_AVAILABLE = {LLM_FACT_EXTRACTOR_AVAILABLE}")
+        logger.info(f"ðŸ” [DEBUG] anthropic_client = {self.anthropic_client is not None}")
 
         if LLM_FACT_EXTRACTOR_AVAILABLE:
             try:
                 if self.anthropic_client:
-                    logger.info(f"🔧 Inicializando LLMFactExtractor ({Config.INTERNAL_MODEL})...")
+                    logger.info(f"ðŸ”§ Inicializando LLMFactExtractor ({Config.INTERNAL_MODEL})...")
                     self.fact_extractor = LLMFactExtractor(
                         llm_client=self.anthropic_client,
                         model=Config.INTERNAL_MODEL,
                     )
-                    logger.info(f"✅ LLM Fact Extractor inicializado ({Config.INTERNAL_MODEL})")
+                    logger.info(f"âœ… LLM Fact Extractor inicializado ({Config.INTERNAL_MODEL})")
                 else:
-                    logger.warning("⚠️ LLM client não disponível para fact extractor")
+                    logger.warning("âš ï¸ LLM client nÃ£o disponÃ­vel para fact extractor")
                     self.fact_extractor = None
             except Exception as e:
-                logger.error(f"❌ Erro ao inicializar LLM Fact Extractor: {e}")
+                logger.error(f"âŒ Erro ao inicializar LLM Fact Extractor: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
                 self.fact_extractor = None
         else:
             self.fact_extractor = None
-            logger.warning("⚠️ LLM Fact Extractor module não disponível (import falhou)")
+            logger.warning("âš ï¸ LLM Fact Extractor module nÃ£o disponÃ­vel (import falhou)")
 
-        logger.info("✅ Banco híbrido inicializado com sucesso")
+        logger.info("âœ… Banco hÃ­brido inicializado com sucesso")
 
     # ========================================
     # THREAD-SAFE TRANSACTION MANAGEMENT
     # ========================================
 
     def transaction(self):
-        """Context manager para transações thread-safe"""
+        """Context manager para transaÃ§Ãµes thread-safe"""
         from contextlib import contextmanager
 
         @contextmanager
@@ -173,7 +177,7 @@ class HybridDatabaseManager:
                     self.conn.commit()
                 except Exception as e:
                     self.conn.rollback()
-                    logger.error(f"❌ Erro na transação, rollback executado: {e}")
+                    logger.error(f"âŒ Erro na transaÃ§Ã£o, rollback executado: {e}")
                     raise
 
         return _transaction()
@@ -186,7 +190,7 @@ class HybridDatabaseManager:
         """Cria schema SQLite completo"""
         cursor = self.conn.cursor()
         
-        # ========== USUÁRIOS ==========
+        # ========== USUÃRIOS ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
@@ -211,22 +215,22 @@ class HybridDatabaseManager:
                 session_id TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 
-                -- Conteúdo
+                -- ConteÃºdo
                 user_input TEXT NOT NULL,
                 ai_response TEXT NOT NULL,
                 
-                -- Análise arquetípica
+                -- AnÃ¡lise arquetÃ­pica
                 archetype_analyses TEXT,
                 detected_conflicts TEXT,
                 
-                -- Métricas
+                -- MÃ©tricas
                 tension_level REAL DEFAULT 0.0,
                 affective_charge REAL DEFAULT 0.0,
                 existential_depth REAL DEFAULT 0.0,
                 intensity_level INTEGER DEFAULT 5,
                 complexity TEXT DEFAULT 'medium',
                 
-                -- Extração
+                -- ExtraÃ§Ã£o
                 keywords TEXT,
                 
                 -- Linking ChromaDB
@@ -244,11 +248,11 @@ class HybridDatabaseManager:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
                 
-                -- Categorização
+                -- CategorizaÃ§Ã£o
                 fact_category TEXT NOT NULL,
                 fact_subcategory TEXT,
                 
-                -- Conteúdo
+                -- ConteÃºdo
                 fact_key TEXT NOT NULL,
                 fact_value TEXT NOT NULL,
                 
@@ -267,7 +271,7 @@ class HybridDatabaseManager:
             )
         """)
         
-        # ========== PADRÕES DETECTADOS ==========
+        # ========== PADRÃ•ES DETECTADOS ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_patterns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -288,7 +292,7 @@ class HybridDatabaseManager:
             )
         """)
         
-        # ========== MARCOS DO USUÁRIO ==========
+        # ========== MARCOS DO USUÃRIO ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_milestones (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -309,7 +313,7 @@ class HybridDatabaseManager:
             )
         """)
         
-        # ========== CONFLITOS ARQUETÍPICOS ==========
+        # ========== CONFLITOS ARQUETÃPICOS ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS archetype_conflicts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -330,7 +334,7 @@ class HybridDatabaseManager:
         """)
         
         # ========== DESENVOLVIMENTO DO AGENTE ==========
-        # Migração: Verificar se tabela precisa ser recriada com user_id
+        # MigraÃ§Ã£o: Verificar se tabela precisa ser recriada com user_id
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_development'")
         table_exists = cursor.fetchone() is not None
 
@@ -340,7 +344,7 @@ class HybridDatabaseManager:
             columns = [row[1] for row in cursor.fetchall()]
 
             if 'user_id' not in columns:
-                logger.warning("⚠️ Migrando agent_development para nova estrutura com user_id...")
+                logger.warning("âš ï¸ Migrando agent_development para nova estrutura com user_id...")
 
                 # 1. Salvar dados antigos
                 cursor.execute("SELECT * FROM agent_development WHERE id = 1")
@@ -372,7 +376,7 @@ class HybridDatabaseManager:
                     )
                 """)
 
-                # 4. Migrar dados para todos os usuários existentes
+                # 4. Migrar dados para todos os usuÃ¡rios existentes
                 if old_data:
                     cursor.execute("SELECT user_id FROM users")
                     users = cursor.fetchall()
@@ -398,11 +402,11 @@ class HybridDatabaseManager:
                             old_data[9] if len(old_data) > 9 else 'CURRENT_TIMESTAMP'  # last_updated
                         ))
 
-                    logger.info(f"✅ Migrados dados de agent_development para {len(users)} usuários")
+                    logger.info(f"âœ… Migrados dados de agent_development para {len(users)} usuÃ¡rios")
 
                 self.conn.commit()
         else:
-            # Tabela não existe, criar nova estrutura
+            # Tabela nÃ£o existe, criar nova estrutura
             cursor.execute("""
                 CREATE TABLE agent_development (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -425,7 +429,7 @@ class HybridDatabaseManager:
                 )
             """)
 
-        # Criar índice único para garantir um registro por usuário
+        # Criar Ã­ndice Ãºnico para garantir um registro por usuÃ¡rio
         cursor.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_dev_user
             ON agent_development(user_id)
@@ -445,7 +449,7 @@ class HybridDatabaseManager:
             )
         """)
         
-        # ========== ANÁLISES COMPLETAS ==========
+        # ========== ANÃLISES COMPLETAS ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS full_analyses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -464,7 +468,7 @@ class HybridDatabaseManager:
             )
         """)
 
-        # ========== SONHOS DO AGENTE (MOTOR ONÍRICO) ==========
+        # ========== SONHOS DO AGENTE (MOTOR ONÃRICO) ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS agent_dreams (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -516,16 +520,16 @@ class HybridDatabaseManager:
             )
         """)
 
-        # Auto-migração para bancos antigos
+        # Auto-migraÃ§Ã£o para bancos antigos
         try:
             cursor.execute("ALTER TABLE agent_dreams ADD COLUMN image_url TEXT;")
         except sqlite3.OperationalError:
-            pass # Coluna já existe
+            pass # Coluna jÃ¡ existe
             
         try:
             cursor.execute("ALTER TABLE agent_dreams ADD COLUMN image_prompt TEXT;")
         except sqlite3.OperationalError:
-            pass # Coluna já existe
+            pass # Coluna jÃ¡ existe
 
         for column_name, column_type in (
             ("regulatory_function", "TEXT"),
@@ -561,7 +565,7 @@ class HybridDatabaseManager:
         except sqlite3.OperationalError:
             pass
 
-        # ========== PESQUISA AUTÔNOMA (Caminho Extrovertido) ==========
+        # ========== PESQUISA AUTÃ”NOMA (Caminho Extrovertido) ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS external_research (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -713,7 +717,7 @@ class HybridDatabaseManager:
             )
         """)
 
-        # ========== ANÁLISES PSICOMÉTRICAS (RH) ==========
+        # ========== ANÃLISES PSICOMÃ‰TRICAS (RH) ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_psychometrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -744,7 +748,7 @@ class HybridDatabaseManager:
                 big_five_confidence INTEGER,
                 big_five_interpretation TEXT,
 
-                -- Inteligência Emocional (EQ) - scores 0-100
+                -- InteligÃªncia Emocional (EQ) - scores 0-100
                 eq_self_awareness INTEGER,
                 eq_self_management INTEGER,
                 eq_social_awareness INTEGER,
@@ -779,7 +783,7 @@ class HybridDatabaseManager:
             )
         """)
 
-        # ========== LACUNAS DE CONHECIMENTO (CARÊNCIA DE SABERES) ==========
+        # ========== LACUNAS DE CONHECIMENTO (CARÃŠNCIA DE SABERES) ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS knowledge_gaps (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1164,7 +1168,7 @@ class HybridDatabaseManager:
             )
         """)
 
-        # ========== ÍNDICES DE PERFORMANCE ==========
+        # ========== ÃNDICES DE PERFORMANCE ==========
         # Conversas
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_conv_timestamp ON conversations(timestamp DESC)")  # DESC para ORDER BY
@@ -1177,7 +1181,7 @@ class HybridDatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_conflict_conversation ON archetype_conflicts(conversation_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_conflict_timestamp ON archetype_conflicts(timestamp DESC)")
 
-        # Usuários
+        # UsuÃ¡rios
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_platform ON users(platform, platform_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen DESC)")
 
@@ -1185,7 +1189,7 @@ class HybridDatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_facts_user_category ON user_facts(user_id, fact_category, is_current)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_facts_current ON user_facts(is_current, user_id)")  # Para buscas de fatos atuais
 
-        # Padrões
+        # PadrÃµes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_patterns_user ON user_patterns(user_id, pattern_type)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_patterns_confidence ON user_patterns(confidence_score DESC)")
 
@@ -1193,7 +1197,7 @@ class HybridDatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_milestones_type ON milestones(milestone_type)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_milestones_timestamp ON milestones(timestamp DESC)")
 
-        # Análises
+        # AnÃ¡lises
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_analyses_user ON full_analyses(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_analyses_timestamp ON full_analyses(timestamp DESC)")
 
@@ -1232,148 +1236,23 @@ class HybridDatabaseManager:
             pass
 
         self.conn.commit()
-        logger.info("✅ Schema SQLite criado/verificado com índices de performance")
+        logger.info("âœ… Schema SQLite criado/verificado com Ã­ndices de performance")
     
     # ========================================
-    # USUÁRIOS
+    # USUÃRIOS
     # ========================================
     
-    def create_user(self, user_id: str, user_name: str,
-                   platform: str = 'telegram', platform_id: str = None):
-        """Cria ou atualiza usuário"""
-        with self._lock:
-            cursor = self.conn.cursor()
-
-            name_parts = user_name.split()
-            first_name = name_parts[0].title() if name_parts else ""
-            last_name = name_parts[-1].title() if len(name_parts) > 1 else ""
-
-            cursor.execute("""
-                INSERT OR REPLACE INTO users
-                (user_id, user_name, first_name, last_name, platform, platform_id)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (user_id, user_name, first_name, last_name, platform, platform_id))
-
-            self.conn.commit()
-            logger.info(f"✅ Usuário criado/atualizado: {user_name}")
-    
-    def register_user(self, full_name: str, platform: str = "telegram") -> str:
-        """Registra usuário (método legado compatível)"""
-        name_normalized = full_name.lower().strip()
-        user_id = hashlib.md5(name_normalized.encode()).hexdigest()[:12]
-
-        with self._lock:
-            cursor = self.conn.cursor()
-
-            cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-            existing = cursor.fetchone()
-
-            if existing:
-                cursor.execute("""
-                    UPDATE users
-                    SET total_sessions = total_sessions + 1,
-                        last_seen = CURRENT_TIMESTAMP
-                    WHERE user_id = ?
-                """, (user_id,))
-                logger.info(f"✅ Usuário existente: {full_name} (sessão #{existing['total_sessions'] + 1})")
-            else:
-                name_parts = full_name.split()
-                first_name = name_parts[0].title()
-                last_name = name_parts[-1].title() if len(name_parts) > 1 else ""
-
-                cursor.execute("""
-                    INSERT INTO users (user_id, user_name, first_name, last_name, platform)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (user_id, full_name.title(), first_name, last_name, platform))
-                logger.info(f"✅ Novo usuário: {full_name}")
-
-            self.conn.commit()
-            return user_id
-    
-    def get_user(self, user_id: str) -> Optional[Dict]:
-        """Busca dados do usuário"""
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
-        
-    def delete_user_completely(self, user_id: str) -> bool:
-        """Deleta fisicamente um usuário e todos os seus dados vinculados"""
-        try:
-            with self.transaction() as conn:
-                # `self.transaction()` yields the connection — we need to create a cursor from it
-                cursor = conn.cursor()
-                tables = [
-                    "unesco_pilot_data", "user_facts", "user_patterns", "user_milestones", 
-                    "archetype_conflicts", "agent_development", "full_analyses",
-                    "agent_dreams", "external_research", "user_psychometrics",
-                    "knowledge_gaps", "user_subscriptions", "user_daily_usage",
-                    "user_organization_mapping", "conversations", "users"
-                ]
-                for table in tables:
-                    # Verifica se a tabela existe
-                    cursor.execute(f"SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", (table,))
-                    if cursor.fetchone()[0] > 0:
-                        cursor.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
-            
-            # ChromaDB
-            if self.chroma_enabled and hasattr(self, 'vectorstore') and self.vectorstore:
-                try:
-                    collection = self.vectorstore._collection
-                    collection.delete(where={"user_id": user_id})
-                    logger.info(f"Dados deletados do ChromaDB para usuário {user_id}")
-                except Exception as e:
-                    logger.warning(f"Erro ao deletar do ChromaDB: {e}")
-            
-            # Mem0
-            if hasattr(self, 'mem0') and self.mem0:
-                try:
-                    self.mem0.delete_all(user_id=user_id)
-                    logger.info(f"Dados deletados do mem0 para usuário {user_id}")
-                except Exception as e:
-                    logger.warning(f"Erro ao deletar do mem0: {e}")
-            
-            logger.info(f"✅ Usuário {user_id} e seus dados foram apagados fisicamente com sucesso.")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Erro ao deletar usuário {user_id}: {e}", exc_info=True)
-            return False
-    
-    def get_user_stats(self, user_id: str) -> Optional[Dict]:
-        """Retorna estatísticas do usuário"""
-        cursor = self.conn.cursor()
-        
-        cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-        user_row = cursor.fetchone()
-        
-        if not user_row:
-            return None
-        
-        user = dict(user_row)
-        
-        cursor.execute("SELECT COUNT(*) as count FROM conversations WHERE user_id = ?", (user_id,))
-        total_messages = cursor.fetchone()['count']
-        
-        return {
-            'total_messages': total_messages,
-            'first_interaction': user['registration_date'],
-            'total_sessions': user['total_sessions']
-        }
-    
-    # ========================================
-    # FUNÇÕES AUXILIARES - METADATA ENRIQUECIDO
     # ========================================
 
     def _calculate_recency_tier(self, timestamp: datetime) -> str:
         """
-        Calcula tier de recência da conversa
+        Calcula tier de recÃªncia da conversa
 
         Args:
             timestamp: Timestamp da conversa
 
         Returns:
-            "recent" (≤30 dias) | "medium" (31-90 dias) | "old" (>90 dias)
+            "recent" (â‰¤30 dias) | "medium" (31-90 dias) | "old" (>90 dias)
         """
         days_ago = (datetime.now() - timestamp).days
 
@@ -1386,13 +1265,13 @@ class HybridDatabaseManager:
 
     def _get_dominant_archetype(self, archetype_analyses: Dict) -> str:
         """
-        Retorna arquétipo com maior intensidade
+        Retorna arquÃ©tipo com maior intensidade
 
         Args:
-            archetype_analyses: Dict com análises arquetípicas
+            archetype_analyses: Dict com anÃ¡lises arquetÃ­picas
 
         Returns:
-            Nome do arquétipo dominante ou ""
+            Nome do arquÃ©tipo dominante ou ""
         """
         if not archetype_analyses:
             return ""
@@ -1404,7 +1283,7 @@ class HybridDatabaseManager:
             )
             return dominant[0] if dominant else ""
         except Exception as e:
-            logger.warning(f"Erro ao calcular arquétipo dominante: {e}")
+            logger.warning(f"Erro ao calcular arquÃ©tipo dominante: {e}")
             return ""
 
     def _extract_people_from_conversation(self, conversation_id: int) -> List[str]:
@@ -1415,7 +1294,7 @@ class HybridDatabaseManager:
             conversation_id: ID da conversa
 
         Returns:
-            Lista de nomes próprios
+            Lista de nomes prÃ³prios
         """
         cursor = self.conn.cursor()
 
@@ -1452,18 +1331,18 @@ class HybridDatabaseManager:
 
     def _extract_topics_from_keywords(self, keywords: List[str]) -> List[str]:
         """
-        Classifica keywords em tópicos amplos
+        Classifica keywords em tÃ³picos amplos
 
         Args:
             keywords: Lista de keywords da conversa
 
         Returns:
-            Lista de tópicos detectados
+            Lista de tÃ³picos detectados
         """
         if not keywords:
             return []
 
-        # Mapeamento de keywords para tópicos
+        # Mapeamento de keywords para tÃ³picos
         topic_mapping = {
             "trabalho": ["trabalho", "emprego", "empresa", "carreira", "chefe", "colega", "projeto"],
             "familia": ["esposa", "marido", "filho", "filha", "pai", "mae", "familia", "casa"],
@@ -1484,10 +1363,10 @@ class HybridDatabaseManager:
 
     def calculate_temporal_boost(self, memory_timestamp: str, mode: str = "balanced") -> float:
         """
-        Calcula boost temporal para reranking de memórias
+        Calcula boost temporal para reranking de memÃ³rias
 
         Args:
-            memory_timestamp: Timestamp ISO da memória
+            memory_timestamp: Timestamp ISO da memÃ³ria
             mode: Modo de decay ("recent_focused" | "balanced" | "archeological")
 
         Returns:
@@ -1496,12 +1375,12 @@ class HybridDatabaseManager:
         try:
             mem_time = datetime.fromisoformat(memory_timestamp)
         except:
-            return 1.0  # Fallback se timestamp inválido
+            return 1.0  # Fallback se timestamp invÃ¡lido
 
         days_ago = (datetime.now() - mem_time).days
 
         if mode == "recent_focused":
-            # Valoriza últimos 7 dias, penaliza antigas
+            # Valoriza Ãºltimos 7 dias, penaliza antigas
             if days_ago <= 7:
                 return 1.5
             elif days_ago <= 30:
@@ -1512,7 +1391,7 @@ class HybridDatabaseManager:
                 return 0.7
 
         elif mode == "balanced":
-            # Equilíbrio entre recente e histórico
+            # EquilÃ­brio entre recente e histÃ³rico
             if days_ago <= 30:
                 return 1.2
             elif days_ago <= 90:
@@ -1521,18 +1400,18 @@ class HybridDatabaseManager:
                 return 0.9
 
         elif mode == "archeological":
-            # Valoriza padrões de longo prazo
+            # Valoriza padrÃµes de longo prazo
             if days_ago <= 30:
                 return 1.0
             elif days_ago <= 90:
                 return 1.1
             else:
-                return 1.3  # Boost para memórias antigas
+                return 1.3  # Boost para memÃ³rias antigas
 
         return 1.0  # Default
 
     # ========================================
-    # CONVERSAS (HÍBRIDO: SQLite + mem0/Qdrant + ChromaDB legado)
+    # CONVERSAS (HÃBRIDO: SQLite + mem0/Qdrant + ChromaDB legado)
     # ========================================
 
     def save_conversation(self, user_id: str, user_name: str, user_input: str,
@@ -1548,8 +1427,8 @@ class HybridDatabaseManager:
                          platform: str = "telegram",
                          chat_history: List[Dict] = None) -> int:
         """
-        Salva conversa em SQLite e, quando habilitado, em memória semântica.
-        Em produção a via semântica principal é mem0/Qdrant; ChromaDB é legado.
+        Salva conversa em SQLite e, quando habilitado, em memÃ³ria semÃ¢ntica.
+        Em produÃ§Ã£o a via semÃ¢ntica principal Ã© mem0/Qdrant; ChromaDB Ã© legado.
 
         Returns:
             int: ID da conversa no SQLite
@@ -1562,14 +1441,14 @@ class HybridDatabaseManager:
             len(user_input) if user_input else 0,
         )
 
-        # Garantir que user_id é string para consistência
+        # Garantir que user_id Ã© string para consistÃªncia
         user_id_str = str(user_id) if user_id else None
         if not user_id_str:
-            logger.error("❌ user_id é None ou vazio! Não é possível salvar.")
-            raise ValueError("user_id não pode ser None ou vazio")
+            logger.error("âŒ user_id Ã© None ou vazio! NÃ£o Ã© possÃ­vel salvar.")
+            raise ValueError("user_id nÃ£o pode ser None ou vazio")
 
         if user_id_str != user_id:
-            logger.warning(f"⚠️ user_id convertido de {type(user_id).__name__} para string: '{user_id}' -> '{user_id_str}'")
+            logger.warning(f"âš ï¸ user_id convertido de {type(user_id).__name__} para string: '{user_id}' -> '{user_id_str}'")
             user_id = user_id_str
 
         with self._lock:
@@ -1612,7 +1491,7 @@ class HybridDatabaseManager:
             try:
                 # Construir documento completo
                 doc_content = f"""
-Usuário: {user_name}
+UsuÃ¡rio: {user_name}
 Input: {user_input}
 Resposta: {ai_response}
 """
@@ -1627,7 +1506,7 @@ Resposta: {ai_response}
                     for conflict in detected_conflicts:
                         doc_content += f"{conflict.description}\n"
                 
-                # Metadata (Enriquecido - Fase 1 do Plano de Memória)
+                # Metadata (Enriquecido - Fase 1 do Plano de MemÃ³ria)
                 now = datetime.now()
                 metadata = {
                     # Campos existentes (manter)
@@ -1650,7 +1529,7 @@ Resposta: {ai_response}
                     "month_bucket": now.strftime("%Y-%m"),
                     "recency_tier": self._calculate_recency_tier(now),
 
-                    # NOVOS - Emocional/Temático
+                    # NOVOS - Emocional/TemÃ¡tico
                     "emotional_intensity": round(affective_charge + tension_level, 2),
                     "dominant_archetype": self._get_dominant_archetype(archetype_analyses) if archetype_analyses else "",
 
@@ -1660,7 +1539,7 @@ Resposta: {ai_response}
                 }
 
                 # NOVO - Fact-Conversation Linking (Fase 4)
-                # Buscar IDs de fatos extraídos desta conversa
+                # Buscar IDs de fatos extraÃ­dos desta conversa
                 try:
                     cursor.execute("""
                         SELECT name FROM sqlite_master
@@ -1685,28 +1564,28 @@ Resposta: {ai_response}
                         logger.info(f"   Linkados {len(fact_ids)} fatos ao ChromaDB metadata")
                 except Exception as fact_link_error:
                     logger.warning(f"   Erro ao linkar fatos: {fact_link_error}")
-                    # Não bloquear salvamento se linking falhar
+                    # NÃ£o bloquear salvamento se linking falhar
                     pass
 
-                # 🔍 DEBUG: Log do metadata sendo salvo
+                # ðŸ” DEBUG: Log do metadata sendo salvo
                 logger.info(f"   ChromaDB metadata: user_id='{metadata['user_id']}' (type={type(metadata['user_id']).__name__})")
                 logger.info(f"   ChromaDB doc_id: '{chroma_id}'")
 
                 # Criar documento
                 doc = Document(page_content=doc_content, metadata=metadata)
 
-                # ✅ ADICIONAR COM TRATAMENTO DE DUPLICATAS
+                # âœ… ADICIONAR COM TRATAMENTO DE DUPLICATAS
                 try:
                     self.vectorstore.add_documents([doc], ids=[chroma_id])
-                    logger.info(f"✅ ChromaDB: Documento '{chroma_id}' salvo com user_id='{metadata['user_id']}'")
-                    logger.info(f"✅ Conversa salva: SQLite (ID={conversation_id}) + ChromaDB ({chroma_id})")
+                    logger.info(f"âœ… ChromaDB: Documento '{chroma_id}' salvo com user_id='{metadata['user_id']}'")
+                    logger.info(f"âœ… Conversa salva: SQLite (ID={conversation_id}) + ChromaDB ({chroma_id})")
                     
                 except Exception as add_error:
                     error_msg = str(add_error).lower()
                     
-                    # Verificar se é erro de duplicata
+                    # Verificar se Ã© erro de duplicata
                     if "already exists" in error_msg or "duplicate" in error_msg or "unique constraint" in error_msg:
-                        logger.warning(f"⚠️ Documento {chroma_id} já existe no ChromaDB, substituindo...")
+                        logger.warning(f"âš ï¸ Documento {chroma_id} jÃ¡ existe no ChromaDB, substituindo...")
                         
                         try:
                             # Deletar documento existente
@@ -1715,21 +1594,21 @@ Resposta: {ai_response}
                             # Adicionar novo documento
                             self.vectorstore.add_documents([doc], ids=[chroma_id])
                             
-                            logger.info(f"✅ Documento {chroma_id} substituído com sucesso")
+                            logger.info(f"âœ… Documento {chroma_id} substituÃ­do com sucesso")
                             
                         except Exception as replace_error:
-                            logger.error(f"❌ Erro ao substituir documento {chroma_id}: {replace_error}")
-                            logger.warning(f"⚠️ Conversa salva apenas no SQLite (ID={conversation_id})")
+                            logger.error(f"âŒ Erro ao substituir documento {chroma_id}: {replace_error}")
+                            logger.warning(f"âš ï¸ Conversa salva apenas no SQLite (ID={conversation_id})")
                     else:
                         # Outro tipo de erro
-                        logger.error(f"❌ Erro ao adicionar ao ChromaDB: {add_error}")
-                        logger.warning(f"⚠️ Conversa salva apenas no SQLite (ID={conversation_id})")
+                        logger.error(f"âŒ Erro ao adicionar ao ChromaDB: {add_error}")
+                        logger.warning(f"âš ï¸ Conversa salva apenas no SQLite (ID={conversation_id})")
                 
             except Exception as e:
-                logger.error(f"❌ Erro geral ao processar ChromaDB: {e}")
-                logger.warning(f"⚠️ Sistema continua funcionando apenas com SQLite")
+                logger.error(f"âŒ Erro geral ao processar ChromaDB: {e}")
+                logger.warning(f"âš ï¸ Sistema continua funcionando apenas com SQLite")
         
-        # 4. Salvar conflitos na tabela específica
+        # 4. Salvar conflitos na tabela especÃ­fica
         if detected_conflicts:
             with self._lock:
                 for conflict in detected_conflicts:
@@ -1747,19 +1626,19 @@ Resposta: {ai_response}
 
                 self.conn.commit()
         
-        # 5. Atualizar desenvolvimento do agente (isolado por usuário)
+        # 5. Atualizar desenvolvimento do agente (isolado por usuÃ¡rio)
         self._update_agent_development(user_id)
 
         # 6. Extrair fatos do input (V2 com LLM, fallback para V1)
-        logger.info(f"🔍 [DEBUG FATOS] Verificando extração... hasattr(extract_and_save_facts_v2)={hasattr(self, 'extract_and_save_facts_v2')}")
+        logger.info(f"ðŸ” [DEBUG FATOS] Verificando extraÃ§Ã£o... hasattr(extract_and_save_facts_v2)={hasattr(self, 'extract_and_save_facts_v2')}")
         if hasattr(self, 'extract_and_save_facts_v2'):
-            logger.info("✅ Chamando extract_and_save_facts_v2...")
+            logger.info("âœ… Chamando extract_and_save_facts_v2...")
             self.extract_and_save_facts_v2(user_id, user_input, conversation_id)
         else:
-            logger.info("⚠️ extract_and_save_facts_v2 não encontrado, usando método antigo...")
+            logger.info("âš ï¸ extract_and_save_facts_v2 nÃ£o encontrado, usando mÃ©todo antigo...")
             self.extract_and_save_facts(user_id, user_input, conversation_id)
 
-        # 7. HOOK: Sistema de Ruminação (só para admin)
+        # 7. HOOK: Sistema de RuminaÃ§Ã£o (sÃ³ para admin)
         try:
             from instance_config import ADMIN_USER_ID
             if user_id == ADMIN_USER_ID and platform == "telegram":
@@ -1775,9 +1654,9 @@ Resposta: {ai_response}
                     "existential_depth": existential_depth,
                 })
         except Exception as e:
-            logger.warning(f"⚠️ Erro no hook de ruminação: {e}")
+            logger.warning(f"âš ï¸ Erro no hook de ruminaÃ§Ã£o: {e}")
 
-        # 8. HOOK: Log diário em arquivo .md (memória textual)
+        # 8. HOOK: Log diÃ¡rio em arquivo .md (memÃ³ria textual)
         try:
             from user_profile_writer import write_session_entry
             write_session_entry(
@@ -1791,14 +1670,14 @@ Resposta: {ai_response}
                 },
             )
         except Exception as e:
-            logger.warning(f"⚠️ Erro no hook de log diário: {e}")
+            logger.warning(f"âš ï¸ Erro no hook de log diÃ¡rio: {e}")
 
-        # 9. Sincronizar com mem0 (extração automática de fatos)
+        # 9. Sincronizar com mem0 (extraÃ§Ã£o automÃ¡tica de fatos)
         if self.mem0:
             try:
                 self.mem0.add_exchange(user_id, user_input, ai_response)
             except Exception as e:
-                logger.warning(f"⚠️ [MEM0] Erro ao sincronizar conversa: {e}")
+                logger.warning(f"âš ï¸ [MEM0] Erro ao sincronizar conversa: {e}")
 
         return conversation_id
 
@@ -1809,11 +1688,11 @@ Resposta: {ai_response}
         include_proactive: bool = False
     ) -> List[Dict]:
         """
-        Busca últimas conversas do usuário (SQLite)
+        Busca Ãºltimas conversas do usuÃ¡rio (SQLite)
 
         Args:
-            user_id: ID do usuário
-            limit: Número máximo de conversas
+            user_id: ID do usuÃ¡rio
+            limit: NÃºmero mÃ¡ximo de conversas
             include_proactive: Se True, inclui conversas com platform='proactive' ou 'proactive_rumination'
 
         Returns:
@@ -1831,7 +1710,7 @@ Resposta: {ai_response}
             """
             params = (user_id, limit)
         else:
-            # Comportamento padrão: excluir proativas
+            # Comportamento padrÃ£o: excluir proativas
             query = """
                 SELECT * FROM conversations
                 WHERE user_id = ?
@@ -1859,7 +1738,7 @@ Resposta: {ai_response}
         return conversations
     
     def count_conversations(self, user_id: str) -> int:
-        """Conta conversas do usuário"""
+        """Conta conversas do usuÃ¡rio"""
         cursor = self.conn.cursor()
         cursor.execute("SELECT COUNT(*) as count FROM conversations WHERE user_id = ?", (user_id,))
         return cursor.fetchone()['count']
@@ -1873,11 +1752,11 @@ Resposta: {ai_response}
 
         Returns:
             Lista de dicts {"role": "user"/"assistant", "content": str}
-            em ordem cronológica (mais antiga primeiro)
+            em ordem cronolÃ³gica (mais antiga primeiro)
         """
         history = []
 
-        # Inverter para ordem cronológica (mais antiga → mais recente)
+        # Inverter para ordem cronolÃ³gica (mais antiga â†’ mais recente)
         for conv in reversed(conversations):
             user_input = conv.get('user_input', '')
 
@@ -1902,182 +1781,12 @@ Resposta: {ai_response}
         return history
 
     # ========================================
-    # SQLite: AGENT DREAMS (MOTOR ONÍRICO)
-    # ========================================
-
-    def save_dream(
-        self,
-        user_id: str,
-        dream_content: str,
-        symbolic_theme: str,
-        regulatory_function: str = "",
-        compensated_attitude: str = "",
-        dream_mood: str = "",
-    ) -> Optional[int]:
-        """Salva um novo sonho gerado pelo Motor Onírico"""
-        with self._lock:
-            try:
-                cursor = self.conn.cursor()
-                cursor.execute("""
-                    INSERT INTO agent_dreams (
-                        user_id,
-                        dream_content,
-                        symbolic_theme,
-                        regulatory_function,
-                        compensated_attitude,
-                        dream_mood,
-                        status
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, 'pending')
-                """, (
-                    user_id,
-                    dream_content,
-                    symbolic_theme,
-                    regulatory_function,
-                    compensated_attitude,
-                    dream_mood,
-                ))
-                self.conn.commit()
-                return cursor.lastrowid
-            except Exception as e:
-                logger.error(f"❌ Erro ao salvar sonho: {e}")
-                return None
-
-    def update_dream_with_insight(self, dream_id: int, extracted_insight: str) -> bool:
-        """Atualiza o sonho com o insight extraído pela ruminação"""
-        with self._lock:
-            try:
-                cursor = self.conn.cursor()
-                cursor.execute("""
-                    UPDATE agent_dreams 
-                    SET extracted_insight = ?
-                    WHERE id = ?
-                """, (extracted_insight, dream_id))
-                self.conn.commit()
-                return cursor.rowcount > 0
-            except Exception as e:
-                logger.error(f"❌ Erro ao atualizar sonho com insight: {e}")
-                return False
-
-    def update_dream_image(
-        self,
-        dream_id: int,
-        image_url: str,
-        image_prompt: str,
-        image_provider: str = "",
-        image_model: str = "",
-        image_status: str = "generated",
-        image_raw_response_json: str = "",
-    ) -> bool:
-        """Salva a imagem gerada e seus metadados."""
-        with self._lock:
-            for attempt in range(3):
-                try:
-                    cursor = self.conn.cursor()
-                    cursor.execute("""
-                        UPDATE agent_dreams 
-                        SET image_url = ?,
-                            image_prompt = ?,
-                            image_provider = ?,
-                            image_model = ?,
-                            image_status = ?,
-                            image_raw_response_json = ?
-                        WHERE id = ?
-                    """, (
-                        image_url,
-                        image_prompt,
-                        image_provider,
-                        image_model,
-                        image_status,
-                        image_raw_response_json,
-                        dream_id,
-                    ))
-                    self.conn.commit()
-                    return cursor.rowcount > 0
-                except sqlite3.OperationalError as e:
-                    if "locked" in str(e).lower() and attempt < 2:
-                        wait_seconds = 0.4 * (attempt + 1)
-                        logger.warning(
-                            "⚠️ Banco ocupado ao atualizar imagem do sonho %s; retry em %.1fs",
-                            dream_id,
-                            wait_seconds,
-                        )
-                        time.sleep(wait_seconds)
-                        continue
-                    logger.error(f"❌ Erro ao atualizar imagem do sonho: {e}")
-                    return False
-                except Exception as e:
-                    logger.error(f"❌ Erro ao atualizar imagem do sonho: {e}")
-                    return False
-
-    def get_latest_dream_insight(self, user_id: str) -> Optional[Dict]:
-        """Busca o insight onírico mais recente, independente de status"""
-        with self._lock:
-            cursor = self.conn.cursor()
-            cursor.execute("""
-                UPDATE agent_dreams
-                SET status = 'faded'
-                WHERE user_id = ?
-                  AND COALESCE(status, 'pending') = 'pending'
-                  AND extracted_insight IS NOT NULL
-                  AND created_at < datetime('now', '-24 hours')
-            """, (user_id,))
-            cursor.execute("""
-                SELECT id, dream_content, extracted_insight, symbolic_theme 
-                FROM agent_dreams
-                WHERE user_id = ?
-                  AND extracted_insight IS NOT NULL
-                  AND COALESCE(status, 'pending') = 'pending'
-                  AND created_at >= datetime('now', '-24 hours')
-                ORDER BY created_at DESC
-                LIMIT 1
-            """, (user_id,))
-            
-            row = cursor.fetchone()
-            if row:
-                return dict(row)
-            return None
-
-    def get_pending_unprocessed_dreams(self, user_id: str = None) -> List[Dict]:
-        """Busca sonhos que ainda não passaram pela ruminação"""
-        with self._lock:
-            cursor = self.conn.cursor()
-            query = """
-                SELECT id, user_id, dream_content, symbolic_theme 
-                FROM agent_dreams
-                WHERE status = 'pending' AND extracted_insight IS NULL
-            """
-            params = ()
-            if user_id:
-                query += " AND user_id = ?"
-                params = (user_id,)
-                
-            cursor.execute(query, params)
-            return [dict(row) for row in cursor.fetchall()]
-
-    def mark_dream_delivered(self, dream_id: int) -> bool:
-        """Sinaliza que o insight onírico foi usado na conversa"""
-        with self._lock:
-            try:
-                cursor = self.conn.cursor()
-                cursor.execute("""
-                    UPDATE agent_dreams 
-                    SET status = 'delivered', delivered_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                """, (dream_id,))
-                self.conn.commit()
-                return cursor.rowcount > 0
-            except Exception as e:
-                logger.error(f"❌ Erro marcar sonho como delivered: {e}")
-                return False
-
-    # ========================================
     # SQLite: ABORDAGENS PROATIVAS (COOLDOWN)
     # ========================================
 
     def save_proactive_approach(self, user_id: str, approach_type: str, category: str, summary: str) -> bool:
         """
-        Registra uma abordagem proativa enviada ao usuário para gerenciar cooldown.
+        Registra uma abordagem proativa enviada ao usuÃ¡rio para gerenciar cooldown.
         Args:
             approach_type: ex: 'strategic_question', 'knowledge_gap', 'ontological_curiosity'
             category: ex: 'insight', 'world_event', 'rumination'
@@ -2086,106 +1795,38 @@ Resposta: {ai_response}
         with self._lock:
             try:
                 cursor = self.conn.cursor()
-                # A tabela `proactive_approaches` já foi desenhada no schema do v4.0.
+                # A tabela `proactive_approaches` jÃ¡ foi desenhada no schema do v4.0.
                 cursor.execute("""
                     INSERT INTO proactive_approaches (user_id, approach_type, category, summary, timestamp)
                     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """, (user_id, approach_type, category, summary))
                 self.conn.commit()
-                logger.info(f"✅ Registro de Proatividade salvo para gerenciar Cooldown ({approach_type})")
+                logger.info(f"âœ… Registro de Proatividade salvo para gerenciar Cooldown ({approach_type})")
                 return True
             except Exception as e:
-                logger.error(f"❌ Erro ao salvar log de proatividade: {e}")
+                logger.error(f"âŒ Erro ao salvar log de proatividade: {e}")
                 return False
 
-    # ========================================
-    # SQLite: KNOWLEDGE GAPS (CARÊNCIA DE SABERES)
-    # ========================================
-
-    def add_knowledge_gap(self, user_id: str, topic: str, the_gap: str, importance: float = 0.5) -> Optional[int]:
-        """Adiciona uma nova lacuna de conhecimento (gap) para o usuário"""
-        with self._lock:
-            cursor = self.conn.cursor()
-            
-            # Evitar duplicatas exatas
-            cursor.execute("SELECT id FROM knowledge_gaps WHERE user_id = ? AND the_gap = ?", (user_id, the_gap))
-            if cursor.fetchone():
-                return None
-                
-            cursor.execute("""
-                INSERT INTO knowledge_gaps (user_id, topic, the_gap, importance_score, status)
-                VALUES (?, ?, ?, ?, 'open')
-            """, (user_id, topic, the_gap, importance))
-            
-            self.conn.commit()
-            return cursor.lastrowid
-
-    def get_active_knowledge_gaps(self, user_id: str, limit: int = 3) -> List[Dict]:
-        """Busca as lacunas ativas mais importantes para o usuário"""
-        with self._lock:
-            cursor = self.conn.cursor()
-            cursor.execute("""
-                SELECT * FROM knowledge_gaps
-                WHERE user_id = ? AND status = 'open'
-                ORDER BY importance_score DESC, created_at DESC
-                LIMIT ?
-            """, (user_id, limit))
-            
-            return [dict(row) for row in cursor.fetchall()]
-
-    def resolve_knowledge_gap(self, gap_id: int) -> bool:
-        """Marca uma lacuna como resolvida"""
-        with self._lock:
-            try:
-                cursor = self.conn.cursor()
-                cursor.execute("""
-                    UPDATE knowledge_gaps 
-                    SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                """, (gap_id,))
-                self.conn.commit()
-                return cursor.rowcount > 0
-            except Exception as e:
-                logger.error(f"❌ Erro ao resolver knowledge gap {gap_id}: {e}")
-                return False
-
-    def reject_knowledge_gap(self, gap_id: int) -> bool:
-        """Marca uma lacuna como rejeitada (irrelevante/inválida)"""
-        with self._lock:
-            try:
-                cursor = self.conn.cursor()
-                cursor.execute("""
-                    UPDATE knowledge_gaps 
-                    SET status = 'rejected', resolved_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                """, (gap_id,))
-                self.conn.commit()
-                return cursor.rowcount > 0
-            except Exception as e:
-                logger.error(f"❌ Erro ao rejeitar knowledge gap {gap_id}: {e}")
-                return False
-
-    # ========================================
     # QUERY ENRICHMENT - FASE 2
     # ========================================
 
     def _extract_names_from_text(self, text: str) -> List[str]:
         """
-        Extrai nomes próprios do texto (heurística simples)
+        Extrai nomes prÃ³prios do texto (heurÃ­stica simples)
 
         Args:
-            text: Texto para análise
+            text: Texto para anÃ¡lise
 
         Returns:
-            Lista de possíveis nomes próprios
+            Lista de possÃ­veis nomes prÃ³prios
         """
         import re
 
-        # Padrão: Palavras capitalizadas que não são início de frase
+        # PadrÃ£o: Palavras capitalizadas que nÃ£o sÃ£o inÃ­cio de frase
         # Ex: "Minha esposa Ana" -> captura "Ana"
-        pattern = r'\b([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+)\b'
+        pattern = r'\b([A-ZÃÃ‰ÃÃ“ÃšÃ‚ÃŠÃ”ÃƒÃ•Ã‡][a-zÃ¡Ã©Ã­Ã³ÃºÃ¢ÃªÃ´Ã£ÃµÃ§]+)\b'
 
-        # Filtrar palavras comuns que não são nomes
+        # Filtrar palavras comuns que nÃ£o sÃ£o nomes
         stopwords = {'O', 'A', 'Os', 'As', 'Um', 'Uma', 'De', 'Da', 'Do', 'Em', 'No', 'Na',
                     'Para', 'Por', 'Com', 'Sem', 'Mais', 'Menos', 'Muito', 'Pouco'}
 
@@ -2196,23 +1837,23 @@ Resposta: {ai_response}
 
     def _detect_topics_in_text(self, text: str) -> List[str]:
         """
-        Detecta tópicos mencionados no texto
+        Detecta tÃ³picos mencionados no texto
 
         Args:
-            text: Texto para análise
+            text: Texto para anÃ¡lise
 
         Returns:
-            Lista de tópicos detectados
+            Lista de tÃ³picos detectados
         """
         text_lower = text.lower()
 
         topic_keywords = {
-            "trabalho": ["trabalho", "emprego", "empresa", "chefe", "colega", "reunião", "projeto"],
-            "familia": ["esposa", "marido", "filho", "filha", "pai", "mãe", "família", "casa"],
-            "saude": ["saúde", "doença", "médico", "ansiedade", "depressão", "terapia", "remédio"],
+            "trabalho": ["trabalho", "emprego", "empresa", "chefe", "colega", "reuniÃ£o", "projeto"],
+            "familia": ["esposa", "marido", "filho", "filha", "pai", "mÃ£e", "famÃ­lia", "casa"],
+            "saude": ["saÃºde", "doenÃ§a", "mÃ©dico", "ansiedade", "depressÃ£o", "terapia", "remÃ©dio"],
             "relacionamento": ["amigo", "namoro", "amor", "relacionamento", "parceiro"],
-            "lazer": ["viagem", "férias", "hobby", "passeio"],
-            "dinheiro": ["dinheiro", "salário", "conta", "dívida", "financeiro"],
+            "lazer": ["viagem", "fÃ©rias", "hobby", "passeio"],
+            "dinheiro": ["dinheiro", "salÃ¡rio", "conta", "dÃ­vida", "financeiro"],
         }
 
         detected = []
@@ -2224,23 +1865,23 @@ Resposta: {ai_response}
 
     def _is_factual_memory_query(self, text: str) -> bool:
         """
-        Detecta perguntas factuais diretas sobre o usuário.
+        Detecta perguntas factuais diretas sobre o usuÃ¡rio.
 
-        Serve para priorizar fatos canônicos antes da busca semântica.
+        Serve para priorizar fatos canÃ´nicos antes da busca semÃ¢ntica.
         """
         text_lower = text.lower()
 
         memory_markers = [
-            "você lembra",
+            "vocÃª lembra",
             "vc lembra",
             "lembra",
             "sabe",
-            "qual é",
+            "qual Ã©",
             "qual e",
-            "quais são",
+            "quais sÃ£o",
             "quais sao",
             "como se chama",
-            "quem é",
+            "quem Ã©",
             "quem e",
             "me diga",
             "me fala",
@@ -2253,15 +1894,15 @@ Resposta: {ai_response}
             "meus filhos",
             "minha filha",
             "meu filho",
-            "minha profissão",
+            "minha profissÃ£o",
             "minha profissao",
             "onde trabalho",
             "meu trabalho",
             "minha idade",
             "meu pai",
-            "minha mãe",
+            "minha mÃ£e",
             "minha mae",
-            "minha família",
+            "minha famÃ­lia",
             "minha familia",
         ]
 
@@ -2271,7 +1912,7 @@ Resposta: {ai_response}
         return has_memory_marker and has_identity_target
 
     def _get_current_facts_any(self, user_id: str) -> List[Dict]:
-        """Retorna fatos atuais do usuário com fallback entre V2 e V1."""
+        """Retorna fatos atuais do usuÃ¡rio com fallback entre V2 e V1."""
         with self._lock:
             cursor = self.conn.cursor()
             cursor.execute("""
@@ -2328,7 +1969,7 @@ Resposta: {ai_response}
 
     def _get_priority_facts_for_query(self, user_id: str, query: str, limit: int = 8) -> List[Dict]:
         """
-        Ranqueia fatos canônicos para perguntas factuais diretas.
+        Ranqueia fatos canÃ´nicos para perguntas factuais diretas.
         """
         if not self._is_factual_memory_query(query):
             return []
@@ -2341,9 +1982,9 @@ Resposta: {ai_response}
         query_topics = set(self._detect_topics_in_text(query))
 
         topic_aliases = {
-            "familia": {"esposa", "marido", "filho", "filha", "pai", "mãe", "mae", "família", "familia", "nome"},
-            "trabalho": {"profissão", "profissao", "trabalho", "empresa", "cargo", "função", "funcao"},
-            "saude": {"saúde", "saude", "terapia", "ansiedade", "depressão", "depressao"},
+            "familia": {"esposa", "marido", "filho", "filha", "pai", "mÃ£e", "mae", "famÃ­lia", "familia", "nome"},
+            "trabalho": {"profissÃ£o", "profissao", "trabalho", "empresa", "cargo", "funÃ§Ã£o", "funcao"},
+            "saude": {"saÃºde", "saude", "terapia", "ansiedade", "depressÃ£o", "depressao"},
         }
 
         ranked = []
@@ -2378,9 +2019,9 @@ Resposta: {ai_response}
                 score += 5
             if ("filhos" in query_lower or "filho" in query_lower or "filha" in query_lower) and fact_type == "filhos":
                 score += 5
-            if ("profissão" in query_lower or "profissao" in query_lower or "trabalho" in query_lower) and category == "trabalho":
+            if ("profissÃ£o" in query_lower or "profissao" in query_lower or "trabalho" in query_lower) and category == "trabalho":
                 score += 4
-            if ("pai" in query_lower or "mãe" in query_lower or "mae" in query_lower) and fact_type in {"pai", "mãe", "mae"}:
+            if ("pai" in query_lower or "mÃ£e" in query_lower or "mae" in query_lower) and fact_type in {"pai", "mÃ£e", "mae"}:
                 score += 5
 
             ranked.append((score, fact))
@@ -2402,13 +2043,13 @@ Resposta: {ai_response}
 
     def build_priority_fact_context(self, user_id: str, query: str, limit: int = 8) -> str:
         """
-        Constrói contexto factual prioritário para perguntas diretas de memória.
+        ConstrÃ³i contexto factual prioritÃ¡rio para perguntas diretas de memÃ³ria.
         """
         priority_facts = self._get_priority_facts_for_query(user_id, query, limit=limit)
         if not priority_facts:
             return ""
 
-        lines = ["[FATOS CANÔNICOS PRIORITÁRIOS SOBRE O USUÁRIO]"]
+        lines = ["[FATOS CANÃ”NICOS PRIORITÃRIOS SOBRE O USUÃRIO]"]
         for fact in priority_facts:
             category = fact.get("category", "OUTROS")
             fact_type = fact.get("fact_type", "")
@@ -2416,17 +2057,17 @@ Resposta: {ai_response}
             value = fact.get("fact_value", "")
             lines.append(f"- {category}.{fact_type}.{attribute}: {value}")
 
-        lines.append("Use estes fatos como referência factual prioritária ao responder perguntas sobre identidade, família, profissão e dados biográficos do usuário.")
+        lines.append("Use estes fatos como referÃªncia factual prioritÃ¡ria ao responder perguntas sobre identidade, famÃ­lia, profissÃ£o e dados biogrÃ¡ficos do usuÃ¡rio.")
         return "\n".join(lines)
 
     def _build_enriched_query(self, user_id: str, user_input: str, chat_history: List[Dict] = None) -> str:
         """
-        Constrói query enriquecida com múltiplas fontes (Fase 2 - Query Enrichment)
+        ConstrÃ³i query enriquecida com mÃºltiplas fontes (Fase 2 - Query Enrichment)
 
         Args:
-            user_id: ID do usuário
-            user_input: Input do usuário
-            chat_history: Histórico da conversa atual
+            user_id: ID do usuÃ¡rio
+            user_input: Input do usuÃ¡rio
+            chat_history: HistÃ³rico da conversa atual
 
         Returns:
             Query enriquecida
@@ -2443,7 +2084,7 @@ Resposta: {ai_response}
             if recent:
                 query_parts.append(recent)
 
-        # CAMADA 2: Fatos relevantes do usuário (NOVO)
+        # CAMADA 2: Fatos relevantes do usuÃ¡rio (NOVO)
         # Buscar nomes de pessoas mencionadas no input
         mentioned_names = self._extract_names_from_text(user_input)
 
@@ -2451,7 +2092,7 @@ Resposta: {ai_response}
             # Buscar fatos sobre essas pessoas
             cursor = self.conn.cursor()
 
-            # Usar user_facts_v2 se disponível
+            # Usar user_facts_v2 se disponÃ­vel
             cursor.execute("""
                 SELECT name FROM sqlite_master
                 WHERE type='table' AND name='user_facts_v2'
@@ -2487,7 +2128,7 @@ Resposta: {ai_response}
             if relevant_facts:
                 query_parts.append(" ".join(relevant_facts[:5]))  # Limitar a 5 fatos
 
-        # CAMADA 3: Tópicos implícitos (NOVO)
+        # CAMADA 3: TÃ³picos implÃ­citos (NOVO)
         topics = self._detect_topics_in_text(user_input)
         if topics:
             query_parts.append(" ".join(topics))
@@ -2498,7 +2139,7 @@ Resposta: {ai_response}
         if len(enriched) > len(user_input):
             logger.info(f"   Query enriquecida: {len(enriched)} chars (original: {len(user_input)} chars)")
             logger.info(f"   Nomes detectados: {mentioned_names}")
-            logger.info(f"   Tópicos detectados: {topics}")
+            logger.info(f"   TÃ³picos detectados: {topics}")
 
         return enriched
 
@@ -2511,16 +2152,16 @@ Resposta: {ai_response}
         Calcula k adaptativo baseado em complexidade do contexto (Fase 3)
 
         Args:
-            query: Query do usuário
-            chat_history: Histórico da conversa
-            user_id: ID do usuário
+            query: Query do usuÃ¡rio
+            chat_history: HistÃ³rico da conversa
+            user_id: ID do usuÃ¡rio
 
         Returns:
-            k dinâmico entre 3 e 12
+            k dinÃ¢mico entre 3 e 12
         """
         base_k = 5
 
-        # Fator 1: Comprimento do histórico
+        # Fator 1: Comprimento do histÃ³rico
         if chat_history and len(chat_history) > 10:
             base_k += 2  # Conversas longas precisam de mais contexto
 
@@ -2531,15 +2172,15 @@ Resposta: {ai_response}
         elif query_words < 5:
             base_k -= 1  # Queries curtas precisam de menos
 
-        # Fator 3: Múltiplas pessoas mencionadas
+        # Fator 3: MÃºltiplas pessoas mencionadas
         mentioned_names = self._extract_names_from_text(query)
         if len(mentioned_names) > 1:
             base_k += len(mentioned_names)
 
-        # Fator 4: Histórico total do usuário
+        # Fator 4: HistÃ³rico total do usuÃ¡rio
         total_conversations = self.count_conversations(user_id)
         if total_conversations < 20:
-            base_k = min(base_k, 3)  # Limitar para usuários novos
+            base_k = min(base_k, 3)  # Limitar para usuÃ¡rios novos
 
         # Limitar entre 3 e 12
         final_k = max(3, min(base_k, 12))
@@ -2554,35 +2195,35 @@ Resposta: {ai_response}
 
         Args:
             results: Lista de (Document, score) do ChromaDB
-            user_id: ID do usuário
+            user_id: ID do usuÃ¡rio
             query: Query original
-            chat_history: Histórico da conversa
+            chat_history: HistÃ³rico da conversa
 
         Returns:
-            Lista de memórias rerankeadas com scores combinados
+            Lista de memÃ³rias rerankeadas com scores combinados
         """
         import re
 
         reranked = []
 
-        # Extrair informações da query para boosting
+        # Extrair informaÃ§Ãµes da query para boosting
         query_names = set(self._extract_names_from_text(query))
         query_topics = set(self._detect_topics_in_text(query))
 
-        logger.info(f"   Reranking {len(results)} memórias...")
+        logger.info(f"   Reranking {len(results)} memÃ³rias...")
         logger.info(f"   Query names: {query_names}")
         logger.info(f"   Query topics: {query_topics}")
 
         for doc, base_score in results:
             metadata = doc.metadata
 
-            # Validação extra: filtrar manualmente user_id errado
+            # ValidaÃ§Ã£o extra: filtrar manualmente user_id errado
             doc_user_id = str(metadata.get('user_id', ''))
             if doc_user_id != str(user_id):
-                logger.error(f"🚨 Removendo doc com user_id='{doc_user_id}' (esperado='{user_id}')")
+                logger.error(f"ðŸš¨ Removendo doc com user_id='{doc_user_id}' (esperado='{user_id}')")
                 continue
 
-            # === CÁLCULO DE BOOSTS ===
+            # === CÃLCULO DE BOOSTS ===
 
             # 1. BOOST TEMPORAL
             temporal_boost = self.calculate_temporal_boost(
@@ -2598,22 +2239,22 @@ Resposta: {ai_response}
             elif emotional_intensity > 2.5:
                 emotional_boost = 1.5  # Muito intenso
 
-            # 3. BOOST DE TÓPICO
+            # 3. BOOST DE TÃ“PICO
             memory_topics = set(metadata.get('topics', '').split(',')) if metadata.get('topics') else set()
             # Remover strings vazias
             memory_topics = {t.strip() for t in memory_topics if t.strip()}
 
             topic_boost = 1.0
-            if query_topics & memory_topics:  # Interseção
+            if query_topics & memory_topics:  # InterseÃ§Ã£o
                 overlap = len(query_topics & memory_topics)
-                topic_boost = 1.2 + (overlap * 0.1)  # +0.1 por tópico em comum
+                topic_boost = 1.2 + (overlap * 0.1)  # +0.1 por tÃ³pico em comum
 
             # 4. BOOST DE PESSOA MENCIONADA (mais forte)
             memory_people = set(metadata.get('mentions_people', '').split(',')) if metadata.get('mentions_people') else set()
             memory_people = {p.strip() for p in memory_people if p.strip()}
 
             person_boost = 1.0
-            if query_names & memory_people:  # Interseção
+            if query_names & memory_people:  # InterseÃ§Ã£o
                 person_boost = 1.5  # FORTE boost se mesma pessoa mencionada
 
             # 5. BOOST DE PROFUNDIDADE EXISTENCIAL
@@ -2622,13 +2263,13 @@ Resposta: {ai_response}
             if depth > 0.7:
                 depth_boost = 1.15  # Leve boost para conversas profundas
 
-            # 6. BOOST DE CONFLITO ARQUETÍPICO
+            # 6. BOOST DE CONFLITO ARQUETÃPICO
             conflict_boost = 1.0
             if metadata.get('has_conflicts', False):
                 conflict_boost = 1.1  # Leve boost para momentos de conflito interno
 
             # === SCORE FINAL COMBINADO ===
-            # Distância ChromaDB é invertida (menor = mais similar)
+            # DistÃ¢ncia ChromaDB Ã© invertida (menor = mais similar)
             # Convertemos para similaridade: 1 - score
             similarity = 1 - base_score
 
@@ -2642,7 +2283,7 @@ Resposta: {ai_response}
                 conflict_boost
             )
 
-            # Extrair conteúdo do documento
+            # Extrair conteÃºdo do documento
             user_input_match = re.search(r"Input:\s*(.+?)(?:\n|Resposta:|$)", doc.page_content, re.DOTALL)
             user_input_text = user_input_match.group(1).strip() if user_input_match else ""
 
@@ -2675,7 +2316,7 @@ Resposta: {ai_response}
         reranked.sort(key=lambda x: x['final_score'], reverse=True)
 
         # Log dos top 3 com detalhes de boosts
-        logger.info(f"   ✅ Reranking concluído. Top 3:")
+        logger.info(f"   âœ… Reranking concluÃ­do. Top 3:")
         for i, mem in enumerate(reranked[:3], 1):
             logger.info(f"   {i}. base={mem['base_score']:.3f}, similarity={mem['similarity_score']:.3f}, final={mem['final_score']:.3f}")
             logger.info(f"      Boosts: {mem['boosts']}")
@@ -2684,25 +2325,25 @@ Resposta: {ai_response}
         return reranked
 
     # ========================================
-    # BUSCA SEMÂNTICA LEGADA (ChromaDB)
+    # BUSCA SEMÃ‚NTICA LEGADA (ChromaDB)
     # ========================================
 
     def semantic_search(self, user_id: str, query: str, k: int = None,
                        chat_history: List[Dict] = None) -> List[Dict]:
         """
-        Busca semântica com TWO-STAGE RETRIEVAL + INTELLIGENT RERANKING (Fase 3)
+        Busca semÃ¢ntica com TWO-STAGE RETRIEVAL + INTELLIGENT RERANKING (Fase 3)
 
         STAGE 1: Broad retrieval (k*3)
         STAGE 2: Intelligent reranking com 6 boosts
 
         Args:
-            user_id: ID do usuário
+            user_id: ID do usuÃ¡rio
             query: Texto da consulta
-            k: Número de resultados (None = adaptativo)
-            chat_history: Histórico da conversa atual (opcional)
+            k: NÃºmero de resultados (None = adaptativo)
+            chat_history: HistÃ³rico da conversa atual (opcional)
 
         Returns:
-            Lista de memórias rerankeadas com scores combinados
+            Lista de memÃ³rias rerankeadas com scores combinados
         """
 
         if not self.chroma_enabled:
@@ -2710,17 +2351,17 @@ Resposta: {ai_response}
             return self._fallback_keyword_search(user_id, query, k or 5)
 
         try:
-            # Garantir que user_id é string para consistência
+            # Garantir que user_id Ã© string para consistÃªncia
             user_id_str = str(user_id) if user_id else None
             if not user_id_str:
-                logger.error("❌ user_id é None ou vazio! Retornando lista vazia.")
+                logger.error("âŒ user_id Ã© None ou vazio! Retornando lista vazia.")
                 return []
 
-            # 🔍 DEBUG: Início do two-stage retrieval
-            logger.info(f"🔍 [TWO-STAGE] Busca semântica para user_id='{user_id_str}'")
+            # ðŸ” DEBUG: InÃ­cio do two-stage retrieval
+            logger.info(f"ðŸ” [TWO-STAGE] Busca semÃ¢ntica para user_id='{user_id_str}'")
             logger.info(f"   Query original: '{query[:100]}'")
 
-            # Calcular k adaptativo se não fornecido (FASE 3)
+            # Calcular k adaptativo se nÃ£o fornecido (FASE 3)
             if k is None:
                 k = self._calculate_adaptive_k(query, chat_history, user_id_str)
             else:
@@ -2736,7 +2377,7 @@ Resposta: {ai_response}
             # ============================================
             # STAGE 1: BROAD RETRIEVAL
             # ============================================
-            broad_k = max(k * 3, 9)  # Buscar pelo menos 3x mais, mínimo 9
+            broad_k = max(k * 3, 9)  # Buscar pelo menos 3x mais, mÃ­nimo 9
             logger.info(f"   STAGE 1: Broad retrieval (k={broad_k})")
 
             chroma_filter = {"user_id": user_id_str}
@@ -2763,21 +2404,21 @@ Resposta: {ai_response}
                 query=query
             )
 
-            # Retornar top k após reranking
+            # Retornar top k apÃ³s reranking
             top_memories = reranked[:k]
 
-            logger.info(f"✅ Two-Stage concluído: {len(top_memories)} memórias finais (de {len(results)} broad)")
+            logger.info(f"âœ… Two-Stage concluÃ­do: {len(top_memories)} memÃ³rias finais (de {len(results)} broad)")
             for i, mem in enumerate(top_memories[:3], 1):
                 logger.info(f"   {i}. [final={mem['final_score']:.3f}] {mem['user_input'][:50]}...")
 
-            # STAGE 3: Merge com BM25 sobre arquivos de sessão
+            # STAGE 3: Merge com BM25 sobre arquivos de sessÃ£o
             try:
                 from bm25_search import search as bm25_search
                 bm25_hits = bm25_search(user_id_str, query, k=max(3, k // 2))
                 if bm25_hits:
                     existing_texts = {m['user_input'][:80] for m in top_memories}
                     for hit in bm25_hits:
-                        # Evitar duplicatas já cobertas pelo vector search
+                        # Evitar duplicatas jÃ¡ cobertas pelo vector search
                         if hit['text'][:80] not in existing_texts:
                             top_memories.append({
                                 'conversation_id': None,
@@ -2794,18 +2435,18 @@ Resposta: {ai_response}
                     top_memories = top_memories[:k]
                     logger.info(f"   BM25: {len(bm25_hits)} hits fundidos")
             except Exception as bm25_err:
-                logger.debug(f"   BM25 indisponível: {bm25_err}")
+                logger.debug(f"   BM25 indisponÃ­vel: {bm25_err}")
 
             return top_memories
 
         except Exception as e:
-            logger.error(f"❌ Erro na busca semântica: {e}")
+            logger.error(f"âŒ Erro na busca semÃ¢ntica: {e}")
             import traceback
             logger.error(traceback.format_exc())
             return self._fallback_keyword_search(user_id, query, k or 5)
     
     def _fallback_keyword_search(self, user_id: str, query: str, k: int = 5) -> List[Dict]:
-        """Busca por keywords (fallback quando ChromaDB indisponível)"""
+        """Busca por keywords (fallback quando ChromaDB indisponÃ­vel)"""
         cursor = self.conn.cursor()
         
         search_term = f"%{query}%"
@@ -2832,7 +2473,7 @@ Resposta: {ai_response}
         return results
     
     # ========================================
-    # CONSTRUÇÃO DE CONTEXTO
+    # CONSTRUÃ‡ÃƒO DE CONTEXTO
     # ========================================
 
     def _search_relevant_facts(self, user_id: str, query: str) -> List[Dict]:
@@ -2840,13 +2481,13 @@ Resposta: {ai_response}
         Busca fatos relevantes ao input atual (Fase 5)
 
         Args:
-            user_id: ID do usuário
-            query: Input do usuário
+            user_id: ID do usuÃ¡rio
+            query: Input do usuÃ¡rio
 
         Returns:
             Lista de fatos relevantes
         """
-        # Extrair nomes e tópicos da query
+        # Extrair nomes e tÃ³picos da query
         mentioned_names = self._extract_names_from_text(query)
         mentioned_topics = self._detect_topics_in_text(query)
 
@@ -2881,7 +2522,7 @@ Resposta: {ai_response}
 
                 relevant_facts.extend([dict(row) for row in cursor.fetchall()])
 
-        # Buscar fatos sobre tópicos mencionados
+        # Buscar fatos sobre tÃ³picos mencionados
         if mentioned_topics:
             for topic in mentioned_topics:
                 category_map = {
@@ -2912,7 +2553,7 @@ Resposta: {ai_response}
 
     def _format_facts_hierarchically(self, facts: List[Dict]) -> str:
         """
-        Formata fatos de forma hierárquica (Fase 5)
+        Formata fatos de forma hierÃ¡rquica (Fase 5)
 
         Args:
             facts: Lista de fatos
@@ -2945,18 +2586,18 @@ Resposta: {ai_response}
 
     def _get_relevant_patterns(self, user_id: str, query: str) -> List[Dict]:
         """
-        Busca padrões relevantes ao input atual (Fase 5)
+        Busca padrÃµes relevantes ao input atual (Fase 5)
 
         Args:
-            user_id: ID do usuário
-            query: Input do usuário
+            user_id: ID do usuÃ¡rio
+            query: Input do usuÃ¡rio
 
         Returns:
-            Lista de padrões relevantes
+            Lista de padrÃµes relevantes
         """
         cursor = self.conn.cursor()
 
-        # Buscar padrões com alta confiança
+        # Buscar padrÃµes com alta confianÃ§a
         cursor.execute("""
             SELECT pattern_name, pattern_description, frequency_count, confidence_score
             FROM user_patterns
@@ -2973,12 +2614,12 @@ Resposta: {ai_response}
 
         Args:
             context: Contexto completo
-            max_tokens: Limite máximo de tokens
+            max_tokens: Limite mÃ¡ximo de tokens
 
         Returns:
-            Contexto comprimido se necessário
+            Contexto comprimido se necessÃ¡rio
         """
-        # Estimativa simples: 1 token ≈ 4 caracteres
+        # Estimativa simples: 1 token â‰ˆ 4 caracteres
         estimated_tokens = len(context) / 4
 
         if estimated_tokens <= max_tokens:
@@ -2992,28 +2633,28 @@ Resposta: {ai_response}
                           k_memories: int = None,
                           chat_history: List[Dict] = None) -> str:
         """
-        Constrói contexto HIERÁRQUICO e ESTRATIFICADO (Fase 5)
+        ConstrÃ³i contexto HIERÃRQUICO e ESTRATIFICADO (Fase 5)
 
         Combina em layers:
-        1. Histórico imediato (sempre incluir)
+        1. HistÃ³rico imediato (sempre incluir)
         2. Fatos relevantes ao input (busca inteligente)
-        3. Memórias semânticas (reranked, agrupadas por recência + consolidadas)
-        4. Padrões detectados (se relevantes)
+        3. MemÃ³rias semÃ¢nticas (reranked, agrupadas por recÃªncia + consolidadas)
+        4. PadrÃµes detectados (se relevantes)
 
         Args:
-            user_id: ID do usuário
+            user_id: ID do usuÃ¡rio
             current_input: Input atual
-            k_memories: Número de memórias (None = adaptativo)
-            chat_history: Histórico da conversa atual
+            k_memories: NÃºmero de memÃ³rias (None = adaptativo)
+            chat_history: HistÃ³rico da conversa atual
 
         Returns:
-            Contexto formatado e hierárquico
+            Contexto formatado e hierÃ¡rquico
         """
 
-        logger.info(f"🏗️ [FASE 5] Construindo contexto hierárquico para user_id={user_id}")
+        logger.info(f"ðŸ—ï¸ [FASE 5] Construindo contexto hierÃ¡rquico para user_id={user_id}")
 
         user = self.get_user(user_id)
-        name = user['user_name'] if user else "Usuário"
+        name = user['user_name'] if user else "UsuÃ¡rio"
 
         context_parts = []
 
@@ -3022,14 +2663,14 @@ Resposta: {ai_response}
             context_parts.append(priority_fact_context)
             context_parts.append("")
 
-        # ===== LAYER 1: HISTÓRICO IMEDIATO =====
+        # ===== LAYER 1: HISTÃ“RICO IMEDIATO =====
         context_parts.append("=== CONVERSA ATUAL ===\n")
 
         if chat_history and len(chat_history) > 0:
             recent = chat_history[-6:] if len(chat_history) > 6 else chat_history
 
             for msg in recent:
-                role = "👤 Usuário" if msg["role"] == "user" else "🤖 Jung"
+                role = "ðŸ‘¤ UsuÃ¡rio" if msg["role"] == "user" else "ðŸ¤– Jung"
                 content = msg["content"][:150] + "..." if len(msg["content"]) > 150 else msg["content"]
                 context_parts.append(f"{role}: {content}")
 
@@ -3044,51 +2685,51 @@ Resposta: {ai_response}
             context_parts.append("")
 
 
-        # ===== LAYER 3: MEMÓRIAS SEMÂNTICAS =====
+        # ===== LAYER 3: MEMÃ“RIAS SEMÃ‚NTICAS =====
         memories = self.semantic_search(user_id, current_input, k=k_memories, chat_history=chat_history)
 
         if memories:
-            context_parts.append("=== MEMÓRIAS RELACIONADAS ===\n")
+            context_parts.append("=== MEMÃ“RIAS RELACIONADAS ===\n")
 
-            # Separar por tipo e recência
+            # Separar por tipo e recÃªncia
             consolidated = [m for m in memories if m.get('metadata', {}).get('type') == 'consolidated']
             regular = [m for m in memories if m.get('metadata', {}).get('type') != 'consolidated']
 
-            # Agrupar regulares por recência
+            # Agrupar regulares por recÃªncia
             recent = [m for m in regular if m.get('metadata', {}).get('recency_tier') == 'recent']
             older = [m for m in regular if m.get('metadata', {}).get('recency_tier') != 'recent']
 
-            # Memórias consolidadas primeiro (se existirem)
+            # MemÃ³rias consolidadas primeiro (se existirem)
             if consolidated:
-                context_parts.append("📦 Padrões de Longo Prazo (Consolidado):")
+                context_parts.append("ðŸ“¦ PadrÃµes de Longo Prazo (Consolidado):")
                 for mem in consolidated[:1]:  # Apenas 1 consolidada
                     preview = mem.get('full_document', '')[:300]
                     context_parts.append(f"{preview}...")
                 context_parts.append("")
 
-            # Memórias recentes
+            # MemÃ³rias recentes
             if recent:
-                context_parts.append("🕐 Recente (últimos 30 dias):")
+                context_parts.append("ðŸ• Recente (Ãºltimos 30 dias):")
                 for i, mem in enumerate(recent[:3], 1):
                     timestamp = mem.get('timestamp', '')[:10]
                     user_input = mem.get('user_input', '')[:100]
                     context_parts.append(f"{i}. [{timestamp}] {user_input}...")
                 context_parts.append("")
 
-            # Memórias antigas (se relevantes)
+            # MemÃ³rias antigas (se relevantes)
             if older:
-                context_parts.append("📚 Histórico:")
+                context_parts.append("ðŸ“š HistÃ³rico:")
                 for i, mem in enumerate(older[:2], 1):
                     timestamp = mem.get('timestamp', '')[:10]
                     user_input = mem.get('user_input', '')[:100]
                     context_parts.append(f"{i}. [{timestamp}] {user_input}...")
                 context_parts.append("")
 
-        # ===== LAYER 4: PADRÕES DETECTADOS =====
+        # ===== LAYER 4: PADRÃ•ES DETECTADOS =====
         patterns = self._get_relevant_patterns(user_id, current_input)
 
         if patterns:
-            context_parts.append("=== PADRÕES OBSERVADOS ===\n")
+            context_parts.append("=== PADRÃ•ES OBSERVADOS ===\n")
             for pattern in patterns[:2]:
                 context_parts.append(f"- {pattern['pattern_name']}: {pattern['pattern_description']}")
             context_parts.append("")
@@ -3096,27 +2737,27 @@ Resposta: {ai_response}
         # Juntar tudo
         full_context = "\n".join(context_parts)
 
-        # Comprimir se necessário
+        # Comprimir se necessÃ¡rio
         full_context = self._compress_context_if_needed(full_context, max_tokens=2000)
 
-        logger.info(f"✅ [FASE 5] Contexto construído: {len(full_context)} caracteres")
+        logger.info(f"âœ… [FASE 5] Contexto construÃ­do: {len(full_context)} caracteres")
 
         return full_context
     
     # ========================================
-    # EXTRAÇÃO DE FATOS
+    # EXTRAÃ‡ÃƒO DE FATOS
     # ========================================
     
     def extract_and_save_facts(self, user_id: str, user_input: str, 
                                conversation_id: int) -> List[Dict]:
         """
-        Extrai fatos estruturados do input do usuário
+        Extrai fatos estruturados do input do usuÃ¡rio
         
         Usa regex patterns para detectar:
-        - Profissão, empresa, área de atuação
-        - Traços de personalidade
+        - ProfissÃ£o, empresa, Ã¡rea de atuaÃ§Ã£o
+        - TraÃ§os de personalidade
         - Relacionamentos
-        - Preferências
+        - PreferÃªncias
         - Eventos de vida
         """
         
@@ -3126,14 +2767,14 @@ Resposta: {ai_response}
         # ===== TRABALHO =====
         work_patterns = {
             'profissao': [
-                r'sou (engenheiro|médico|professor|advogado|desenvolvedor|designer|gerente|analista)',
+                r'sou (engenheiro|mÃ©dico|professor|advogado|desenvolvedor|designer|gerente|analista)',
                 r'trabalho como (.+?)(?:\.|,|no|na|em)',
                 r'atuo como (.+?)(?:\.|,|no|na|em)'
             ],
             'empresa': [
                 r'trabalho na (.+?)(?:\.|,|como)',
                 r'trabalho no (.+?)(?:\.|,|como)',
-                r'minha empresa é (.+?)(?:\.|,)'
+                r'minha empresa Ã© (.+?)(?:\.|,)'
             ]
         }
         
@@ -3154,20 +2795,20 @@ Resposta: {ai_response}
             'extrovertido': ['sou extrovertido', 'gosto de pessoas', 'adoro festas'],
             'ansioso': ['tenho ansiedade', 'fico ansioso', 'sou ansioso'],
             'calmo': ['sou calmo', 'sou tranquilo', 'pessoa zen'],
-            'perfeccionista': ['sou perfeccionista', 'gosto de perfeição', 'detalhe é importante']
+            'perfeccionista': ['sou perfeccionista', 'gosto de perfeiÃ§Ã£o', 'detalhe Ã© importante']
         }
         
         for trait, patterns in personality_traits.items():
             if any(p in input_lower for p in patterns):
                 self._save_or_update_fact(
-                    user_id, 'PERSONALIDADE', 'traço', trait, conversation_id
+                    user_id, 'PERSONALIDADE', 'traÃ§o', trait, conversation_id
                 )
-                extracted.append({'category': 'PERSONALIDADE', 'key': 'traço', 'value': trait})
+                extracted.append({'category': 'PERSONALIDADE', 'key': 'traÃ§o', 'value': trait})
         
         # ===== RELACIONAMENTO =====
         relationship_patterns = [
             'meu namorado', 'minha namorada', 'meu marido', 'minha esposa',
-            'meu pai', 'minha mãe', 'meu irmão', 'minha irmã'
+            'meu pai', 'minha mÃ£e', 'meu irmÃ£o', 'minha irmÃ£'
         ]
         
         for pattern in relationship_patterns:
@@ -3178,7 +2819,7 @@ Resposta: {ai_response}
                 extracted.append({'category': 'RELACIONAMENTO', 'key': 'pessoa', 'value': pattern})
         
         if extracted:
-            logger.info("✅ Extraídos %s fatos para user_id=%s", len(extracted), user_id)
+            logger.info("âœ… ExtraÃ­dos %s fatos para user_id=%s", len(extracted), user_id)
         
         return extracted
     
@@ -3197,7 +2838,7 @@ Resposta: {ai_response}
         with self._lock:
             cursor = self.conn.cursor()
 
-            # Verificar se fato já existe
+            # Verificar se fato jÃ¡ existe
             cursor.execute("""
                 SELECT id, fact_value FROM user_facts
                 WHERE user_id = ? AND fact_category = ? AND fact_key = ? AND is_current = 1
@@ -3206,16 +2847,16 @@ Resposta: {ai_response}
             existing = cursor.fetchone()
 
             if existing:
-                # Se valor mudou, criar nova versão
+                # Se valor mudou, criar nova versÃ£o
                 if existing['fact_value'] != value:
-                    logger.info(f"   ✏️  Atualizando fato existente: '{existing['fact_value']}' → '{value}'")
+                    logger.info(f"   âœï¸  Atualizando fato existente: '{existing['fact_value']}' â†’ '{value}'")
 
-                    # Desativar versão antiga
+                    # Desativar versÃ£o antiga
                     cursor.execute("""
                         UPDATE user_facts SET is_current = 0 WHERE id = ?
                     """, (existing['id'],))
 
-                    # Criar nova versão
+                    # Criar nova versÃ£o
                     cursor.execute("""
                         INSERT INTO user_facts
                         (user_id, fact_category, fact_key, fact_value,
@@ -3224,9 +2865,9 @@ Resposta: {ai_response}
                         FROM user_facts WHERE id = ?
                     """, (value, conversation_id, existing['id']))
                 else:
-                    logger.info(f"   ℹ️  Fato já existe com mesmo valor, pulando")
+                    logger.info(f"   â„¹ï¸  Fato jÃ¡ existe com mesmo valor, pulando")
             else:
-                logger.info(f"   ✨ Criando novo fato")
+                logger.info(f"   âœ¨ Criando novo fato")
                 # Criar fato novo
                 cursor.execute("""
                     INSERT INTO user_facts
@@ -3235,46 +2876,46 @@ Resposta: {ai_response}
                 """, (user_id, category, key, value, conversation_id))
 
             self.conn.commit()
-            logger.info(f"   ✅ Fato salvo com sucesso")
+            logger.info(f"   âœ… Fato salvo com sucesso")
 
     # ========================================
-    # EXTRAÇÃO DE FATOS V2 (com LLM)
+    # EXTRAÃ‡ÃƒO DE FATOS V2 (com LLM)
     # ========================================
 
     def extract_and_save_facts_v2(self, user_id: str, user_input: str,
                                   conversation_id: int) -> List[Dict]:
         """
         Extrai fatos estruturados usando LLM + fallback regex.
-        Detecta e processa correções ANTES de extrair fatos novos.
+        Detecta e processa correÃ§Ãµes ANTES de extrair fatos novos.
 
-        VERSÃO 3: Com suporte a correções genéricas via CorrectionDetector
+        VERSÃƒO 3: Com suporte a correÃ§Ãµes genÃ©ricas via CorrectionDetector
         """
 
         extracted_facts = []
 
         if not (hasattr(self, 'fact_extractor') and self.fact_extractor):
-            logger.info("🔄 fact_extractor indisponível, usando método legado...")
+            logger.info("ðŸ”„ fact_extractor indisponÃ­vel, usando mÃ©todo legado...")
             return self.extract_and_save_facts(user_id, user_input, conversation_id)
 
         try:
-            # ETAPA 1: Buscar fatos existentes para contexto de correção
+            # ETAPA 1: Buscar fatos existentes para contexto de correÃ§Ã£o
             existing_facts = self._get_current_facts(user_id)
-            logger.info(f"📋 {len(existing_facts)} fatos existentes carregados para contexto")
+            logger.info(f"ðŸ“‹ {len(existing_facts)} fatos existentes carregados para contexto")
 
-            # ETAPA 2: Extrair fatos, detectar correções e lacunas de conhecimento
-            logger.info("🤖 Analisando mensagem (fatos + correções + gaps)...")
+            # ETAPA 2: Extrair fatos, detectar correÃ§Ãµes e lacunas de conhecimento
+            logger.info("ðŸ¤– Analisando mensagem (fatos + correÃ§Ãµes + gaps)...")
             facts, corrections, gaps = self.fact_extractor.extract_facts(
                 user_input, user_id, existing_facts
             )
 
             # ETAPA 2.5: Salvar Knowledge Gaps
             if gaps:
-                logger.info(f"   🤯 LLM encontrou {len(gaps)} Knowledge Gaps")
+                logger.info(f"   ðŸ¤¯ LLM encontrou {len(gaps)} Knowledge Gaps")
                 for gap in gaps:
                     self.add_knowledge_gap(user_id, gap.topic, gap.the_gap, gap.importance)
 
 
-            # ETAPA 3: Processar correções detectadas
+            # ETAPA 3: Processar correÃ§Ãµes detectadas
             for correction in corrections:
                 self._apply_correction(user_id, correction, conversation_id)
                 extracted_facts.append({
@@ -3311,22 +2952,22 @@ Resposta: {ai_response}
             if extracted_facts:
                 n_corr = sum(1 for f in extracted_facts if f.get('is_correction'))
                 n_new = len(extracted_facts) - n_corr
-                logger.info(f"✅ Processados: {n_new} fatos novos, {n_corr} correções")
+                logger.info(f"âœ… Processados: {n_new} fatos novos, {n_corr} correÃ§Ãµes")
 
         except Exception as e:
-            logger.error(f"❌ Erro na extração com LLM: {e}")
+            logger.error(f"âŒ Erro na extraÃ§Ã£o com LLM: {e}")
             import traceback
             logger.error(traceback.format_exc())
 
-        # Fallback se nada foi extraído
+        # Fallback se nada foi extraÃ­do
         if not extracted_facts:
-            logger.info("🔄 LLM não extraiu fatos, usando método legado...")
+            logger.info("ðŸ”„ LLM nÃ£o extraiu fatos, usando mÃ©todo legado...")
             extracted_facts = self.extract_and_save_facts(user_id, user_input, conversation_id)
 
         return extracted_facts
 
     def _get_current_facts(self, user_id: str) -> List[Dict]:
-        """Retorna todos os fatos atuais do usuário (is_current=1)."""
+        """Retorna todos os fatos atuais do usuÃ¡rio (is_current=1)."""
         with self._lock:
             cursor = self.conn.cursor()
             cursor.execute("""
@@ -3349,32 +2990,32 @@ Resposta: {ai_response}
 
     def _apply_correction(self, user_id: str, correction, conversation_id: int):
         """
-        Aplica uma correção detectada:
+        Aplica uma correÃ§Ã£o detectada:
         1. Versiona o fato antigo no SQLite
-        2. Anota memórias no ChromaDB
+        2. Anota memÃ³rias no ChromaDB
 
         Args:
-            correction: CorrectionIntent com os detalhes da correção
+            correction: CorrectionIntent com os detalhes da correÃ§Ã£o
         """
         from correction_detector import generate_correction_feedback
 
-        # Não aplicar correções de baixa confiança para evitar falsos positivos
+        # NÃ£o aplicar correÃ§Ãµes de baixa confianÃ§a para evitar falsos positivos
         if correction.confidence < 0.5:
             logger.info(
-                f"⚠️ Correção ignorada (confiança muito baixa={correction.confidence:.2f}): "
-                f"{correction.fact_type}.{correction.attribute} → '{correction.new_value}'"
+                f"âš ï¸ CorreÃ§Ã£o ignorada (confianÃ§a muito baixa={correction.confidence:.2f}): "
+                f"{correction.fact_type}.{correction.attribute} â†’ '{correction.new_value}'"
             )
             return
 
         logger.info(
-            f"🔧 Aplicando correção: {correction.fact_type}.{correction.attribute} "
-            f"'{correction.old_value}' → '{correction.new_value}' (confiança={correction.confidence:.2f})"
+            f"ðŸ”§ Aplicando correÃ§Ã£o: {correction.fact_type}.{correction.attribute} "
+            f"'{correction.old_value}' â†’ '{correction.new_value}' (confianÃ§a={correction.confidence:.2f})"
         )
 
         # 1. Buscar fato atual para anotar ChromaDB
         old_fact = self._find_current_fact(user_id, correction.fact_type, correction.attribute)
 
-        # 2. Salvar nova versão (versionamento automático em _save_fact_v2)
+        # 2. Salvar nova versÃ£o (versionamento automÃ¡tico em _save_fact_v2)
         self._save_fact_v2(
             user_id=user_id,
             category=correction.category,
@@ -3386,19 +3027,19 @@ Resposta: {ai_response}
             context=correction.context[:500] if correction.context else None,
             conversation_id=conversation_id
         )
-        logger.info(f"   ✅ SQLite atualizado")
+        logger.info(f"   âœ… SQLite atualizado")
 
-        # 3. Sincronizar ChromaDB com anotação de correção
+        # 3. Sincronizar ChromaDB com anotaÃ§Ã£o de correÃ§Ã£o
         if old_fact:
             self._annotate_chromadb_correction(user_id, old_fact, correction)
 
         # 4. Log feedback (para debug/monitoramento)
         feedback = generate_correction_feedback(correction)
         if feedback:
-            logger.info(f"   💬 Feedback de correção ambígua: {feedback}")
+            logger.info(f"   ðŸ’¬ Feedback de correÃ§Ã£o ambÃ­gua: {feedback}")
 
     def _find_current_fact(self, user_id: str, fact_type: str, attribute: str) -> Optional[Dict]:
-        """Busca o fato atual (is_current=1) de um tipo/atributo específico."""
+        """Busca o fato atual (is_current=1) de um tipo/atributo especÃ­fico."""
         with self._lock:
             cursor = self.conn.cursor()
             cursor.execute("""
@@ -3420,11 +3061,11 @@ Resposta: {ai_response}
 
     def _annotate_chromadb_correction(self, user_id: str, old_fact: Dict, correction):
         """
-        Anota memórias no ChromaDB que referenciam um fato que foi corrigido.
+        Anota memÃ³rias no ChromaDB que referenciam um fato que foi corrigido.
 
-        Estratégia: adicionar metadado 'fact_correction' em vez de deletar.
-        Assim o contexto histórico é preservado, mas o build_rich_context
-        pode identificar que aquela informação foi corrigida.
+        EstratÃ©gia: adicionar metadado 'fact_correction' em vez de deletar.
+        Assim o contexto histÃ³rico Ã© preservado, mas o build_rich_context
+        pode identificar que aquela informaÃ§Ã£o foi corrigida.
 
         Args:
             old_fact: Fato anterior (com 'fact_value')
@@ -3438,7 +3079,7 @@ Resposta: {ai_response}
             return
 
         try:
-            # Buscar memórias que mencionam o valor antigo
+            # Buscar memÃ³rias que mencionam o valor antigo
             results = self.vectorstore.similarity_search_with_score(
                 old_value,
                 k=20,
@@ -3451,11 +3092,11 @@ Resposta: {ai_response}
                 if old_value.lower() not in doc.page_content.lower():
                     continue
 
-                # Montar metadado de correção
+                # Montar metadado de correÃ§Ã£o
                 new_metadata = dict(doc.metadata)
-                correction_note = f"{old_value} → {correction.new_value}"
+                correction_note = f"{old_value} â†’ {correction.new_value}"
 
-                # Acumular se já houver correções anteriores
+                # Acumular se jÃ¡ houver correÃ§Ãµes anteriores
                 existing = new_metadata.get('fact_corrections', '')
                 if correction_note not in existing:
                     new_metadata['fact_corrections'] = (
@@ -3470,15 +3111,15 @@ Resposta: {ai_response}
                         )
                         annotated += 1
 
-            logger.info(f"   ✅ ChromaDB: {annotated} memória(s) anotada(s) com correção")
+            logger.info(f"   âœ… ChromaDB: {annotated} memÃ³ria(s) anotada(s) com correÃ§Ã£o")
 
         except Exception as e:
-            logger.warning(f"   ⚠️ Erro ao anotar ChromaDB: {e}")
+            logger.warning(f"   âš ï¸ Erro ao anotar ChromaDB: {e}")
 
     def _update_chroma_document(self, doc_id: str, content: str, new_metadata: Dict):
         """
         Atualiza um documento no ChromaDB (delete + re-add).
-        O ChromaDB não suporta update nativo de metadados.
+        O ChromaDB nÃ£o suporta update nativo de metadados.
         """
         try:
             self.vectorstore.delete([doc_id])
@@ -3486,7 +3127,7 @@ Resposta: {ai_response}
             doc = Document(page_content=content, metadata=new_metadata)
             self.vectorstore.add_documents([doc], ids=[doc_id])
         except Exception as e:
-            logger.warning(f"   ⚠️ Erro ao atualizar documento ChromaDB {doc_id}: {e}")
+            logger.warning(f"   âš ï¸ Erro ao atualizar documento ChromaDB {doc_id}: {e}")
 
     def _save_fact_v2(self, user_id: str, category: str, fact_type: str,
                      attribute: str, value: str, confidence: float = 1.0,
@@ -3496,13 +3137,13 @@ Resposta: {ai_response}
         Salva ou atualiza fato na tabela user_facts_v2
 
         FEATURES:
-        - Suporta múltiplas pessoas da mesma categoria
+        - Suporta mÃºltiplas pessoas da mesma categoria
         - Versionamento adequado
-        - Metadados de confiança e método
+        - Metadados de confianÃ§a e mÃ©todo
         """
 
         logger.info(
-            "📝 [FACTS V2] Salvando categoria=%s tipo=%s atributo=%s",
+            "ðŸ“ [FACTS V2] Salvando categoria=%s tipo=%s atributo=%s",
             category,
             fact_type,
             attribute,
@@ -3511,7 +3152,7 @@ Resposta: {ai_response}
         with self._lock:
             cursor = self.conn.cursor()
 
-            # Verificar se fato já existe
+            # Verificar se fato jÃ¡ existe
             cursor.execute("""
                 SELECT id, fact_value, version
                 FROM user_facts_v2
@@ -3529,18 +3170,18 @@ Resposta: {ai_response}
                 existing_value = existing[1]
                 existing_version = existing[2]
 
-                # Se valor mudou, criar nova versão
+                # Se valor mudou, criar nova versÃ£o
                 if existing_value != value:
-                    logger.info(f"   ✏️  Atualizando: '{existing_value}' → '{value}'")
+                    logger.info(f"   âœï¸  Atualizando: '{existing_value}' â†’ '{value}'")
 
-                    # Marcar versão antiga como não-atual
+                    # Marcar versÃ£o antiga como nÃ£o-atual
                     cursor.execute("""
                         UPDATE user_facts_v2
                         SET is_current = 0, updated_at = CURRENT_TIMESTAMP
                         WHERE id = ?
                     """, (existing_id,))
 
-                    # Criar nova versão
+                    # Criar nova versÃ£o
                     cursor.execute("""
                         INSERT INTO user_facts_v2
                         (user_id, fact_category, fact_type, fact_attribute, fact_value,
@@ -3555,19 +3196,19 @@ Resposta: {ai_response}
 
                     new_id = cursor.lastrowid
 
-                    # Marcar que a versão antiga foi substituída
+                    # Marcar que a versÃ£o antiga foi substituÃ­da
                     cursor.execute("""
                         UPDATE user_facts_v2
                         SET replaced_by = ?
                         WHERE id = ?
                     """, (new_id, existing_id))
 
-                    logger.info(f"   ✅ Nova versão criada (v{existing_version + 1})")
+                    logger.info(f"   âœ… Nova versÃ£o criada (v{existing_version + 1})")
                 else:
-                    logger.info(f"   ℹ️  Fato já existe com mesmo valor")
+                    logger.info(f"   â„¹ï¸  Fato jÃ¡ existe com mesmo valor")
             else:
                 # Criar fato novo
-                logger.info(f"   ✨ Criando novo fato")
+                logger.info(f"   âœ¨ Criando novo fato")
                 cursor.execute("""
                     INSERT INTO user_facts_v2
                     (user_id, fact_category, fact_type, fact_attribute, fact_value,
@@ -3579,28 +3220,28 @@ Resposta: {ai_response}
                     confidence, extraction_method, context, conversation_id
                 ))
 
-                logger.info(f"   ✅ Fato salvo com sucesso")
+                logger.info(f"   âœ… Fato salvo com sucesso")
 
             self.conn.commit()
 
     # ========================================
-    # DETECÇÃO DE PADRÕES
+    # DETECÃ‡ÃƒO DE PADRÃ•ES
     # ========================================
     
     def detect_and_save_patterns(self, user_id: str):
         """
-        Analisa conversas do usuário e detecta padrões recorrentes
+        Analisa conversas do usuÃ¡rio e detecta padrÃµes recorrentes
         
-        Usa busca semântica para agrupar temas similares
+        Usa busca semÃ¢ntica para agrupar temas similares
         """
         
         if not self.chroma_enabled:
-            logger.warning("ChromaDB desabilitado. Detecção de padrões limitada.")
+            logger.warning("ChromaDB desabilitado. DetecÃ§Ã£o de padrÃµes limitada.")
             return
         
         cursor = self.conn.cursor()
         
-        # Buscar keywords únicas do usuário
+        # Buscar keywords Ãºnicas do usuÃ¡rio
         cursor.execute("""
             SELECT DISTINCT keywords FROM conversations
             WHERE user_id = ? AND keywords IS NOT NULL AND keywords != ''
@@ -3618,12 +3259,12 @@ Resposta: {ai_response}
 
             related = self.semantic_search(user_id, theme, k=10)
 
-            # Se há múltiplas conversas sobre o tema (padrão recorrente)
+            # Se hÃ¡ mÃºltiplas conversas sobre o tema (padrÃ£o recorrente)
             if len(related) >= 3:
                 conv_ids = [m['conversation_id'] for m in related]
 
                 with self._lock:
-                    # Verificar se padrão já existe
+                    # Verificar se padrÃ£o jÃ¡ existe
                     cursor.execute("""
                         SELECT id FROM user_patterns
                         WHERE user_id = ? AND pattern_name = ?
@@ -3655,9 +3296,9 @@ Resposta: {ai_response}
                             VALUES (?, ?, ?, ?, ?, ?, ?)
                         """, (
                             user_id,
-                            'TEMÁTICO',
+                            'TEMÃTICO',
                             f"tema_{theme}",
-                            f"Usuário frequentemente menciona: {theme}",
+                            f"UsuÃ¡rio frequentemente menciona: {theme}",
                             len(related),
                             json.dumps(conv_ids),
                             min(1.0, len(related) * 0.15)
@@ -3665,7 +3306,7 @@ Resposta: {ai_response}
 
                     self.conn.commit()
 
-        logger.info(f"✅ Padrões detectados para usuário {user_id}")
+        logger.info(f"âœ… PadrÃµes detectados para usuÃ¡rio {user_id}")
     
     # ========================================
     # DESENVOLVIMENTO DO AGENTE
@@ -3701,7 +3342,7 @@ Resposta: {ai_response}
     # ========================================
     
     def get_user_conflicts(self, user_id: str, limit: int = 10) -> List[Dict]:
-        """Busca conflitos do usuário"""
+        """Busca conflitos do usuÃ¡rio"""
         cursor = self.conn.cursor()
         cursor.execute("""
             SELECT * FROM archetype_conflicts
@@ -3712,12 +3353,12 @@ Resposta: {ai_response}
         return [dict(row) for row in cursor.fetchall()]
     
     # ========================================
-    # ANÁLISES COMPLETAS
+    # ANÃLISES COMPLETAS
     # ========================================
     
     def save_full_analysis(self, user_id: str, user_name: str,
                           analysis: Dict, platform: str = "telegram") -> int:
-        """Salva análise completa"""
+        """Salva anÃ¡lise completa"""
         with self._lock:
             cursor = self.conn.cursor()
 
@@ -3738,7 +3379,7 @@ Resposta: {ai_response}
             return cursor.lastrowid
     
     def get_user_analyses(self, user_id: str) -> List[Dict]:
-        """Retorna análises completas do usuário"""
+        """Retorna anÃ¡lises completas do usuÃ¡rio"""
         cursor = self.conn.cursor()
         cursor.execute("""
             SELECT * FROM full_analyses
@@ -3748,626 +3389,14 @@ Resposta: {ai_response}
         return [dict(row) for row in cursor.fetchall()]
 
     # ========================================
-    # ANÁLISES PSICOMÉTRICAS (RH)
+    # ANÃLISES PSICOMÃ‰TRICAS (RH)
     # ========================================
 
-    def analyze_big_five(self, user_id: str, min_conversations: int = 20) -> Dict:
-        """
-        Analisa Big Five (OCEAN) do usuário via Grok AI
-
-        Retorna dict com scores 0-100 para cada dimensão:
-        - openness, conscientiousness, extraversion, agreeableness, neuroticism
-        """
-        logger.info(f"🧬 Iniciando análise Big Five para {user_id}")
-
-        # Buscar conversas do usuário
-        conversations = self.get_user_conversations(user_id, limit=50)
-
-        if len(conversations) < min_conversations:
-            return {
-                "error": f"Dados insuficientes ({len(conversations)} conversas, mínimo {min_conversations})",
-                "conversations_analyzed": len(conversations)
-            }
-
-        # Montar contexto para o Grok
-        convo_texts = []
-        for c in conversations[:30]:  # Últimas 30 para não exceder token limit
-            convo_texts.append(f"Usuário: {c['user_input']}")
-            convo_texts.append(f"Resposta: {c['ai_response'][:200]}")  # Truncar resposta
-
-        context = "\n\n".join(convo_texts)
-
-        # Prompt para Grok
-        prompt = f"""Analise as conversas abaixo e infira os traços Big Five (OCEAN) do usuário.
-
-CONVERSAS:
-{context}
-
-TAREFA:
-Para cada dimensão, dê um score de 0-100 e justifique em 2-3 frases:
-
-1. OPENNESS (Abertura): Criatividade, curiosidade intelectual, preferência por novidade
-   - Alto: busca experiências novas, criativo, imaginativo
-   - Baixo: prefere rotina, prático, tradicional
-
-2. CONSCIENTIOUSNESS (Conscienciosidade): Organização, autodisciplina, orientação a metas
-   - Alto: organizado, responsável, planejado
-   - Baixo: espontâneo, flexível, menos estruturado
-
-3. EXTRAVERSION (Extroversão): Sociabilidade, assertividade, busca por estimulação
-   - Alto: social, energético, falante
-   - Baixo: reservado, independente, introspectivo
-
-4. AGREEABLENESS (Amabilidade): Empatia, cooperação, confiança
-   - Alto: empático, cooperativo, altruísta
-   - Baixo: analítico, competitivo, direto
-
-5. NEUROTICISM (Neuroticismo): Ansiedade, instabilidade emocional, vulnerabilidade
-   - Alto: ansioso, sensível, emocionalmente reativo
-   - Baixo: calmo, estável, resiliente
-
-CONSIDERE:
-- Temas abordados (projetos criativos = Openness alto)
-- Estrutura da comunicação (mensagens organizadas = Conscientiousness alto)
-- Tom emocional (ansiedade recorrente = Neuroticism alto)
-- Menções a relações sociais (solidão = Extraversion baixo)
-
-Responda APENAS em JSON válido (sem markdown):
-{{
-    "openness": {{"score": 0-100, "level": "Muito Baixo/Baixo/Médio/Alto/Muito Alto", "description": "..."}},
-    "conscientiousness": {{"score": 0-100, "level": "...", "description": "..."}},
-    "extraversion": {{"score": 0-100, "level": "...", "description": "..."}},
-    "agreeableness": {{"score": 0-100, "level": "...", "description": "..."}},
-    "neuroticism": {{"score": 0-100, "level": "...", "description": "..."}},
-    "confidence": 0-100,
-    "interpretation": "Resumo do perfil em 2-3 frases para RH"
-}}
-"""
-
-        try:
-            # Usar Claude Sonnet para análises psicométricas (melhor precisão)
-            from llm_providers import create_llm_provider
-
-            claude_provider = create_llm_provider("claude")
-            response = claude_provider.get_response(prompt, temperature=0.5, max_tokens=1500)
-
-            # Usar parser robusto
-            result = self._parse_json_response(response)
-
-            # Adicionar metadados
-            result["conversations_analyzed"] = len(conversations)
-            result["analysis_date"] = datetime.now().isoformat()
-            result["model_used"] = claude_provider.get_model_name()
-
-            logger.info(f"✅ Big Five analisado (Claude): O={result['openness']['score']}, C={result['conscientiousness']['score']}, E={result['extraversion']['score']}, A={result['agreeableness']['score']}, N={result['neuroticism']['score']}")
-
-            return result
-
-        except Exception as e:
-            logger.error(f"❌ Erro ao analisar Big Five: {e}")
-            logger.error(f"Resposta bruta do LLM: {response if 'response' in locals() else 'N/A'}")
-            return {
-                "error": str(e),
-                "conversations_analyzed": len(conversations)
-            }
-
-    def analyze_emotional_intelligence(self, user_id: str) -> Dict:
-        """
-        Calcula Inteligência Emocional (EQ) baseado em dados já coletados
-
-        4 Componentes:
-        1. Autoconsciência (self_awareness_score do banco)
-        2. Autogestão (variação de tension_level)
-        3. Consciência Social (menções a outros)
-        4. Gestão de Relacionamentos (evolução de conflitos)
-        """
-        logger.info(f"💖 Iniciando análise EQ para {user_id}")
-
-        # 1. Autoconsciência - pegar do agent_development do usuário
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT self_awareness_score FROM agent_development WHERE user_id = ?", (user_id,))
-        agent_state = cursor.fetchone()
-        self_awareness_raw = agent_state['self_awareness_score'] if agent_state else 0.0
-        self_awareness = int(min(100, self_awareness_raw * 100))  # Normalizar para 0-100
-
-        # 2. Autogestão - analisar variação de tension_level
-        conversations = self.get_user_conversations(user_id, limit=50)
-        if len(conversations) < 10:
-            return {
-                "error": f"Dados insuficientes ({len(conversations)} conversas, mínimo 10)",
-                "conversations_analyzed": len(conversations)
-            }
-
-        tensions = [c.get('tension_level', 5.0) for c in conversations if c.get('tension_level')]
-        if tensions:
-            import statistics
-            avg_tension = statistics.mean(tensions)
-            std_tension = statistics.stdev(tensions) if len(tensions) > 1 else 0
-            # Menor desvio padrão = melhor autogestão
-            self_management = int(max(0, min(100, 100 - (std_tension * 15))))
-        else:
-            self_management = 50  # Default médio
-
-        # 3. Consciência Social - contar menções a "outros", "equipe", "família", etc
-        social_keywords = ['outros', 'equipe', 'família', 'amigos', 'colegas', 'pessoas', 'eles', 'ela', 'ele']
-        social_mentions = 0
-        total_words = 0
-
-        for c in conversations:
-            user_input_lower = c['user_input'].lower()
-            words = user_input_lower.split()
-            total_words += len(words)
-            for keyword in social_keywords:
-                social_mentions += user_input_lower.count(keyword)
-
-        social_ratio = (social_mentions / max(1, total_words)) * 1000  # Normalizar
-        social_awareness = int(min(100, social_ratio * 30 + 40))  # Base 40, até 100
-
-        # 4. Gestão de Relacionamentos - analisar conflitos Persona vs outros
-        conflicts = self.get_user_conflicts(user_id, limit=100)
-        persona_conflicts = [c for c in conflicts if 'persona' in c['archetype1'].lower() or 'persona' in c['archetype2'].lower()]
-
-        if len(persona_conflicts) > 5:
-            # Analisar se conflitos diminuem com o tempo (sinal de melhoria)
-            recent_conflicts = persona_conflicts[:len(persona_conflicts)//2]
-            old_conflicts = persona_conflicts[len(persona_conflicts)//2:]
-
-            recent_avg_tension = statistics.mean([c.get('tension_level', 5.0) for c in recent_conflicts]) if recent_conflicts else 5.0
-            old_avg_tension = statistics.mean([c.get('tension_level', 5.0) for c in old_conflicts]) if old_conflicts else 5.0
-
-            improvement = ((old_avg_tension - recent_avg_tension) / max(0.1, old_avg_tension)) * 100
-            relationship_management = int(min(100, max(30, 60 + improvement * 2)))
-        else:
-            relationship_management = 60  # Default médio-alto
-
-        # Calcular EQ geral
-        eq_overall = int((self_awareness + self_management + social_awareness + relationship_management) / 4)
-
-        # Determinar potencial de liderança
-        if eq_overall >= 75:
-            leadership_potential = "Alto"
-        elif eq_overall >= 60:
-            leadership_potential = "Médio-Alto"
-        elif eq_overall >= 45:
-            leadership_potential = "Médio"
-        else:
-            leadership_potential = "Baixo"
-
-        result = {
-            "self_awareness": {
-                "score": self_awareness,
-                "level": self._get_level(self_awareness),
-                "description": "Capacidade de reconhecer emoções e padrões próprios"
-            },
-            "self_management": {
-                "score": self_management,
-                "level": self._get_level(self_management),
-                "description": "Capacidade de regular emoções e manter equilíbrio"
-            },
-            "social_awareness": {
-                "score": social_awareness,
-                "level": self._get_level(social_awareness),
-                "description": "Capacidade de perceber emoções e necessidades alheias"
-            },
-            "relationship_management": {
-                "score": relationship_management,
-                "level": self._get_level(relationship_management),
-                "description": "Capacidade de influenciar e conectar-se com outros"
-            },
-            "overall_eq": eq_overall,
-            "leadership_potential": leadership_potential,
-            "conversations_analyzed": len(conversations),
-            "analysis_date": datetime.now().isoformat()
-        }
-
-        logger.info(f"✅ EQ analisado: Overall={eq_overall}, Liderança={leadership_potential}")
-
-        return result
-
-    def _get_level(self, score: int) -> str:
-        """Helper para converter score em nível textual"""
-        if score >= 80:
-            return "Muito Alto"
-        elif score >= 65:
-            return "Alto"
-        elif score >= 45:
-            return "Médio"
-        elif score >= 30:
-            return "Baixo"
-        else:
-            return "Muito Baixo"
-
-    def _parse_json_response(self, response: str) -> Dict:
-        """
-        Parse robusto de resposta JSON do LLM
-        Remove markdown code blocks e trata erros comuns
-        """
-        import json as json_lib
-        import re
-
-        # Remover espaços em branco nas extremidades
-        response = response.strip()
-
-        # Remover markdown code blocks (```json ... ``` ou ``` ... ```)
-        if response.startswith("```"):
-            # Encontrar o conteúdo entre ``` e ```
-            match = re.search(r'```(?:json)?\s*(.*?)\s*```', response, re.DOTALL)
-            if match:
-                response = match.group(1).strip()
-
-        # Tentar remover texto antes do JSON (às vezes o LLM adiciona explicações)
-        if not response.startswith('{') and not response.startswith('['):
-            # Procurar o primeiro { ou [
-            json_start = min(
-                response.find('{') if response.find('{') != -1 else len(response),
-                response.find('[') if response.find('[') != -1 else len(response)
-            )
-            if json_start < len(response):
-                response = response[json_start:]
-
-        # Tentar parse
-        try:
-            return json_lib.loads(response)
-        except json_lib.JSONDecodeError as e:
-            logger.error(f"❌ Erro ao fazer parse de JSON: {e}")
-            logger.error(f"Resposta recebida: {response[:500]}...")
-            raise ValueError(f"Resposta LLM não é JSON válido: {str(e)}")
-
-    def analyze_learning_style(self, user_id: str, min_conversations: int = 20) -> Dict:
-        """
-        Analisa Estilos de Aprendizagem (VARK) via Grok AI
-
-        VARK:
-        - Visual, Auditory, Reading/Writing, Kinesthetic
-        """
-        logger.info(f"📚 Iniciando análise VARK para {user_id}")
-
-        conversations = self.get_user_conversations(user_id, limit=40)
-
-        if len(conversations) < min_conversations:
-            return {
-                "error": f"Dados insuficientes ({len(conversations)} conversas, mínimo {min_conversations})",
-                "conversations_analyzed": len(conversations)
-            }
-
-        # Montar contexto
-        user_messages = [c['user_input'] for c in conversations[:25]]
-        context = "\n\n".join([f"Mensagem {i+1}: {msg}" for i, msg in enumerate(user_messages)])
-
-        prompt = f"""Analise o estilo de comunicação do usuário e infira seu estilo de aprendizagem VARK.
-
-MENSAGENS DO USUÁRIO:
-{context}
-
-INDICADORES:
-
-VISUAL (V):
-- Usa palavras: "vejo", "imagem", "parece", "claro", "visualizo", "mostra"
-- Menciona gráficos, diagramas, cores, formas
-- Pede explicações visuais
-
-AUDITIVO (A):
-- Usa palavras: "ouço", "soa", "ritmo", "harmonia", "escuto", "fala"
-- Menciona músicas, podcasts, conversas, tom de voz
-- Prefere explicações verbais
-
-LEITURA/ESCRITA (R):
-- Mensagens longas e estruturadas
-- Usa listas, tópicos, citações, referências
-- Menciona livros, artigos, documentação, pesquisa
-- Vocabulário rico e formal
-
-CINESTÉSICO (K):
-- Usa palavras: "sinto", "toque", "movimento", "prática", "experiência"
-- Menciona fazer, experimentar, testar, agir
-- Foco em sensações físicas e ação
-
-Responda APENAS em JSON válido (sem markdown):
-{{
-    "visual": 0-100,
-    "auditory": 0-100,
-    "reading": 0-100,
-    "kinesthetic": 0-100,
-    "dominant_style": "Visual/Auditivo/Leitura/Cinestésico",
-    "recommended_training": "Sugestão de formato de treinamento ideal para este perfil"
-}}
-
-IMPORTANTE: Os 4 scores devem somar aproximadamente 100.
-"""
-
-        try:
-            # Usar Claude Sonnet para análises psicométricas (melhor precisão)
-            from llm_providers import create_llm_provider
-
-            claude_provider = create_llm_provider("claude")
-            response = claude_provider.get_response(prompt, temperature=0.5, max_tokens=800)
-
-            # Usar parser robusto
-            result = self._parse_json_response(response)
-
-            result["conversations_analyzed"] = len(conversations)
-            result["analysis_date"] = datetime.now().isoformat()
-            result["model_used"] = claude_provider.get_model_name()
-
-            logger.info(f"✅ VARK analisado (Claude): Dominante={result['dominant_style']}")
-
-            return result
-
-        except Exception as e:
-            logger.error(f"❌ Erro ao analisar VARK: {e}")
-            logger.error(f"Resposta bruta do LLM: {response if 'response' in locals() else 'N/A'}")
-            return {
-                "error": str(e),
-                "conversations_analyzed": len(conversations)
-            }
-
-    def analyze_personal_values(self, user_id: str, min_conversations: int = 20) -> Dict:
-        """
-        Analisa Valores Pessoais (Schwartz) via extração de user_facts + Grok AI
-
-        10 Valores Universais de Schwartz
-        """
-        logger.info(f"⭐ Iniciando análise Valores Schwartz para {user_id}")
-
-        # Primeiro tentar buscar de user_facts categoria 'values'
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            SELECT fact_key, fact_value, confidence
-            FROM user_facts
-            WHERE user_id = ? AND fact_category = 'values' AND is_current = 1
-            ORDER BY confidence DESC
-        """, (user_id,))
-
-        existing_values = cursor.fetchall()
-
-        # Se tiver menos de 3 valores, usar Grok para inferir
-        if len(existing_values) < 3:
-            conversations = self.get_user_conversations(user_id, limit=40)
-
-            if len(conversations) < min_conversations:
-                return {
-                    "error": f"Dados insuficientes ({len(conversations)} conversas, mínimo {min_conversations})",
-                    "conversations_analyzed": len(conversations)
-                }
-
-            # Montar contexto
-            convo_texts = []
-            for c in conversations[:25]:
-                convo_texts.append(f"{c['user_input']}")
-            context = "\n\n".join(convo_texts)
-
-            prompt = f"""Analise as mensagens do usuário e identifique seus valores pessoais segundo a teoria de Schwartz.
-
-MENSAGENS:
-{context}
-
-10 VALORES UNIVERSAIS DE SCHWARTZ:
-
-1. AUTODIREÇÃO: Independência, criatividade, exploração, liberdade de pensamento
-2. ESTIMULAÇÃO: Novidade, desafios, excitação, vida variada
-3. HEDONISMO: Prazer, gratificação sensorial, aproveitar a vida
-4. REALIZAÇÃO: Sucesso pessoal, competência, ambição, reconhecimento
-5. PODER: Status social, prestígio, controle sobre recursos/pessoas
-6. SEGURANÇA: Proteção, ordem, estabilidade, harmonia
-7. CONFORMIDADE: Restrição de ações que violam normas sociais, autodisciplina
-8. TRADIÇÃO: Respeito por costumes culturais/religiosos, humildade
-9. BENEVOLÊNCIA: Bem-estar de pessoas próximas, ajudar, honestidade
-10. UNIVERSALISMO: Compreensão, tolerância, justiça social, proteção da natureza
-
-Identifique os 3 valores MAIS FORTES do usuário.
-
-Responda APENAS em JSON válido (sem markdown):
-{{
-    "self_direction": {{"score": 0-100, "evidences": ["evidência 1", "evidência 2"]}},
-    "stimulation": {{"score": 0-100, "evidences": []}},
-    "hedonism": {{"score": 0-100, "evidences": []}},
-    "achievement": {{"score": 0-100, "evidences": []}},
-    "power": {{"score": 0-100, "evidences": []}},
-    "security": {{"score": 0-100, "evidences": []}},
-    "conformity": {{"score": 0-100, "evidences": []}},
-    "tradition": {{"score": 0-100, "evidences": []}},
-    "benevolence": {{"score": 0-100, "evidences": []}},
-    "universalism": {{"score": 0-100, "evidences": []}},
-    "top_3_values": ["Valor 1", "Valor 2", "Valor 3"],
-    "cultural_fit": "Descrição de ambientes/culturas onde este perfil prospera",
-    "retention_risk": "Baixo/Médio/Alto - baseado em alinhamento de valores"
-}}
-"""
-
-            try:
-                # Usar Claude Sonnet para análises psicométricas (melhor precisão)
-                from llm_providers import create_llm_provider
-
-                claude_provider = create_llm_provider("claude")
-                response = claude_provider.get_response(prompt, temperature=0.5, max_tokens=1800)
-
-                # Usar parser robusto
-                result = self._parse_json_response(response)
-
-                result["conversations_analyzed"] = len(conversations)
-                result["analysis_date"] = datetime.now().isoformat()
-                result["source"] = "claude_inference"
-                result["model_used"] = claude_provider.get_model_name()
-
-                logger.info(f"✅ Valores analisados (Claude): Top 3={result['top_3_values']}")
-
-                return result
-
-            except Exception as e:
-                logger.error(f"❌ Erro ao analisar valores: {e}")
-                logger.error(f"Resposta bruta do LLM: {response if 'response' in locals() else 'N/A'}")
-                return {
-                    "error": str(e),
-                    "conversations_analyzed": len(conversations)
-                }
-
-        else:
-            # Construir resultado a partir de user_facts existentes
-            logger.info(f"✅ Valores extraídos de user_facts ({len(existing_values)} encontrados)")
-
-            # Mapear fatos para valores de Schwartz (simplificado)
-            result = {
-                "self_direction": {"score": 0, "evidences": []},
-                "stimulation": {"score": 0, "evidences": []},
-                "hedonism": {"score": 0, "evidences": []},
-                "achievement": {"score": 0, "evidences": []},
-                "power": {"score": 0, "evidences": []},
-                "security": {"score": 0, "evidences": []},
-                "conformity": {"score": 0, "evidences": []},
-                "tradition": {"score": 0, "evidences": []},
-                "benevolence": {"score": 0, "evidences": []},
-                "universalism": {"score": 0, "evidences": []},
-                "top_3_values": [],
-                "cultural_fit": "A determinar com mais dados",
-                "retention_risk": "Médio",
-                "source": "user_facts",
-                "conversations_analyzed": 0,
-                "analysis_date": datetime.now().isoformat()
-            }
-
-            # Classificação básica (pode ser melhorada)
-            for fact in existing_values:
-                key = fact['fact_key'].lower()
-                value = fact['fact_value'].lower()
-                confidence = fact['confidence'] * 100
-
-                if any(word in key+value for word in ['independência', 'criatividade', 'autonomia']):
-                    result["self_direction"]["score"] = max(result["self_direction"]["score"], int(confidence))
-                    result["self_direction"]["evidences"].append(fact['fact_value'])
-
-                if any(word in key+value for word in ['sucesso', 'realização', 'ambição']):
-                    result["achievement"]["score"] = max(result["achievement"]["score"], int(confidence))
-                    result["achievement"]["evidences"].append(fact['fact_value'])
-
-                # Adicionar mais mapeamentos conforme necessário
-
-            # Identificar top 3
-            values_scores = {k: v["score"] for k, v in result.items() if isinstance(v, dict) and "score" in v}
-            sorted_values = sorted(values_scores.items(), key=lambda x: x[1], reverse=True)
-            result["top_3_values"] = [k.replace("_", " ").title() for k, _ in sorted_values[:3] if sorted_values[0][1] > 0]
-
-            return result
-
-    def save_psychometrics(self, user_id: str, big_five: Dict, eq: Dict, vark: Dict, values: Dict) -> None:
-        """
-        Salva análises psicométricas no banco
-        """
-        logger.info(f"💾 Salvando análises psicométricas para {user_id}")
-
-        # Verificar se já existe análise (para versionamento)
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT MAX(version) as max_version FROM user_psychometrics WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
-        version = (row['max_version'] or 0) + 1 if row else 1
-
-        # Preparar dados
-        import json as json_lib
-
-        # Big Five
-        bf_o = big_five.get('openness', {})
-        bf_c = big_five.get('conscientiousness', {})
-        bf_e = big_five.get('extraversion', {})
-        bf_a = big_five.get('agreeableness', {})
-        bf_n = big_five.get('neuroticism', {})
-
-        # EQ
-        eq_sa = eq.get('self_awareness', {})
-        eq_sm = eq.get('self_management', {})
-        eq_soc = eq.get('social_awareness', {})
-        eq_rm = eq.get('relationship_management', {})
-
-        # Resumo executivo
-        executive_summary = json_lib.dumps({
-            "profile": f"Big Five: O{bf_o.get('score', 0)}, C{bf_c.get('score', 0)}, E{bf_e.get('score', 0)}, A{bf_a.get('score', 0)}, N{bf_n.get('score', 0)} | EQ: {eq.get('overall_eq', 0)}",
-            "strengths": big_five.get('interpretation', 'N/A')[:200],
-            "development_areas": f"EQ Liderança: {eq.get('leadership_potential', 'N/A')}",
-            "organizational_fit": values.get('cultural_fit', 'A determinar'),
-            "recommendations": f"Estilo de aprendizagem: {vark.get('dominant_style', 'N/A')}"
-        })
-
-        # Insert
-        cursor.execute("""
-            INSERT INTO user_psychometrics (
-                user_id, version,
-                openness_score, openness_level, openness_description,
-                conscientiousness_score, conscientiousness_level, conscientiousness_description,
-                extraversion_score, extraversion_level, extraversion_description,
-                agreeableness_score, agreeableness_level, agreeableness_description,
-                neuroticism_score, neuroticism_level, neuroticism_description,
-                big_five_confidence, big_five_interpretation,
-                eq_self_awareness, eq_self_management, eq_social_awareness, eq_relationship_management,
-                eq_overall, eq_leadership_potential, eq_details,
-                vark_visual, vark_auditory, vark_reading, vark_kinesthetic,
-                vark_dominant, vark_recommended_training,
-                schwartz_values, schwartz_top_3, schwartz_cultural_fit, schwartz_retention_risk,
-                executive_summary,
-                conversations_analyzed
-            ) VALUES (
-                ?, ?,
-                ?, ?, ?,
-                ?, ?, ?,
-                ?, ?, ?,
-                ?, ?, ?,
-                ?, ?, ?,
-                ?, ?,
-                ?, ?, ?, ?,
-                ?, ?, ?,
-                ?, ?, ?, ?,
-                ?, ?,
-                ?, ?, ?, ?,
-                ?,
-                ?
-            )
-        """, (
-            user_id, version,
-            bf_o.get('score'), bf_o.get('level'), bf_o.get('description'),
-            bf_c.get('score'), bf_c.get('level'), bf_c.get('description'),
-            bf_e.get('score'), bf_e.get('level'), bf_e.get('description'),
-            bf_a.get('score'), bf_a.get('level'), bf_a.get('description'),
-            bf_n.get('score'), bf_n.get('level'), bf_n.get('description'),
-            big_five.get('confidence'), big_five.get('interpretation'),
-            eq_sa.get('score'), eq_sm.get('score'), eq_soc.get('score'), eq_rm.get('score'),
-            eq.get('overall_eq'), eq.get('leadership_potential'), json_lib.dumps(eq),
-            vark.get('visual'), vark.get('auditory'), vark.get('reading'), vark.get('kinesthetic'),
-            vark.get('dominant_style'), vark.get('recommended_training'),
-            json_lib.dumps(values), ','.join(values.get('top_3_values', [])),
-            values.get('cultural_fit'), values.get('retention_risk'),
-            executive_summary,
-            big_five.get('conversations_analyzed', 0)
-        ))
-
-        self.conn.commit()
-        logger.info(f"✅ Análises psicométricas salvas (versão {version})")
-
-    def get_psychometrics(self, user_id: str, version: int = None) -> Optional[Dict]:
-        """
-        Busca análises psicométricas do usuário
-        Se version não especificado, retorna a mais recente
-        """
-        cursor = self.conn.cursor()
-
-        if version:
-            cursor.execute("""
-                SELECT * FROM user_psychometrics
-                WHERE user_id = ? AND version = ?
-            """, (user_id, version))
-        else:
-            cursor.execute("""
-                SELECT * FROM user_psychometrics
-                WHERE user_id = ?
-                ORDER BY version DESC
-                LIMIT 1
-            """, (user_id,))
-
-        row = cursor.fetchone()
-        return dict(row) if row else None
-
-    # ========================================
-    # UTILITÁRIOS
+    # UTILITÃRIOS
     # ========================================
     
     def get_all_users(self, platform: str = None) -> List[Dict]:
-        """Retorna todos os usuários"""
+        """Retorna todos os usuÃ¡rios"""
         cursor = self.conn.cursor()
         
         if platform:
@@ -4391,11 +3420,11 @@ Responda APENAS em JSON válido (sem markdown):
         return [dict(row) for row in cursor.fetchall()]
     
     def count_memories(self, user_id: str) -> int:
-        """Conta memórias do usuário"""
+        """Conta memÃ³rias do usuÃ¡rio"""
         return self.count_conversations(user_id)
     
     def close(self):
-        """Fecha conexões"""
+        """Fecha conexÃµes"""
         self.conn.close()
-        logger.info("✅ Banco de dados fechado")
+        logger.info("âœ… Banco de dados fechado")
 
