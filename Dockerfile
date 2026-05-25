@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy Python modules and package directories.
 COPY *.py .
 COPY core/ ./core/
+COPY work/ ./work/
 
 # Copy dashboard, helper scripts, and migrations.
 COPY admin_web/ ./admin_web/
