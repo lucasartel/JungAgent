@@ -3672,118 +3672,29 @@ Resposta: {ai_response}
     # ========================================
 
     def _ensure_agent_state(self, user_id: str):
-        """
-        Garante que o usuário tenha um registro de agent_development.
-        Cria um novo registro com valores padrão se não existir.
+        from core.db.agent_development import ensure_agent_state
 
-        Args:
-            user_id: ID do usuário
-        """
-        with self._lock:
-            cursor = self.conn.cursor()
-
-            # Verificar se já existe registro para este usuário
-            cursor.execute("""
-                SELECT id FROM agent_development WHERE user_id = ?
-            """, (user_id,))
-
-            if not cursor.fetchone():
-                # Criar registro inicial para este usuário
-                cursor.execute("""
-                    INSERT INTO agent_development (user_id)
-                    VALUES (?)
-                """, (user_id,))
-
-                self.conn.commit()
-                logger.info(f"✅ Agent state inicializado para user_id={user_id}")
+        return ensure_agent_state(self, user_id)
 
     def _update_agent_development(self, user_id: str):
-        """Atualiza métricas de desenvolvimento do agente para um usuário específico"""
-        # Garantir que o usuário tem registro de agent_development
-        self._ensure_agent_state(user_id)
+        from core.db.agent_development import update_agent_development
 
-        with self._lock:
-            cursor = self.conn.cursor()
-
-            cursor.execute("""
-                UPDATE agent_development
-                SET total_interactions = total_interactions + 1,
-                    self_awareness_score = MIN(1.0, self_awareness_score + 0.001),
-                    moral_complexity_score = MIN(1.0, moral_complexity_score + 0.0008),
-                    emotional_depth_score = MIN(1.0, emotional_depth_score + 0.0012),
-                    autonomy_score = MIN(1.0, autonomy_score + 0.0005),
-                    depth_level = (self_awareness_score + moral_complexity_score + emotional_depth_score) / 3,
-                    autonomy_level = autonomy_score,
-                    last_updated = CURRENT_TIMESTAMP
-                WHERE user_id = ?
-            """, (user_id,))
-
-            self.conn.commit()
-            self._check_phase_progression(user_id)
+        return update_agent_development(self, user_id)
 
     def _check_phase_progression(self, user_id: str):
-        """Verifica se agente deve progredir de fase para um usuário específico"""
-        # Note: Pode ser chamado de dentro de _update_agent_development (já locked)
-        # ou de forma independente. RLock permite reentrada.
-        with self._lock:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT * FROM agent_development WHERE user_id = ?", (user_id,))
-            result = cursor.fetchone()
+        from core.db.agent_development import check_phase_progression
 
-            if not result:
-                logger.warning(f"⚠️ Agent state não encontrado para user_id={user_id}")
-                return
-
-            state = dict(result)
-
-            avg_score = (
-                state['self_awareness_score'] +
-                state['moral_complexity_score'] +
-                state['emotional_depth_score'] +
-                state['autonomy_score']
-            ) / 4
-
-            new_phase = min(5, int(avg_score * 5) + 1)
-
-            if new_phase > state['phase']:
-                cursor.execute("UPDATE agent_development SET phase = ? WHERE user_id = ?", (new_phase, user_id))
-
-                cursor.execute("""
-                    INSERT INTO milestones (milestone_type, description, phase, interaction_count)
-                    VALUES (?, ?, ?, ?)
-                """, (
-                    "phase_progression",
-                    f"Progressão para Fase {new_phase}",
-                    new_phase,
-                    state['total_interactions']
-                ))
-
-                self.conn.commit()
-                logger.info(f"🎯 AGENTE PROGREDIU PARA FASE {new_phase}!")
+        return check_phase_progression(self, user_id)
     
     def get_agent_state(self, user_id: str) -> Optional[Dict]:
-        """Retorna estado atual do agente para um usuário específico"""
-        self._ensure_agent_state(user_id)
+        from core.db.agent_development import get_agent_state
 
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM agent_development WHERE user_id = ?", (user_id,))
-        result = cursor.fetchone()
-
-        if not result:
-            logger.warning(f"⚠️ Agent state não encontrado para user_id={user_id}")
-            return None
-
-        return dict(result)
+        return get_agent_state(self, user_id)
     
     def get_milestones(self, limit: int = 20) -> List[Dict]:
-        """Busca milestones recentes"""
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            SELECT * FROM milestones
-            ORDER BY timestamp DESC
-            LIMIT ?
-        """, (limit,))
-        return [dict(row) for row in cursor.fetchall()]
+        from core.db.agent_development import get_milestones
+
+        return get_milestones(self, limit)
     
     # ========================================
     # CONFLITOS
