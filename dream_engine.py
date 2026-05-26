@@ -428,15 +428,17 @@ Responda APENAS com um objeto JSON valido:
 
             dream_data = self._parse_dream_payload(result_text)
 
-            dream_content = dream_data.get("dream_narrative", "")
-            symbolic_theme = dream_data.get("symbolic_theme", "Desconhecido")
-            regulatory_function = dream_data.get("regulatory_function", "")
-            compensated_attitude = dream_data.get("compensated_attitude", "")
-            dream_mood = dream_data.get("dream_mood", "")
+            dream_content = self._normalize_dream_field(dream_data.get("dream_narrative", ""))
+            symbolic_theme = self._normalize_dream_field(dream_data.get("symbolic_theme", ""))
+            regulatory_function = self._normalize_dream_field(dream_data.get("regulatory_function", ""))
+            compensated_attitude = self._normalize_dream_field(dream_data.get("compensated_attitude", ""))
+            dream_mood = self._normalize_dream_field(dream_data.get("dream_mood", ""))
 
             if not dream_content:
                 logger.warning("Dream Engine nao conseguiu recuperar um dream_narrative valido")
                 return False
+            if not symbolic_theme:
+                symbolic_theme = self._fallback_symbolic_theme(dream_content, chosen_motif)
 
             dream_id = self.db.save_dream(
                 user_id,
@@ -449,7 +451,7 @@ Responda APENAS com um objeto JSON valido:
             if dream_id:
                 logger.info(f"Sonho salvo com sucesso (ID: {dream_id}, Tema: {symbolic_theme})")
 
-                self._extract_dream_insight(dream_id, user_id, dream_content)
+                self._extract_dream_insight(dream_id, user_id, dream_content, symbolic_theme)
                 self._generate_dream_image(dream_id, dream_content, symbolic_theme)
                 self._feed_dream_to_rumination(
                     user_id=user_id,
@@ -469,7 +471,69 @@ Responda APENAS com um objeto JSON valido:
 
         return False
 
-    def _extract_dream_insight(self, dream_id: int, user_id: str, dream_content: str):
+    def _stringify_payload_value(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return " ".join(self._stringify_payload_value(item) for item in value if item is not None)
+        if isinstance(value, dict):
+            for key in ("text", "content", "summary", "value", "message"):
+                if value.get(key):
+                    return self._stringify_payload_value(value.get(key))
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
+
+    def _normalize_dream_field(self, value: Any, limit: int = 4000) -> str:
+        cleaned = " ".join(self._stringify_payload_value(value).split()).strip()
+        if not cleaned:
+            return ""
+        if len(cleaned) <= limit:
+            return cleaned
+        return cleaned[: limit - 3].rstrip(" ,.;:") + "..."
+
+    def _fallback_symbolic_theme(self, dream_content: str, chosen_motif: str) -> str:
+        motif = self._normalize_dream_field(chosen_motif, limit=80)
+        if motif:
+            return motif
+        first_sentence = re.split(r"(?<=[.!?])\s+", dream_content.strip(), maxsplit=1)[0]
+        return self._normalize_dream_field(first_sentence, limit=90) or "Tema onirico nao nomeado"
+
+    def _fallback_dream_residue(self, dream_content: str, symbolic_theme: str = "") -> str:
+        theme = self._normalize_dream_field(symbolic_theme, limit=90) or "um tema ainda sem nome"
+        first_image = re.split(r"(?<=[.!?])\s+", dream_content.strip(), maxsplit=1)[0]
+        first_image = self._normalize_dream_field(first_image, limit=150)
+        if first_image:
+            residue = (
+                f"O sonho deixou ativo o tema '{theme}', com a imagem de {first_image.lower()} "
+                "ainda tensionando minha escuta."
+            )
+        else:
+            residue = f"O sonho deixou ativo o tema '{theme}', ainda pedindo elaboracao na ruminacao."
+        return self._normalize_dream_field(residue, limit=320)
+
+    def _normalize_dream_residue(self, text: str, dream_content: str = "", symbolic_theme: str = "") -> str:
+        """Compacta residuos oniricos e evita aceitar respostas claramente truncadas."""
+        if not text:
+            return self._fallback_dream_residue(dream_content, symbolic_theme)
+
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`").strip()
+
+        cleaned = " ".join(cleaned.split())
+        if len(cleaned) < 48 and not re.search(r"[.!?]$", cleaned):
+            logger.warning("Dream Engine descartou residuo onirico curto/truncado: %r", cleaned)
+            return self._fallback_dream_residue(dream_content, symbolic_theme)
+
+        if len(cleaned) <= 320:
+            return cleaned
+
+        truncated = cleaned[:317].rstrip(" ,.;:")
+        return truncated + "..."
+
+    def _extract_dream_insight(self, dream_id: int, user_id: str, dream_content: str, symbolic_theme: str = ""):
         """Extrai um residuo simbolico curto para influenciar a conversa sem coloniza-la."""
         prompt = f"""
 Voce e a mente analitica da IA Jung. Voce acaba de acordar deste sonho surreal gerado pelo seu subconsciente a respeito do usuario:
@@ -495,7 +559,11 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
                 temperature=0.25,
                 purpose="extracao_de_residuo_onirico",
             )
-            insight_text = self._normalize_dream_residue(response_text)
+            insight_text = self._normalize_dream_residue(
+                response_text,
+                dream_content=dream_content,
+                symbolic_theme=symbolic_theme,
+            )
 
             if insight_text:
                 self.db.update_dream_with_insight(dream_id, insight_text)
@@ -504,23 +572,6 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
                 logger.info("   Insight onirico vazio ou inutilizavel; seguindo sem residuo novo")
         except Exception as e:
             logger.error(f"Erro ao extrair insight onirico: {e}")
-
-    def _normalize_dream_residue(self, text: str) -> str:
-        """Compacta residuos oniricos para evitar mini-ensaios no prompt."""
-        if not text:
-            return ""
-
-        cleaned = text.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.strip("`").strip()
-
-        cleaned = " ".join(cleaned.split())
-
-        if len(cleaned) <= 320:
-            return cleaned
-
-        truncated = cleaned[:317].rstrip(" ,.;:")
-        return truncated + "..."
 
     def _apply_image_style_policy(self, dream_content: str) -> str:
         base_prompt = " ".join((dream_content or "").split()).strip()
@@ -691,7 +742,7 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
         regulatory_function: str = "",
         compensated_attitude: str = "",
         dream_mood: str = "",
-    ):
+    ) -> list[int]:
         """Dispara o sonho de volta para o modulo de ruminacao como material continuo."""
         try:
             dream_summary = (
@@ -723,10 +774,102 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
 
             ruminator = RuminationEngine(self.db)
             logger.info("   Retornando sonho organico para a roda da ruminacao...")
-            ruminator.ingest(mock_interaction)
+            fragment_ids = ruminator.ingest(mock_interaction)
+            if fragment_ids:
+                return fragment_ids
+
+            logger.warning(
+                "Dream Engine nao recebeu fragmentos do extrator; criando fragmento onirico deterministico para sonho #%s",
+                dream_id,
+            )
+            fallback_id = self._insert_dream_rumination_fragment(
+                user_id=user_id,
+                dream_id=dream_id,
+                dream_summary=dream_summary,
+                symbolic_theme=symbolic_theme,
+                regulatory_function=regulatory_function,
+                compensated_attitude=compensated_attitude,
+                dream_mood=dream_mood,
+            )
+            return [fallback_id] if fallback_id else []
 
         except Exception as e:
             logger.error(f"Erro ao retroalimentar sonho na ruminacao: {e}")
+            return []
+
+    def _insert_dream_rumination_fragment(
+        self,
+        user_id: str,
+        dream_id: int,
+        dream_summary: str,
+        symbolic_theme: str = "",
+        regulatory_function: str = "",
+        compensated_attitude: str = "",
+        dream_mood: str = "",
+    ) -> Optional[int]:
+        """Garante que cada sonho persistido deixe ao menos um fragmento rastreavel."""
+        try:
+            cursor = self.db.conn.cursor()
+            source_id = str(dream_id)
+            cursor.execute(
+                """
+                SELECT id
+                FROM rumination_fragments
+                WHERE user_id = ? AND source_kind = ? AND source_table = ? AND source_id = ?
+                LIMIT 1
+                """,
+                (user_id, "dream", "agent_dreams", source_id),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                return existing["id"] if isinstance(existing, dict) else existing[0]
+
+            theme = self._normalize_dream_field(symbolic_theme, limit=120) or "sonho sem tema nomeado"
+            content = (
+                f"O sonho #{dream_id} deixou um residuo onirico em torno de '{theme}', "
+                "pedindo metabolizacao simbolica na ruminacao."
+            )
+            context = self._normalize_dream_field(dream_summary, limit=520)
+            cursor.execute(
+                """
+                INSERT INTO rumination_fragments (
+                    user_id, fragment_type, content, context,
+                    source_conversation_id, source_quote,
+                    source_kind, source_table, source_id, source_metadata_json,
+                    emotional_weight, tension_level
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    "tensao",
+                    content,
+                    context,
+                    -int(dream_id),
+                    theme,
+                    "dream",
+                    "agent_dreams",
+                    source_id,
+                    json.dumps(
+                        {
+                            "symbolic_theme": symbolic_theme,
+                            "regulatory_function": regulatory_function,
+                            "compensated_attitude": compensated_attitude,
+                            "dream_mood": dream_mood,
+                            "fallback_fragment": True,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    0.86,
+                    0.9,
+                ),
+            )
+            self.db.conn.commit()
+            fragment_id = cursor.lastrowid
+            logger.info("Dream Engine criou fragmento onirico fallback #%s para sonho #%s", fragment_id, dream_id)
+            return fragment_id
+        except Exception as exc:
+            logger.error("Dream Engine falhou ao criar fragmento onirico fallback: %s", exc)
+            return None
 
 
 if __name__ == "__main__":

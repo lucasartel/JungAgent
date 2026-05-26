@@ -361,12 +361,37 @@ class WorldConsciousnessFetcher:
             return "neutral"
         return str(will_state.get("id") or will_state.get("updated_at") or will_state.get("created_at") or "neutral")
 
+    def _stringify_text_value(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return "; ".join(
+                part for part in (self._stringify_text_value(item) for item in value) if part
+            )
+        if isinstance(value, dict):
+            for key in ("text", "content", "summary", "admin_summary", "prompt_summary", "value", "message"):
+                if value.get(key):
+                    return self._stringify_text_value(value.get(key))
+            try:
+                return json.dumps(value, ensure_ascii=False)
+            except Exception:
+                return str(value)
+        return str(value)
+
     def _truncate_text(self, text: str, limit: int = 160) -> str:
-        cleaned = " ".join((text or "").split())
+        cleaned = " ".join(self._stringify_text_value(text).split())
         if len(cleaned) <= limit:
             return cleaned
         clipped = cleaned[: limit - 3].rsplit(" ", 1)[0].rstrip(" ,.;:")
         return (clipped or cleaned[: limit - 3]) + "..."
+
+    def _summary_text(self, value: Any, fallback: str, limit: int = 700) -> str:
+        cleaned = self._truncate_text(value, limit)
+        if cleaned:
+            return cleaned
+        return self._truncate_text(fallback, limit)
 
     def _extract_focus_terms(self, text: str) -> List[str]:
         tokens = re.findall(r"[a-zA-ZÀ-ÿ0-9]{4,}", (text or "").lower())
@@ -1454,7 +1479,7 @@ Contexto:
 """
         try:
             raw = get_llm_response(prompt, temperature=0.25, max_tokens=160)
-            entry = " ".join((raw or "").strip().strip('"').split())
+            entry = " ".join(self._stringify_text_value(raw).strip().strip('"').split())
         except Exception as exc:
             logger.debug("World Consciousness: fallback no journal de saber: %s", exc)
             entry = ""
@@ -2270,10 +2295,10 @@ Estado estruturado:
         lucidity_summary = self._deterministic_lucidity_summary(area_panels, dominant_tensions, confidence_overall, continuity)
         llm_summary = self._llm_enrich_lucidity(world_state)
         world_state["world_lucidity_summary"] = {
-            "zeitgeist": (llm_summary.get("zeitgeist") or lucidity_summary["zeitgeist"]).strip(),
-            "mean_of_truth": (llm_summary.get("mean_of_truth") or lucidity_summary["mean_of_truth"]).strip(),
-            "admin_summary": (llm_summary.get("admin_summary") or lucidity_summary["admin_summary"]).strip(),
-            "prompt_summary": (llm_summary.get("prompt_summary") or lucidity_summary["prompt_summary"]).strip(),
+            "zeitgeist": self._summary_text(llm_summary.get("zeitgeist"), lucidity_summary["zeitgeist"], 520),
+            "mean_of_truth": self._summary_text(llm_summary.get("mean_of_truth"), lucidity_summary["mean_of_truth"], 520),
+            "admin_summary": self._summary_text(llm_summary.get("admin_summary"), lucidity_summary["admin_summary"], 900),
+            "prompt_summary": self._summary_text(llm_summary.get("prompt_summary"), lucidity_summary["prompt_summary"], 900),
         }
         world_state["formatted_prompt_summary"] = self._format_prompt_summary(world_state)
         world_state["formatted_admin_summary"] = self._format_admin_summary(world_state)
