@@ -92,7 +92,7 @@ class AgentMetaConsciousnessEngine:
         )
         return [self._truncate(row["full_message"], 200) for row in cursor.fetchall() if row["full_message"]]
 
-    def _recent_artworks(self, user_id: str, limit: int = 3) -> List[Dict[str, str]]:
+    def _recent_artworks(self, user_id: str, limit: int = 3) -> List[Dict[str, Any]]:
         """
         Busca obras de arte recentes do módulo Art/Hobby.
         Retorna lista vazia se a tabela não existir.
@@ -101,25 +101,43 @@ class AgentMetaConsciousnessEngine:
         try:
             cursor.execute(
                 """
-                SELECT artwork_description, critique, feedback, timestamp
-                FROM art_hobby_memory
+                SELECT
+                    title,
+                    cycle_id,
+                    summary,
+                    provider,
+                    critique_summary,
+                    critique_json,
+                    created_at
+                FROM agent_hobby_artifacts
                 WHERE user_id = ?
-                ORDER BY timestamp DESC
+                ORDER BY created_at DESC, id DESC
                 LIMIT ?
                 """,
                 (user_id, limit),
             )
-            items: List[Dict[str, str]] = []
+            items: List[Dict[str, Any]] = []
             for row in cursor.fetchall():
-                items.append({
-                    "artwork": self._truncate(row["artwork_description"], 200),
-                    "critique": self._truncate(row["critique"], 150),
-                    "feedback": self._truncate(row["feedback"], 150),
-                    "timestamp": row["timestamp"],
-                })
+                critique_payload = self._extract_json(row["critique_json"] or "")
+                symbolic_reading = critique_payload.get("symbolic_reading")
+                verdict = critique_payload.get("verdict")
+                items.append(
+                    {
+                        "title": self._truncate(row["title"], 120),
+                        "cycle_id": row["cycle_id"],
+                        "summary": self._truncate(row["summary"], 180),
+                        "critique": self._truncate(row["critique_summary"], 160),
+                        "symbolic_reading": self._truncate(symbolic_reading, 160),
+                        "verdict": self._truncate(verdict, 80),
+                        "fit_score": critique_payload.get("fit_score"),
+                        "provider": row["provider"],
+                        "created_at": row["created_at"],
+                    }
+                )
             return items
-        except Exception:
+        except Exception as exc:
             # Tabela ou colunas podem não existir ainda
+            logger.debug("Meta-consciousness: art/hobby memory unavailable: %s", exc)
             return []
 
     def _recent_loop_results(self, limit: int = 6) -> List[Dict[str, str]]:
