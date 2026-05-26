@@ -92,6 +92,54 @@ class AgentMetaConsciousnessEngine:
         )
         return [self._truncate(row["full_message"], 200) for row in cursor.fetchall() if row["full_message"]]
 
+    def _recent_artworks(self, user_id: str, limit: int = 3) -> List[Dict[str, Any]]:
+        """
+        Busca obras de arte recentes do módulo Art/Hobby.
+        Retorna lista vazia se a tabela não existir.
+        """
+        cursor = self.db.conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT
+                    title,
+                    cycle_id,
+                    summary,
+                    provider,
+                    critique_summary,
+                    critique_json,
+                    created_at
+                FROM agent_hobby_artifacts
+                WHERE user_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            )
+            items: List[Dict[str, Any]] = []
+            for row in cursor.fetchall():
+                critique_payload = self._extract_json(row["critique_json"] or "")
+                symbolic_reading = critique_payload.get("symbolic_reading")
+                verdict = critique_payload.get("verdict")
+                items.append(
+                    {
+                        "title": self._truncate(row["title"], 120),
+                        "cycle_id": row["cycle_id"],
+                        "summary": self._truncate(row["summary"], 180),
+                        "critique": self._truncate(row["critique_summary"], 160),
+                        "symbolic_reading": self._truncate(symbolic_reading, 160),
+                        "verdict": self._truncate(verdict, 80),
+                        "fit_score": critique_payload.get("fit_score"),
+                        "provider": row["provider"],
+                        "created_at": row["created_at"],
+                    }
+                )
+            return items
+        except Exception as exc:
+            # Tabela ou colunas podem não existir ainda
+            logger.debug("Meta-consciousness: art/hobby memory unavailable: %s", exc)
+            return []
+
     def _recent_loop_results(self, limit: int = 6) -> List[Dict[str, str]]:
         cursor = self.db.conn.cursor()
         cursor.execute(
@@ -135,6 +183,7 @@ class AgentMetaConsciousnessEngine:
         rumination = self._recent_rumination_insights(user_id, limit=3)
         will_state = self._latest_will(user_id)
         loop_results = self._recent_loop_results(limit=6)
+        artworks = self._recent_artworks(user_id, limit=2)
         return {
             "cycle_id": cycle_id,
             "current_state": {
@@ -150,10 +199,12 @@ class AgentMetaConsciousnessEngine:
             "recent_rumination_insights": rumination,
             "latest_will": will_state,
             "recent_loop_results": loop_results,
+            "recent_artworks": artworks,
             "source_summary": {
                 "conversation_count": len(conversations),
                 "rumination_count": len(rumination),
                 "loop_result_count": len(loop_results),
+                "artwork_count": len(artworks),
                 "has_will": 1 if will_state else 0,
             },
         }
