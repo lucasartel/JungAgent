@@ -92,6 +92,36 @@ class AgentMetaConsciousnessEngine:
         )
         return [self._truncate(row["full_message"], 200) for row in cursor.fetchall() if row["full_message"]]
 
+    def _recent_artworks(self, user_id: str, limit: int = 3) -> List[Dict[str, str]]:
+        """
+        Busca obras de arte recentes do módulo Art/Hobby.
+        Retorna lista vazia se a tabela não existir.
+        """
+        cursor = self.db.conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT artwork_description, critique, feedback, timestamp
+                FROM art_hobby_memory
+                WHERE user_id = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            )
+            items: List[Dict[str, str]] = []
+            for row in cursor.fetchall():
+                items.append({
+                    "artwork": self._truncate(row["artwork_description"], 200),
+                    "critique": self._truncate(row["critique"], 150),
+                    "feedback": self._truncate(row["feedback"], 150),
+                    "timestamp": row["timestamp"],
+                })
+            return items
+        except Exception:
+            # Tabela ou colunas podem não existir ainda
+            return []
+
     def _recent_loop_results(self, limit: int = 6) -> List[Dict[str, str]]:
         cursor = self.db.conn.cursor()
         cursor.execute(
@@ -135,6 +165,7 @@ class AgentMetaConsciousnessEngine:
         rumination = self._recent_rumination_insights(user_id, limit=3)
         will_state = self._latest_will(user_id)
         loop_results = self._recent_loop_results(limit=6)
+        artworks = self._recent_artworks(user_id, limit=2)
         return {
             "cycle_id": cycle_id,
             "current_state": {
@@ -150,10 +181,12 @@ class AgentMetaConsciousnessEngine:
             "recent_rumination_insights": rumination,
             "latest_will": will_state,
             "recent_loop_results": loop_results,
+            "recent_artworks": artworks,
             "source_summary": {
                 "conversation_count": len(conversations),
                 "rumination_count": len(rumination),
                 "loop_result_count": len(loop_results),
+                "artwork_count": len(artworks),
                 "has_will": 1 if will_state else 0,
             },
         }
