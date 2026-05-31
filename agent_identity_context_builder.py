@@ -1189,7 +1189,7 @@ class AgentIdentityContextBuilder:
             return None
 
         try:
-            return self._fetch_dict_rows(
+            rows = self._fetch_dict_rows(
                 cursor,
                 """
                 SELECT
@@ -1208,8 +1208,44 @@ class AgentIdentityContextBuilder:
                 """,
                 (user_id, limit),
             )
+            if rows:
+                logging.getLogger(__name__).info(self._diagnose_art_repetition(rows))
+            return rows
         except Exception:
             return None
+
+    def _diagnose_art_repetition(self, artifacts: List[Dict[str, Any]]) -> str:
+        if not artifacts or len(artifacts) < 2:
+            return "Insufficient artwork history for repetition diagnosis."
+        lines = []
+        for i in range(min(5, len(artifacts))):
+            a = artifacts[i]
+            title = a.get("title", "untitled")
+            critique_json = self._parse_json_object(a.get("critique_json"))
+            theme = critique_json.get("symbolic_reading", "") or ""
+            dominant_color = critique_json.get("dominant_color", "") or ""
+            critique_status = "critiqued" if a.get("critique_summary") else "not_critiqued"
+            lines.append(f"  [{i+1}] {title} | theme: {theme} | color: {dominant_color} | status: {critique_status}")
+        repetition_warnings = []
+        for i in range(min(5-1, len(artifacts)-1)):
+            a1 = artifacts[i]
+            a2 = artifacts[i+1]
+            c1 = self._parse_json_object(a1.get("critique_json"))
+            c2 = self._parse_json_object(a2.get("critique_json"))
+            theme1 = (c1.get("symbolic_reading") or "").strip().lower()
+            theme2 = (c2.get("symbolic_reading") or "").strip().lower()
+            if theme1 and theme2 and theme1 == theme2:
+                repetition_warnings.append(f"  Consecutive repetition of theme '{theme1}' between '{a1.get('title','')}' and '{a2.get('title','')}'")
+            color1 = (c1.get("dominant_color") or "").strip().lower()
+            color2 = (c2.get("dominant_color") or "").strip().lower()
+            if color1 and color2 and color1 == color2:
+                repetition_warnings.append(f"  Consecutive repetition of dominant color '{color1}' between '{a1.get('title','')}' and '{a2.get('title','')}'")
+        summary = "Recent artworks:\n" + "\n".join(lines)
+        if repetition_warnings:
+            summary += "\nRepetition warnings:\n" + "\n".join(repetition_warnings)
+        else:
+            summary += "\nNo repetition detected."
+        return summary
 
     def _format_work_project_line(self, project: Dict[str, Any]) -> str:
         name = project.get("name") or "projeto sem nome"
