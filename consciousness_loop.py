@@ -1920,6 +1920,24 @@ class ConsciousnessLoopManager:
 
         return result
 
+    def _write_cycle_diary(self, cycle_id: str) -> Optional[Dict]:
+        if not cycle_id:
+            return None
+        try:
+            from agent_diary import write_agent_daily_diary
+
+            result = write_agent_daily_diary(self.db, cycle_id=cycle_id)
+            logger.info(
+                "LOOP DIARY cycle_id=%s session_path=%s timeline_events_added=%s",
+                cycle_id,
+                result.get("session_path"),
+                result.get("timeline_events_added"),
+            )
+            return result
+        except Exception as exc:
+            logger.warning("LOOP DIARY failed cycle_id=%s error=%s", cycle_id, exc)
+            return None
+
     def sync_loop(self, trigger_source: str = "scheduled_trigger", notify_admin: bool = False) -> Dict:
         self._ensure_phase_config()
         window = self._phase_window_for()
@@ -1984,9 +2002,12 @@ class ConsciousnessLoopManager:
         action = "noop"
         phase_result = None
         retry_assessment = None
+        diary_result = None
 
         if state["current_phase"] != target_phase.key or state["cycle_id"] != cycle_id:
             previous_phase = state["current_phase"]
+            previous_cycle_id = state["cycle_id"]
+            cycle_completed = target_phase.key == "dream" and previous_phase in {"will", "scholar"}
             cursor.execute(
                 """
                 UPDATE consciousness_loop_state
@@ -2022,6 +2043,8 @@ class ConsciousnessLoopManager:
                 ),
             )
             self.db.conn.commit()
+            if cycle_completed:
+                diary_result = self._write_cycle_diary(previous_cycle_id)
             self._insert_event(
                 cycle_id=cycle_id,
                 phase=target_phase.key,
@@ -2087,6 +2110,7 @@ class ConsciousnessLoopManager:
             "current_phase": target_phase.key,
             "next_phase": next_phase.key,
             "phase_result": phase_result,
+            "diary_result": diary_result,
             "retry_assessment": self._summarize_retry_assessment(retry_assessment),
         }
 
