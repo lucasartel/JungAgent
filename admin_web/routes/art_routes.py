@@ -90,6 +90,19 @@ async def generate_art(request: Request, admin: Dict = Depends(require_master)):
         return JSONResponse({"success": False, "error": str(exc)}, status_code=500)
 
 
+@router.get("/list")
+async def list_artworks(request: Request, admin: Dict = Depends(require_master)):
+    """Return recent artworks with critique and hash for admin visibility."""
+    try:
+        db = get_hybrid_db()
+        from hobby_art_engine import HobbyArtEngine
+        engine = HobbyArtEngine(db)
+        artworks = engine.list_recent_artworks(ADMIN_USER_ID, limit=20)
+        return {"success": True, "artworks": artworks}
+    except Exception as exc:
+        logger.error("Erro ao listar artworks: %s", exc)
+        return JSONResponse({"success": False, "error": str(exc)}, status_code=500)
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def art_dashboard(request: Request, admin: Dict = Depends(require_master)):
     from instance_dashboard import get_art_dashboard_payload

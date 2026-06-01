@@ -51,6 +51,22 @@ class HobbyArtEngine:
             or DEFAULT_ART_IMAGE_MODEL
         ).strip()
 
+    def list_recent_artworks(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Return recent artworks with critique status and content hash for repetition detection."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, title, image_url, critique, content_hash, created_at
+            FROM agent_artworks
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        )
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
     def _truncate(self, text: str, limit: int = 220) -> str:
         cleaned = " ".join((text or "").strip().split())
         if len(cleaned) <= limit:
