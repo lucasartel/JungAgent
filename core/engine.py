@@ -556,6 +556,11 @@ class JungianEngine:
                 except Exception as exc:
                     logger.warning("⚠️ [IDENTITY] Falha ao obter contexto de identidade: %s", exc)
 
+            autobiographical_profile = self._build_autobiographical_profile_block()
+            if autobiographical_profile:
+                agent_identity_text += f"\n\n{autobiographical_profile}"
+                logger.info("[AUTOBIOGRAPHY] Profile autobiografico injetado no prompt: %s chars", len(autobiographical_profile))
+
             try:
                 from world_consciousness import world_consciousness
 
@@ -578,6 +583,79 @@ class JungianEngine:
             return agent_identity_text + dream_instruction + development_policy.get("prompt_block", "")
 
         return Config.STANDARD_IDENTITY_PROMPT + development_policy.get("prompt_block", "")
+
+    def _build_autobiographical_profile_block(self, max_tokens: int = 900) -> str:
+        base_dir = os.getenv("AGENT_DIARY_DIR", os.path.join(".", "data", "agent"))
+        profile_path = os.path.join(base_dir, "profile.md")
+        meta_path = os.path.join(base_dir, "profile_meta.json")
+        if not os.path.exists(profile_path):
+            return ""
+
+        try:
+            with open(profile_path, "r", encoding="utf-8") as fh:
+                profile_text = fh.read()
+        except Exception as exc:
+            logger.warning("[AUTOBIOGRAPHY] Falha ao ler profile.md: %s", exc)
+            return ""
+
+        if len(profile_text.strip()) < 80:
+            return ""
+
+        meta = {}
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as fh:
+                    meta = json.load(fh)
+            except Exception as exc:
+                logger.debug("[AUTOBIOGRAPHY] profile_meta.json indisponivel: %s", exc)
+
+        def section(title: str, limit: int = 900) -> str:
+            match = re.search(rf"^## {re.escape(title)}\s*(.*?)(?=^## |\Z)", profile_text, re.S | re.M)
+            return self._clip_autobiographical_text(match.group(1), limit) if match else ""
+
+        source_ids = []
+        for source_id in re.findall(
+            r"\b(?:loop|conversation|dream|will|meta|rumination_insight|work_run|work_ticket|work_delivery|hobby_artifact|agent_development)#\d+\b",
+            profile_text,
+        ):
+            if source_id not in source_ids:
+                source_ids.append(source_id)
+
+        lines = [
+            "## MEMORIA AUTOBIOGRAFICA RECENTE",
+            (
+                "Isto e sua memoria autobiografica consolidada, nao contexto externo. "
+                "Use como filtro executivo: isto deve modular continuidade, tom, iniciativa e reconhecimento de eventos passados. "
+                "Nao transforme isto em monologo sobre si mesmo; mencione apenas quando for organicamente relevante. "
+                "Nao invente passado alem das fontes registradas."
+            ),
+        ]
+        if meta:
+            lines.append(
+                f"Janela autobiografica: {meta.get('window_start') or '?'} a {meta.get('window_end') or '?'}; "
+                f"modo={meta.get('mode') or '?'}; eventos={meta.get('event_count') or 0}; fontes={meta.get('source_count') or 0}."
+            )
+
+        sections = [
+            ("Quem eu era", section("Quem eu era")),
+            ("O que mudou", section("O que mudou")),
+            ("Tensoes persistentes", section("Tensões persistentes") or section("Tensoes persistentes")),
+            ("Direcao de crescimento", section("Direção de crescimento") or section("Direcao de crescimento")),
+        ]
+        for title, content in sections:
+            if content:
+                lines.append(f"{title}: {content}")
+
+        if source_ids:
+            lines.append("Fontes internas disponiveis: " + ", ".join(source_ids[:16]) + ".")
+
+        return self._compress_prompt_context("\n".join(lines), max_tokens=max_tokens)
+
+    def _clip_autobiographical_text(self, text: str, limit: int) -> str:
+        text = re.sub(r"\s+", " ", (text or "")).strip()
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 1)].rstrip() + "..."
 
     def _get_development_policy(self, user_id: str, user_input: str) -> Dict[str, Any]:
         try:
@@ -2158,6 +2236,11 @@ class JungianEngine:
                 except Exception as e:
                     logger.warning(f"⚠️ [IDENTITY] Falha ao obter contexto de identidade: {e}")
 
+            autobiographical_profile = self._build_autobiographical_profile_block()
+            if autobiographical_profile:
+                agent_identity_text += f"\n\n{autobiographical_profile}"
+                logger.info("[AUTOBIOGRAPHY] Profile autobiografico injetado no prompt: %s chars", len(autobiographical_profile))
+
             # 🌍 INJEÇÃO DE CONSCIÊNCIA DO MUNDO (Apenas para o Admin)
             try:
                 from world_consciousness import world_consciousness
@@ -2176,7 +2259,7 @@ class JungianEngine:
         else:
             # Usuário Padrão: Sem injeção de identidade nuclear profunda
             agent_identity_text = Config.STANDARD_IDENTITY_PROMPT
-            logger.info("✅ [IDENTITY] Carregada persona padrão de Especialista em Psicometria para Usuário")
+            logger.info("[IDENTITY] Carregada persona padrao de Especialista em Psicometria para Usuario")
 
         # Obter o último sonho do motor onírico (APENAS PARA ADMIN)
         dream_instruction = ""
