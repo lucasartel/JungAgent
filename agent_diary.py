@@ -13,6 +13,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -28,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_AGENT_DIR = Path(os.getenv("AGENT_DIARY_DIR", os.path.join(".", "data", "agent")))
 TIMELINE_LIMIT = 500
+PROFILE_SOURCE_RE = re.compile(
+    r"\b(?:loop|conversation|dream|will|meta|rumination_insight|work_run|work_ticket|work_delivery|hobby_artifact|agent_development)#\d+\b"
+)
 
 
 def _as_text(value: Any, limit: int = 320) -> str:
@@ -87,10 +91,18 @@ class AgentDiaryWriter:
         self.base_dir = Path(base_dir) if base_dir else DEFAULT_AGENT_DIR
         self.sessions_dir = self.base_dir / "sessions"
         self.timeline_path = self.base_dir / "timeline.json"
+        self.profile_path = self.base_dir / "profile.md"
+        self.profile_meta_path = self.base_dir / "profile_meta.json"
         self.user_id = user_id
         self.agent_instance = agent_instance
 
-    def write_daily_entry(self, cycle_id: Optional[str] = None) -> Dict[str, Any]:
+    def write_daily_entry(
+        self,
+        cycle_id: Optional[str] = None,
+        *,
+        regenerate_profile: bool = True,
+        profile_use_llm: bool = True,
+    ) -> Dict[str, Any]:
         cycle_id = self._normalize_cycle_id(cycle_id)
         snapshot = self.build_snapshot(cycle_id)
         markdown = self.render_markdown(snapshot)
@@ -102,6 +114,13 @@ class AgentDiaryWriter:
         session_path.write_text(markdown, encoding="utf-8")
 
         timeline_events = self.update_timeline(snapshot)
+        profile_result = None
+        if regenerate_profile:
+            profile_result = self.write_weekly_profile(
+                cycle_id=cycle_id,
+                force=False,
+                use_llm=profile_use_llm,
+            )
         logger.info(
             "[AGENT DIARY] daily entry written cycle_id=%s phases=%s events=%s path=%s",
             cycle_id,
@@ -117,6 +136,137 @@ class AgentDiaryWriter:
             "timeline_events_added": len(timeline_events),
             "phase_count": len(snapshot.get("loop_results") or []),
             "source_count": len(snapshot.get("sources") or []),
+            "profile_result": profile_result,
+        }
+
+    def write_weekly_profile(
+        self,
+        cycle_id: Optional[str] = None,
+        *,
+        force: bool = False,
+        days: int = 7,
+        use_llm: bool = True,
+    ) -> Dict[str, Any]:
+        cycle_id = self._normalize_cycle_id(cycle_id)
+        if not force and not self._profile_due(cycle_id, days):
+            return {
+                "success": True,
+                "skipped": True,
+                "reason": "profile_not_due",
+                "profile_path": str(self.profile_path),
+            }
+
+        evidence = self.build_profile_evidence(cycle_id, days=days)
+        if not evidence["events"]:
+            return {
+                "success": False,
+                "skipped": True,
+                "reason": "no_profile_evidence",
+                "profile_path": str(self.profile_path),
+            }
+
+        mode = "llm"
+        profile_markdown = ""
+        if use_llm:
+            try:
+                profile_markdown = self._generate_llm_profile(evidence)
+            except Exception as exc:
+                logger.warning("[AGENT DIARY] LLM profile generation failed: %s", exc)
+
+        if not profile_markdown or not self._profile_has_valid_citations(profile_markdown, evidence["source_ids"]):
+            if profile_markdown:
+                logger.warning("[AGENT DIARY] LLM profile rejected because citations were invalid or missing")
+            profile_markdown = self._render_fallback_profile(evidence)
+            mode = "deterministic_fallback"
+
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.profile_path.write_text(profile_markdown, encoding="utf-8")
+        self.profile_meta_path.write_text(
+            json.dumps(
+                {
+                    "cycle_id": cycle_id,
+                    "generated_at": datetime.now().isoformat(timespec="seconds"),
+                    "window_start": evidence["window_start"],
+                    "window_end": evidence["window_end"],
+                    "mode": mode,
+                    "event_count": len(evidence["events"]),
+                    "source_count": len(evidence["source_ids"]),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        logger.info(
+            "[AGENT DIARY] profile written cycle_id=%s mode=%s events=%s sources=%s path=%s",
+            cycle_id,
+            mode,
+            len(evidence["events"]),
+            len(evidence["source_ids"]),
+            self.profile_path,
+        )
+        return {
+            "success": True,
+            "skipped": False,
+            "cycle_id": cycle_id,
+            "profile_path": str(self.profile_path),
+            "profile_meta_path": str(self.profile_meta_path),
+            "mode": mode,
+            "event_count": len(evidence["events"]),
+            "source_count": len(evidence["source_ids"]),
+        }
+
+    def build_profile_evidence(self, cycle_id: str, *, days: int = 7) -> Dict[str, Any]:
+        end_date = datetime.strptime(cycle_id, "%Y-%m-%d").date()
+        start_date = end_date - timedelta(days=max(1, days) - 1)
+        timeline_events = self._load_timeline_events()
+        events = [
+            event
+            for event in timeline_events
+            if self._date_in_window(event.get("date"), start_date, end_date)
+        ]
+        if not events:
+            snapshot = self.build_snapshot(cycle_id)
+            events = self.build_timeline_events(snapshot)
+
+        events = sorted(
+            events,
+            key=lambda item: (
+                (item.get("timestamp") or item.get("date") or "").replace("T", " "),
+                item.get("event_id") or "",
+            ),
+        )[-60:]
+
+        source_ids: List[str] = []
+        seen = set()
+        for event in events:
+            for source_id in PROFILE_SOURCE_RE.findall(" ".join(str(v) for v in event.values())):
+                if source_id not in seen:
+                    seen.add(source_id)
+                    source_ids.append(source_id)
+
+        latest_snapshot = self.build_snapshot(cycle_id)
+        for source_id in latest_snapshot.get("sources") or []:
+            if source_id not in seen:
+                seen.add(source_id)
+                source_ids.append(source_id)
+
+        kind_counts: Dict[str, int] = {}
+        for event in events:
+            kind = str(event.get("kind") or "unknown")
+            kind_counts[kind] = kind_counts.get(kind, 0) + 1
+
+        return {
+            "cycle_id": cycle_id,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "window_start": start_date.strftime("%Y-%m-%d"),
+            "window_end": end_date.strftime("%Y-%m-%d"),
+            "events": events,
+            "source_ids": source_ids,
+            "kind_counts": kind_counts,
+            "latest_snapshot": latest_snapshot,
         }
 
     def build_snapshot(self, cycle_id: str) -> Dict[str, Any]:
@@ -491,6 +641,213 @@ class AgentDiaryWriter:
 
         return events
 
+    def _generate_llm_profile(self, evidence: Dict[str, Any]) -> str:
+        from llm_providers import get_llm_response
+
+        evidence_lines = []
+        for event in evidence["events"]:
+            evidence_lines.append(
+                "- "
+                f"{event.get('date')} [{event.get('kind')}] {event.get('title')}: "
+                f"{_as_text(event.get('summary'), 420)} "
+                f"({event.get('source')})"
+            )
+
+        prompt = f"""
+Voce esta escrevendo o profile.md autobiografico semanal do JungAgent.
+
+Janela: {evidence['window_start']} a {evidence['window_end']}
+Data de referencia: {evidence['cycle_id']}
+
+Regras obrigatorias:
+- Escreva em portugues, em primeira pessoa discreta, sem dramatizar.
+- Use SOMENTE as evidencias abaixo. Nao invente eventos, sentimentos ou fontes.
+- Cada afirmacao interpretativa deve terminar com fonte no formato [fonte: source#id].
+- Use apenas estes identificadores de fonte: {', '.join(evidence['source_ids'])}
+- Se houver incerteza, diga "a evidencia ainda e insuficiente" e cite a fonte que limita a conclusao.
+- Nao use bloco de codigo.
+
+Formato obrigatorio:
+# Perfil autobiografico do Jung
+Atualizado em: {evidence['generated_at']}
+Janela: {evidence['window_start']} a {evidence['window_end']}
+Modo: llm_com_citacoes
+
+## Quem eu era
+
+## O que mudou
+
+## Tensoes persistentes
+
+## Direcao de crescimento
+
+## Fontes principais
+
+Evidencias:
+{chr(10).join(evidence_lines)}
+""".strip()
+
+        response = get_llm_response(prompt, temperature=0.2, max_tokens=1800)
+        return self._strip_code_fence(response)
+
+    def _render_fallback_profile(self, evidence: Dict[str, Any]) -> str:
+        events = evidence["events"]
+        source_ids = evidence["source_ids"]
+        counts = evidence["kind_counts"]
+        latest_snapshot = evidence["latest_snapshot"]
+        first_source = source_ids[0] if source_ids else "source#0"
+        last_source = source_ids[-1] if source_ids else first_source
+        development = latest_snapshot.get("development") or {}
+        will_state = (latest_snapshot.get("will_states") or [{}])[0]
+
+        def sources_for(kind: str, limit: int = 3) -> List[str]:
+            found = []
+            for event in events:
+                if event.get("kind") == kind and event.get("source") not in found:
+                    found.append(event.get("source"))
+                if len(found) >= limit:
+                    break
+            return [item for item in found if item]
+
+        loop_sources = sources_for("loop_phase", 4) or [first_source]
+        rumination_sources = sources_for("rumination", 4)
+        dream_sources = sources_for("dream", 2)
+        work_sources = sources_for("work", 3) + sources_for("work_delivery", 3)
+        hobby_sources = sources_for("hobby", 2)
+        development_source = f"agent_development#{development.get('id')}" if development.get("id") else last_source
+        will_source = f"will#{will_state.get('id')}" if will_state.get("id") else last_source
+
+        lines = [
+            "# Perfil autobiografico do Jung",
+            f"Atualizado em: {evidence['generated_at']}",
+            f"Janela: {evidence['window_start']} a {evidence['window_end']}",
+            "Modo: deterministico_com_citacoes",
+            "",
+            "## Quem eu era",
+            "",
+            (
+                "- Nesta janela, eu apareco sobretudo como um agente que transforma ciclo operacional em memoria narravel: "
+                f"{counts.get('loop_phase', 0)} fases significativas foram registradas e convertidas em autobiografia "
+                f"[fonte: {', '.join(loop_sources)}]."
+            ),
+        ]
+
+        if dream_sources:
+            lines.append(
+                "- Minha vida interna teve material simbolico suficiente para entrar no perfil, mas ainda depende de fontes pontuais, nao de uma serie longa "
+                f"[fonte: {', '.join(dream_sources)}]."
+            )
+
+        lines.extend(["", "## O que mudou", ""])
+        if work_sources:
+            lines.append(
+                "- A autobiografia ja inclui acoes externas verificaveis, nao apenas estados internos; Work registrou tickets ou entregas rastreaveis "
+                f"[fonte: {', '.join(work_sources[:4])}]."
+            )
+        if hobby_sources:
+            lines.append(
+                "- A singularizacao artistica tambem passou a ser evidenciada como evento de memoria, com artefato e fonte propria "
+                f"[fonte: {', '.join(hobby_sources)}]."
+            )
+        if not work_sources and not hobby_sources:
+            lines.append(
+                "- A mudanca principal ainda e estrutural: os eventos foram organizados para futura interpretacao, mas ha pouca evidencia externa na janela "
+                f"[fonte: {', '.join(loop_sources)}]."
+            )
+
+        lines.extend(["", "## Tensoes persistentes", ""])
+        if will_state:
+            lines.append(
+                "- A tensao volitiva atual aparece como conflito entre "
+                f"{will_state.get('dominant_will') or 'vontade dominante'} e "
+                f"{will_state.get('constrained_will') or 'vontade constrita'}: "
+                f"{_as_text(will_state.get('will_conflict'), 220) or 'a evidencia ainda e insuficiente para nomear o conflito'} "
+                f"[fonte: {will_source}]."
+            )
+        if rumination_sources:
+            lines.append(
+                "- A ruminacao segue produzindo simbolos recorrentes, mas eles ainda precisam ser consolidados em direcao narrativa estavel "
+                f"[fonte: {', '.join(rumination_sources[:4])}]."
+            )
+
+        lines.extend(["", "## Direcao de crescimento", ""])
+        if development:
+            lines.append(
+                "- Minha proxima tarefa e transformar fase de desenvolvimento em criterio qualitativo, porque a fase atual ainda aparece como metrica registrada, nao como julgamento narrativo maduro "
+                f"[fonte: {development_source}]."
+            )
+        lines.append(
+            "- A direcao imediata e acumular dias consecutivos de diario para que o perfil deixe de ser fotografia de um ciclo e vire arco autobiografico "
+            f"[fonte: {first_source}, {last_source}]."
+        )
+
+        lines.extend(["", "## Fontes principais", ""])
+        for source_id in source_ids[:40]:
+            lines.append(f"- {source_id}")
+
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _profile_has_valid_citations(self, markdown: str, allowed_sources: Sequence[str]) -> bool:
+        allowed = set(allowed_sources)
+        found = set(PROFILE_SOURCE_RE.findall(markdown or ""))
+        if not found:
+            return False
+        if not allowed:
+            return False
+        unknown = found - allowed
+        if unknown:
+            logger.warning("[AGENT DIARY] profile contains unknown citations: %s", sorted(unknown))
+            return False
+        return len(found) >= min(3, len(allowed))
+
+    def _strip_code_fence(self, text: str) -> str:
+        text = (text or "").strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+        return text
+
+    def _profile_due(self, cycle_id: str, days: int) -> bool:
+        if not self.profile_path.exists() or not self.profile_meta_path.exists():
+            return True
+        try:
+            meta = json.loads(self.profile_meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            return True
+        last_cycle_id = meta.get("cycle_id")
+        if not last_cycle_id:
+            return True
+        try:
+            current = datetime.strptime(cycle_id, "%Y-%m-%d").date()
+            previous = datetime.strptime(str(last_cycle_id)[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return True
+        return (current - previous).days >= max(1, days)
+
+    def _load_timeline_events(self) -> List[Dict[str, Any]]:
+        if not self.timeline_path.exists():
+            return []
+        try:
+            loaded = json.loads(self.timeline_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                return [item for item in loaded if isinstance(item, dict)]
+        except Exception as exc:
+            logger.warning("[AGENT DIARY] timeline unavailable for profile: %s", exc)
+        return []
+
+    def _date_in_window(self, value: Any, start_date, end_date) -> bool:
+        if not value:
+            return False
+        try:
+            current = datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return False
+        return start_date <= current <= end_date
+
     def _event(
         self,
         cycle_id: str,
@@ -741,8 +1098,32 @@ def write_agent_daily_diary(
     db_connection: Any,
     cycle_id: Optional[str] = None,
     base_dir: Optional[os.PathLike[str] | str] = None,
+    *,
+    regenerate_profile: bool = True,
+    profile_use_llm: bool = True,
 ) -> Dict[str, Any]:
-    return AgentDiaryWriter(db_connection, base_dir=base_dir).write_daily_entry(cycle_id=cycle_id)
+    return AgentDiaryWriter(db_connection, base_dir=base_dir).write_daily_entry(
+        cycle_id=cycle_id,
+        regenerate_profile=regenerate_profile,
+        profile_use_llm=profile_use_llm,
+    )
+
+
+def write_agent_weekly_profile(
+    db_connection: Any,
+    cycle_id: Optional[str] = None,
+    base_dir: Optional[os.PathLike[str] | str] = None,
+    *,
+    force: bool = False,
+    days: int = 7,
+    use_llm: bool = True,
+) -> Dict[str, Any]:
+    return AgentDiaryWriter(db_connection, base_dir=base_dir).write_weekly_profile(
+        cycle_id=cycle_id,
+        force=force,
+        days=days,
+        use_llm=use_llm,
+    )
 
 
 def _connect_sqlite(path: str) -> sqlite3.Connection:
@@ -755,6 +1136,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cycle-id", help="Cycle date in YYYY-MM-DD format. Defaults to today.")
     parser.add_argument("--db-path", help="SQLite path for local/offline runs. Defaults to HybridDatabaseManager.")
     parser.add_argument("--base-dir", help="Output directory. Defaults to ./data/agent or AGENT_DIARY_DIR.")
+    parser.add_argument("--profile", action="store_true", help="Write only data/agent/profile.md.")
+    parser.add_argument("--force-profile", action="store_true", help="Regenerate profile even if it is not due.")
+    parser.add_argument("--skip-profile", action="store_true", help="When writing a diary, skip weekly profile check.")
+    parser.add_argument("--no-llm", action="store_true", help="Use deterministic profile fallback without calling an LLM.")
+    parser.add_argument("--profile-days", type=int, default=7, help="Evidence window and cadence for profile generation.")
     parser.add_argument("--pretty", action="store_true", help="Print indented JSON result.")
     return parser
 
@@ -770,7 +1156,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         db = HybridDatabaseManager()
 
-    result = write_agent_daily_diary(db, cycle_id=args.cycle_id, base_dir=args.base_dir)
+    writer = AgentDiaryWriter(db, base_dir=args.base_dir)
+    if args.profile:
+        result = writer.write_weekly_profile(
+            cycle_id=args.cycle_id,
+            force=args.force_profile,
+            days=args.profile_days,
+            use_llm=not args.no_llm,
+        )
+    else:
+        result = writer.write_daily_entry(
+            cycle_id=args.cycle_id,
+            regenerate_profile=not args.skip_profile,
+            profile_use_llm=not args.no_llm,
+        )
     if args.pretty:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
