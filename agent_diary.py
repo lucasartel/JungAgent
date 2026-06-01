@@ -27,7 +27,19 @@ except Exception:  # pragma: no cover - allows local one-file smoke tests
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_AGENT_DIR = Path(os.getenv("AGENT_DIARY_DIR", os.path.join(".", "data", "agent")))
+def _default_agent_dir() -> Path:
+    configured = os.getenv("AGENT_DIARY_DIR")
+    if configured:
+        return Path(configured)
+    volume_root = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+    if volume_root:
+        return Path(volume_root) / "agent"
+    if os.path.exists("/data"):
+        return Path("/data") / "agent"
+    return Path(".") / "data" / "agent"
+
+
+DEFAULT_AGENT_DIR = _default_agent_dir()
 TIMELINE_LIMIT = 500
 PROFILE_SOURCE_RE = re.compile(
     r"\b(?:loop|conversation|dream|will|meta|rumination_insight|work_run|work_ticket|work_delivery|hobby_artifact|agent_development)#\d+\b"
@@ -1135,7 +1147,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Write JungAgent daily autobiographical diary.")
     parser.add_argument("--cycle-id", help="Cycle date in YYYY-MM-DD format. Defaults to today.")
     parser.add_argument("--db-path", help="SQLite path for local/offline runs. Defaults to HybridDatabaseManager.")
-    parser.add_argument("--base-dir", help="Output directory. Defaults to ./data/agent or AGENT_DIARY_DIR.")
+    parser.add_argument("--base-dir", help="Output directory. Defaults to AGENT_DIARY_DIR, Railway volume /data/agent, or ./data/agent.")
     parser.add_argument("--profile", action="store_true", help="Write only data/agent/profile.md.")
     parser.add_argument("--force-profile", action="store_true", help="Regenerate profile even if it is not due.")
     parser.add_argument("--skip-profile", action="store_true", help="When writing a diary, skip weekly profile check.")

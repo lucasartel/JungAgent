@@ -585,7 +585,17 @@ class JungianEngine:
         return Config.STANDARD_IDENTITY_PROMPT + development_policy.get("prompt_block", "")
 
     def _build_autobiographical_profile_block(self, max_tokens: int = 900) -> str:
-        base_dir = os.getenv("AGENT_DIARY_DIR", os.path.join(".", "data", "agent"))
+        configured_dir = os.getenv("AGENT_DIARY_DIR")
+        if configured_dir:
+            base_dir = configured_dir
+        else:
+            volume_root = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+            if volume_root:
+                base_dir = os.path.join(volume_root, "agent")
+            elif os.path.exists("/data"):
+                base_dir = os.path.join("/data", "agent")
+            else:
+                base_dir = os.path.join(".", "data", "agent")
         profile_path = os.path.join(base_dir, "profile.md")
         meta_path = os.path.join(base_dir, "profile_meta.json")
         if not os.path.exists(profile_path):
