@@ -114,6 +114,8 @@ class AgentDiaryWriter:
         *,
         regenerate_profile: bool = True,
         profile_use_llm: bool = True,
+        evaluate_development: bool = True,
+        development_use_llm: bool = True,
     ) -> Dict[str, Any]:
         cycle_id = self._normalize_cycle_id(cycle_id)
         snapshot = self.build_snapshot(cycle_id)
@@ -133,6 +135,20 @@ class AgentDiaryWriter:
                 force=False,
                 use_llm=profile_use_llm,
             )
+        development_result = None
+        if evaluate_development:
+            try:
+                from agent_development import evaluate_agent_development
+
+                development_result = evaluate_agent_development(
+                    self.db,
+                    cycle_id=cycle_id,
+                    base_dir=self.base_dir,
+                    force=False,
+                    use_llm=development_use_llm,
+                )
+            except Exception as exc:
+                logger.warning("[AGENT DIARY] narrative development evaluation failed: %s", exc)
         logger.info(
             "[AGENT DIARY] daily entry written cycle_id=%s phases=%s events=%s path=%s",
             cycle_id,
@@ -149,6 +165,7 @@ class AgentDiaryWriter:
             "phase_count": len(snapshot.get("loop_results") or []),
             "source_count": len(snapshot.get("sources") or []),
             "profile_result": profile_result,
+            "development_result": development_result,
         }
 
     def write_weekly_profile(
@@ -1113,11 +1130,15 @@ def write_agent_daily_diary(
     *,
     regenerate_profile: bool = True,
     profile_use_llm: bool = True,
+    evaluate_development: bool = True,
+    development_use_llm: bool = True,
 ) -> Dict[str, Any]:
     return AgentDiaryWriter(db_connection, base_dir=base_dir).write_daily_entry(
         cycle_id=cycle_id,
         regenerate_profile=regenerate_profile,
         profile_use_llm=profile_use_llm,
+        evaluate_development=evaluate_development,
+        development_use_llm=development_use_llm,
     )
 
 
@@ -1151,6 +1172,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", action="store_true", help="Write only data/agent/profile.md.")
     parser.add_argument("--force-profile", action="store_true", help="Regenerate profile even if it is not due.")
     parser.add_argument("--skip-profile", action="store_true", help="When writing a diary, skip weekly profile check.")
+    parser.add_argument("--skip-development", action="store_true", help="When writing a diary, skip narrative development evaluation.")
     parser.add_argument("--no-llm", action="store_true", help="Use deterministic profile fallback without calling an LLM.")
     parser.add_argument("--profile-days", type=int, default=7, help="Evidence window and cadence for profile generation.")
     parser.add_argument("--pretty", action="store_true", help="Print indented JSON result.")
@@ -1181,6 +1203,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             cycle_id=args.cycle_id,
             regenerate_profile=not args.skip_profile,
             profile_use_llm=not args.no_llm,
+            evaluate_development=not args.skip_development,
+            development_use_llm=not args.no_llm,
         )
     if args.pretty:
         print(json.dumps(result, ensure_ascii=False, indent=2))

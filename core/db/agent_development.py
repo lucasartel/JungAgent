@@ -13,13 +13,13 @@ def ensure_agent_state(manager, user_id: str) -> None:
         cursor.execute("SELECT id FROM agent_development WHERE user_id = ?", (user_id,))
 
         if not cursor.fetchone():
-            cursor.execute("INSERT INTO agent_development (user_id) VALUES (?)", (user_id,))
+            cursor.execute("INSERT INTO agent_development (user_id, phase) VALUES (?, 0)", (user_id,))
             manager.conn.commit()
             logger.info("Agent state inicializado para user_id=%s", user_id)
 
 
 def update_agent_development(manager, user_id: str) -> None:
-    """Update linear development metrics for one user."""
+    """Update lightweight metrics for one user without changing narrative phase."""
     ensure_agent_state(manager, user_id)
 
     with manager._lock:
@@ -40,45 +40,12 @@ def update_agent_development(manager, user_id: str) -> None:
             (user_id,),
         )
         manager.conn.commit()
-        check_phase_progression(manager, user_id)
 
 
 def check_phase_progression(manager, user_id: str) -> None:
-    """Check whether the user-specific agent development phase should advance."""
-    with manager._lock:
-        cursor = manager.conn.cursor()
-        cursor.execute("SELECT * FROM agent_development WHERE user_id = ?", (user_id,))
-        result = cursor.fetchone()
-
-        if not result:
-            logger.warning("Agent state nao encontrado para user_id=%s", user_id)
-            return
-
-        state = dict(result)
-        avg_score = (
-            state["self_awareness_score"]
-            + state["moral_complexity_score"]
-            + state["emotional_depth_score"]
-            + state["autonomy_score"]
-        ) / 4
-        new_phase = min(5, int(avg_score * 5) + 1)
-
-        if new_phase > state["phase"]:
-            cursor.execute("UPDATE agent_development SET phase = ? WHERE user_id = ?", (new_phase, user_id))
-            cursor.execute(
-                """
-                INSERT INTO milestones (milestone_type, description, phase, interaction_count)
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    "phase_progression",
-                    f"Progressao para Fase {new_phase}",
-                    new_phase,
-                    state["total_interactions"],
-                ),
-            )
-            manager.conn.commit()
-            logger.info("AGENTE PROGREDIU PARA FASE %s!", new_phase)
+    """Compatibility hook: narrative phase is governed by agent_development.py."""
+    ensure_agent_state(manager, user_id)
+    logger.debug("Linear phase progression disabled; narrative evaluator controls phase for user_id=%s", user_id)
 
 
 def get_agent_state(manager, user_id: str) -> Optional[Dict]:
