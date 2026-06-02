@@ -535,10 +535,16 @@ class JungianEngine:
 
         return semantic_context, stats
 
-    def _build_agent_identity_text(self, user_id: str, user_input: str) -> str:
+    def _build_agent_identity_text(
+        self,
+        user_id: str,
+        user_input: str,
+        development_policy: Optional[Dict[str, Any]] = None,
+    ) -> str:
         is_admin = str(user_id) == self._get_admin_user_id()
         identity_state_injected = False
-        development_policy = self._get_development_policy(user_id, user_input)
+        if development_policy is None:
+            development_policy = self._get_development_policy(user_id, user_input)
 
         if is_admin:
             agent_identity_text = Config.ADMIN_IDENTITY_PROMPT
@@ -556,7 +562,9 @@ class JungianEngine:
                 except Exception as exc:
                     logger.warning("⚠️ [IDENTITY] Falha ao obter contexto de identidade: %s", exc)
 
-            autobiographical_profile = self._build_autobiographical_profile_block()
+            autobiographical_profile = self._build_autobiographical_profile_block(
+                development_policy.get("state") or {}
+            )
             if autobiographical_profile:
                 agent_identity_text += f"\n\n{autobiographical_profile}"
                 logger.info("[AUTOBIOGRAPHY] Profile autobiografico injetado no prompt: %s chars", len(autobiographical_profile))
@@ -584,7 +592,11 @@ class JungianEngine:
 
         return Config.STANDARD_IDENTITY_PROMPT + development_policy.get("prompt_block", "")
 
-    def _build_autobiographical_profile_block(self, max_tokens: int = 900) -> str:
+    def _build_autobiographical_profile_block(
+        self,
+        development_state: Optional[Dict[str, Any]] = None,
+        max_tokens: int = 900,
+    ) -> str:
         configured_dir = os.getenv("AGENT_DIARY_DIR")
         if configured_dir:
             base_dir = configured_dir
@@ -646,6 +658,8 @@ class JungianEngine:
                 f"modo={meta.get('mode') or '?'}; eventos={meta.get('event_count') or 0}; fontes={meta.get('source_count') or 0}."
             )
 
+        lines.extend(self._build_narrative_development_profile_lines(development_state or {}))
+
         sections = [
             ("Quem eu era", section("Quem eu era")),
             ("O que mudou", section("O que mudou")),
@@ -660,6 +674,59 @@ class JungianEngine:
             lines.append("Fontes internas disponiveis: " + ", ".join(source_ids[:16]) + ".")
 
         return self._compress_prompt_context("\n".join(lines), max_tokens=max_tokens)
+
+    def _build_narrative_development_profile_lines(self, state: Dict[str, Any]) -> List[str]:
+        if not state:
+            return []
+
+        phase = state.get("phase")
+        phase_name = state.get("narrative_phase_name") or state.get("narrative_phase_key")
+        confidence = state.get("phase_confidence")
+        cycle_id = state.get("narrative_review_cycle_id")
+        reviewed_at = state.get("last_narrative_review_at")
+        try:
+            confidence_text = f"{float(confidence):.2f}"
+        except Exception:
+            confidence_text = "?"
+
+        lines = [
+            (
+                "Estado narrativo atual: "
+                f"fase {phase if phase is not None else '?'}"
+                f"{f' - {phase_name}' if phase_name else ''}; "
+                f"confianca={confidence_text}; ciclo={cycle_id or '?'}; revisado_em={reviewed_at or '?'}."
+            )
+        ]
+
+        review = {}
+        raw_review = state.get("narrative_evaluation_json")
+        if raw_review:
+            try:
+                review = json.loads(raw_review) if isinstance(raw_review, str) else dict(raw_review)
+            except Exception as exc:
+                logger.debug("[AUTOBIOGRAPHY] narrative_evaluation_json indisponivel: %s", exc)
+
+        rationale = self._clip_autobiographical_text(str(review.get("rationale") or ""), 360)
+        if rationale:
+            lines.append(f"Ultima avaliacao narrativa: {rationale}")
+
+        implications = review.get("behavioral_implications") or []
+        if isinstance(implications, list):
+            clipped = [
+                self._clip_autobiographical_text(str(item), 220)
+                for item in implications[:2]
+                if str(item or "").strip()
+            ]
+            if clipped:
+                lines.append("Implicacoes comportamentais: " + " | ".join(clipped))
+
+        evidence_sources = review.get("evidence_sources") or []
+        if isinstance(evidence_sources, list):
+            sources = [str(item) for item in evidence_sources[:8] if str(item or "").strip()]
+            if sources:
+                lines.append("Fontes da avaliacao narrativa: " + ", ".join(sources) + ".")
+
+        return lines
 
     def _clip_autobiographical_text(self, text: str, limit: int) -> str:
         text = re.sub(r"\s+", " ", (text or "")).strip()
@@ -1856,7 +1923,7 @@ class JungianEngine:
         development_policy = self._get_development_policy(user_id, user_input)
         policy_values = development_policy.get("policy") or {}
         agent_identity_text = self._prune_identity_for_active_chorus(
-            self._build_agent_identity_text(user_id, user_input),
+            self._build_agent_identity_text(user_id, user_input, development_policy=development_policy),
             speech_act,
         )
         history_text = self._build_history_text(
@@ -2246,7 +2313,9 @@ class JungianEngine:
                 except Exception as e:
                     logger.warning(f"⚠️ [IDENTITY] Falha ao obter contexto de identidade: {e}")
 
-            autobiographical_profile = self._build_autobiographical_profile_block()
+            autobiographical_profile = self._build_autobiographical_profile_block(
+                development_policy.get("state") or {}
+            )
             if autobiographical_profile:
                 agent_identity_text += f"\n\n{autobiographical_profile}"
                 logger.info("[AUTOBIOGRAPHY] Profile autobiografico injetado no prompt: %s chars", len(autobiographical_profile))
