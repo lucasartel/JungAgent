@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import logging
@@ -85,15 +85,6 @@ class UserDatabaseMixin:
                     cursor.execute(f"SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", (table,))
                     if cursor.fetchone()[0] > 0:
                         cursor.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
-            
-            # ChromaDB
-            if self.chroma_enabled and hasattr(self, 'vectorstore') and self.vectorstore:
-                try:
-                    collection = self.vectorstore._collection
-                    collection.delete(where={"user_id": user_id})
-                    logger.info(f"Dados deletados do ChromaDB para usuÃ¡rio {user_id}")
-                except Exception as e:
-                    logger.warning(f"Erro ao deletar do ChromaDB: {e}")
             
             # Mem0
             if hasattr(self, 'mem0') and self.mem0:

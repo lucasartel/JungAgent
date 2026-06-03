@@ -1,4 +1,4 @@
-﻿"""Hybrid database manager: SQLite + mem0/Qdrant + ChromaDB legacy."""
+"""Hybrid database manager: SQLite + mem0/Qdrant semantic memory."""
 import os
 import sqlite3
 import json
@@ -14,21 +14,13 @@ from collections import Counter
 from openai import OpenAI
 
 from core.models import ArchetypeInsight, ArchetypeConflict
-from core.config import Config, CHROMADB_AVAILABLE
-from core.embeddings import OpenAICompatibleEmbeddings
+from core.config import Config
 from core.db.dreams import DreamDatabaseMixin
 from core.db.knowledge_gaps import KnowledgeGapDatabaseMixin
 from core.db.psychometrics import PsychometricsDatabaseMixin
 from core.db.users import UserDatabaseMixin
 
 logger = logging.getLogger(__name__)
-
-if CHROMADB_AVAILABLE:
-    from langchain_chroma import Chroma
-    from langchain.schema import Document
-else:
-    Chroma = None
-    Document = None
 
 # LLM fact extractor
 try:
@@ -43,7 +35,6 @@ class HybridDatabaseManager(UserDatabaseMixin, DreamDatabaseMixin, KnowledgeGapD
     Gerenciador HÃBRIDO de memÃ³ria:
     - SQLite: Metadados estruturados, fatos, padrÃµes, desenvolvimento
     - mem0/Qdrant: MemÃ³ria semÃ¢ntica conversacional em produÃ§Ã£o
-    - ChromaDB: fallback legado/local quando Qdrant nÃ£o estÃ¡ configurado
     """
 
     def __init__(self):
@@ -53,9 +44,7 @@ class HybridDatabaseManager(UserDatabaseMixin, DreamDatabaseMixin, KnowledgeGapD
 
         logger.info(f"ðŸ—„ï¸  Inicializando banco HÃBRIDO...")
         logger.info(f"   SQLite: {os.path.abspath(Config.SQLITE_PATH)}")
-        logger.info(f"   ChromaDB legado: {'habilitado' if Config.LEGACY_CHROMA_ENABLED else 'desabilitado'}")
-        if Config.LEGACY_CHROMA_ENABLED:
-            logger.info(f"   ChromaDB path: {os.path.abspath(Config.CHROMA_PATH)}")
+        logger.info("   ChromaDB legado: removido do runtime")
 
         # ===== Thread Safety =====
         self._lock = threading.RLock()  # Reentrant lock para operaÃ§Ãµes SQLite
@@ -74,35 +63,11 @@ class HybridDatabaseManager(UserDatabaseMixin, DreamDatabaseMixin, KnowledgeGapD
             self.mem0 = None
             logger.warning(f"âš ï¸ [MEM0] Erro ao inicializar: {e}")
 
-        # ===== ChromaDB: legado/local fallback =====
-        self.chroma_enabled = CHROMADB_AVAILABLE and Config.LEGACY_CHROMA_ENABLED
-        
-        if self.chroma_enabled:
-            try:
-                self.embeddings = OpenAICompatibleEmbeddings(
-                    api_key=Config.EMBEDDING_API_KEY,
-                    model=Config.EMBEDDING_MODEL,
-                    dimensions=Config.EMBEDDING_DIMENSIONS,
-                    base_url=Config.EMBEDDING_BASE_URL,
-                )
-                
-                self.vectorstore = Chroma(
-                    collection_name=Config.CHROMA_COLLECTION_NAME,
-                    embedding_function=self.embeddings,
-                    persist_directory=Config.CHROMA_PATH
-                )
-                
-                logger.info(
-                    f"âœ… ChromaDB + OpenAI-compatible Embeddings ({Config.EMBEDDING_MODEL}, dim={Config.EMBEDDING_DIMENSIONS}) inicializados"
-                )
-            except Exception as e:
-                logger.error(f"âŒ Erro ao inicializar ChromaDB local: {e}")
-                self.chroma_enabled = False
-        else:
-            if Config.QDRANT_URL and not Config.ENABLE_LEGACY_CHROMA:
-                logger.info("â„¹ï¸ ChromaDB legado desabilitado: mem0/Qdrant Ã© a memÃ³ria semÃ¢ntica principal.")
-            else:
-                logger.warning("âš ï¸  ChromaDB legado desabilitado. Usando SQLite/mem0 conforme disponÃ­vel.")
+        # ===== ChromaDB: removido do runtime =====
+        self.chroma_enabled = False
+        self.vectorstore = None
+        self.embeddings = None
+        logger.info("â„¹ï¸ ChromaDB legado removido; mem0/Qdrant Ã© a memÃ³ria semÃ¢ntica principal.")
             
         self.openai_client = None # Removido dependÃªncia direta da OpenAI
 
@@ -1411,7 +1376,7 @@ class HybridDatabaseManager(UserDatabaseMixin, DreamDatabaseMixin, KnowledgeGapD
         return 1.0  # Default
 
     # ========================================
-    # CONVERSAS (HÃBRIDO: SQLite + mem0/Qdrant + ChromaDB legado)
+    # CONVERSAS (SQLite + mem0/Qdrant)
     # ========================================
 
     def save_conversation(self, user_id: str, user_name: str, user_input: str,
@@ -1427,8 +1392,8 @@ class HybridDatabaseManager(UserDatabaseMixin, DreamDatabaseMixin, KnowledgeGapD
                          platform: str = "telegram",
                          chat_history: List[Dict] = None) -> int:
         """
-        Salva conversa em SQLite e, quando habilitado, em memÃ³ria semÃ¢ntica.
-        Em produÃ§Ã£o a via semÃ¢ntica principal Ã© mem0/Qdrant; ChromaDB Ã© legado.
+        Salva conversa em SQLite e, quando habilitado, em memÃ³ria semÃ¢ntica
+        via mem0/Qdrant.
 
         Returns:
             int: ID da conversa no SQLite
@@ -1485,128 +1450,7 @@ class HybridDatabaseManager(UserDatabaseMixin, DreamDatabaseMixin, KnowledgeGapD
             """, (chroma_id, conversation_id))
 
             self.conn.commit()
-        
-        # 3. Salvar no ChromaDB legado (somente se habilitado)
-        if self.chroma_enabled:
-            try:
-                # Construir documento completo
-                doc_content = f"""
-UsuÃ¡rio: {user_name}
-Input: {user_input}
-Resposta: {ai_response}
-"""
-                
-                if archetype_analyses:
-                    doc_content += "\n=== VOZES INTERNAS ===\n"
-                    for arch_name, insight in archetype_analyses.items():
-                        doc_content += f"\n{arch_name}: {insight.voice_reaction[:150]} (impulso: {insight.impulse}, intensidade: {insight.intensity:.1f})\n"
-                
-                if detected_conflicts:
-                    doc_content += "\n=== CONFLITOS DETECTADOS ===\n"
-                    for conflict in detected_conflicts:
-                        doc_content += f"{conflict.description}\n"
-                
-                # Metadata (Enriquecido - Fase 1 do Plano de MemÃ³ria)
-                now = datetime.now()
-                metadata = {
-                    # Campos existentes (manter)
-                    "user_id": user_id,
-                    "user_name": user_name,
-                    "session_id": session_id or "",
-                    "timestamp": now.isoformat(),
-                    "conversation_id": conversation_id,
-                    "tension_level": tension_level,
-                    "affective_charge": affective_charge,
-                    "existential_depth": existential_depth,
-                    "intensity_level": intensity_level,
-                    "complexity": complexity,
-                    "keywords": ",".join(keywords) if keywords else "",
-                    "has_conflicts": len(detected_conflicts) > 0 if detected_conflicts else False,
-
-                    # NOVOS - Temporal Estratificado
-                    "day_bucket": now.strftime("%Y-%m-%d"),
-                    "week_bucket": now.strftime("%Y-W%W"),
-                    "month_bucket": now.strftime("%Y-%m"),
-                    "recency_tier": self._calculate_recency_tier(now),
-
-                    # NOVOS - Emocional/TemÃ¡tico
-                    "emotional_intensity": round(affective_charge + tension_level, 2),
-                    "dominant_archetype": self._get_dominant_archetype(archetype_analyses) if archetype_analyses else "",
-
-                    # NOVOS - Relacional
-                    "mentions_people": ",".join(self._extract_people_from_conversation(conversation_id)),
-                    "topics": ",".join(self._extract_topics_from_keywords(keywords)),
-                }
-
-                # NOVO - Fact-Conversation Linking (Fase 4)
-                # Buscar IDs de fatos extraÃ­dos desta conversa
-                try:
-                    cursor.execute("""
-                        SELECT name FROM sqlite_master
-                        WHERE type='table' AND name='user_facts_v2'
-                    """)
-                    use_v2 = cursor.fetchone() is not None
-
-                    if use_v2:
-                        cursor.execute("""
-                            SELECT id FROM user_facts_v2
-                            WHERE source_conversation_id = ? AND is_current = 1
-                        """, (conversation_id,))
-                    else:
-                        cursor.execute("""
-                            SELECT id FROM user_facts
-                            WHERE source_conversation_id = ? AND is_current = 1
-                        """, (conversation_id,))
-
-                    fact_ids = [str(row[0]) for row in cursor.fetchall()]
-                    if fact_ids:
-                        metadata["extracted_fact_ids"] = ",".join(fact_ids)
-                        logger.info(f"   Linkados {len(fact_ids)} fatos ao ChromaDB metadata")
-                except Exception as fact_link_error:
-                    logger.warning(f"   Erro ao linkar fatos: {fact_link_error}")
-                    # NÃ£o bloquear salvamento se linking falhar
-                    pass
-
-                # ðŸ” DEBUG: Log do metadata sendo salvo
-                logger.info(f"   ChromaDB metadata: user_id='{metadata['user_id']}' (type={type(metadata['user_id']).__name__})")
-                logger.info(f"   ChromaDB doc_id: '{chroma_id}'")
-
-                # Criar documento
-                doc = Document(page_content=doc_content, metadata=metadata)
-
-                # âœ… ADICIONAR COM TRATAMENTO DE DUPLICATAS
-                try:
-                    self.vectorstore.add_documents([doc], ids=[chroma_id])
-                    logger.info(f"âœ… ChromaDB: Documento '{chroma_id}' salvo com user_id='{metadata['user_id']}'")
-                    logger.info(f"âœ… Conversa salva: SQLite (ID={conversation_id}) + ChromaDB ({chroma_id})")
-                    
-                except Exception as add_error:
-                    error_msg = str(add_error).lower()
-                    
-                    # Verificar se Ã© erro de duplicata
-                    if "already exists" in error_msg or "duplicate" in error_msg or "unique constraint" in error_msg:
-                        logger.warning(f"âš ï¸ Documento {chroma_id} jÃ¡ existe no ChromaDB, substituindo...")
-                        
-                        try:
-                            # Deletar documento existente
-                            self.vectorstore.delete([chroma_id])
-                            
-                            # Adicionar novo documento
-                            self.vectorstore.add_documents([doc], ids=[chroma_id])
-                            
-                            logger.info(f"âœ… Documento {chroma_id} substituÃ­do com sucesso")
-                            
-                        except Exception as replace_error:
-                            logger.error(f"âŒ Erro ao substituir documento {chroma_id}: {replace_error}")
-                            logger.warning(f"âš ï¸ Conversa salva apenas no SQLite (ID={conversation_id})")
-                    else:
-                        # Outro tipo de erro
-                        logger.error(f"âŒ Erro ao adicionar ao ChromaDB: {add_error}")
-                        logger.warning(f"âš ï¸ Conversa salva apenas no SQLite (ID={conversation_id})")
-                
-            except Exception as e:
-                logger.error(f"âŒ Erro geral ao processar ChromaDB: {e}")
-                logger.warning(f"âš ï¸ Sistema continua funcionando apenas com SQLite")
+        # 3. ChromaDB legacy write removed from runtime. Semantic memory is synced through mem0/Qdrant below.
         
         # 4. Salvar conflitos na tabela especÃ­fica
         if detected_conflicts:
@@ -2325,128 +2169,57 @@ Resposta: {ai_response}
         return reranked
 
     # ========================================
-    # BUSCA SEMÃ‚NTICA LEGADA (ChromaDB)
+    # BUSCA SEMÃ‚NTICA (mem0/Qdrant + SQLite/BM25 fallback)
     # ========================================
 
     def semantic_search(self, user_id: str, query: str, k: int = None,
                        chat_history: List[Dict] = None) -> List[Dict]:
         """
-        Busca semÃ¢ntica com TWO-STAGE RETRIEVAL + INTELLIGENT RERANKING (Fase 3)
+        Retrieve related memories from mem0/Qdrant, with SQLite/BM25 fallback.
 
-        STAGE 1: Broad retrieval (k*3)
-        STAGE 2: Intelligent reranking com 6 boosts
-
-        Args:
-            user_id: ID do usuÃ¡rio
-            query: Texto da consulta
-            k: NÃºmero de resultados (None = adaptativo)
-            chat_history: HistÃ³rico da conversa atual (opcional)
-
-        Returns:
-            Lista de memÃ³rias rerankeadas com scores combinados
+        This method keeps the old semantic_search API used by build_rich_context,
+        but ChromaDB is no longer a runtime backend.
         """
+        limit = k or self._calculate_adaptive_k(query, chat_history, str(user_id))
+        user_id_str = str(user_id) if user_id else None
+        if not user_id_str:
+            logger.error("user_id vazio na busca semantica")
+            return []
 
-        if not self.chroma_enabled:
-            logger.warning("ChromaDB desabilitado. Retornando conversas recentes do SQLite.")
-            return self._fallback_keyword_search(user_id, query, k or 5)
-
-        try:
-            # Garantir que user_id Ã© string para consistÃªncia
-            user_id_str = str(user_id) if user_id else None
-            if not user_id_str:
-                logger.error("âŒ user_id Ã© None ou vazio! Retornando lista vazia.")
-                return []
-
-            # ðŸ” DEBUG: InÃ­cio do two-stage retrieval
-            logger.info(f"ðŸ” [TWO-STAGE] Busca semÃ¢ntica para user_id='{user_id_str}'")
-            logger.info(f"   Query original: '{query[:100]}'")
-
-            # Calcular k adaptativo se nÃ£o fornecido (FASE 3)
-            if k is None:
-                k = self._calculate_adaptive_k(query, chat_history, user_id_str)
-            else:
-                logger.info(f"   k fixo fornecido: {k}")
-
-            # Query enriquecida com multi-stage enhancement (FASE 2)
-            enriched_query = self._build_enriched_query(
-                user_id=user_id_str,
-                user_input=query,
-                chat_history=chat_history
-            )
-
-            # ============================================
-            # STAGE 1: BROAD RETRIEVAL
-            # ============================================
-            broad_k = max(k * 3, 9)  # Buscar pelo menos 3x mais, mÃ­nimo 9
-            logger.info(f"   STAGE 1: Broad retrieval (k={broad_k})")
-
-            chroma_filter = {"user_id": user_id_str}
-
-            results = self.vectorstore.similarity_search_with_score(
-                enriched_query,
-                k=broad_k,
-                filter=chroma_filter
-            )
-
-            logger.info(f"   Resultados retornados do ChromaDB: {len(results)}")
-
-            if not results:
-                logger.warning("   Nenhum resultado encontrado no ChromaDB")
-                return []
-
-            # ============================================
-            # STAGE 2: INTELLIGENT RERANKING
-            # ============================================
-            logger.info(f"   STAGE 2: Reranking inteligente")
-            reranked = self._rerank_memories(
-                results=results,
-                user_id=user_id_str,
-                query=query
-            )
-
-            # Retornar top k apÃ³s reranking
-            top_memories = reranked[:k]
-
-            logger.info(f"âœ… Two-Stage concluÃ­do: {len(top_memories)} memÃ³rias finais (de {len(results)} broad)")
-            for i, mem in enumerate(top_memories[:3], 1):
-                logger.info(f"   {i}. [final={mem['final_score']:.3f}] {mem['user_input'][:50]}...")
-
-            # STAGE 3: Merge com BM25 sobre arquivos de sessÃ£o
+        if self.mem0:
             try:
-                from bm25_search import search as bm25_search
-                bm25_hits = bm25_search(user_id_str, query, k=max(3, k // 2))
-                if bm25_hits:
-                    existing_texts = {m['user_input'][:80] for m in top_memories}
-                    for hit in bm25_hits:
-                        # Evitar duplicatas jÃ¡ cobertas pelo vector search
-                        if hit['text'][:80] not in existing_texts:
-                            top_memories.append({
-                                'conversation_id': None,
-                                'user_input': hit['text'],
-                                'ai_response': '',
-                                'timestamp': hit['date'],
-                                'similarity_score': hit['bm25_score'] * 0.3,
-                                'final_score': hit['bm25_score'] * 0.3,
-                                'keywords': [],
-                                'metadata': {'type': 'bm25', 'date': hit['date']},
-                            })
-                    # Re-ordenar por final_score
-                    top_memories.sort(key=lambda m: m.get('final_score', 0), reverse=True)
-                    top_memories = top_memories[:k]
-                    logger.info(f"   BM25: {len(bm25_hits)} hits fundidos")
-            except Exception as bm25_err:
-                logger.debug(f"   BM25 indisponÃ­vel: {bm25_err}")
+                mem0_context = self.mem0.get_context(user_id_str, query, limit=limit)
+                mem0_memories = self._mem0_context_to_memory_rows(mem0_context, limit=limit)
+                if mem0_memories:
+                    logger.info("mem0/Qdrant: %s memorias retornadas", len(mem0_memories))
+                    return mem0_memories
+            except Exception as exc:
+                logger.warning("[MEM0] Falha na busca semantica; usando fallback SQLite/BM25: %s", exc)
 
-            return top_memories
+        logger.info("mem0/Qdrant sem retorno; usando fallback SQLite/BM25")
+        return self._fallback_keyword_search(user_id_str, query, limit)
 
-        except Exception as e:
-            logger.error(f"âŒ Erro na busca semÃ¢ntica: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return self._fallback_keyword_search(user_id, query, k or 5)
-    
+    def _mem0_context_to_memory_rows(self, context: str, limit: int = 5) -> List[Dict]:
+        rows: List[Dict] = []
+        if not context:
+            return rows
+
+        lines = [line.strip(" -\t") for line in str(context).splitlines() if line.strip()]
+        for index, line in enumerate(lines[: max(1, limit)], 1):
+            rows.append({
+                "conversation_id": None,
+                "user_input": line[:900],
+                "ai_response": "",
+                "timestamp": "",
+                "similarity_score": max(0.0, 1.0 - (index - 1) * 0.05),
+                "final_score": max(0.0, 1.0 - (index - 1) * 0.05),
+                "keywords": [],
+                "metadata": {"type": "mem0_qdrant", "recency_tier": "recent"},
+            })
+        return rows
+
     def _fallback_keyword_search(self, user_id: str, query: str, k: int = 5) -> List[Dict]:
-        """Busca por keywords (fallback quando ChromaDB indisponÃ­vel)"""
+        """Busca por keywords quando mem0/Qdrant nao retorna contexto suficiente."""
         cursor = self.conn.cursor()
         
         search_term = f"%{query}%"
@@ -2992,7 +2765,7 @@ Resposta: {ai_response}
         """
         Aplica uma correÃ§Ã£o detectada:
         1. Versiona o fato antigo no SQLite
-        2. Anota memÃ³rias no ChromaDB
+        2. Mantem mem0/Qdrant como fonte semantica futura via novas trocas
 
         Args:
             correction: CorrectionIntent com os detalhes da correÃ§Ã£o
@@ -3012,10 +2785,7 @@ Resposta: {ai_response}
             f"'{correction.old_value}' â†’ '{correction.new_value}' (confianÃ§a={correction.confidence:.2f})"
         )
 
-        # 1. Buscar fato atual para anotar ChromaDB
-        old_fact = self._find_current_fact(user_id, correction.fact_type, correction.attribute)
-
-        # 2. Salvar nova versÃ£o (versionamento automÃ¡tico em _save_fact_v2)
+        # 1. Salvar nova versÃ£o (versionamento automÃ¡tico em _save_fact_v2)
         self._save_fact_v2(
             user_id=user_id,
             category=correction.category,
@@ -3029,11 +2799,7 @@ Resposta: {ai_response}
         )
         logger.info(f"   âœ… SQLite atualizado")
 
-        # 3. Sincronizar ChromaDB com anotaÃ§Ã£o de correÃ§Ã£o
-        if old_fact:
-            self._annotate_chromadb_correction(user_id, old_fact, correction)
-
-        # 4. Log feedback (para debug/monitoramento)
+        # 2. Log feedback (para debug/monitoramento)
         feedback = generate_correction_feedback(correction)
         if feedback:
             logger.info(f"   ðŸ’¬ Feedback de correÃ§Ã£o ambÃ­gua: {feedback}")
@@ -3060,74 +2826,12 @@ Resposta: {ai_response}
             return None
 
     def _annotate_chromadb_correction(self, user_id: str, old_fact: Dict, correction):
-        """
-        Anota memÃ³rias no ChromaDB que referenciam um fato que foi corrigido.
-
-        EstratÃ©gia: adicionar metadado 'fact_correction' em vez de deletar.
-        Assim o contexto histÃ³rico Ã© preservado, mas o build_rich_context
-        pode identificar que aquela informaÃ§Ã£o foi corrigida.
-
-        Args:
-            old_fact: Fato anterior (com 'fact_value')
-            correction: CorrectionIntent com old_value e new_value
-        """
-        if not self.chroma_enabled or not self.vectorstore:
-            return
-
-        old_value = old_fact.get('fact_value', '')
-        if not old_value:
-            return
-
-        try:
-            # Buscar memÃ³rias que mencionam o valor antigo
-            results = self.vectorstore.similarity_search_with_score(
-                old_value,
-                k=20,
-                filter={"user_id": str(user_id)}
-            )
-
-            annotated = 0
-            for doc, score in results:
-                # Verificar se o documento realmente menciona o valor antigo
-                if old_value.lower() not in doc.page_content.lower():
-                    continue
-
-                # Montar metadado de correÃ§Ã£o
-                new_metadata = dict(doc.metadata)
-                correction_note = f"{old_value} â†’ {correction.new_value}"
-
-                # Acumular se jÃ¡ houver correÃ§Ãµes anteriores
-                existing = new_metadata.get('fact_corrections', '')
-                if correction_note not in existing:
-                    new_metadata['fact_corrections'] = (
-                        f"{existing}|{correction_note}".strip('|')
-                    )
-
-                    # Atualizar documento no ChromaDB (delete + re-add)
-                    doc_id = doc.metadata.get('conversation_id')
-                    if doc_id:
-                        self._update_chroma_document(
-                            f"conv_{doc_id}", doc.page_content, new_metadata
-                        )
-                        annotated += 1
-
-            logger.info(f"   âœ… ChromaDB: {annotated} memÃ³ria(s) anotada(s) com correÃ§Ã£o")
-
-        except Exception as e:
-            logger.warning(f"   âš ï¸ Erro ao anotar ChromaDB: {e}")
+        """Compatibility no-op: ChromaDB was removed from runtime."""
+        return None
 
     def _update_chroma_document(self, doc_id: str, content: str, new_metadata: Dict):
-        """
-        Atualiza um documento no ChromaDB (delete + re-add).
-        O ChromaDB nÃ£o suporta update nativo de metadados.
-        """
-        try:
-            self.vectorstore.delete([doc_id])
-            from langchain.schema import Document
-            doc = Document(page_content=content, metadata=new_metadata)
-            self.vectorstore.add_documents([doc], ids=[doc_id])
-        except Exception as e:
-            logger.warning(f"   âš ï¸ Erro ao atualizar documento ChromaDB {doc_id}: {e}")
+        """Compatibility no-op: ChromaDB was removed from runtime."""
+        return None
 
     def _save_fact_v2(self, user_id: str, category: str, fact_type: str,
                      attribute: str, value: str, confidence: float = 1.0,
@@ -3235,10 +2939,6 @@ Resposta: {ai_response}
         Usa busca semÃ¢ntica para agrupar temas similares
         """
         
-        if not self.chroma_enabled:
-            logger.warning("ChromaDB desabilitado. DetecÃ§Ã£o de padrÃµes limitada.")
-            return
-        
         cursor = self.conn.cursor()
         
         # Buscar keywords Ãºnicas do usuÃ¡rio
@@ -3261,7 +2961,7 @@ Resposta: {ai_response}
 
             # Se hÃ¡ mÃºltiplas conversas sobre o tema (padrÃ£o recorrente)
             if len(related) >= 3:
-                conv_ids = [m['conversation_id'] for m in related]
+                conv_ids = [m['conversation_id'] for m in related if m.get('conversation_id')]
 
                 with self._lock:
                     # Verificar se padrÃ£o jÃ¡ existe

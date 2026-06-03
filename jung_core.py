@@ -13,7 +13,6 @@ Versão: 4.3 - REFACTORED (modularized into core/)
 
 from core.models import ArchetypeInsight, ArchetypeConflict
 from core.config import Config
-from core.embeddings import OpenAICompatibleEmbeddings
 from core.database import HybridDatabaseManager
 from core.conflict_detector import ConflictDetector
 from core.engine import JungianEngine
@@ -33,7 +32,7 @@ logger = logging.getLogger(__name__)
 try:
     Config.validate()
     logger.info(" jung_core.py v4.3 - MODULARIZED (core/)")
-    logger.info(f"   ChromaDB legado: {'ATIVO' if Config.LEGACY_CHROMA_ENABLED else 'INATIVO'}")
+    logger.info("   ChromaDB legado: REMOVIDO DO RUNTIME")
     logger.info(f"   Embeddings: {'ATIVO' if Config.EMBEDDING_API_KEY else 'INATIVO'} ({Config.EMBEDDING_MODEL})")
 except ValueError as e:
     logger.error(f"  {e}")

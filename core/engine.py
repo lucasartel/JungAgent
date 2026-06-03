@@ -80,9 +80,9 @@ class JungianEngine:
                        chat_history: List[Dict] = None) -> Dict:
         """
         PROCESSAMENTO SIMPLIFICADO (v7.0):
-        1. Busca semântica (ChromaDB)
+        1. Busca semântica (mem0/Qdrant + SQLite fallback)
         2. Geração de resposta direta (1 chamada LLM)
-        3. Salvamento (SQLite + ChromaDB)
+        3. Salvamento (SQLite + mem0/Qdrant)
 
         Args:
             user_id: ID do usuário
@@ -276,7 +276,7 @@ class JungianEngine:
             signal_profile["diagnostic_summary"],
         )
 
-        # Salvar conversa (SQLite + ChromaDB)
+        # Salvar conversa (SQLite + mem0/Qdrant)
         conversation_id = self.db.save_conversation(
             user_id=user_id,
             user_name=user_name,

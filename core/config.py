@@ -21,14 +21,9 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# ChromaDB check (needed by Config.LEGACY_CHROMA_ENABLED logic)
-try:
-    from langchain_chroma import Chroma
-    from langchain.schema import Document
-    CHROMADB_AVAILABLE = True
-except ImportError:
-    CHROMADB_AVAILABLE = False
-    print("⚠️  ChromaDB não disponível. Usando apenas SQLite.")
+# ChromaDB was the legacy local vector backend. Runtime semantic memory is now
+# mem0/Qdrant, with SQLite/BM25 as textual fallback.
+CHROMADB_AVAILABLE = False
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,11 +49,10 @@ class Config:
     ACTIVE_CONSCIOUSNESS_ENABLED = os.getenv("ACTIVE_CONSCIOUSNESS_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 
     # mem0/Qdrant is the production semantic memory backend.
-    # ChromaDB remains available only as a legacy/local fallback.
     DATABASE_URL = os.getenv("DATABASE_URL")  # PostgreSQL Railway (obrigatório para mem0)
     QDRANT_URL = os.getenv("QDRANT_URL")
-    ENABLE_LEGACY_CHROMA = os.getenv("ENABLE_LEGACY_CHROMA", "").strip().lower() in ("1", "true", "yes", "on")
-    LEGACY_CHROMA_ENABLED = (not QDRANT_URL) or ENABLE_LEGACY_CHROMA
+    ENABLE_LEGACY_CHROMA = False
+    LEGACY_CHROMA_ENABLED = False
     MEM0_LLM_PROVIDER = os.getenv("MEM0_LLM_PROVIDER", "openai")
     MEM0_LLM_MODEL = os.getenv("MEM0_LLM_MODEL", "openai/gpt-4o-mini")
     MEM0_LLM_BASE_URL = os.getenv("MEM0_LLM_BASE_URL", "https://openrouter.ai/api/v1")
@@ -91,21 +85,15 @@ class Config:
     else:
         SQLITE_PATH = os.path.join(DATA_DIR, "jung_hybrid.db")
         
-    # 3. Resolver Caminho do ChromaDB
-    _env_chroma = os.getenv("CHROMA_DB_PATH")
-    if _env_chroma:
-        if os.path.isabs(_env_chroma):
-            CHROMA_PATH = _env_chroma
-        else:
-            CHROMA_PATH = os.path.join(DATA_DIR, os.path.basename(_env_chroma))
-    else:
-        CHROMA_PATH = os.path.join(DATA_DIR, "chroma_db")
+    # 3. Caminho historico do ChromaDB mantido apenas para compatibilidade.
+    # O runtime nao inicializa nem escreve Chroma.
+    CHROMA_PATH = os.path.join(DATA_DIR, "chroma_db")
     
     # Memória
     MIN_MEMORIES_FOR_ANALYSIS = 3
     MAX_CONTEXT_MEMORIES = 10
     
-    # ChromaDB
+    # Historical ChromaDB metadata kept for schema compatibility only.
     CHROMA_COLLECTION_NAME = "jung_conversations"
     
     EMBEDDING_BASE_URL = os.getenv("OPENAI_EMBEDDING_BASE_URL")
@@ -473,16 +461,11 @@ Jung:"""
         if not cls.TELEGRAM_BOT_TOKEN:
             logger.warning("⚠️  TELEGRAM_BOT_TOKEN ausente (Bot Telegram não funcionará)")
         
-        if cls.LEGACY_CHROMA_ENABLED and not CHROMADB_AVAILABLE:
-            logger.warning("⚠️  ChromaDB não disponível. Sistema funcionará em modo SQLite-only")
-        elif not cls.LEGACY_CHROMA_ENABLED:
-            logger.info("ℹ️ ChromaDB em modo legado desativado nesta instância")
+        logger.info("ℹ️ ChromaDB legado removido do runtime; usando mem0/Qdrant + SQLite/BM25.")
     
     @classmethod
     def ensure_directories(cls):
         """Garante que os diretórios de dados existem"""
         os.makedirs(cls.DATA_DIR, exist_ok=True)
-        if cls.LEGACY_CHROMA_ENABLED:
-            os.makedirs(cls.CHROMA_PATH, exist_ok=True)
         os.makedirs(os.path.dirname(cls.SQLITE_PATH), exist_ok=True)
 

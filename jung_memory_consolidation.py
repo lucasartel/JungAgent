@@ -4,7 +4,7 @@ jung_memory_consolidation.py - Sistema de Consolidação de Memórias
 Responsável por:
 - Agrupar memórias similares por período
 - Gerar resumos temáticos com LLM
-- Criar documentos "consolidated" no ChromaDB
+- Registrar padroes consolidados em SQLite/profile
 """
 
 import logging
@@ -211,28 +211,66 @@ MÉTRICAS DO PERÍODO:
             "topics": topic,
         }
 
-        # Salvar no ChromaDB
-        chroma_id = f"consolidated_{user_id}_{topic}_{period_end}"
+        pattern_name = f"consolidado_{topic}_{period_end}"
+        payload = {
+            "topic": topic,
+            "period_start": period_start,
+            "period_end": period_end,
+            "source_ids": source_ids,
+            "summary": summary,
+            "metrics": metadata,
+        }
+        description = doc_content.strip()
 
-        from langchain.schema import Document
-        doc = Document(page_content=doc_content, metadata=metadata)
-
-        try:
-            # Tentar adicionar
-            self.db.vectorstore.add_documents([doc], ids=[chroma_id])
-            logger.info(f"✅ Memória consolidada criada: {chroma_id}")
-        except Exception as e:
-            # Se já existe, substituir
-            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                logger.info(f"   Substituindo memória consolidada existente: {chroma_id}")
-                try:
-                    self.db.vectorstore.delete([chroma_id])
-                    self.db.vectorstore.add_documents([doc], ids=[chroma_id])
-                    logger.info(f"✅ Memória consolidada atualizada: {chroma_id}")
-                except Exception as delete_error:
-                    logger.error(f"❌ Erro ao substituir memória consolidada: {delete_error}")
+        with self.db._lock:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                """
+                SELECT id FROM user_patterns
+                WHERE user_id = ? AND pattern_name = ?
+                """,
+                (user_id, pattern_name),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                cursor.execute(
+                    """
+                    UPDATE user_patterns
+                    SET pattern_description = ?,
+                        frequency_count = ?,
+                        last_occurrence_at = CURRENT_TIMESTAMP,
+                        supporting_conversation_ids = ?,
+                        confidence_score = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        description,
+                        len(memories),
+                        json.dumps(payload, ensure_ascii=False),
+                        min(1.0, len(memories) * 0.08),
+                        existing["id"],
+                    ),
+                )
             else:
-                logger.error(f"❌ Erro ao criar memória consolidada: {e}")
+                cursor.execute(
+                    """
+                    INSERT INTO user_patterns
+                    (user_id, pattern_type, pattern_name, pattern_description,
+                     frequency_count, supporting_conversation_ids, confidence_score)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        "CONSOLIDATED_MEMORY",
+                        pattern_name,
+                        description,
+                        len(memories),
+                        json.dumps(payload, ensure_ascii=False),
+                        min(1.0, len(memories) * 0.08),
+                    ),
+                )
+            self.db.conn.commit()
+        logger.info("Memoria consolidada salva em SQLite: %s", pattern_name)
 
     def _generate_summary_with_llm(self, topic: str, memories: List[Dict]) -> str:
         """
