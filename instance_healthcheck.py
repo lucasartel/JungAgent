@@ -170,10 +170,12 @@ def run_healthcheck(json_output: bool = False, db_path: str | None = None) -> in
         critiqued = int(critiqued_row["critiqued"]) if critiqued_row else 0
         art_detail = f"{artwork_count} total, {recent_artworks} in last 7 days, {critiqued} with critique"
         art_status = "ok" if recent_artworks > 0 else "warning"
-        art_action = "If no recent artworks, check Hobby phase logs in Loop dashboard."
+        art_action = "Art/Hobby activity is healthy."
         if recent_artworks > 0 and critiqued == 0:
             art_status = "warning"
             art_action = "Artworks exist but none have critiques; check critique generation logic."
+        elif recent_artworks == 0:
+            art_action = "If no recent artworks, check Hobby phase logs in Loop dashboard."
     else:
         art_status = "warning"
         art_detail = "no artworks found"
