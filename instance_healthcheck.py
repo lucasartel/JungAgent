@@ -158,6 +158,33 @@ def run_healthcheck(json_output: bool = False, db_path: str | None = None) -> in
         }
     )
 
+    # Art/Hobby Module Activity
+    artwork_count = _count(db.conn, "agent_hobby_artifacts")
+    if artwork_count > 0:
+        cursor = db.conn.cursor()
+        cursor.execute("SELECT COUNT(*) AS recent FROM agent_hobby_artifacts WHERE created_at >= datetime('now', '-7 days')")
+        recent_row = cursor.fetchone()
+        recent_artworks = int(recent_row["recent"]) if recent_row else 0
+        cursor.execute("SELECT COUNT(*) AS critiqued FROM agent_hobby_artifacts WHERE created_at >= datetime('now', '-7 days') AND (critique_summary IS NOT NULL AND critique_summary != '')")
+        critiqued_row = cursor.fetchone()
+        critiqued = int(critiqued_row["critiqued"]) if critiqued_row else 0
+        art_detail = f"{artwork_count} total, {recent_artworks} in last 7 days, {critiqued} with critique"
+        art_status = "ok" if recent_artworks > 0 else "warning"
+        art_action = "If no recent artworks, check Hobby phase logs in Loop dashboard."
+        if recent_artworks > 0 and critiqued == 0:
+            art_status = "warning"
+            art_action = "Artworks exist but none have critiques; check critique generation logic."
+    else:
+        art_status = "warning"
+        art_detail = "no artworks found"
+        art_action = "Wait for Hobby phase to execute, or check Provider credentials."
+    checks.append({
+        "status": art_status,
+        "title": "Art/Hobby Module Activity",
+        "detail": art_detail,
+        "action": art_action,
+    })
+
     # Vulnerability & Resilience Diagnostic
     api_provider = "OpenRouter" if os.getenv("OPENROUTER_API_KEY") else "OpenAI"
     checks.append(
