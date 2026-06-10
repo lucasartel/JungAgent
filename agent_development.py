@@ -102,7 +102,9 @@ def _as_text(value: Any, limit: int = 700) -> str:
     text = " ".join(str(value or "").split())
     if len(text) <= limit:
         return text
-    return text[: max(0, limit - 1)].rstrip() + "..."
+    if limit <= 3:
+        return "..."[:max(0, limit)]
+    return text[: max(0, limit - 3)].rstrip() + "..."
 
 
 def _json_loads(value: Any, default: Any = None) -> Any:
@@ -584,5 +586,3 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
