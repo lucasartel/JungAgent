@@ -1,0 +1,6 @@
+# requirements-test.txt — dependencias minimas para rodar a suite de testes (Fase 0.1)
+# Nao inclui dependencias de producao (telegram, qdrant, openai etc.) pois todas
+# sao stubadas via sys.modules em tests/conftest.py antes de qualquer import do projeto.
+
+pytest>=7.4.0
+python-dotenv>=1.0.0

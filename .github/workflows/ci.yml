@@ -1,0 +1,119 @@
+# .github/workflows/ci.yml
+# CI para JungAgent — Fase 0.1: compilacao + suite de testes unitarios offline
+#
+# Dispara em:  push para main  |  qualquer pull_request
+# Python:      3.11
+#
+# Passos:
+#   1. py_compile em todos os .py da raiz e dos pacotes instrumentados
+#      (exclui scripts utilitarios/migracao sem __init__ que importam servicos externos)
+#   2. pytest tests/ -v  (100% offline, sem LLM/Qdrant/rede)
+
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: pip install -r requirements-test.txt
+
+      # ------------------------------------------------------------------
+      # Compilacao sintatica dos modulos instrumentados.
+      # Exclucoes justificadas:
+      #   - test_*.py na raiz: scripts ad-hoc antigos sem estrutura pytest
+      #   - migrate_*.py / apply_*/force_*: scripts de migracao one-shot que
+      #     importam servicos externos (qdrant, telegram) no nivel de modulo
+      #     e nao fazem parte do runtime normal
+      #   - setup_instance.py / apply_agent_identity_migration.py /
+      #     force_apply_identity_migration.py: idem (one-shot, deps externas)
+      #   - endojung_snapshot_export.py: script de exportacao legado
+      # ------------------------------------------------------------------
+      - name: Syntax check — root .py modules
+        run: |
+          python -m py_compile \
+            agent_development.py \
+            agent_development_policy.py \
+            agent_diary.py \
+            agent_identity_context_builder.py \
+            agent_identity_extractor.py \
+            agent_meta_consciousness.py \
+            bm25_search.py \
+            consciousness_loop.py \
+            correction_detector.py \
+            database_migrations.py \
+            dream_engine.py \
+            evidence_extractor.py \
+            firecrawl_client.py \
+            fragment_detector.py \
+            hobby_art_engine.py \
+            identity_config.py \
+            identity_rumination_bridge.py \
+            instance_config.py \
+            instance_dashboard.py \
+            instance_healthcheck.py \
+            instance_settings.py \
+            integration_secrets.py \
+            irt_engine.py \
+            jung_core.py \
+            jung_memory_consolidation.py \
+            jung_memory_metrics.py \
+            jung_proactive_advanced.py \
+            jung_rumination.py \
+            llm_fact_extractor.py \
+            llm_providers.py \
+            mem0_memory_adapter.py \
+            memory_flush.py \
+            migration_logger.py \
+            profile_gap_analyzer.py \
+            psychometric_validator.py \
+            quality_detector.py \
+            rumination_config.py \
+            rumination_prompts.py \
+            rumination_scheduler.py \
+            scholar_engine.py \
+            strategic_question_generator.py \
+            telegram_bot.py \
+            user_profile_writer.py \
+            utils.py \
+            will_engine.py \
+            will_pressure.py \
+            work_engine.py \
+            world_consciousness.py
+
+      - name: Syntax check — core/ package
+        run: |
+          python -m py_compile \
+            core/__init__.py \
+            core/database.py \
+            core/engine.py
+          # core/db/ subpackage
+          find core/db/ -name "*.py" -exec python -m py_compile {} +
+
+      - name: Syntax check — work/ package
+        run: |
+          find work/ -name "*.py" -exec python -m py_compile {} +
+
+      - name: Syntax check — admin_web/ package
+        run: |
+          find admin_web/ -name "*.py" -exec python -m py_compile {} +
+
+      - name: Run test suite
+        run: pytest tests/ -v
+        env:
+          ADMIN_USER_ID: test_admin_ci
+          AGENT_INSTANCE: test_jung_ci
