@@ -143,6 +143,31 @@ async def get_current_mind_state(
             user_id=ADMIN_USER_ID,
             style="expanded",
         )
+        cursor = db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                phase,
+                narrative_phase_key,
+                narrative_phase_name,
+                phase_confidence,
+                narrative_review_cycle_id,
+                last_narrative_review_at
+            FROM agent_development
+            WHERE user_id = ?
+            """,
+            (ADMIN_USER_ID,),
+        )
+        development_row = cursor.fetchone()
+        if development_row:
+            current_state["development_phase"] = {
+                "phase": development_row[0],
+                "key": development_row[1],
+                "name": development_row[2],
+                "confidence": development_row[3],
+                "review_cycle_id": development_row[4],
+                "last_review_at": development_row[5],
+            }
 
         logger.info(f"🧭 Estado mental atual acessado por master admin: {admin['email']}")
 
@@ -1111,6 +1136,7 @@ async def agent_identity_dashboard(
 
                 const state = data.current_state || {};
                 const phase = state.current_phase || {};
+                const developmentPhase = state.development_phase || null;
                 const conflict = state.dominant_conflict || null;
                 const metaSignal = state.meta_signal || null;
                 const dream = state.dream_residue || null;
@@ -1135,6 +1161,24 @@ async def agent_identity_dashboard(
                     <span class="stat-label">Tema dominante</span>
                     <span class="stat-value" style="font-size: 1em;">${phase.theme || 'N/A'}</span>
                 </div>`;
+
+                if (developmentPhase) {
+                    const confidence = developmentPhase.confidence == null
+                        ? 'N/A'
+                        : `${(developmentPhase.confidence * 100).toFixed(0)}%`;
+                    html += `<div class="stat-box">
+                        <span class="stat-label">Fase de desenvolvimento</span>
+                        <span class="stat-value" style="font-size: 1em;">${developmentPhase.phase} - ${developmentPhase.name || developmentPhase.key || 'N/A'}</span>
+                    </div>`;
+                    html += `<div class="belief-item">
+                        <div class="belief-content"><strong>Revisao narrativa</strong></div>
+                        <div class="belief-meta">
+                            <span class="badge badge-certainty">Confianca: ${confidence}</span>
+                            <span>Ciclo: ${developmentPhase.review_cycle_id || 'N/A'}</span>
+                            <span>${developmentPhase.last_review_at || 'sem data'}</span>
+                        </div>
+                    </div>`;
+                }
 
                 if (conflict) {
                     html += `<div class="contradiction-item">
