@@ -1,9 +1,10 @@
 """
-test_rumination_maturity.py — Testa a formula de maturidade de jung_rumination.py.
+test_rumination_maturity.py - Testa a formula de maturidade de jung_rumination.py.
 
 Circuitos cobertos:
   - _calculate_maturity: todos os fatores (time, evidence, revisit, connection, intensity)
   - connection_factor: fallback via connected_tension_ids JSON quando connection_count == 0
+  - connection_factor: fallback silencioso com JSON invalido retorna 0 (D3 fix)
   - time_factor: maximo em 7 dias (MAX_DAYS_FOR_SYNTHESIS)
   - Logica de forced_temporal_synthesis (dias >= MAX_DAYS_FOR_SYNTHESIS forca status ready)
   - Integridade dos MATURITY_WEIGHTS (soma == 1.0, chaves esperadas presentes)
@@ -100,7 +101,7 @@ class TestTimeFactor:
     def test_seven_days_maxes_time_factor(self, engine):
         t_7 = _tension(days_ago=7.0, intensity=0.0)
         t_14 = _tension(days_ago=14.0, intensity=0.0)
-        # Apos 7 dias time_factor ja esta saturado em 1.0 — mais dias nao aumentam
+        # Apos 7 dias time_factor ja esta saturado em 1.0 - mais dias nao aumentam
         assert engine._calculate_maturity(t_7) == pytest.approx(
             engine._calculate_maturity(t_14), abs=0.01
         )
@@ -144,9 +145,20 @@ class TestConnectionFactor:
         assert engine._calculate_maturity(t) == pytest.approx(expected, abs=0.02)
 
     def test_connection_json_invalid_falls_back_to_zero(self, engine):
+        # D3 fix: JSON invalido deve retornar 0 silenciosamente (logger.debug registra o erro)
         t = _tension(connection_count=0, connected_tension_ids="INVALID_JSON", intensity=0.0)
         # Sem conexoes validas, contribution = 0
         assert engine._calculate_maturity(t) == pytest.approx(0.0, abs=0.02)
+
+    def test_connection_json_invalid_various_types(self, engine):
+        """D3: diferentes formas de JSON invalido todas retornam 0 sem lancar excecao."""
+        for bad_json in ["{broken", "None", "undefined", "[1, 2", ""]:
+            t = _tension(connection_count=0, connected_tension_ids=bad_json, intensity=0.0)
+            # Nao deve lancar excecao; connection_count deve cair para 0
+            result = engine._calculate_maturity(t)
+            assert result == pytest.approx(0.0, abs=0.02), (
+                f"Esperava 0.0 para connected_tension_ids={bad_json!r}, obteve {result}"
+            )
 
     def test_connection_json_empty_list(self, engine):
         t = _tension(connection_count=0, connected_tension_ids="[]", intensity=0.0)
@@ -214,7 +226,7 @@ class TestForcedTemporalSynthesis:
 
     Como essa logica esta embutida no metodo de digestao que exige DB populado e
     chamadas LLM, testamos a condicao booleana diretamente usando as constantes
-    importadas — e verificamos que _calculate_maturity retorna o valor correto para
+    importadas - e verificamos que _calculate_maturity retorna o valor correto para
     o cenario de forced synthesis (maturity forcada para MIN_MATURITY_FOR_SYNTHESIS).
     """
 

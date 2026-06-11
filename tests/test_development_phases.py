@@ -5,7 +5,7 @@ Circuitos cobertos:
   - Integridade de PHASES (fases 0-5, campos obrigatorios, chaves unicas)
   - NarrativePhase: dataclass imutavel, atributos corretos
   - SOURCE_RE: mesmos tipos que PROFILE_SOURCE_RE (mesma regex, modulo diferente)
-  - _as_text de agent_development: comportamento real (limit-1 chars + "...")
+  - _as_text de agent_development: len(resultado) <= limit (contrato corrigido)
   - _json_loads de agent_development: funcoes puras identicas a agent_diary
   - _extract_json_object: extrai JSON de texto bruto, blocos markdown e JSON puro
   - _coerce_phase / _coerce_confidence via NarrativeDevelopmentEvaluator em DB de memoria
@@ -123,8 +123,9 @@ class TestSourceRe:
 # ---------------------------------------------------------------------------
 # 3. _as_text (agent_development tem limite padrao 700)
 #
-# Comportamento real: text[:max(0, limit-1)].rstrip() + "..."
-# Para "x"*800 com limit=700: "x"*699 + "..."
+# Contrato corrigido: len(resultado) <= limit sempre.
+# text[:max(0, limit-3)].rstrip() + "..."
+# Para "x"*800 com limit=700: "x"*697 + "..." = 700 chars
 # ---------------------------------------------------------------------------
 
 class TestDevAsText:
@@ -138,11 +139,13 @@ class TestDevAsText:
         assert _as_text("hello") == "hello"
 
     def test_default_limit_700(self):
-        # Implementacao: text[:limit-1].rstrip() + "..." => "x"*699 + "..."
+        # Contrato: len(resultado) <= 700
+        # text[:697].rstrip() + "..." = "x"*697 + "..." = 700 chars
         s = "x" * 800
         result = _as_text(s)
         assert result.endswith("...")
-        assert result == "x" * 699 + "..."
+        assert len(result) <= 700
+        assert result == "x" * 697 + "..."
 
     def test_no_truncation_within_limit(self):
         s = "x" * 700
@@ -150,6 +153,23 @@ class TestDevAsText:
 
     def test_normalizes_whitespace(self):
         assert _as_text("a  b\n\tc") == "a b c"
+
+    def test_len_never_exceeds_limit(self):
+        """Invariante principal: resultado nunca ultrapassa limit."""
+        s = "y" * 1000
+        for lim in [1, 2, 3, 4, 10, 100, 700]:
+            result = _as_text(s, limit=lim)
+            assert len(result) <= lim, f"len={len(result)} excedeu limit={lim}"
+
+    def test_limit_3_returns_ellipsis(self):
+        result = _as_text("hello world", limit=3)
+        assert result == "..."
+        assert len(result) <= 3
+
+    def test_limit_1_returns_single_dot(self):
+        result = _as_text("hello world", limit=1)
+        assert result == "."
+        assert len(result) <= 1
 
 
 # ---------------------------------------------------------------------------

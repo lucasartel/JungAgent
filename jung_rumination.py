@@ -956,7 +956,12 @@ class RuminationEngine:
         if not connection_count:
             try:
                 connection_count = len(json.loads(tension.get('connected_tension_ids') or '[]'))
-            except Exception:
+            except Exception as _conn_exc:
+                logger.debug(
+                    "connection_count fallback failed for tension_id=%s: %s",
+                    tension.get('id'),
+                    _conn_exc,
+                )
                 connection_count = 0
         connection_factor = min(1.0, connection_count / 3.0)
 
@@ -1650,11 +1655,4 @@ class RuminationEngine:
         stats['insights_ready'] = cursor.fetchone()[0]
 
         cursor.execute("SELECT COUNT(*) FROM rumination_insights WHERE user_id = ? AND status = 'delivered'", (user_id,))
-        stats['insights_delivered'] = cursor.fetchone()[0]
-
-        return stats
-
-    def reset_user_activity(self, user_id: str):
-        """Atualiza timestamp de atividade do usuário"""
-        # Implementado no jung_core, apenas placeholder
-        pass
+        stats['insights_delivered'] = cursor.fetc

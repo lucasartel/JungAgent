@@ -3,7 +3,7 @@ test_diary_anchors.py - Testa ancoras de evidencia e utilitarios puros de agent_
 
 Circuitos cobertos:
   - PROFILE_SOURCE_RE: aceita e rejeita formatos corretos e invalidos
-  - _as_text: truncamento real (limit-1 chars + "..."), normalizacao de whitespace, None
+  - _as_text: truncamento com len(resultado) <= limit, normalizacao de whitespace, None
   - _json_loads: JSON valido, invalido, None, dict/list ja pronto
   - _safe_float: valores numericos, strings numericas, None, invalidos
 """
@@ -104,11 +104,10 @@ class TestProfileSourceRe:
 # ---------------------------------------------------------------------------
 # 2. _as_text
 #
-# Comportamento real da implementacao:
-#   text[:max(0, limit-1)].rstrip() + "..."
-# Portanto para string sem espacos internos:
-#   resultado = primeiros (limit-1) chars + "..."  => len = limit + 2
-# O teste documenta o comportamento real, nao um ideal hipotetico.
+# Contrato corrigido: len(resultado) <= limit sempre.
+# Implementacao: texto curto retorna intacto; texto longo usa
+#   text[:max(0, limit-3)].rstrip() + "..."
+# Casos de borda: limit <= 3 retorna "..."[:max(0, limit)]
 # ---------------------------------------------------------------------------
 
 class TestAsText:
@@ -125,18 +124,26 @@ class TestAsText:
         assert _as_text("hello world") == "hello world"
 
     def test_truncates_long_string(self):
-        # Implementacao: text[:limit-1].rstrip() + "..."
-        # Para string de 400 'a' com limit=320: "a"*319 + "..." = 322 chars
+        # Contrato: len(resultado) <= limit
+        # text[:limit-3].rstrip() + "..." = "a"*317 + "..." = 320 chars
         s = "a" * 400
         result = _as_text(s, limit=320)
         assert result.endswith("...")
-        assert result == "a" * 319 + "..."
+        assert len(result) <= 320
+        assert result == "a" * 317 + "..."
 
     def test_no_truncation_at_exact_limit(self):
         s = "a" * 320
         result = _as_text(s, limit=320)
         assert result == s
         assert not result.endswith("...")
+
+    def test_len_never_exceeds_limit(self):
+        """Invariante principal: resultado nunca ultrapassa limit."""
+        s = "x" * 500
+        for lim in [1, 2, 3, 4, 10, 100, 320]:
+            result = _as_text(s, limit=lim)
+            assert len(result) <= lim, f"len={len(result)} excedeu limit={lim}"
 
     def test_normalizes_internal_whitespace(self):
         assert _as_text("hello   \n  world") == "hello world"
@@ -148,16 +155,36 @@ class TestAsText:
         result = _as_text(42)
         assert result == "42"
 
-    def test_zero_limit_appends_ellipsis(self):
-        # limit=0 => text[:max(0,-1)] = text[:0] = "" => "" + "..." = "..."
+    def test_zero_limit_returns_empty(self):
+        # limit=0 => "..."[:0] = ""
         result = _as_text("hello world", limit=0)
+        assert result == ""
+        assert len(result) <= 0
+
+    def test_limit_1_returns_single_dot(self):
+        # limit=1 => "..."[:1] = "."
+        result = _as_text("hello world", limit=1)
+        assert result == "."
+        assert len(result) <= 1
+
+    def test_limit_2_returns_two_dots(self):
+        # limit=2 => "..."[:2] = ".."
+        result = _as_text("hello world", limit=2)
+        assert result == ".."
+        assert len(result) <= 2
+
+    def test_limit_3_returns_ellipsis(self):
+        # limit=3 => "..."[:3] = "..."
+        result = _as_text("hello world", limit=3)
         assert result == "..."
+        assert len(result) <= 3
 
     def test_custom_limit_truncates(self):
-        # limit=10 => text[:9] + "..." => "aaaaaaaaa..."
+        # limit=10 => text[:7].rstrip() + "..." = "aaaaaaa..."
         s = "a" * 50
         result = _as_text(s, limit=10)
-        assert result == "a" * 9 + "..."
+        assert result == "a" * 7 + "..."
+        assert len(result) <= 10
 
     def test_list_converted_to_string(self):
         result = _as_text([1, 2, 3])
