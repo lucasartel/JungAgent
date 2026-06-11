@@ -5,7 +5,7 @@ Circuitos cobertos:
   - _calculate_maturity: todos os fatores (time, evidence, revisit, connection, intensity)
   - connection_factor: fallback via connected_tension_ids JSON quando connection_count == 0
   - connection_factor: fallback silencioso com JSON invalido retorna 0 (D3 fix)
-  - time_factor: maximo em 7 dias (MAX_DAYS_FOR_SYNTHESIS)
+  - time_factor: maximo em MAX_DAYS_FOR_SYNTHESIS
   - Logica de forced_temporal_synthesis (dias >= MAX_DAYS_FOR_SYNTHESIS forca status ready)
   - Integridade dos MATURITY_WEIGHTS (soma == 1.0, chaves esperadas presentes)
   - Constantes de limiar: MIN_MATURITY_FOR_SYNTHESIS, MIN_DAYS_FOR_SYNTHESIS
@@ -98,17 +98,18 @@ class TestTimeFactor:
         # a maturidade deve ser 0.0
         assert maturity == pytest.approx(0.0, abs=0.01)
 
-    def test_seven_days_maxes_time_factor(self, engine):
-        t_7 = _tension(days_ago=7.0, intensity=0.0)
+    def test_max_days_for_synthesis_maxes_time_factor(self, engine):
+        t_7 = _tension(days_ago=MAX_DAYS_FOR_SYNTHESIS, intensity=0.0)
         t_14 = _tension(days_ago=14.0, intensity=0.0)
-        # Apos 7 dias time_factor ja esta saturado em 1.0 - mais dias nao aumentam
+        # Apos MAX_DAYS_FOR_SYNTHESIS, time_factor ja esta saturado em 1.0.
         assert engine._calculate_maturity(t_7) == pytest.approx(
             engine._calculate_maturity(t_14), abs=0.01
         )
 
     def test_partial_days_proportional(self, engine):
-        t_3_5 = _tension(days_ago=3.5, intensity=0.0)
-        # time_factor = min(1, 3.5/7) = 0.5; contribuicao = 0.5 * MATURITY_WEIGHTS['time']
+        half_window = MAX_DAYS_FOR_SYNTHESIS / 2
+        t_3_5 = _tension(days_ago=half_window, intensity=0.0)
+        # time_factor = min(1, half_window/MAX_DAYS_FOR_SYNTHESIS) = 0.5
         expected = 0.5 * MATURITY_WEIGHTS["time"]
         assert engine._calculate_maturity(t_3_5) == pytest.approx(expected, abs=0.02)
 

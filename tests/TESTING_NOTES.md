@@ -39,6 +39,12 @@ executado nesta entrega para evitar custo e chamada externa sem uma decisao
 explicita de modelo/custo pelo mantenedor. O primeiro diff live deve ser anexado
 a estas notas quando o mantenedor aprovar a execucao local.
 
+Diff mock D2, apos remover o hardcode `7.0` da formula de maturidade:
+`python tests/regression_runner.py --diff .tmp_before_d2_mock.json .tmp_after_d2_mock.json`
+retornou `changed_count=0`. Isso e esperado porque `MAX_DAYS_FOR_SYNTHESIS`
+continua valendo 7; a mudanca preserva o comportamento atual e evita divergencia
+futura se a constante mudar.
+
 ### 1. Digestao completa de tensoes (`_process_digest_cycle`)
 
 A logica de `forced_temporal_synthesis` esta embutida em `_process_digest_cycle`,
@@ -116,7 +122,13 @@ Se `connection_count=0` e o JSON e invalido, silenciosamente retorna 0.
 Comportamento verificado e testado; nao e um bug, mas e um contrato implicito
 que nao estava documentado.
 
-### D3. Constante `MAX_DAYS_FOR_SYNTHESIS` duplica como limite de time_factor
+### D3. Constante `MAX_DAYS_FOR_SYNTHESIS` agora governa o time_factor
+
+Resolvido na Fase 0.3/D2: `_calculate_maturity` e o runner mock usam
+`time_factor = min(1.0, days / MAX_DAYS_FOR_SYNTHESIS)`. O diff mock antes/depois
+nao alterou os 20 cenarios canonicos porque a constante permanece em 7.
+
+Historico da pendencia original:
 
 `time_factor = min(1.0, days / 7.0)` usa 7 hardcoded, enquanto
 `MAX_DAYS_FOR_SYNTHESIS = 7` esta em `rumination_config.py`. Se alguem alterar

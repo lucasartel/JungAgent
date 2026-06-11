@@ -943,7 +943,7 @@ class RuminationEngine:
         """
         # Tempo
         days_since_detection = (datetime.now() - datetime.fromisoformat(tension['first_detected_at'])).days
-        time_factor = min(1.0, days_since_detection / 7.0)  # Máximo em 7 dias
+        time_factor = min(1.0, days_since_detection / MAX_DAYS_FOR_SYNTHESIS)
 
         # Evidências
         evidence_factor = min(1.0, tension['evidence_count'] / 5.0)  # Máximo em 5 evidências
