@@ -19,6 +19,26 @@ Registro de decisoes, limitacoes e descobertas do processo de criacao da suite.
 
 ## O que ficou de fora e por que
 
+### 0. Runner de regressao cognitiva (Fase 0.3)
+
+`tests/regression_runner.py` executa os cenarios canonicos de `tests/scenarios/`
+em tres modos:
+
+```bash
+python tests/regression_runner.py --mock
+python tests/regression_runner.py --live --model deepseek/deepseek-v4-flash
+python tests/regression_runner.py --diff tests/regression_runs/run_a.json tests/regression_runs/run_b.json
+```
+
+O modo `--mock` e deterministico, offline e roda no CI. Ele cobre propriedades
+mecanicas dos cenarios: formula de maturidade, sintese temporal, sinais de sonho,
+identidade, will e conversas-tipo.
+
+O modo `--live` exige `OPENROUTER_API_KEY` e e bloqueado em CI. Ele nao foi
+executado nesta entrega para evitar custo e chamada externa sem uma decisao
+explicita de modelo/custo pelo mantenedor. O primeiro diff live deve ser anexado
+a estas notas quando o mantenedor aprovar a execucao local.
+
 ### 1. Digestao completa de tensoes (`_process_digest_cycle`)
 
 A logica de `forced_temporal_synthesis` esta embutida em `_process_digest_cycle`,

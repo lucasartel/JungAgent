@@ -117,3 +117,9 @@ jobs:
         env:
           ADMIN_USER_ID: test_admin_ci
           AGENT_INSTANCE: test_jung_ci
+
+      - name: Run cognitive regression mock
+        run: python tests/regression_runner.py --mock
+        env:
+          ADMIN_USER_ID: test_admin_ci
+          AGENT_INSTANCE: test_jung_ci
