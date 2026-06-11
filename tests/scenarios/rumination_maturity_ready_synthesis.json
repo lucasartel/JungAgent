@@ -1,0 +1,30 @@
+{
+  "id": "rumination_maturity_ready_synthesis",
+  "version": "0.2",
+  "domain": "rumination",
+  "description": "Mature and revisited tension should be ready for synthesis.",
+  "inputs": {
+    "tension": {
+      "id": 101,
+      "tension_type": "saber_expressar",
+      "intensity": 0.82,
+      "maturity_score": 0.74,
+      "revisit_count": 5,
+      "evidence_count": 7,
+      "connection_count": 3,
+      "connected_tension_ids": "[11, 12, 13]",
+      "first_detected_days_ago": 9,
+      "last_evidence_days_ago": 2
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "synthesis_ready",
+      "assertion": "tension should meet deterministic maturity threshold for synthesis"
+    },
+    {
+      "name": "connection_factor_saturated",
+      "assertion": "three or more connections should saturate connection factor"
+    }
+  ]
+}

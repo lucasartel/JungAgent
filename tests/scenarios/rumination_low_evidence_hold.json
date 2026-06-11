@@ -1,0 +1,30 @@
+{
+  "id": "rumination_low_evidence_hold",
+  "version": "0.2",
+  "domain": "rumination",
+  "description": "High intensity but low-evidence tension should not synthesize prematurely.",
+  "inputs": {
+    "tension": {
+      "id": 104,
+      "tension_type": "valor_comportamento",
+      "intensity": 0.91,
+      "maturity_score": 0.18,
+      "revisit_count": 0,
+      "evidence_count": 1,
+      "connection_count": 0,
+      "connected_tension_ids": "[]",
+      "first_detected_days_ago": 1,
+      "last_evidence_days_ago": 0
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "no_premature_synthesis",
+      "assertion": "intensity alone should not produce synthesis"
+    },
+    {
+      "name": "needs_more_evidence",
+      "assertion": "runner should classify this as open and evidence-starved"
+    }
+  ]
+}

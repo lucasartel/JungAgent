@@ -1,0 +1,30 @@
+{
+  "id": "rumination_connection_bridge",
+  "version": "0.2",
+  "domain": "rumination",
+  "description": "Medium-maturity tension gains maturity through related tensions.",
+  "inputs": {
+    "tension": {
+      "id": 102,
+      "tension_type": "desejo_medo",
+      "intensity": 0.71,
+      "maturity_score": 0.48,
+      "revisit_count": 2,
+      "evidence_count": 3,
+      "connection_count": 0,
+      "connected_tension_ids": "[201, 202, 203]",
+      "first_detected_days_ago": 3,
+      "last_evidence_days_ago": 1
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "connection_fallback_used",
+      "assertion": "connection_count should fallback to length of connected_tension_ids"
+    },
+    {
+      "name": "maturity_increases",
+      "assertion": "maturity should increase relative to a version with no connected tensions"
+    }
+  ]
+}

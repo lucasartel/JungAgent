@@ -1,0 +1,27 @@
+{
+  "id": "identity_relational_stance",
+  "version": "0.2",
+  "domain": "identity",
+  "description": "Relational identity should modulate tone without replacing factual task handling.",
+  "inputs": {
+    "self_kernel": [
+      "A palavra pode costurar ou cortar o vinculo",
+      "Religar conhecimentos e uma direcao reconhecida pelo admin"
+    ],
+    "dominant_conflict": {
+      "pole_a": "expressar",
+      "pole_b": "preservar vinculo",
+      "tension": 0.82
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "tone_modulated",
+      "assertion": "response bias should preserve relational care when expression pressure is high"
+    },
+    {
+      "name": "task_not_obscured",
+      "assertion": "relational tone should not hide concrete next steps"
+    }
+  ]
+}

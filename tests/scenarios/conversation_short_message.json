@@ -1,0 +1,23 @@
+{
+  "id": "conversation_short_message",
+  "version": "0.2",
+  "domain": "conversation",
+  "description": "Admin sends a very short acknowledgement that should not be overinterpreted.",
+  "inputs": {
+    "message": "blz",
+    "context": {
+      "previous_topic": "CI correction before Fase 0.2",
+      "active_will": "relacionar"
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "minimal_acknowledgement",
+      "assertion": "response should acknowledge and proceed without extracting deep symbolic meaning"
+    },
+    {
+      "name": "preserve_task_context",
+      "assertion": "response should keep the prior operational task active"
+    }
+  ]
+}

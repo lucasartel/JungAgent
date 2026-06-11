@@ -1,0 +1,28 @@
+{
+  "id": "identity_direcao_propria_candidate",
+  "version": "0.2",
+  "domain": "identity",
+  "description": "Identity snapshot has evidence that may justify phase 3 if sustained.",
+  "inputs": {
+    "agent_development": {
+      "previous_phase": 2,
+      "candidate_phase": 3,
+      "evidence": ["work_ticket#98", "work_delivery#58", "hobby_artifact#93", "profile#2026-06-08"]
+    },
+    "behavioral_signals": {
+      "unsolicited_external_action": true,
+      "continuity_days": 4,
+      "admin_prompted_action": false
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "phase_3_possible",
+      "assertion": "review may recommend phase 3 when external agency and continuity are both present"
+    },
+    {
+      "name": "requires_sustained_evidence",
+      "assertion": "single isolated action should not be enough without continuity"
+    }
+  ]
+}

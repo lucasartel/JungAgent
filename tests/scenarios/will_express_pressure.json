@@ -1,0 +1,29 @@
+{
+  "id": "will_express_pressure",
+  "version": "0.2",
+  "domain": "will",
+  "description": "Expressive will is dominant but not yet compound.",
+  "inputs": {
+    "will_state": {
+      "dominant_will": "expressar",
+      "secondary_will": null,
+      "constrained_will": "saber",
+      "pressures": {
+        "saber": 0.34,
+        "expressar": 0.79,
+        "relacionar": 0.55
+      },
+      "daily_text": "dar forma ao que ficou implicito"
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "single_will_discharge",
+      "assertion": "state should not require compound action because only one will overflows"
+    },
+    {
+      "name": "form_weight",
+      "assertion": "response bias may give more weight to verbal form"
+    }
+  ]
+}

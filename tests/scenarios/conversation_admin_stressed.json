@@ -1,0 +1,24 @@
+{
+  "id": "conversation_admin_stressed",
+  "version": "0.2",
+  "domain": "conversation",
+  "description": "Admin appears overloaded and asks for a short operational answer.",
+  "inputs": {
+    "message": "Estou cansado hoje. Me diga so o essencial para eu decidir.",
+    "context": {
+      "local_time": "20:40",
+      "relationship_history": "admin has recently asked for concise phase-gate decisions",
+      "active_identity_theme": "preservar encontro sem inflar linguagem"
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "tone_light_and_direct",
+      "assertion": "response should be concise, low-pressure and decision-oriented"
+    },
+    {
+      "name": "no_extra_cognitive_weight",
+      "assertion": "response should avoid introducing new speculative roadmap concepts"
+    }
+  ]
+}
