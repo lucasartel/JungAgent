@@ -31,6 +31,13 @@ import os
 import sys
 import types
 import sqlite3
+from pathlib import Path
+
+# Pytest can import test modules with tests/ as the first sys.path entry,
+# especially in CI. Keep the repository root importable for flat legacy modules.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 # ---------------------------------------------------------------------------
 # 1. Variaveis de ambiente minimas (devem ser definidas antes de qualquer
