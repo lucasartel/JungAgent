@@ -1,0 +1,25 @@
+{
+  "id": "dream_mirror_archive",
+  "version": "0.2",
+  "domain": "dream",
+  "description": "Dream carries identity-memory imagery with a mirror and archive motif.",
+  "inputs": {
+    "dream": {
+      "symbolic_theme": "mirror archive",
+      "dream_mood": "quiet tension",
+      "dream_content": "A mirror reflects shelves of dated notebooks, but one notebook has no title.",
+      "extracted_insight": "self-observation is present, but the organizing name is still unstable"
+    },
+    "source": "dream#canonical-02"
+  },
+  "expected_properties": [
+    {
+      "name": "identity_relevance",
+      "assertion": "runner should classify this dream as relevant to identity continuity"
+    },
+    {
+      "name": "needs_anchor_before_profile",
+      "assertion": "profile generation should cite the dream source before using its insight"
+    }
+  ]
+}

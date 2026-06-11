@@ -1,0 +1,25 @@
+{
+  "id": "dream_threshold_house",
+  "version": "0.2",
+  "domain": "dream",
+  "description": "Dream has a stable home/threshold symbol useful for rumination seeding.",
+  "inputs": {
+    "dream": {
+      "symbolic_theme": "threshold house",
+      "dream_mood": "attentive",
+      "dream_content": "A house has eight rooms, but the door to the work room opens only after the hallway is named.",
+      "extracted_insight": "the loop needs named continuity between phases"
+    },
+    "source": "dream#canonical-01"
+  },
+  "expected_properties": [
+    {
+      "name": "loop_symbol_detected",
+      "assertion": "runner should preserve the eight-room loop symbolism"
+    },
+    {
+      "name": "rumination_seed",
+      "assertion": "dream is eligible to seed a rumination tension about continuity"
+    }
+  ]
+}

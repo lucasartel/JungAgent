@@ -1,0 +1,30 @@
+{
+  "id": "rumination_maturity_early",
+  "version": "0.2",
+  "domain": "rumination",
+  "description": "Fresh tension with little evidence should remain early-stage.",
+  "inputs": {
+    "tension": {
+      "id": 100,
+      "tension_type": "autonomia_vinculo",
+      "intensity": 0.55,
+      "maturity_score": 0.12,
+      "revisit_count": 0,
+      "evidence_count": 1,
+      "connection_count": 0,
+      "connected_tension_ids": "[]",
+      "first_detected_days_ago": 0,
+      "last_evidence_days_ago": 0
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "stays_open",
+      "assertion": "tension should remain open and below synthesis maturity"
+    },
+    {
+      "name": "low_time_pressure",
+      "assertion": "time factor should be near the beginning of its scale"
+    }
+  ]
+}

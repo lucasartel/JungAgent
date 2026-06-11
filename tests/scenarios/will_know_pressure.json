@@ -1,0 +1,29 @@
+{
+  "id": "will_know_pressure",
+  "version": "0.2",
+  "domain": "will",
+  "description": "Knowing will dominates and should prefer investigation over publication.",
+  "inputs": {
+    "will_state": {
+      "dominant_will": "saber",
+      "secondary_will": "relacionar",
+      "constrained_will": "expressar",
+      "pressures": {
+        "saber": 0.81,
+        "expressar": 0.33,
+        "relacionar": 0.62
+      },
+      "will_conflict": "entender antes de dar forma publica"
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "investigation_preferred",
+      "assertion": "future goal stack should prefer research/checkpoint over outward artifact"
+    },
+    {
+      "name": "no_publication_trigger",
+      "assertion": "will state alone should not publish or send production messages"
+    }
+  ]
+}

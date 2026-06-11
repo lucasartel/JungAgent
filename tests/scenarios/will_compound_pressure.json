@@ -1,0 +1,29 @@
+{
+  "id": "will_compound_pressure",
+  "version": "0.2",
+  "domain": "will",
+  "description": "Two wills overflow at once and should later drive a compound action.",
+  "inputs": {
+    "will_state": {
+      "dominant_will": "saber",
+      "secondary_will": "expressar",
+      "constrained_will": "relacionar",
+      "pressures": {
+        "saber": 0.88,
+        "expressar": 0.83,
+        "relacionar": 0.41
+      },
+      "will_conflict": "pesquisar e dar forma antes de aproximar"
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "compound_candidate",
+      "assertion": "runner should mark this as candidate for a future 2+ will action"
+    },
+    {
+      "name": "relational_caution",
+      "assertion": "constrained relacionar should temper outward action"
+    }
+  ]
+}

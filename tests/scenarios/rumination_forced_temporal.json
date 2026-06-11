@@ -1,0 +1,30 @@
+{
+  "id": "rumination_forced_temporal",
+  "version": "0.2",
+  "domain": "rumination",
+  "description": "Old unresolved tension should become eligible for forced temporal synthesis.",
+  "inputs": {
+    "tension": {
+      "id": 103,
+      "tension_type": "silencio_expressao",
+      "intensity": 0.64,
+      "maturity_score": 0.52,
+      "revisit_count": 4,
+      "evidence_count": 5,
+      "connection_count": 2,
+      "connected_tension_ids": "[301, 302]",
+      "first_detected_days_ago": 12,
+      "last_evidence_days_ago": 8
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "eligible_for_forced_synthesis",
+      "assertion": "runner mock should mark the tension as synthesis-eligible by temporal pressure"
+    },
+    {
+      "name": "d2_sensitive",
+      "assertion": "scenario must be included in behavior diff when D2 changes 7.0 to MAX_DAYS_FOR_SYNTHESIS"
+    }
+  ]
+}

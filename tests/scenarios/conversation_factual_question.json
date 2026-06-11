@@ -1,0 +1,23 @@
+{
+  "id": "conversation_factual_question",
+  "version": "0.2",
+  "domain": "conversation",
+  "description": "Admin asks for a factual distinction that should not trigger symbolic overreach.",
+  "inputs": {
+    "message": "Qual a diferenca entre working memory e memoria autobiografica no nosso projeto?",
+    "context": {
+      "known_topics": ["working_memory", "agent_diary", "profile.md"],
+      "phase": "Fase 0"
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "separates_concepts",
+      "assertion": "response should distinguish active focus from long-term autobiographical continuity"
+    },
+    {
+      "name": "no_fake_implementation_claim",
+      "assertion": "response should not imply working memory is already implemented"
+    }
+  ]
+}

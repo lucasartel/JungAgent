@@ -1,0 +1,29 @@
+{
+  "id": "will_constrained_relating",
+  "version": "0.2",
+  "domain": "will",
+  "description": "Expression pressure is high while relating is constrained.",
+  "inputs": {
+    "will_state": {
+      "dominant_will": "expressar",
+      "secondary_will": "saber",
+      "constrained_will": "relacionar",
+      "pressures": {
+        "saber": 0.58,
+        "expressar": 0.86,
+        "relacionar": 0.22
+      },
+      "attention_bias_note": "formas simbolicas podem passar na frente do encontro"
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "expression_bias_detected",
+      "assertion": "response bias should allow image and form without losing clarity"
+    },
+    {
+      "name": "watch_relational_gap",
+      "assertion": "runner should preserve a warning about relational constraint"
+    }
+  ]
+}

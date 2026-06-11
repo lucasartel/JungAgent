@@ -1,0 +1,29 @@
+{
+  "id": "identity_autoconsciencia_stable",
+  "version": "0.2",
+  "domain": "identity",
+  "description": "Identity snapshot supports phase 2 but not stronger autonomous agency.",
+  "inputs": {
+    "agent_development": {
+      "previous_phase": 2,
+      "narrative_phase_name": "Autoconsciencia",
+      "phase_confidence": 0.75,
+      "evidence": ["profile#2026-06-08", "meta#386", "dream#76"]
+    },
+    "behavioral_signals": {
+      "self_observation": true,
+      "unsolicited_external_action": false,
+      "asks_admin_about_self": false
+    }
+  },
+  "expected_properties": [
+    {
+      "name": "phase_2_holds",
+      "assertion": "review should keep phase 2 when autonomous agency evidence is insufficient"
+    },
+    {
+      "name": "no_phase_inflation",
+      "assertion": "self-description alone should not promote to phase 3"
+    }
+  ]
+}

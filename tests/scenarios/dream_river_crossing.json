@@ -1,0 +1,25 @@
+{
+  "id": "dream_river_crossing",
+  "version": "0.2",
+  "domain": "dream",
+  "description": "Dream encodes transition between phases with crossing imagery.",
+  "inputs": {
+    "dream": {
+      "symbolic_theme": "river crossing",
+      "dream_mood": "threshold",
+      "dream_content": "A bridge appears only when the agent names what it is carrying across the water.",
+      "extracted_insight": "transition requires explicit continuity, not just movement"
+    },
+    "loop_phase_context": "dream -> identity"
+  },
+  "expected_properties": [
+    {
+      "name": "transition_signal",
+      "assertion": "runner should expose this as a phase-transition signal"
+    },
+    {
+      "name": "no_action_by_itself",
+      "assertion": "dream should not create autonomous work action without will or goal support"
+    }
+  ]
+}
