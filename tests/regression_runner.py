@@ -54,7 +54,7 @@ def _maturity_from_tension(tension: dict[str, Any]) -> dict[str, Any]:
             connection_count = 0
 
     factors = {
-        "time": min(1.0, days / 7.0),
+        "time": min(1.0, days / MAX_DAYS_FOR_SYNTHESIS),
         "evidence": min(1.0, evidence_count / 5.0),
         "revisit": min(1.0, revisit_count / 4.0),
         "connection": min(1.0, connection_count / 3.0),
@@ -72,7 +72,7 @@ def _maturity_from_tension(tension: dict[str, Any]) -> dict[str, Any]:
         "normal_synthesis": normal,
         "forced_temporal_synthesis": forced,
         "synthesis_ready": normal or forced,
-        "d2_formula": "time_factor=min(1, days/7.0)",
+        "d2_formula": "time_factor=min(1, days/MAX_DAYS_FOR_SYNTHESIS)",
     }
 
 
@@ -185,6 +185,16 @@ def run_live(model: str) -> dict[str, Any]:
     }
 
 
+def _normalize_result_for_diff(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    if result is None:
+        return None
+    normalized = json.loads(json.dumps(result))
+    maturity = normalized.get("checks", {}).get("rumination_maturity")
+    if isinstance(maturity, dict):
+        maturity.pop("d2_formula", None)
+    return normalized
+
+
 def diff_runs(left_path: str | Path, right_path: str | Path) -> dict[str, Any]:
     left = _read_json(left_path)
     right = _read_json(right_path)
@@ -195,7 +205,7 @@ def diff_runs(left_path: str | Path, right_path: str | Path) -> dict[str, Any]:
     for scenario_id in ids:
         before = left_results.get(scenario_id)
         after = right_results.get(scenario_id)
-        if before != after:
+        if _normalize_result_for_diff(before) != _normalize_result_for_diff(after):
             changes.append(
                 {
                     "scenario_id": scenario_id,

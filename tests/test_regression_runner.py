@@ -21,7 +21,7 @@ def test_mock_runner_marks_d2_sensitive_scenario() -> None:
     }["rumination_forced_temporal"]
     maturity = forced["checks"]["rumination_maturity"]
     assert maturity["forced_temporal_synthesis"] is True
-    assert maturity["d2_formula"] == "time_factor=min(1, days/7.0)"
+    assert maturity["d2_formula"] == "time_factor=min(1, days/MAX_DAYS_FOR_SYNTHESIS)"
 
 
 def test_diff_reports_changed_scenarios(tmp_path) -> None:
@@ -36,3 +36,20 @@ def test_diff_reports_changed_scenarios(tmp_path) -> None:
     diff = regression_runner.diff_runs(left_path, right_path)
     assert diff["scenario_count"] == 20
     assert diff["changed_count"] == 1
+
+
+def test_diff_ignores_d2_formula_label_only(tmp_path) -> None:
+    left = regression_runner.run_mock()
+    right = json.loads(json.dumps(left))
+    rumination_result = next(
+        item for item in right["results"] if "rumination_maturity" in item["checks"]
+    )
+    maturity = rumination_result["checks"]["rumination_maturity"]
+    maturity["d2_formula"] = "time_factor=min(1, days/7.0)"
+    left_path = tmp_path / "left.json"
+    right_path = tmp_path / "right.json"
+    left_path.write_text(json.dumps(left), encoding="utf-8")
+    right_path.write_text(json.dumps(right), encoding="utf-8")
+
+    diff = regression_runner.diff_runs(left_path, right_path)
+    assert diff["changed_count"] == 0
