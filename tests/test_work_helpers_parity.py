@@ -10,6 +10,7 @@ from work.common import (
     _looks_like_objective_echo, _now_iso, _slugify, _truncate,
     _validate_destination_url,
 )
+from work.providers import DEFAULT_PROVIDER_SPECS as PROVIDER_DEFAULT_PROVIDER_SPECS
 from work_engine import (
     DEFAULT_PROVIDER_SPECS,
     _extract_package_text as we_extract_package_text,
@@ -73,6 +74,9 @@ class TestHelperBehavior:
 
 class TestDefaultProviderSpecs:
     """DEFAULT_PROVIDER_SPECS em work_engine tem as 7 entradas esperadas."""
+
+    def test_work_engine_reexports_provider_specs(self):
+        assert DEFAULT_PROVIDER_SPECS is PROVIDER_DEFAULT_PROVIDER_SPECS
 
     def test_executable_providers(self):
         assert DEFAULT_PROVIDER_SPECS["wordpress"]["status"] == "executable"

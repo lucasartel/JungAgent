@@ -68,6 +68,66 @@ DEFAULT_PROVIDER_SPECS = {
             "no_secret_changes",
         ],
     },
+    "google_drive": {
+        "display_name": "Google Drive",
+        "status": "planned",
+        "description": "Leitura e escrita aprovada de documentos/pastas do Google Drive.",
+        "credential_schema": {
+            "fields": [
+                {"name": "workspace_label", "label": "Workspace label", "type": "text", "required": True},
+                {"name": "root_folder_id", "label": "Root folder ID", "type": "text", "required": False},
+                {"name": "oauth_reference", "label": "OAuth reference", "type": "password", "required": True},
+            ],
+            "secret_fields": ["oauth_reference"],
+            "public_fields": ["workspace_label", "root_folder_id"],
+        },
+        "capabilities": ["test_connection", "read_file", "create_doc", "update_doc", "comment_doc"],
+    },
+    "google_calendar": {
+        "display_name": "Google Calendar",
+        "status": "planned",
+        "description": "Criacao e ajuste aprovado de eventos no calendario.",
+        "credential_schema": {
+            "fields": [
+                {"name": "calendar_id", "label": "Calendar ID", "type": "text", "required": True},
+                {"name": "oauth_reference", "label": "OAuth reference", "type": "password", "required": True},
+            ],
+            "secret_fields": ["oauth_reference"],
+            "public_fields": ["calendar_id"],
+        },
+        "capabilities": ["test_connection", "create_event", "update_event", "cancel_event"],
+    },
+    "railway": {
+        "display_name": "Railway",
+        "status": "planned",
+        "description": "Operacao segura de projeto Railway com logs, healthcheck e deploy gates.",
+        "credential_schema": {
+            "fields": [
+                {"name": "project_id", "label": "Project ID", "type": "text", "required": True},
+                {"name": "service_id", "label": "Service ID", "type": "text", "required": False},
+                {"name": "environment", "label": "Environment", "type": "text", "required": False, "default": "production"},
+                {"name": "token", "label": "Railway token", "type": "password", "required": True},
+            ],
+            "secret_fields": ["token"],
+            "public_fields": ["project_id", "service_id", "environment"],
+        },
+        "capabilities": ["test_connection", "read_logs", "read_deployments", "trigger_deploy_after_approval"],
+        "guardrails": ["no_secret_reads", "no_unapproved_deploy", "production_confirmation_required"],
+    },
+    "google": {
+        "display_name": "Google",
+        "status": "legacy_placeholder",
+        "description": "Placeholder legado; preferir google_drive ou google_calendar.",
+        "credential_schema": {"fields": ["oauth"], "secret_fields": ["oauth_refresh_token"]},
+        "capabilities": [],
+    },
+    "asana": {
+        "display_name": "Asana",
+        "status": "planned",
+        "description": "Gestao futura de tarefas e projetos externos.",
+        "credential_schema": {"fields": ["workspace"], "secret_fields": ["api_token"]},
+        "capabilities": [],
+    },
 }
 
 
