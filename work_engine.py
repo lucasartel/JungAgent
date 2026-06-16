@@ -17,6 +17,7 @@ from work.common import (
     _extract_package_text,
     _extract_theme_from_work_seed,
     _has_any_term,
+    _has_non_numeric_terms,
     _json_loads_maybe,
     _looks_like_objective_echo,
     _now_iso,
