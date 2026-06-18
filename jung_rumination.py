@@ -1655,4 +1655,6 @@ class RuminationEngine:
         stats['insights_ready'] = cursor.fetchone()[0]
 
         cursor.execute("SELECT COUNT(*) FROM rumination_insights WHERE user_id = ? AND status = 'delivered'", (user_id,))
-        stats['insights_delivered'] = cursor.fetc
+        stats['insights_delivered'] = cursor.fetchone()[0]
+
+        return stats
