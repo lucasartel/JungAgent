@@ -86,6 +86,80 @@ class TestMaturityWeights:
         assert 0.0 < MIN_MATURITY_FOR_SYNTHESIS < 1.0
 
 
+class TestRuminationStats:
+    def test_get_stats_counts_all_statuses(self, engine, rumination_db):
+        conn = rumination_db.conn
+        user_id = "u1"
+
+        conn.execute(
+            """
+            INSERT INTO rumination_fragments (user_id, fragment_type, content, processed)
+            VALUES (?, 'thought', 'fragment one', 0)
+            """,
+            (user_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO rumination_fragments (user_id, fragment_type, content, processed)
+            VALUES (?, 'thought', 'fragment two', 1)
+            """,
+            (user_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO rumination_tensions (
+                user_id, tension_type, pole_a_content, pole_b_content, status
+            ) VALUES (?, 'conflict', 'a', 'b', 'open')
+            """,
+            (user_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO rumination_tensions (
+                user_id, tension_type, pole_a_content, pole_b_content, status
+            ) VALUES (?, 'conflict', 'a', 'b', 'maturing')
+            """,
+            (user_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO rumination_tensions (
+                user_id, tension_type, pole_a_content, pole_b_content, status
+            ) VALUES (?, 'conflict', 'a', 'b', 'ready_for_synthesis')
+            """,
+            (user_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO rumination_insights (user_id, full_message, status)
+            VALUES (?, 'ready insight', 'ready')
+            """,
+            (user_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO rumination_insights (user_id, full_message, status)
+            VALUES (?, 'delivered insight', 'delivered')
+            """,
+            (user_id,),
+        )
+        conn.commit()
+
+        stats = engine.get_stats(user_id)
+
+        assert stats == {
+            "fragments_total": 2,
+            "fragments_unprocessed": 1,
+            "tensions_total": 3,
+            "tensions_open": 1,
+            "tensions_maturing": 1,
+            "tensions_ready": 1,
+            "insights_total": 2,
+            "insights_ready": 1,
+            "insights_delivered": 1,
+        }
+
+
 # ---------------------------------------------------------------------------
 # 2. time_factor
 # ---------------------------------------------------------------------------
