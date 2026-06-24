@@ -1,0 +1,1010 @@
+[
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/test",
+    "full_path": "/admin/test",
+    "endpoint": "test_route",
+    "line": 127,
+    "migration_bucket": "legacy_admin_core"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/",
+    "full_path": "/admin",
+    "endpoint": "dashboard",
+    "line": 139,
+    "migration_bucket": "legacy_admin_core"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "POST",
+    "path": "/instance/settings",
+    "full_path": "/admin/instance/settings",
+    "endpoint": "update_instance_settings",
+    "line": 210,
+    "migration_bucket": "legacy_admin_core"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/users",
+    "full_path": "/admin/users",
+    "endpoint": "users_list",
+    "line": 253,
+    "migration_bucket": "legacy_admin_core"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/unesco/export",
+    "full_path": "/admin/unesco/export",
+    "endpoint": "view_unesco_data",
+    "line": 270,
+    "migration_bucket": "legacy_unesco_export"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/unesco/export/csv",
+    "full_path": "/admin/unesco/export/csv",
+    "endpoint": "export_unesco_csv",
+    "line": 315,
+    "migration_bucket": "legacy_unesco_export"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/sync-check",
+    "full_path": "/admin/sync-check",
+    "endpoint": "sync_check_page",
+    "line": 381,
+    "migration_bucket": "legacy_admin_core"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/instance/setup",
+    "full_path": "/admin/instance/setup",
+    "endpoint": "instance_setup_page",
+    "line": 386,
+    "migration_bucket": "legacy_admin_core"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/instance/health",
+    "full_path": "/admin/instance/health",
+    "endpoint": "instance_health",
+    "line": 407,
+    "migration_bucket": "legacy_admin_core"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "POST",
+    "path": "/instance/ensure-admin-user",
+    "full_path": "/admin/instance/ensure-admin-user",
+    "endpoint": "instance_ensure_admin_user",
+    "line": 416,
+    "migration_bucket": "legacy_admin_core"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/wellness",
+    "full_path": "/admin/wellness",
+    "endpoint": "wellness_dashboard",
+    "line": 426,
+    "migration_bucket": "legacy_user_analysis"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/user/{user_id}/analysis",
+    "full_path": "/admin/user/{user_id}/analysis",
+    "endpoint": "user_analysis_page",
+    "line": 487,
+    "migration_bucket": "legacy_user_analysis"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/user/{user_id}/agent-data",
+    "full_path": "/admin/user/{user_id}/agent-data",
+    "endpoint": "user_agent_data_page",
+    "line": 521,
+    "migration_bucket": "legacy_user_analysis"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/api/sync-status",
+    "full_path": "/admin/api/sync-status",
+    "endpoint": "get_sync_status",
+    "line": 686,
+    "migration_bucket": "legacy_admin_core"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/api/diagnose",
+    "full_path": "/admin/api/diagnose",
+    "endpoint": "run_diagnosis",
+    "line": 694,
+    "migration_bucket": "legacy_diagnostics"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "POST",
+    "path": "/api/user/{user_id}/analyze-mbti",
+    "full_path": "/admin/api/user/{user_id}/analyze-mbti",
+    "endpoint": "analyze_user_mbti",
+    "line": 762,
+    "migration_bucket": "legacy_admin_core"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/user/{user_id}/psychometrics",
+    "full_path": "/admin/user/{user_id}/psychometrics",
+    "endpoint": "user_psychometrics_page",
+    "line": 898,
+    "migration_bucket": "legacy_psychometrics_reports"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "POST",
+    "path": "/api/user/{user_id}/regenerate-psychometrics",
+    "full_path": "/admin/api/user/{user_id}/regenerate-psychometrics",
+    "endpoint": "regenerate_psychometrics",
+    "line": 1016,
+    "migration_bucket": "legacy_admin_core"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "POST",
+    "path": "/api/user/{user_id}/generate-personal-report",
+    "full_path": "/admin/api/user/{user_id}/generate-personal-report",
+    "endpoint": "generate_personal_report",
+    "line": 1047,
+    "migration_bucket": "legacy_admin_core"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "POST",
+    "path": "/api/user/{user_id}/generate-hr-report",
+    "full_path": "/admin/api/user/{user_id}/generate-hr-report",
+    "endpoint": "generate_hr_report",
+    "line": 1238,
+    "migration_bucket": "legacy_admin_core"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/user/{user_id}/psychometrics/download-pdf",
+    "full_path": "/admin/user/{user_id}/psychometrics/download-pdf",
+    "endpoint": "download_psychometrics_pdf",
+    "line": 1418,
+    "migration_bucket": "legacy_psychometrics_reports"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/api/diagnose-facts",
+    "full_path": "/admin/api/diagnose-facts",
+    "endpoint": "diagnose_facts",
+    "line": 1499,
+    "migration_bucket": "legacy_diagnostics"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/api/diagnose-chromadb",
+    "full_path": "/admin/api/diagnose-chromadb",
+    "endpoint": "diagnose_chromadb",
+    "line": 1600,
+    "migration_bucket": "legacy_diagnostics"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/api/conversation/{conversation_id}",
+    "full_path": "/admin/api/conversation/{conversation_id}",
+    "endpoint": "get_conversation_detail",
+    "line": 1698,
+    "migration_bucket": "legacy_diagnostics"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/user/{user_id}/psychometrics/{dimension}/evidence",
+    "full_path": "/admin/user/{user_id}/psychometrics/{dimension}/evidence",
+    "endpoint": "get_dimension_evidence",
+    "line": 1746,
+    "migration_bucket": "legacy_psychometrics_reports"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "POST",
+    "path": "/user/{user_id}/psychometrics/extract-evidence",
+    "full_path": "/admin/user/{user_id}/psychometrics/extract-evidence",
+    "endpoint": "extract_all_evidence",
+    "line": 1862,
+    "migration_bucket": "legacy_psychometrics_reports"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/memory-metrics",
+    "full_path": "/admin/memory-metrics",
+    "endpoint": "memory_metrics_dashboard",
+    "line": 2276,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/dreams",
+    "full_path": "/admin/dreams",
+    "endpoint": "dreams_dashboard",
+    "line": 2307,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/research",
+    "full_path": "/admin/research",
+    "endpoint": "research_dashboard",
+    "line": 2340,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/jung-lab",
+    "full_path": "/admin/jung-lab",
+    "endpoint": "jung_lab_dashboard",
+    "line": 2555,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "POST",
+    "path": "/api/jung-lab/digest",
+    "full_path": "/admin/api/jung-lab/digest",
+    "endpoint": "run_manual_digest",
+    "line": 2635,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "POST",
+    "path": "/api/jung-lab/scheduler/{action}",
+    "full_path": "/admin/api/jung-lab/scheduler/{action}",
+    "endpoint": "control_scheduler",
+    "line": 2669,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/api/jung-lab/diagnose",
+    "full_path": "/admin/api/jung-lab/diagnose",
+    "endpoint": "diagnose_rumination",
+    "line": 2749,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "POST",
+    "path": "/api/jung-lab/fix-platform",
+    "full_path": "/admin/api/jung-lab/fix-platform",
+    "endpoint": "fix_platform_issue",
+    "line": 2957,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/api/jung-lab/debug-full",
+    "full_path": "/admin/api/jung-lab/debug-full",
+    "endpoint": "debug_rumination_full",
+    "line": 3011,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/api/jung-lab/why-no-insights",
+    "full_path": "/admin/api/jung-lab/why-no-insights",
+    "endpoint": "why_no_insights",
+    "line": 3228,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/api/jung-lab/export-fragments",
+    "full_path": "/admin/api/jung-lab/export-fragments",
+    "endpoint": "export_fragments",
+    "line": 3398,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/api/jung-lab/export-tensions",
+    "full_path": "/admin/api/jung-lab/export-tensions",
+    "endpoint": "export_tensions",
+    "line": 3431,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/api/jung-lab/export-insights",
+    "full_path": "/admin/api/jung-lab/export-insights",
+    "endpoint": "export_insights",
+    "line": 3467,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/jung-mind",
+    "full_path": "/admin/jung-mind",
+    "endpoint": "jung_mind_page",
+    "line": 3505,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes.py",
+    "method": "GET",
+    "path": "/api/jung-mind-data",
+    "full_path": "/admin/api/jung-mind-data",
+    "endpoint": "jung_mind_data",
+    "line": 3517,
+    "migration_bucket": "legacy_research_lab"
+  },
+  {
+    "module": "admin_web/routes/admin_user_routes.py",
+    "method": "GET",
+    "path": "",
+    "full_path": "/admin/admins",
+    "endpoint": "list_admins",
+    "line": 68,
+    "migration_bucket": "admin_user_routes"
+  },
+  {
+    "module": "admin_web/routes/admin_user_routes.py",
+    "method": "GET",
+    "path": "/new",
+    "full_path": "/admin/admins/new",
+    "endpoint": "new_admin_form",
+    "line": 133,
+    "migration_bucket": "admin_user_routes"
+  },
+  {
+    "module": "admin_web/routes/admin_user_routes.py",
+    "method": "POST",
+    "path": "/new",
+    "full_path": "/admin/admins/new",
+    "endpoint": "create_admin",
+    "line": 156,
+    "migration_bucket": "admin_user_routes"
+  },
+  {
+    "module": "admin_web/routes/admin_user_routes.py",
+    "method": "GET",
+    "path": "/{admin_id}/edit",
+    "full_path": "/admin/admins/{admin_id}/edit",
+    "endpoint": "edit_admin_form",
+    "line": 230,
+    "migration_bucket": "admin_user_routes"
+  },
+  {
+    "module": "admin_web/routes/admin_user_routes.py",
+    "method": "POST",
+    "path": "/{admin_id}/edit",
+    "full_path": "/admin/admins/{admin_id}/edit",
+    "endpoint": "update_admin",
+    "line": 284,
+    "migration_bucket": "admin_user_routes"
+  },
+  {
+    "module": "admin_web/routes/admin_user_routes.py",
+    "method": "POST",
+    "path": "/{admin_id}/deactivate",
+    "full_path": "/admin/admins/{admin_id}/deactivate",
+    "endpoint": "deactivate_admin",
+    "line": 372,
+    "migration_bucket": "admin_user_routes"
+  },
+  {
+    "module": "admin_web/routes/agent_identity_routes.py",
+    "method": "GET",
+    "path": "/stats",
+    "full_path": "/admin/agent-identity/stats",
+    "endpoint": "get_agent_identity_stats",
+    "line": 49,
+    "migration_bucket": "agent_identity_routes"
+  },
+  {
+    "module": "admin_web/routes/agent_identity_routes.py",
+    "method": "GET",
+    "path": "/context",
+    "full_path": "/admin/agent-identity/context",
+    "endpoint": "get_agent_identity_context",
+    "line": 81,
+    "migration_bucket": "agent_identity_routes"
+  },
+  {
+    "module": "admin_web/routes/agent_identity_routes.py",
+    "method": "GET",
+    "path": "/current-state",
+    "full_path": "/admin/agent-identity/current-state",
+    "endpoint": "get_current_mind_state",
+    "line": 127,
+    "migration_bucket": "agent_identity_routes"
+  },
+  {
+    "module": "admin_web/routes/agent_identity_routes.py",
+    "method": "GET",
+    "path": "/meta-consciousness",
+    "full_path": "/admin/agent-identity/meta-consciousness",
+    "endpoint": "get_meta_consciousness_status",
+    "line": 188,
+    "migration_bucket": "agent_identity_routes"
+  },
+  {
+    "module": "admin_web/routes/agent_identity_routes.py",
+    "method": "GET",
+    "path": "/nuclear",
+    "full_path": "/admin/agent-identity/nuclear",
+    "endpoint": "get_nuclear_beliefs",
+    "line": 283,
+    "migration_bucket": "agent_identity_routes"
+  },
+  {
+    "module": "admin_web/routes/agent_identity_routes.py",
+    "method": "GET",
+    "path": "/contradictions",
+    "full_path": "/admin/agent-identity/contradictions",
+    "endpoint": "get_active_contradictions",
+    "line": 350,
+    "migration_bucket": "agent_identity_routes"
+  },
+  {
+    "module": "admin_web/routes/agent_identity_routes.py",
+    "method": "GET",
+    "path": "/narrative",
+    "full_path": "/admin/agent-identity/narrative",
+    "endpoint": "get_narrative_chapters",
+    "line": 417,
+    "migration_bucket": "agent_identity_routes"
+  },
+  {
+    "module": "admin_web/routes/agent_identity_routes.py",
+    "method": "GET",
+    "path": "/relational",
+    "full_path": "/admin/agent-identity/relational",
+    "endpoint": "get_relational_identities",
+    "line": 486,
+    "migration_bucket": "agent_identity_routes"
+  },
+  {
+    "module": "admin_web/routes/agent_identity_routes.py",
+    "method": "POST",
+    "path": "/consolidate",
+    "full_path": "/admin/agent-identity/consolidate",
+    "endpoint": "run_manual_consolidation",
+    "line": 547,
+    "migration_bucket": "agent_identity_routes"
+  },
+  {
+    "module": "admin_web/routes/agent_identity_routes.py",
+    "method": "GET",
+    "path": "/export/download",
+    "full_path": "/admin/agent-identity/export/download",
+    "endpoint": "download_endojung_snapshot",
+    "line": 682,
+    "migration_bucket": "agent_identity_routes"
+  },
+  {
+    "module": "admin_web/routes/agent_identity_routes.py",
+    "method": "GET",
+    "path": "/dashboard",
+    "full_path": "/admin/agent-identity/dashboard",
+    "endpoint": "agent_identity_dashboard",
+    "line": 713,
+    "migration_bucket": "agent_identity_routes"
+  },
+  {
+    "module": "admin_web/routes/art_routes.py",
+    "method": "GET",
+    "path": "/state",
+    "full_path": "/admin/art/state",
+    "endpoint": "get_art_state",
+    "line": 45,
+    "migration_bucket": "art_routes"
+  },
+  {
+    "module": "admin_web/routes/art_routes.py",
+    "method": "POST",
+    "path": "/generate",
+    "full_path": "/admin/art/generate",
+    "endpoint": "generate_art",
+    "line": 56,
+    "migration_bucket": "art_routes"
+  },
+  {
+    "module": "admin_web/routes/art_routes.py",
+    "method": "GET",
+    "path": "/dashboard",
+    "full_path": "/admin/art/dashboard",
+    "endpoint": "art_dashboard",
+    "line": 94,
+    "migration_bucket": "art_routes"
+  },
+  {
+    "module": "admin_web/routes/auth_routes.py",
+    "method": "GET",
+    "path": "/login",
+    "full_path": "/admin/login",
+    "endpoint": "login_page",
+    "line": 103,
+    "migration_bucket": "auth_routes"
+  },
+  {
+    "module": "admin_web/routes/auth_routes.py",
+    "method": "POST",
+    "path": "/login",
+    "full_path": "/admin/login",
+    "endpoint": "login",
+    "line": 116,
+    "migration_bucket": "auth_routes"
+  },
+  {
+    "module": "admin_web/routes/auth_routes.py",
+    "method": "POST",
+    "path": "/logout",
+    "full_path": "/admin/logout",
+    "endpoint": "logout",
+    "line": 207,
+    "migration_bucket": "auth_routes"
+  },
+  {
+    "module": "admin_web/routes/auth_routes.py",
+    "method": "GET",
+    "path": "/logout",
+    "full_path": "/admin/logout",
+    "endpoint": "logout_get",
+    "line": 227,
+    "migration_bucket": "auth_routes"
+  },
+  {
+    "module": "admin_web/routes/consciousness_loop_routes.py",
+    "method": "GET",
+    "path": "/state",
+    "full_path": "/admin/consciousness-loop/state",
+    "endpoint": "get_loop_state",
+    "line": 49,
+    "migration_bucket": "consciousness_loop_routes"
+  },
+  {
+    "module": "admin_web/routes/consciousness_loop_routes.py",
+    "method": "GET",
+    "path": "/events",
+    "full_path": "/admin/consciousness-loop/events",
+    "endpoint": "get_loop_events",
+    "line": 63,
+    "migration_bucket": "consciousness_loop_routes"
+  },
+  {
+    "module": "admin_web/routes/consciousness_loop_routes.py",
+    "method": "GET",
+    "path": "/results",
+    "full_path": "/admin/consciousness-loop/results",
+    "endpoint": "get_loop_results",
+    "line": 76,
+    "migration_bucket": "consciousness_loop_routes"
+  },
+  {
+    "module": "admin_web/routes/consciousness_loop_routes.py",
+    "method": "POST",
+    "path": "/sync",
+    "full_path": "/admin/consciousness-loop/sync",
+    "endpoint": "sync_loop",
+    "line": 89,
+    "migration_bucket": "consciousness_loop_routes"
+  },
+  {
+    "module": "admin_web/routes/consciousness_loop_routes.py",
+    "method": "POST",
+    "path": "/execute-current",
+    "full_path": "/admin/consciousness-loop/execute-current",
+    "endpoint": "execute_current_phase",
+    "line": 100,
+    "migration_bucket": "consciousness_loop_routes"
+  },
+  {
+    "module": "admin_web/routes/consciousness_loop_routes.py",
+    "method": "GET",
+    "path": "/dashboard",
+    "full_path": "/admin/consciousness-loop/dashboard",
+    "endpoint": "consciousness_loop_dashboard",
+    "line": 111,
+    "migration_bucket": "consciousness_loop_routes"
+  },
+  {
+    "module": "admin_web/routes/dashboard_routes.py",
+    "method": "GET",
+    "path": "/master/dashboard",
+    "full_path": "/admin/master/dashboard",
+    "endpoint": "master_dashboard",
+    "line": 41,
+    "migration_bucket": "dashboard_routes"
+  },
+  {
+    "module": "admin_web/routes/dashboard_routes.py",
+    "method": "GET",
+    "path": "/org/dashboard",
+    "full_path": "/admin/org/dashboard",
+    "endpoint": "org_dashboard",
+    "line": 147,
+    "migration_bucket": "dashboard_routes"
+  },
+  {
+    "module": "admin_web/routes/dashboard_routes.py",
+    "method": "GET",
+    "path": "/org/users",
+    "full_path": "/admin/org/users",
+    "endpoint": "org_users_list",
+    "line": 268,
+    "migration_bucket": "dashboard_routes"
+  },
+  {
+    "module": "admin_web/routes/dashboard_routes.py",
+    "method": "POST",
+    "path": "/user/{user_id}/delete",
+    "full_path": "/admin/user/{user_id}/delete",
+    "endpoint": "delete_telegram_user",
+    "line": 367,
+    "migration_bucket": "dashboard_routes"
+  },
+  {
+    "module": "admin_web/routes/irt_routes.py",
+    "method": "GET",
+    "path": "/dashboard",
+    "full_path": "/admin/irt/dashboard",
+    "endpoint": "irt_dashboard",
+    "line": 60,
+    "migration_bucket": "irt_routes"
+  },
+  {
+    "module": "admin_web/routes/irt_routes.py",
+    "method": "GET",
+    "path": "/user/{user_id}",
+    "full_path": "/admin/irt/user/{user_id}",
+    "endpoint": "get_user_tri_profile",
+    "line": 240,
+    "migration_bucket": "irt_routes"
+  },
+  {
+    "module": "admin_web/routes/irt_routes.py",
+    "method": "GET",
+    "path": "/comparison/{user_id}",
+    "full_path": "/admin/irt/comparison/{user_id}",
+    "endpoint": "compare_tri_legacy",
+    "line": 386,
+    "migration_bucket": "irt_routes"
+  },
+  {
+    "module": "admin_web/routes/irt_routes.py",
+    "method": "POST",
+    "path": "/migration/run",
+    "full_path": "/admin/irt/migration/run",
+    "endpoint": "run_tri_migration",
+    "line": 513,
+    "migration_bucket": "irt_routes"
+  },
+  {
+    "module": "admin_web/routes/irt_routes.py",
+    "method": "POST",
+    "path": "/seed/fragments",
+    "full_path": "/admin/irt/seed/fragments",
+    "endpoint": "seed_tri_fragments",
+    "line": 548,
+    "migration_bucket": "irt_routes"
+  },
+  {
+    "module": "admin_web/routes/irt_routes.py",
+    "method": "GET",
+    "path": "/migration/status",
+    "full_path": "/admin/irt/migration/status",
+    "endpoint": "get_migration_status",
+    "line": 674,
+    "migration_bucket": "irt_routes"
+  },
+  {
+    "module": "admin_web/routes/irt_routes.py",
+    "method": "GET",
+    "path": "/fragments/stats",
+    "full_path": "/admin/irt/fragments/stats",
+    "endpoint": "get_fragment_stats",
+    "line": 732,
+    "migration_bucket": "irt_routes"
+  },
+  {
+    "module": "admin_web/routes/irt_routes.py",
+    "method": "GET",
+    "path": "/api/domain-distribution",
+    "full_path": "/admin/irt/api/domain-distribution",
+    "endpoint": "get_domain_distribution",
+    "line": 838,
+    "migration_bucket": "irt_routes"
+  },
+  {
+    "module": "admin_web/routes/irt_routes.py",
+    "method": "GET",
+    "path": "/api/detection-timeline",
+    "full_path": "/admin/irt/api/detection-timeline",
+    "endpoint": "get_detection_timeline",
+    "line": 881,
+    "migration_bucket": "irt_routes"
+  },
+  {
+    "module": "admin_web/routes/organization_routes.py",
+    "method": "GET",
+    "path": "",
+    "full_path": "/admin/organizations",
+    "endpoint": "list_organizations",
+    "line": 57,
+    "migration_bucket": "organization_routes"
+  },
+  {
+    "module": "admin_web/routes/organization_routes.py",
+    "method": "GET",
+    "path": "/new",
+    "full_path": "/admin/organizations/new",
+    "endpoint": "new_organization_form",
+    "line": 138,
+    "migration_bucket": "organization_routes"
+  },
+  {
+    "module": "admin_web/routes/organization_routes.py",
+    "method": "POST",
+    "path": "/new",
+    "full_path": "/admin/organizations/new",
+    "endpoint": "create_organization",
+    "line": 152,
+    "migration_bucket": "organization_routes"
+  },
+  {
+    "module": "admin_web/routes/organization_routes.py",
+    "method": "GET",
+    "path": "/{org_id}/edit",
+    "full_path": "/admin/organizations/{org_id}/edit",
+    "endpoint": "edit_organization_form",
+    "line": 221,
+    "migration_bucket": "organization_routes"
+  },
+  {
+    "module": "admin_web/routes/organization_routes.py",
+    "method": "POST",
+    "path": "/{org_id}/edit",
+    "full_path": "/admin/organizations/{org_id}/edit",
+    "endpoint": "update_organization",
+    "line": 271,
+    "migration_bucket": "organization_routes"
+  },
+  {
+    "module": "admin_web/routes/organization_routes.py",
+    "method": "POST",
+    "path": "/{org_id}/delete",
+    "full_path": "/admin/organizations/{org_id}/delete",
+    "endpoint": "delete_organization",
+    "line": 335,
+    "migration_bucket": "organization_routes"
+  },
+  {
+    "module": "admin_web/routes/trigger_routes.py",
+    "method": "POST",
+    "path": "/rumination",
+    "full_path": "/admin/triggers/rumination",
+    "endpoint": "trigger_rumination",
+    "line": 18,
+    "migration_bucket": "trigger_routes"
+  },
+  {
+    "module": "admin_web/routes/trigger_routes.py",
+    "method": "POST",
+    "path": "/research",
+    "full_path": "/admin/triggers/research",
+    "endpoint": "trigger_research",
+    "line": 32,
+    "migration_bucket": "trigger_routes"
+  },
+  {
+    "module": "admin_web/routes/trigger_routes.py",
+    "method": "POST",
+    "path": "/identity-consolidation",
+    "full_path": "/admin/triggers/identity-consolidation",
+    "endpoint": "trigger_identity_consolidation",
+    "line": 92,
+    "migration_bucket": "trigger_routes"
+  },
+  {
+    "module": "admin_web/routes/trigger_routes.py",
+    "method": "POST",
+    "path": "/identity-bridge",
+    "full_path": "/admin/triggers/identity-bridge",
+    "endpoint": "trigger_identity_bridge",
+    "line": 116,
+    "migration_bucket": "trigger_routes"
+  },
+  {
+    "module": "admin_web/routes/trigger_routes.py",
+    "method": "POST",
+    "path": "/memory-metrics",
+    "full_path": "/admin/triggers/memory-metrics",
+    "endpoint": "trigger_memory_metrics",
+    "line": 128,
+    "migration_bucket": "trigger_routes"
+  },
+  {
+    "module": "admin_web/routes/trigger_routes.py",
+    "method": "POST",
+    "path": "/proactive-messages",
+    "full_path": "/admin/triggers/proactive-messages",
+    "endpoint": "trigger_proactive_messages",
+    "line": 141,
+    "migration_bucket": "trigger_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "GET",
+    "path": "/state",
+    "full_path": "/admin/work/state",
+    "endpoint": "get_work_state",
+    "line": 49,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "POST",
+    "path": "/destinations/test",
+    "full_path": "/admin/work/destinations/test",
+    "endpoint": "test_destination",
+    "line": 59,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "POST",
+    "path": "/destinations",
+    "full_path": "/admin/work/destinations",
+    "endpoint": "create_destination",
+    "line": 82,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "POST",
+    "path": "/projects",
+    "full_path": "/admin/work/projects",
+    "endpoint": "create_project",
+    "line": 108,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "PATCH",
+    "path": "/projects/{project_id}",
+    "full_path": "/admin/work/projects/{project_id}",
+    "endpoint": "update_project",
+    "line": 132,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "DELETE",
+    "path": "/projects/{project_id}",
+    "full_path": "/admin/work/projects/{project_id}",
+    "endpoint": "delete_project",
+    "line": 144,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "POST",
+    "path": "/briefs/manual",
+    "full_path": "/admin/work/briefs/manual",
+    "endpoint": "create_manual_brief",
+    "line": 159,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "POST",
+    "path": "/briefs/{brief_id}/compose",
+    "full_path": "/admin/work/briefs/{brief_id}/compose",
+    "endpoint": "compose_brief",
+    "line": 189,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "POST",
+    "path": "/tickets/{ticket_id}/approve",
+    "full_path": "/admin/work/tickets/{ticket_id}/approve",
+    "endpoint": "approve_ticket",
+    "line": 206,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "POST",
+    "path": "/tickets/{ticket_id}/reject",
+    "full_path": "/admin/work/tickets/{ticket_id}/reject",
+    "endpoint": "reject_ticket",
+    "line": 217,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "POST",
+    "path": "/artifacts/{artifact_id}/request-publish",
+    "full_path": "/admin/work/artifacts/{artifact_id}/request-publish",
+    "endpoint": "request_publish",
+    "line": 234,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "GET",
+    "path": "/dashboard",
+    "full_path": "/admin/work/dashboard",
+    "endpoint": "work_dashboard",
+    "line": 245,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/world_consciousness_routes.py",
+    "method": "GET",
+    "path": "/state",
+    "full_path": "/admin/world-consciousness/state",
+    "endpoint": "get_world_state",
+    "line": 24,
+    "migration_bucket": "world_consciousness_routes"
+  },
+  {
+    "module": "admin_web/routes/world_consciousness_routes.py",
+    "method": "GET",
+    "path": "/history",
+    "full_path": "/admin/world-consciousness/history",
+    "endpoint": "get_world_history",
+    "line": 34,
+    "migration_bucket": "world_consciousness_routes"
+  },
+  {
+    "module": "admin_web/routes/world_consciousness_routes.py",
+    "method": "POST",
+    "path": "/refresh",
+    "full_path": "/admin/world-consciousness/refresh",
+    "endpoint": "refresh_world_state",
+    "line": 44,
+    "migration_bucket": "world_consciousness_routes"
+  },
+  {
+    "module": "admin_web/routes/world_consciousness_routes.py",
+    "method": "GET",
+    "path": "/dashboard",
+    "full_path": "/admin/world-consciousness/dashboard",
+    "endpoint": "world_dashboard",
+    "line": 55,
+    "migration_bucket": "world_consciousness_routes"
+  }
+]
