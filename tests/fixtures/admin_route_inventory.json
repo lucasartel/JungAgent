@@ -38,28 +38,10 @@
   {
     "module": "admin_web/routes.py",
     "method": "GET",
-    "path": "/unesco/export",
-    "full_path": "/admin/unesco/export",
-    "endpoint": "view_unesco_data",
-    "line": 270,
-    "migration_bucket": "legacy_unesco_export"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/unesco/export/csv",
-    "full_path": "/admin/unesco/export/csv",
-    "endpoint": "export_unesco_csv",
-    "line": 315,
-    "migration_bucket": "legacy_unesco_export"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
     "path": "/sync-check",
     "full_path": "/admin/sync-check",
     "endpoint": "sync_check_page",
-    "line": 381,
+    "line": 270,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -68,7 +50,7 @@
     "path": "/instance/setup",
     "full_path": "/admin/instance/setup",
     "endpoint": "instance_setup_page",
-    "line": 386,
+    "line": 275,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -77,7 +59,7 @@
     "path": "/instance/health",
     "full_path": "/admin/instance/health",
     "endpoint": "instance_health",
-    "line": 407,
+    "line": 296,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -86,7 +68,7 @@
     "path": "/instance/ensure-admin-user",
     "full_path": "/admin/instance/ensure-admin-user",
     "endpoint": "instance_ensure_admin_user",
-    "line": 416,
+    "line": 305,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -95,7 +77,7 @@
     "path": "/wellness",
     "full_path": "/admin/wellness",
     "endpoint": "wellness_dashboard",
-    "line": 426,
+    "line": 315,
     "migration_bucket": "legacy_user_analysis"
   },
   {
@@ -104,7 +86,7 @@
     "path": "/user/{user_id}/analysis",
     "full_path": "/admin/user/{user_id}/analysis",
     "endpoint": "user_analysis_page",
-    "line": 487,
+    "line": 376,
     "migration_bucket": "legacy_user_analysis"
   },
   {
@@ -113,7 +95,7 @@
     "path": "/user/{user_id}/agent-data",
     "full_path": "/admin/user/{user_id}/agent-data",
     "endpoint": "user_agent_data_page",
-    "line": 521,
+    "line": 410,
     "migration_bucket": "legacy_user_analysis"
   },
   {
@@ -122,7 +104,7 @@
     "path": "/api/sync-status",
     "full_path": "/admin/api/sync-status",
     "endpoint": "get_sync_status",
-    "line": 686,
+    "line": 575,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -131,7 +113,7 @@
     "path": "/api/diagnose",
     "full_path": "/admin/api/diagnose",
     "endpoint": "run_diagnosis",
-    "line": 694,
+    "line": 583,
     "migration_bucket": "legacy_diagnostics"
   },
   {
@@ -140,7 +122,7 @@
     "path": "/api/user/{user_id}/analyze-mbti",
     "full_path": "/admin/api/user/{user_id}/analyze-mbti",
     "endpoint": "analyze_user_mbti",
-    "line": 762,
+    "line": 651,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -149,7 +131,7 @@
     "path": "/user/{user_id}/psychometrics",
     "full_path": "/admin/user/{user_id}/psychometrics",
     "endpoint": "user_psychometrics_page",
-    "line": 898,
+    "line": 787,
     "migration_bucket": "legacy_psychometrics_reports"
   },
   {
@@ -158,7 +140,7 @@
     "path": "/api/user/{user_id}/regenerate-psychometrics",
     "full_path": "/admin/api/user/{user_id}/regenerate-psychometrics",
     "endpoint": "regenerate_psychometrics",
-    "line": 1016,
+    "line": 905,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -167,7 +149,7 @@
     "path": "/api/user/{user_id}/generate-personal-report",
     "full_path": "/admin/api/user/{user_id}/generate-personal-report",
     "endpoint": "generate_personal_report",
-    "line": 1047,
+    "line": 936,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -176,7 +158,7 @@
     "path": "/api/user/{user_id}/generate-hr-report",
     "full_path": "/admin/api/user/{user_id}/generate-hr-report",
     "endpoint": "generate_hr_report",
-    "line": 1238,
+    "line": 1127,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -185,7 +167,7 @@
     "path": "/user/{user_id}/psychometrics/download-pdf",
     "full_path": "/admin/user/{user_id}/psychometrics/download-pdf",
     "endpoint": "download_psychometrics_pdf",
-    "line": 1418,
+    "line": 1307,
     "migration_bucket": "legacy_psychometrics_reports"
   },
   {
@@ -194,7 +176,7 @@
     "path": "/api/diagnose-facts",
     "full_path": "/admin/api/diagnose-facts",
     "endpoint": "diagnose_facts",
-    "line": 1499,
+    "line": 1388,
     "migration_bucket": "legacy_diagnostics"
   },
   {
@@ -203,7 +185,7 @@
     "path": "/api/diagnose-chromadb",
     "full_path": "/admin/api/diagnose-chromadb",
     "endpoint": "diagnose_chromadb",
-    "line": 1600,
+    "line": 1489,
     "migration_bucket": "legacy_diagnostics"
   },
   {
@@ -212,7 +194,7 @@
     "path": "/api/conversation/{conversation_id}",
     "full_path": "/admin/api/conversation/{conversation_id}",
     "endpoint": "get_conversation_detail",
-    "line": 1698,
+    "line": 1587,
     "migration_bucket": "legacy_diagnostics"
   },
   {
@@ -221,7 +203,7 @@
     "path": "/user/{user_id}/psychometrics/{dimension}/evidence",
     "full_path": "/admin/user/{user_id}/psychometrics/{dimension}/evidence",
     "endpoint": "get_dimension_evidence",
-    "line": 1746,
+    "line": 1635,
     "migration_bucket": "legacy_psychometrics_reports"
   },
   {
@@ -230,7 +212,7 @@
     "path": "/user/{user_id}/psychometrics/extract-evidence",
     "full_path": "/admin/user/{user_id}/psychometrics/extract-evidence",
     "endpoint": "extract_all_evidence",
-    "line": 1862,
+    "line": 1751,
     "migration_bucket": "legacy_psychometrics_reports"
   },
   {
@@ -239,7 +221,7 @@
     "path": "/memory-metrics",
     "full_path": "/admin/memory-metrics",
     "endpoint": "memory_metrics_dashboard",
-    "line": 2276,
+    "line": 2165,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -248,7 +230,7 @@
     "path": "/dreams",
     "full_path": "/admin/dreams",
     "endpoint": "dreams_dashboard",
-    "line": 2307,
+    "line": 2196,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -257,7 +239,7 @@
     "path": "/research",
     "full_path": "/admin/research",
     "endpoint": "research_dashboard",
-    "line": 2340,
+    "line": 2229,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -266,7 +248,7 @@
     "path": "/jung-lab",
     "full_path": "/admin/jung-lab",
     "endpoint": "jung_lab_dashboard",
-    "line": 2555,
+    "line": 2444,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -275,7 +257,7 @@
     "path": "/api/jung-lab/digest",
     "full_path": "/admin/api/jung-lab/digest",
     "endpoint": "run_manual_digest",
-    "line": 2635,
+    "line": 2524,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -284,7 +266,7 @@
     "path": "/api/jung-lab/scheduler/{action}",
     "full_path": "/admin/api/jung-lab/scheduler/{action}",
     "endpoint": "control_scheduler",
-    "line": 2669,
+    "line": 2558,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -293,7 +275,7 @@
     "path": "/api/jung-lab/diagnose",
     "full_path": "/admin/api/jung-lab/diagnose",
     "endpoint": "diagnose_rumination",
-    "line": 2749,
+    "line": 2638,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -302,7 +284,7 @@
     "path": "/api/jung-lab/fix-platform",
     "full_path": "/admin/api/jung-lab/fix-platform",
     "endpoint": "fix_platform_issue",
-    "line": 2957,
+    "line": 2846,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -311,7 +293,7 @@
     "path": "/api/jung-lab/debug-full",
     "full_path": "/admin/api/jung-lab/debug-full",
     "endpoint": "debug_rumination_full",
-    "line": 3011,
+    "line": 2900,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -320,7 +302,7 @@
     "path": "/api/jung-lab/why-no-insights",
     "full_path": "/admin/api/jung-lab/why-no-insights",
     "endpoint": "why_no_insights",
-    "line": 3228,
+    "line": 3117,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -329,7 +311,7 @@
     "path": "/api/jung-lab/export-fragments",
     "full_path": "/admin/api/jung-lab/export-fragments",
     "endpoint": "export_fragments",
-    "line": 3398,
+    "line": 3287,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -338,7 +320,7 @@
     "path": "/api/jung-lab/export-tensions",
     "full_path": "/admin/api/jung-lab/export-tensions",
     "endpoint": "export_tensions",
-    "line": 3431,
+    "line": 3320,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -347,7 +329,7 @@
     "path": "/api/jung-lab/export-insights",
     "full_path": "/admin/api/jung-lab/export-insights",
     "endpoint": "export_insights",
-    "line": 3467,
+    "line": 3356,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -356,7 +338,7 @@
     "path": "/jung-mind",
     "full_path": "/admin/jung-mind",
     "endpoint": "jung_mind_page",
-    "line": 3505,
+    "line": 3394,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -365,7 +347,7 @@
     "path": "/api/jung-mind-data",
     "full_path": "/admin/api/jung-mind-data",
     "endpoint": "jung_mind_data",
-    "line": 3517,
+    "line": 3406,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -862,6 +844,24 @@
     "endpoint": "trigger_proactive_messages",
     "line": 141,
     "migration_bucket": "trigger_routes"
+  },
+  {
+    "module": "admin_web/routes/unesco_export_routes.py",
+    "method": "GET",
+    "path": "/unesco/export",
+    "full_path": "/admin/unesco/export",
+    "endpoint": "view_unesco_data",
+    "line": 34,
+    "migration_bucket": "unesco_export_routes"
+  },
+  {
+    "module": "admin_web/routes/unesco_export_routes.py",
+    "method": "GET",
+    "path": "/unesco/export/csv",
+    "full_path": "/admin/unesco/export/csv",
+    "endpoint": "export_unesco_csv",
+    "line": 83,
+    "migration_bucket": "unesco_export_routes"
   },
   {
     "module": "admin_web/routes/work_routes.py",
