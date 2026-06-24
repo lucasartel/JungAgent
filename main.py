@@ -2009,6 +2009,22 @@ except Exception as e:
     logger.error(f"Traceback completo:\n{traceback.format_exc()}")
     logger.warning("⚠️  Rotas de análise não disponíveis")
 
+
+# Rotas de export do Piloto UNESCO
+try:
+    from admin_web.routes.unesco_export_routes import router as unesco_export_router, init_unesco_export_routes
+
+    if hasattr(bot_state, 'db') and bot_state.db:
+        init_unesco_export_routes(bot_state.db)
+        app.include_router(unesco_export_router)
+        logger.info("✅ Rotas de export UNESCO carregadas")
+    else:
+        logger.warning("⚠️  DatabaseManager não disponível - UNESCO export routes não carregadas")
+except Exception as e:
+    import traceback
+    logger.error(f"❌ Erro ao carregar UNESCO export routes: {e}")
+    logger.error(traceback.format_exc())
+
 # Rotas de autenticação multi-tenant
 try:
     from admin_web.routes.auth_routes import router as auth_router, init_auth_routes
