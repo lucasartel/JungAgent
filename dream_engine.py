@@ -19,6 +19,7 @@ except ImportError:  # pragma: no cover - production installs it via requirement
 from jung_core import Config, HybridDatabaseManager
 from agent_identity_context_builder import AgentIdentityContextBuilder
 from jung_rumination import RuminationEngine
+from payload_storage import persistable_image_url, sanitize_persisted_payload
 
 logger = logging.getLogger(__name__)
 
@@ -589,7 +590,7 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
 
         return f"{base_prompt}\n\n{style_clause}"
 
-    def _extract_openrouter_image_data_url(self, response: Any) -> Optional[str]:
+    def _extract_openrouter_image_url(self, response: Any) -> Optional[str]:
         if response is None:
             return None
 
@@ -611,25 +612,17 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
         for image in images:
             image_url = image.get("image_url") if isinstance(image, dict) else None
             url = image_url.get("url") if isinstance(image_url, dict) else None
-            if isinstance(url, str) and url.startswith("data:image/"):
-                return url
+            candidate = persistable_image_url(url)
+            if candidate:
+                return candidate
 
         return None
 
     def _sanitize_openrouter_response(self, response: Any) -> str:
         try:
             payload = response.model_dump() if hasattr(response, "model_dump") else response
-            choices = payload.get("choices", []) if isinstance(payload, dict) else []
-            for choice in choices:
-                message = choice.get("message") if isinstance(choice, dict) else None
-                images = message.get("images") if isinstance(message, dict) else None
-                if not images:
-                    continue
-                for image in images:
-                    image_url = image.get("image_url") if isinstance(image, dict) else None
-                    if isinstance(image_url, dict) and isinstance(image_url.get("url"), str):
-                        image_url["url"] = "[data-url-redacted]"
-            return json.dumps(payload, ensure_ascii=False)[:4000]
+            sanitized = sanitize_persisted_payload(payload, max_string_chars=4000)
+            return json.dumps(sanitized, ensure_ascii=False)[:4000]
         except Exception:
             return "{}"
 
@@ -664,7 +657,7 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
                 },
             },
         )
-        return self._extract_openrouter_image_data_url(response), self._sanitize_openrouter_response(response)
+        return self._extract_openrouter_image_url(response), self._sanitize_openrouter_response(response)
 
     def _build_pollinations_image_url(self, dream_id: int, image_prompt: str) -> str:
         encoded_prompt = urllib.parse.quote(image_prompt)

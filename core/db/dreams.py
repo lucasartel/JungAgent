@@ -5,6 +5,8 @@ import sqlite3
 import time
 from typing import Dict, List, Optional
 
+from payload_storage import persistable_image_url, sanitize_json_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -75,6 +77,8 @@ class DreamDatabaseMixin:
     ) -> bool:
         """Salva a imagem gerada e seus metadados."""
         with self._lock:
+            stored_image_url = persistable_image_url(image_url)
+            stored_raw_response_json = sanitize_json_text(image_raw_response_json, max_string_chars=4000)
             for attempt in range(3):
                 try:
                     cursor = self.conn.cursor()
@@ -88,12 +92,12 @@ class DreamDatabaseMixin:
                             image_raw_response_json = ?
                         WHERE id = ?
                     """, (
-                        image_url,
+                        stored_image_url,
                         image_prompt,
                         image_provider,
                         image_model,
                         image_status,
-                        image_raw_response_json,
+                        stored_raw_response_json,
                         dream_id,
                     ))
                     self.conn.commit()

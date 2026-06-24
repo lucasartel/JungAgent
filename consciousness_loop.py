@@ -20,6 +20,7 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from payload_storage import sanitize_persisted_payload
 from instance_config import AGENT_INSTANCE, ADMIN_USER_ID
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,9 @@ class ConsciousnessLoopManager:
 
     def _serialize(self, value) -> str:
         return json.dumps(value or [], ensure_ascii=False)
+
+    def _serialize_raw_result(self, value: Any) -> str:
+        return json.dumps(sanitize_persisted_payload(value or {}), ensure_ascii=False)
 
     def _phase_window_for(self, now: Optional[datetime] = None) -> Dict:
         current = now or self._now()
@@ -459,7 +463,7 @@ class ConsciousnessLoopManager:
                 self._serialize(result["warnings"]),
                 self._serialize(result["errors"]),
                 json.dumps(result["metrics"], ensure_ascii=False),
-                json.dumps(result["raw_result"], ensure_ascii=False),
+                self._serialize_raw_result(result["raw_result"]),
             ),
         )
         phase_result_id = cursor.lastrowid
@@ -500,7 +504,7 @@ class ConsciousnessLoopManager:
                 self._serialize(result["warnings"]),
                 self._serialize(result["errors"]),
                 json.dumps(result["metrics"], ensure_ascii=False),
-                json.dumps(result["raw_result"], ensure_ascii=False),
+                self._serialize_raw_result(result["raw_result"]),
                 phase_result_id,
             ),
         )
