@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover - production installs it via requirement
     OpenAI = None
 
 from llm_providers import get_llm_response
+from payload_storage import persistable_image_url, sanitize_persisted_payload
 
 logger = logging.getLogger(__name__)
 
@@ -344,19 +345,13 @@ Responda APENAS com JSON valido:
             }
 
     def _dig_for_image_url(self, value: Any) -> Optional[str]:
-        if isinstance(value, str) and value.startswith("data:image/"):
-            return value
-
-        if isinstance(value, str) and value.startswith(("http://", "https://")):
-            lowered = value.lower()
-            if any(ext in lowered for ext in [".png", ".jpg", ".jpeg", ".webp"]) or "image" in lowered:
-                return value
-            return value
+        if isinstance(value, str):
+            return persistable_image_url(value)
 
         if isinstance(value, dict):
             for key in ("image_url", "imageUrl", "url", "download_url", "output_url"):
-                candidate = value.get(key)
-                if isinstance(candidate, str) and candidate.startswith(("http://", "https://", "data:image/")):
+                candidate = persistable_image_url(value.get(key))
+                if candidate:
                     return candidate
             for item in value.values():
                 candidate = self._dig_for_image_url(item)
@@ -371,15 +366,7 @@ Responda APENAS com JSON valido:
         return None
 
     def _redact_image_data_urls(self, value: Any) -> Any:
-        if isinstance(value, str):
-            if value.startswith("data:image/"):
-                return "[data-url-redacted]"
-            return value
-        if isinstance(value, dict):
-            return {key: self._redact_image_data_urls(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [self._redact_image_data_urls(item) for item in value]
-        return value
+        return sanitize_persisted_payload(value)
 
     def _generate_image_with_openrouter(self, image_prompt: str) -> Dict[str, Any]:
         api_key = os.getenv("OPENROUTER_API_KEY")
@@ -552,6 +539,8 @@ Responda APENAS com JSON valido:
         evaluation_model: Optional[str] = None,
     ) -> int:
         cursor = self.db.conn.cursor()
+        stored_image_url = persistable_image_url(image_url)
+        stored_raw_response = sanitize_persisted_payload(raw_response)
         cursor.execute(
             """
             INSERT INTO agent_hobby_artifacts (
@@ -566,14 +555,14 @@ Responda APENAS com JSON valido:
                 title,
                 summary,
                 image_prompt,
-                image_url,
+                stored_image_url,
                 provider,
                 critique_summary,
                 json.dumps(critique_payload, ensure_ascii=False) if critique_payload else None,
                 evaluation_model,
                 datetime.utcnow().isoformat() if critique_payload else None,
                 json.dumps(inspirations, ensure_ascii=False),
-                json.dumps(raw_response, ensure_ascii=False),
+                json.dumps(stored_raw_response, ensure_ascii=False),
             ),
         )
         self.db.conn.commit()
