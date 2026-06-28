@@ -1498,7 +1498,7 @@ class ConsciousnessLoopManager:
         return result
 
     def _run_work_phase(self, result: Dict) -> Dict:
-        from work_engine import WorkEngine
+        from work import WorkEngine
 
         self._promote_from_placeholder(result)
         engine = WorkEngine(self.db)

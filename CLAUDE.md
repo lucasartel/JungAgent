@@ -28,7 +28,7 @@ Emulação cognitiva persistente sobre LLM (memória autobiográfica, ruminaçã
 | Diário/perfil autobiográfico (evidence-first) | `agent_diary.py` |
 | Desenvolvimento narrativo (fases 0–5, avaliação qualitativa) | `agent_development.py`, `agent_development_policy.py` |
 | Mundo / knowledge gaps | `world_consciousness.py`, `core/db/knowledge_gaps.py` |
-| Trabalho autônomo (em extração para `work/`) | `work_engine.py` → `work/` |
+| Trabalho autônomo | `work/` |
 | Persistência | SQLite + Qdrant; `core/database.py` (em decomposição para `core/db/`) |
 | Admin web | `main.py`, `admin_web/` (FastAPI + Jinja2 + HTMX) |
 | Interface | `telegram_bot.py` |
@@ -37,7 +37,7 @@ Deploy: Railway (volume em `RAILWAY_VOLUME_MOUNT_PATH`). LLM via OpenRouter.
 
 ## Convenções de trabalho
 
-- **Refatoração dos monólitos** (`core/database.py`, `core/engine.py`, `admin_web/routes.py`, `work_engine.py`, `main.py`): extraia em cortes pequenos, mantendo o arquivo original como fachada compatível até a extração completa. Nunca quebre os métodos públicos de `HybridDatabaseManager`.
+- **Refatoração dos monólitos** (`core/database.py`, `core/engine.py`, `admin_web/routes.py`, `main.py`): extraia em cortes pequenos, mantendo o arquivo original como fachada compatível até a extração completa. Nunca quebre os métodos públicos de `HybridDatabaseManager`.
 - **Compatibilidade de schema**: alterações em tabelas SQLite usam `ALTER TABLE` com guarda de existência (padrão já usado em `jung_rumination.py`). Nunca exija recriação de banco.
 - **Prompts de LLM são código crítico**: mudanças em prompts de julgamento (maturidade, avaliação narrativa, síntese) exigem rodar o runner de regressão e registrar o diff de comportamento.
 - **Custo**: não adicione chamadas LLM a fases do loop sem registrar no contador de custo (Fase 0.5) e mencionar no PR.

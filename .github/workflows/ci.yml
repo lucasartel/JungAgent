@@ -92,8 +92,8 @@ jobs:
             utils.py \
             will_engine.py \
             will_pressure.py \
-            work_engine.py \
             world_consciousness.py
+          find work/ -name "*.py" -exec python -m py_compile {} +
 
       - name: Syntax check — core/ package
         run: |

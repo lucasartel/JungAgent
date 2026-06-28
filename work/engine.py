@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import logging
@@ -56,7 +56,6 @@ class WorkEngine(
     def _ensure_provider_registry(self):
         return self.destination_registry.ensure_provider_registry()
 
-
     def _secret_manager(self) -> IntegrationSecretsManager:
         return self.destination_registry.secret_manager()
 
@@ -75,7 +74,12 @@ class WorkEngine(
     def _provider_secret_fields(self, provider_key: str) -> List[str]:
         return self.destination_registry.provider_secret_fields(provider_key)
 
-    def _destination_url_for_provider(self, provider_key: str, fields: Dict[str, Any], test_result: Optional[Dict[str, Any]] = None) -> str:
+    def _destination_url_for_provider(
+        self,
+        provider_key: str,
+        fields: Dict[str, Any],
+        test_result: Optional[Dict[str, Any]] = None,
+    ) -> str:
         return self.destination_registry.destination_url_for_provider(provider_key, fields, test_result)
 
     def _destination_username_for_provider(self, provider_key: str, fields: Dict[str, Any]) -> str:
@@ -84,10 +88,19 @@ class WorkEngine(
     def _secret_payload_for_provider(self, provider_key: str, fields: Dict[str, Any]) -> str:
         return self.destination_registry.secret_payload_for_provider(provider_key, fields)
 
-    def _safe_config_for_provider(self, provider_key: str, fields: Dict[str, Any], test_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _safe_config_for_provider(
+        self,
+        provider_key: str,
+        fields: Dict[str, Any],
+        test_result: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         return self.destination_registry.safe_config_for_provider(provider_key, fields, test_result)
 
-    def test_destination_connection(self, provider_key: str, fields: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def test_destination_connection(
+        self,
+        provider_key: str,
+        fields: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         return self.destination_registry.test_connection(provider_key, fields)
 
     def list_destinations(self) -> List[Dict[str, Any]]:

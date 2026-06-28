@@ -11,7 +11,7 @@ from work.common import (
     _validate_destination_url,
 )
 from work.providers import DEFAULT_PROVIDER_SPECS as PROVIDER_DEFAULT_PROVIDER_SPECS
-from work_engine import (
+from work.engine import (
     DEFAULT_PROVIDER_SPECS,
     _extract_package_text as we_extract_package_text,
     _extract_theme_from_work_seed as we_extract_theme,
@@ -26,7 +26,7 @@ from work_engine import (
 
 
 class TestSymbolIdentity:
-    """Helpers em work_engine sao os mesmos objetos de work.common (import, nao copia)."""
+    """Helpers em work.engine sao os mesmos objetos de work.common (import, nao copia)."""
 
     def test_slugify_same(self):        assert we_slugify is _slugify
     def test_truncate_same(self):       assert we_truncate is _truncate
@@ -73,7 +73,7 @@ class TestHelperBehavior:
 
 
 class TestDefaultProviderSpecs:
-    """DEFAULT_PROVIDER_SPECS em work_engine tem as 7 entradas esperadas."""
+    """DEFAULT_PROVIDER_SPECS em work.engine tem as 7 entradas esperadas."""
 
     def test_work_engine_reexports_provider_specs(self):
         assert DEFAULT_PROVIDER_SPECS is PROVIDER_DEFAULT_PROVIDER_SPECS

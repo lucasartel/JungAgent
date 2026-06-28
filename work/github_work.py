@@ -47,7 +47,7 @@ class GitHubWorkMixin:
                 path
                 in {
                     "README.md",
-                    "work_engine.py",
+                    "work/engine.py",
                     "jung_core.py",
                     "consciousness_loop.py",
                     "agent_identity_context_builder.py",
@@ -590,7 +590,7 @@ Regras:
             "dream_engine.py",
             "hobby_art_engine.py",
             "docs/PLANO_WORK_AUTONOMO_SKILLS.md",
-            "work_engine.py",
+            "work/engine.py",
             "scripts/remote_db_probe.py",
             "README.md",
         ]
@@ -920,4 +920,3 @@ Guardrails obrigatorios:
             "github_discernment": discernment,
             "firecrawl_research": {"used": False, "destination_used": False, "world_used": False, "urls": [], "errors": []},
         }
-

@@ -958,7 +958,7 @@ async def job_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    from work_engine import WorkEngine
+    from work import WorkEngine
 
     engine = WorkEngine(bot_state.db)
     draft = engine.parse_job_text(prompt_text)
@@ -1220,7 +1220,7 @@ O que você decide?
 
     # ========== CONFIRMACAO / REFINO DE JOBS DO WORK ==========
     if user.id in ADMIN_IDS and context.user_data.get('awaiting_work_brief_refinement'):
-        from work_engine import WorkEngine
+        from work import WorkEngine
 
         original_text = context.user_data.get('pending_work_original_text', '')
         combined_text = original_text.strip()
@@ -1262,7 +1262,7 @@ O que você decide?
             return
 
         if text_upper == 'CONFIRMAR JOB':
-            from work_engine import WorkEngine
+            from work import WorkEngine
 
             draft = context.user_data.get('pending_work_brief_draft') or {}
             engine = WorkEngine(bot_state.db)
@@ -1292,7 +1292,7 @@ O que você decide?
             return
 
         # Qualquer outro texto vira correção do draft atual
-        from work_engine import WorkEngine
+        from work import WorkEngine
 
         original_text = context.user_data.get('pending_work_original_text', '')
         combined_text = f"{original_text}\n\nCorrecoes do admin: {message_text.strip()}".strip()
@@ -1555,4 +1555,3 @@ O que você decide?
             "😔 Desculpe, ocorreu um erro ao processar sua mensagem.\n"
             "Pode tentar novamente?"
         )
-

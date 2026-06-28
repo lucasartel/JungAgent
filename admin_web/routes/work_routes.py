@@ -40,7 +40,7 @@ def get_hybrid_db():
 
 
 def get_work_engine():
-    from work_engine import WorkEngine
+    from work import WorkEngine
 
     return WorkEngine(get_hybrid_db())
 
