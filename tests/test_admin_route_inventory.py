@@ -12,7 +12,7 @@ ROUTE_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
 
 def _route_files() -> list[Path]:
     routes_dir = PROJECT_ROOT / "admin_web" / "routes"
-    return [PROJECT_ROOT / "admin_web" / "routes.py"] + sorted(routes_dir.glob("*_routes.py"))
+    return sorted(routes_dir.glob("*_routes.py"))
 
 
 def _router_prefix(tree: ast.Module) -> str:
@@ -43,26 +43,7 @@ def _full_path(prefix: str, path: str) -> str:
 
 
 def _migration_bucket(module: str, full_path: str) -> str:
-    if module != "admin_web/routes.py":
-        return module.rsplit("/", 1)[-1].removesuffix(".py")
-
-    if full_path.startswith("/admin/unesco"):
-        return "legacy_unesco_export"
-    if "/psychometrics" in full_path or full_path.endswith("/personal-report") or full_path.endswith("/hr-report"):
-        return "legacy_psychometrics_reports"
-    if full_path.startswith("/admin/api/diagnose") or full_path.startswith("/admin/api/conversation"):
-        return "legacy_diagnostics"
-    if (
-        full_path.startswith("/admin/jung-lab")
-        or full_path.startswith("/admin/api/jung-lab")
-        or full_path.startswith("/admin/jung-mind")
-        or full_path.startswith("/admin/api/jung-mind")
-        or full_path in {"/admin/memory-metrics", "/admin/dreams", "/admin/research"}
-    ):
-        return "legacy_research_lab"
-    if full_path.startswith("/admin/user/") or full_path == "/admin/wellness":
-        return "legacy_user_analysis"
-    return "legacy_admin_core"
+    return module.rsplit("/", 1)[-1].removesuffix(".py")
 
 
 def collect_admin_routes() -> list[dict[str, object]]:

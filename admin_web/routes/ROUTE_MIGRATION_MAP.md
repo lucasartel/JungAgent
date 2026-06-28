@@ -6,15 +6,16 @@ splitting `admin_web/routes.py` without changing the exposed route surface.
 ## Current Inventory
 
 - Total admin routes declared by decorators: 112
-- Legacy monolith routes in `admin_web/routes.py`: 0
+- Legacy monolith file `admin_web/routes.py`: eliminated
 - Already modular routes in `admin_web/routes/`: 112
 - Snapshot fixture: `tests/fixtures/admin_route_inventory.json`
 - Guardrail test: `tests/test_admin_route_inventory.py`
 
 ## Legacy Buckets
 
-All legacy route buckets have been extracted. `admin_web/routes.py` remains as
-a compatibility facade without route decorators.
+All legacy route buckets have been extracted. `admin_web/routes.py` has been
+removed; `admin_web/routes/__init__.py` re-exports `admin_core_routes` for
+package-level compatibility.
 
 ## Existing Modular Buckets
 
