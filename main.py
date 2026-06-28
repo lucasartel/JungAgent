@@ -1997,17 +1997,21 @@ except Exception as e:
     logger.error(f"❌ Erro ao carregar trigger routes: {e}")
     logger.error(traceback.format_exc())
 
-# Rotas de análise Jung (protegidas com session-based auth - apenas Master Admin)
-# MIGRADO: Agora usa require_master ao invés de HTTP Basic Auth
+# Rotas legadas admin core
 try:
-    from admin_web.routes import router as admin_router
-    app.include_router(admin_router)
-    logger.info("✅ Rotas de análise Jung carregadas (protegidas - Master Admin only)")
+    from admin_web.routes.admin_core_routes import router as admin_core_router, init_admin_core_routes
+
+    if hasattr(bot_state, 'db') and bot_state.db:
+        init_admin_core_routes(bot_state.db)
+        app.include_router(admin_core_router)
+        logger.info("✅ Rotas admin core carregadas")
+    else:
+        logger.warning("⚠️  DatabaseManager não disponível - admin core routes não carregadas")
 except Exception as e:
     import traceback
-    logger.error(f"❌ Erro ao carregar rotas de análise: {e}")
+    logger.error(f"❌ Erro ao carregar admin core routes: {e}")
     logger.error(f"Traceback completo:\n{traceback.format_exc()}")
-    logger.warning("⚠️  Rotas de análise não disponíveis")
+    logger.warning("⚠️  Rotas admin core não disponíveis")
 
 
 # Rotas de export do Piloto UNESCO

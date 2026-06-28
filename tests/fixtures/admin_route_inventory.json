@@ -1,120 +1,120 @@
 [
   {
-    "module": "admin_web/routes.py",
+    "module": "admin_web/routes/admin_core_routes.py",
     "method": "GET",
     "path": "/test",
     "full_path": "/admin/test",
     "endpoint": "test_route",
-    "line": 127,
-    "migration_bucket": "legacy_admin_core"
+    "line": 22,
+    "migration_bucket": "admin_core_routes"
   },
   {
-    "module": "admin_web/routes.py",
+    "module": "admin_web/routes/admin_core_routes.py",
     "method": "GET",
     "path": "/",
     "full_path": "/admin",
     "endpoint": "dashboard",
-    "line": 139,
-    "migration_bucket": "legacy_admin_core"
+    "line": 27,
+    "migration_bucket": "admin_core_routes"
   },
   {
-    "module": "admin_web/routes.py",
+    "module": "admin_web/routes/admin_core_routes.py",
     "method": "POST",
     "path": "/instance/settings",
     "full_path": "/admin/instance/settings",
     "endpoint": "update_instance_settings",
-    "line": 210,
-    "migration_bucket": "legacy_admin_core"
+    "line": 37,
+    "migration_bucket": "admin_core_routes"
   },
   {
-    "module": "admin_web/routes.py",
+    "module": "admin_web/routes/admin_core_routes.py",
     "method": "GET",
     "path": "/users",
     "full_path": "/admin/users",
     "endpoint": "users_list",
-    "line": 253,
-    "migration_bucket": "legacy_admin_core"
+    "line": 42,
+    "migration_bucket": "admin_core_routes"
   },
   {
-    "module": "admin_web/routes.py",
+    "module": "admin_web/routes/admin_core_routes.py",
     "method": "GET",
     "path": "/sync-check",
     "full_path": "/admin/sync-check",
     "endpoint": "sync_check_page",
-    "line": 270,
-    "migration_bucket": "legacy_admin_core"
+    "line": 47,
+    "migration_bucket": "admin_core_routes"
   },
   {
-    "module": "admin_web/routes.py",
+    "module": "admin_web/routes/admin_core_routes.py",
     "method": "GET",
     "path": "/instance/setup",
     "full_path": "/admin/instance/setup",
     "endpoint": "instance_setup_page",
-    "line": 275,
-    "migration_bucket": "legacy_admin_core"
+    "line": 52,
+    "migration_bucket": "admin_core_routes"
   },
   {
-    "module": "admin_web/routes.py",
+    "module": "admin_web/routes/admin_core_routes.py",
     "method": "GET",
     "path": "/instance/health",
     "full_path": "/admin/instance/health",
     "endpoint": "instance_health",
-    "line": 296,
-    "migration_bucket": "legacy_admin_core"
+    "line": 61,
+    "migration_bucket": "admin_core_routes"
   },
   {
-    "module": "admin_web/routes.py",
+    "module": "admin_web/routes/admin_core_routes.py",
     "method": "POST",
     "path": "/instance/ensure-admin-user",
     "full_path": "/admin/instance/ensure-admin-user",
     "endpoint": "instance_ensure_admin_user",
-    "line": 305,
-    "migration_bucket": "legacy_admin_core"
+    "line": 66,
+    "migration_bucket": "admin_core_routes"
   },
   {
-    "module": "admin_web/routes.py",
+    "module": "admin_web/routes/admin_core_routes.py",
     "method": "GET",
     "path": "/api/sync-status",
     "full_path": "/admin/api/sync-status",
     "endpoint": "get_sync_status",
-    "line": 319,
-    "migration_bucket": "legacy_admin_core"
+    "line": 71,
+    "migration_bucket": "admin_core_routes"
   },
   {
-    "module": "admin_web/routes.py",
+    "module": "admin_web/routes/admin_core_routes.py",
     "method": "POST",
     "path": "/api/user/{user_id}/analyze-mbti",
     "full_path": "/admin/api/user/{user_id}/analyze-mbti",
     "endpoint": "analyze_user_mbti",
-    "line": 327,
-    "migration_bucket": "legacy_admin_core"
+    "line": 76,
+    "migration_bucket": "admin_core_routes"
   },
   {
-    "module": "admin_web/routes.py",
+    "module": "admin_web/routes/admin_core_routes.py",
     "method": "POST",
     "path": "/api/user/{user_id}/regenerate-psychometrics",
     "full_path": "/admin/api/user/{user_id}/regenerate-psychometrics",
     "endpoint": "regenerate_psychometrics",
-    "line": 463,
-    "migration_bucket": "legacy_admin_core"
+    "line": 81,
+    "migration_bucket": "admin_core_routes"
   },
   {
-    "module": "admin_web/routes.py",
+    "module": "admin_web/routes/admin_core_routes.py",
     "method": "POST",
     "path": "/api/user/{user_id}/generate-personal-report",
     "full_path": "/admin/api/user/{user_id}/generate-personal-report",
     "endpoint": "generate_personal_report",
-    "line": 494,
-    "migration_bucket": "legacy_admin_core"
+    "line": 86,
+    "migration_bucket": "admin_core_routes"
   },
   {
-    "module": "admin_web/routes.py",
+    "module": "admin_web/routes/admin_core_routes.py",
     "method": "POST",
     "path": "/api/user/{user_id}/generate-hr-report",
     "full_path": "/admin/api/user/{user_id}/generate-hr-report",
     "endpoint": "generate_hr_report",
-    "line": 685,
-    "migration_bucket": "legacy_admin_core"
+    "line": 91,
+    "migration_bucket": "admin_core_routes"
   },
   {
     "module": "admin_web/routes/admin_user_routes.py",
