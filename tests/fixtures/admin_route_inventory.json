@@ -109,20 +109,11 @@
   },
   {
     "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/api/diagnose",
-    "full_path": "/admin/api/diagnose",
-    "endpoint": "run_diagnosis",
-    "line": 583,
-    "migration_bucket": "legacy_diagnostics"
-  },
-  {
-    "module": "admin_web/routes.py",
     "method": "POST",
     "path": "/api/user/{user_id}/analyze-mbti",
     "full_path": "/admin/api/user/{user_id}/analyze-mbti",
     "endpoint": "analyze_user_mbti",
-    "line": 651,
+    "line": 583,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -131,7 +122,7 @@
     "path": "/user/{user_id}/psychometrics",
     "full_path": "/admin/user/{user_id}/psychometrics",
     "endpoint": "user_psychometrics_page",
-    "line": 787,
+    "line": 719,
     "migration_bucket": "legacy_psychometrics_reports"
   },
   {
@@ -140,7 +131,7 @@
     "path": "/api/user/{user_id}/regenerate-psychometrics",
     "full_path": "/admin/api/user/{user_id}/regenerate-psychometrics",
     "endpoint": "regenerate_psychometrics",
-    "line": 905,
+    "line": 837,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -149,7 +140,7 @@
     "path": "/api/user/{user_id}/generate-personal-report",
     "full_path": "/admin/api/user/{user_id}/generate-personal-report",
     "endpoint": "generate_personal_report",
-    "line": 936,
+    "line": 868,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -158,7 +149,7 @@
     "path": "/api/user/{user_id}/generate-hr-report",
     "full_path": "/admin/api/user/{user_id}/generate-hr-report",
     "endpoint": "generate_hr_report",
-    "line": 1127,
+    "line": 1059,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -167,35 +158,8 @@
     "path": "/user/{user_id}/psychometrics/download-pdf",
     "full_path": "/admin/user/{user_id}/psychometrics/download-pdf",
     "endpoint": "download_psychometrics_pdf",
-    "line": 1307,
+    "line": 1239,
     "migration_bucket": "legacy_psychometrics_reports"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/api/diagnose-facts",
-    "full_path": "/admin/api/diagnose-facts",
-    "endpoint": "diagnose_facts",
-    "line": 1388,
-    "migration_bucket": "legacy_diagnostics"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/api/diagnose-chromadb",
-    "full_path": "/admin/api/diagnose-chromadb",
-    "endpoint": "diagnose_chromadb",
-    "line": 1489,
-    "migration_bucket": "legacy_diagnostics"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/api/conversation/{conversation_id}",
-    "full_path": "/admin/api/conversation/{conversation_id}",
-    "endpoint": "get_conversation_detail",
-    "line": 1587,
-    "migration_bucket": "legacy_diagnostics"
   },
   {
     "module": "admin_web/routes.py",
@@ -203,7 +167,7 @@
     "path": "/user/{user_id}/psychometrics/{dimension}/evidence",
     "full_path": "/admin/user/{user_id}/psychometrics/{dimension}/evidence",
     "endpoint": "get_dimension_evidence",
-    "line": 1635,
+    "line": 1320,
     "migration_bucket": "legacy_psychometrics_reports"
   },
   {
@@ -212,7 +176,7 @@
     "path": "/user/{user_id}/psychometrics/extract-evidence",
     "full_path": "/admin/user/{user_id}/psychometrics/extract-evidence",
     "endpoint": "extract_all_evidence",
-    "line": 1751,
+    "line": 1436,
     "migration_bucket": "legacy_psychometrics_reports"
   },
   {
@@ -221,7 +185,7 @@
     "path": "/memory-metrics",
     "full_path": "/admin/memory-metrics",
     "endpoint": "memory_metrics_dashboard",
-    "line": 2165,
+    "line": 1850,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -230,7 +194,7 @@
     "path": "/dreams",
     "full_path": "/admin/dreams",
     "endpoint": "dreams_dashboard",
-    "line": 2196,
+    "line": 1881,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -239,7 +203,7 @@
     "path": "/research",
     "full_path": "/admin/research",
     "endpoint": "research_dashboard",
-    "line": 2229,
+    "line": 1914,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -248,7 +212,7 @@
     "path": "/jung-lab",
     "full_path": "/admin/jung-lab",
     "endpoint": "jung_lab_dashboard",
-    "line": 2444,
+    "line": 2129,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -257,7 +221,7 @@
     "path": "/api/jung-lab/digest",
     "full_path": "/admin/api/jung-lab/digest",
     "endpoint": "run_manual_digest",
-    "line": 2524,
+    "line": 2209,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -266,7 +230,7 @@
     "path": "/api/jung-lab/scheduler/{action}",
     "full_path": "/admin/api/jung-lab/scheduler/{action}",
     "endpoint": "control_scheduler",
-    "line": 2558,
+    "line": 2243,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -275,7 +239,7 @@
     "path": "/api/jung-lab/diagnose",
     "full_path": "/admin/api/jung-lab/diagnose",
     "endpoint": "diagnose_rumination",
-    "line": 2638,
+    "line": 2323,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -284,7 +248,7 @@
     "path": "/api/jung-lab/fix-platform",
     "full_path": "/admin/api/jung-lab/fix-platform",
     "endpoint": "fix_platform_issue",
-    "line": 2846,
+    "line": 2531,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -293,7 +257,7 @@
     "path": "/api/jung-lab/debug-full",
     "full_path": "/admin/api/jung-lab/debug-full",
     "endpoint": "debug_rumination_full",
-    "line": 2900,
+    "line": 2585,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -302,7 +266,7 @@
     "path": "/api/jung-lab/why-no-insights",
     "full_path": "/admin/api/jung-lab/why-no-insights",
     "endpoint": "why_no_insights",
-    "line": 3117,
+    "line": 2802,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -311,7 +275,7 @@
     "path": "/api/jung-lab/export-fragments",
     "full_path": "/admin/api/jung-lab/export-fragments",
     "endpoint": "export_fragments",
-    "line": 3287,
+    "line": 2972,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -320,7 +284,7 @@
     "path": "/api/jung-lab/export-tensions",
     "full_path": "/admin/api/jung-lab/export-tensions",
     "endpoint": "export_tensions",
-    "line": 3320,
+    "line": 3005,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -329,7 +293,7 @@
     "path": "/api/jung-lab/export-insights",
     "full_path": "/admin/api/jung-lab/export-insights",
     "endpoint": "export_insights",
-    "line": 3356,
+    "line": 3041,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -338,7 +302,7 @@
     "path": "/jung-mind",
     "full_path": "/admin/jung-mind",
     "endpoint": "jung_mind_page",
-    "line": 3394,
+    "line": 3079,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -347,7 +311,7 @@
     "path": "/api/jung-mind-data",
     "full_path": "/admin/api/jung-mind-data",
     "endpoint": "jung_mind_data",
-    "line": 3406,
+    "line": 3091,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -655,6 +619,42 @@
     "endpoint": "delete_telegram_user",
     "line": 367,
     "migration_bucket": "dashboard_routes"
+  },
+  {
+    "module": "admin_web/routes/diagnostics_routes.py",
+    "method": "GET",
+    "path": "/api/diagnose",
+    "full_path": "/admin/api/diagnose",
+    "endpoint": "run_diagnosis",
+    "line": 37,
+    "migration_bucket": "diagnostics_routes"
+  },
+  {
+    "module": "admin_web/routes/diagnostics_routes.py",
+    "method": "GET",
+    "path": "/api/diagnose-facts",
+    "full_path": "/admin/api/diagnose-facts",
+    "endpoint": "diagnose_facts",
+    "line": 103,
+    "migration_bucket": "diagnostics_routes"
+  },
+  {
+    "module": "admin_web/routes/diagnostics_routes.py",
+    "method": "GET",
+    "path": "/api/diagnose-chromadb",
+    "full_path": "/admin/api/diagnose-chromadb",
+    "endpoint": "diagnose_chromadb",
+    "line": 216,
+    "migration_bucket": "diagnostics_routes"
+  },
+  {
+    "module": "admin_web/routes/diagnostics_routes.py",
+    "method": "GET",
+    "path": "/api/conversation/{conversation_id}",
+    "full_path": "/admin/api/conversation/{conversation_id}",
+    "endpoint": "get_conversation_detail",
+    "line": 313,
+    "migration_bucket": "diagnostics_routes"
   },
   {
     "module": "admin_web/routes/irt_routes.py",
