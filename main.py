@@ -2055,6 +2055,21 @@ except Exception as e:
     logger.error(f"❌ Erro ao carregar user analysis routes: {e}")
     logger.error(traceback.format_exc())
 
+# Rotas legadas de psicometria
+try:
+    from admin_web.routes.psychometrics_routes import router as psychometrics_router, init_psychometrics_routes
+
+    if hasattr(bot_state, 'db') and bot_state.db:
+        init_psychometrics_routes(bot_state.db)
+        app.include_router(psychometrics_router)
+        logger.info("✅ Rotas de psicometria carregadas")
+    else:
+        logger.warning("⚠️  DatabaseManager não disponível - psychometrics routes não carregadas")
+except Exception as e:
+    import traceback
+    logger.error(f"❌ Erro ao carregar psychometrics routes: {e}")
+    logger.error(traceback.format_exc())
+
 # Rotas de autenticação multi-tenant
 try:
     from admin_web.routes.auth_routes import router as auth_router, init_auth_routes

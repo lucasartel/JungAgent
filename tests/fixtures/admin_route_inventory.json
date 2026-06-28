@@ -91,20 +91,11 @@
   },
   {
     "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/user/{user_id}/psychometrics",
-    "full_path": "/admin/user/{user_id}/psychometrics",
-    "endpoint": "user_psychometrics_page",
-    "line": 463,
-    "migration_bucket": "legacy_psychometrics_reports"
-  },
-  {
-    "module": "admin_web/routes.py",
     "method": "POST",
     "path": "/api/user/{user_id}/regenerate-psychometrics",
     "full_path": "/admin/api/user/{user_id}/regenerate-psychometrics",
     "endpoint": "regenerate_psychometrics",
-    "line": 581,
+    "line": 463,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -113,7 +104,7 @@
     "path": "/api/user/{user_id}/generate-personal-report",
     "full_path": "/admin/api/user/{user_id}/generate-personal-report",
     "endpoint": "generate_personal_report",
-    "line": 612,
+    "line": 494,
     "migration_bucket": "legacy_admin_core"
   },
   {
@@ -122,35 +113,8 @@
     "path": "/api/user/{user_id}/generate-hr-report",
     "full_path": "/admin/api/user/{user_id}/generate-hr-report",
     "endpoint": "generate_hr_report",
-    "line": 803,
+    "line": 685,
     "migration_bucket": "legacy_admin_core"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/user/{user_id}/psychometrics/download-pdf",
-    "full_path": "/admin/user/{user_id}/psychometrics/download-pdf",
-    "endpoint": "download_psychometrics_pdf",
-    "line": 983,
-    "migration_bucket": "legacy_psychometrics_reports"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/user/{user_id}/psychometrics/{dimension}/evidence",
-    "full_path": "/admin/user/{user_id}/psychometrics/{dimension}/evidence",
-    "endpoint": "get_dimension_evidence",
-    "line": 1064,
-    "migration_bucket": "legacy_psychometrics_reports"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "POST",
-    "path": "/user/{user_id}/psychometrics/extract-evidence",
-    "full_path": "/admin/user/{user_id}/psychometrics/extract-evidence",
-    "endpoint": "extract_all_evidence",
-    "line": 1180,
-    "migration_bucket": "legacy_psychometrics_reports"
   },
   {
     "module": "admin_web/routes.py",
@@ -158,7 +122,7 @@
     "path": "/memory-metrics",
     "full_path": "/admin/memory-metrics",
     "endpoint": "memory_metrics_dashboard",
-    "line": 1594,
+    "line": 1181,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -167,7 +131,7 @@
     "path": "/dreams",
     "full_path": "/admin/dreams",
     "endpoint": "dreams_dashboard",
-    "line": 1625,
+    "line": 1212,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -176,7 +140,7 @@
     "path": "/research",
     "full_path": "/admin/research",
     "endpoint": "research_dashboard",
-    "line": 1658,
+    "line": 1245,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -185,7 +149,7 @@
     "path": "/jung-lab",
     "full_path": "/admin/jung-lab",
     "endpoint": "jung_lab_dashboard",
-    "line": 1873,
+    "line": 1460,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -194,7 +158,7 @@
     "path": "/api/jung-lab/digest",
     "full_path": "/admin/api/jung-lab/digest",
     "endpoint": "run_manual_digest",
-    "line": 1953,
+    "line": 1540,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -203,7 +167,7 @@
     "path": "/api/jung-lab/scheduler/{action}",
     "full_path": "/admin/api/jung-lab/scheduler/{action}",
     "endpoint": "control_scheduler",
-    "line": 1987,
+    "line": 1574,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -212,7 +176,7 @@
     "path": "/api/jung-lab/diagnose",
     "full_path": "/admin/api/jung-lab/diagnose",
     "endpoint": "diagnose_rumination",
-    "line": 2067,
+    "line": 1654,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -221,7 +185,7 @@
     "path": "/api/jung-lab/fix-platform",
     "full_path": "/admin/api/jung-lab/fix-platform",
     "endpoint": "fix_platform_issue",
-    "line": 2275,
+    "line": 1862,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -230,7 +194,7 @@
     "path": "/api/jung-lab/debug-full",
     "full_path": "/admin/api/jung-lab/debug-full",
     "endpoint": "debug_rumination_full",
-    "line": 2329,
+    "line": 1916,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -239,7 +203,7 @@
     "path": "/api/jung-lab/why-no-insights",
     "full_path": "/admin/api/jung-lab/why-no-insights",
     "endpoint": "why_no_insights",
-    "line": 2546,
+    "line": 2133,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -248,7 +212,7 @@
     "path": "/api/jung-lab/export-fragments",
     "full_path": "/admin/api/jung-lab/export-fragments",
     "endpoint": "export_fragments",
-    "line": 2716,
+    "line": 2303,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -257,7 +221,7 @@
     "path": "/api/jung-lab/export-tensions",
     "full_path": "/admin/api/jung-lab/export-tensions",
     "endpoint": "export_tensions",
-    "line": 2749,
+    "line": 2336,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -266,7 +230,7 @@
     "path": "/api/jung-lab/export-insights",
     "full_path": "/admin/api/jung-lab/export-insights",
     "endpoint": "export_insights",
-    "line": 2785,
+    "line": 2372,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -275,7 +239,7 @@
     "path": "/jung-mind",
     "full_path": "/admin/jung-mind",
     "endpoint": "jung_mind_page",
-    "line": 2823,
+    "line": 2410,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -284,7 +248,7 @@
     "path": "/api/jung-mind-data",
     "full_path": "/admin/api/jung-mind-data",
     "endpoint": "jung_mind_data",
-    "line": 2835,
+    "line": 2422,
     "migration_bucket": "legacy_research_lab"
   },
   {
@@ -763,6 +727,42 @@
     "endpoint": "delete_organization",
     "line": 335,
     "migration_bucket": "organization_routes"
+  },
+  {
+    "module": "admin_web/routes/psychometrics_routes.py",
+    "method": "GET",
+    "path": "/user/{user_id}/psychometrics",
+    "full_path": "/admin/user/{user_id}/psychometrics",
+    "endpoint": "user_psychometrics_page",
+    "line": 79,
+    "migration_bucket": "psychometrics_routes"
+  },
+  {
+    "module": "admin_web/routes/psychometrics_routes.py",
+    "method": "GET",
+    "path": "/user/{user_id}/psychometrics/download-pdf",
+    "full_path": "/admin/user/{user_id}/psychometrics/download-pdf",
+    "endpoint": "download_psychometrics_pdf",
+    "line": 198,
+    "migration_bucket": "psychometrics_routes"
+  },
+  {
+    "module": "admin_web/routes/psychometrics_routes.py",
+    "method": "GET",
+    "path": "/user/{user_id}/psychometrics/{dimension}/evidence",
+    "full_path": "/admin/user/{user_id}/psychometrics/{dimension}/evidence",
+    "endpoint": "get_dimension_evidence",
+    "line": 275,
+    "migration_bucket": "psychometrics_routes"
+  },
+  {
+    "module": "admin_web/routes/psychometrics_routes.py",
+    "method": "POST",
+    "path": "/user/{user_id}/psychometrics/extract-evidence",
+    "full_path": "/admin/user/{user_id}/psychometrics/extract-evidence",
+    "endpoint": "extract_all_evidence",
+    "line": 390,
+    "migration_bucket": "psychometrics_routes"
   },
   {
     "module": "admin_web/routes/trigger_routes.py",
