@@ -113,9 +113,8 @@ def test_admin_route_inventory_has_expected_shape():
     buckets = {route["migration_bucket"] for route in legacy_routes}
 
     assert len(routes) == 112
-    assert len(legacy_routes) == 28
+    assert len(legacy_routes) == 13
     assert methods == {"GET", "POST", "PATCH", "DELETE"}
     assert buckets == {
         "legacy_admin_core",
-        "legacy_research_lab",
     }

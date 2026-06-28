@@ -2070,6 +2070,21 @@ except Exception as e:
     logger.error(f"❌ Erro ao carregar psychometrics routes: {e}")
     logger.error(traceback.format_exc())
 
+# Rotas legadas de research lab
+try:
+    from admin_web.routes.research_lab_routes import router as research_lab_router, init_research_lab_routes
+
+    if hasattr(bot_state, 'db') and bot_state.db:
+        init_research_lab_routes(bot_state.db)
+        app.include_router(research_lab_router)
+        logger.info("✅ Rotas de research lab carregadas")
+    else:
+        logger.warning("⚠️  DatabaseManager não disponível - research lab routes não carregadas")
+except Exception as e:
+    import traceback
+    logger.error(f"❌ Erro ao carregar research lab routes: {e}")
+    logger.error(traceback.format_exc())
+
 # Rotas de autenticação multi-tenant
 try:
     from admin_web.routes.auth_routes import router as auth_router, init_auth_routes

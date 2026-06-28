@@ -6,8 +6,8 @@ splitting `admin_web/routes.py` without changing the exposed route surface.
 ## Current Inventory
 
 - Total admin routes declared by decorators: 112
-- Legacy monolith routes in `admin_web/routes.py`: 28
-- Already modular routes in `admin_web/routes/`: 84
+- Legacy monolith routes in `admin_web/routes.py`: 13
+- Already modular routes in `admin_web/routes/`: 99
 - Snapshot fixture: `tests/fixtures/admin_route_inventory.json`
 - Guardrail test: `tests/test_admin_route_inventory.py`
 
@@ -15,7 +15,6 @@ splitting `admin_web/routes.py` without changing the exposed route surface.
 
 | Bucket | Routes | Intended module |
 |---|---:|---|
-| `legacy_research_lab` | 15 | `admin_web/routes/research_lab_routes.py` |
 | `legacy_admin_core` | 13 | `admin_web/routes/admin_core_routes.py` |
 
 ## Existing Modular Buckets
@@ -24,6 +23,7 @@ splitting `admin_web/routes.py` without changing the exposed route surface.
 |---|---:|
 | `work_routes.py` | 12 |
 | `agent_identity_routes.py` | 11 |
+| `research_lab_routes.py` | 15 |
 | `irt_routes.py` | 9 |
 | `admin_user_routes.py` | 6 |
 | `consciousness_loop_routes.py` | 6 |
@@ -44,7 +44,7 @@ splitting `admin_web/routes.py` without changing the exposed route surface.
 2. DONE: Extract `legacy_diagnostics` into `admin_web/routes/diagnostics_routes.py`.
 3. DONE: Extract `legacy_user_analysis` into `admin_web/routes/user_analysis_routes.py`.
 4. DONE: Extract `legacy_psychometrics_reports` into `admin_web/routes/psychometrics_routes.py`.
-5. Extract `legacy_research_lab`, the largest user-facing legacy cluster.
+5. DONE: Extract `legacy_research_lab` into `admin_web/routes/research_lab_routes.py`.
 6. Extract `legacy_admin_core` last, because it contains root/admin utility routes and instance setup behavior.
 
 Each cut should update the route snapshot only when the route list intentionally

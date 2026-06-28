@@ -117,141 +117,6 @@
     "migration_bucket": "legacy_admin_core"
   },
   {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/memory-metrics",
-    "full_path": "/admin/memory-metrics",
-    "endpoint": "memory_metrics_dashboard",
-    "line": 1181,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/dreams",
-    "full_path": "/admin/dreams",
-    "endpoint": "dreams_dashboard",
-    "line": 1212,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/research",
-    "full_path": "/admin/research",
-    "endpoint": "research_dashboard",
-    "line": 1245,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/jung-lab",
-    "full_path": "/admin/jung-lab",
-    "endpoint": "jung_lab_dashboard",
-    "line": 1460,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "POST",
-    "path": "/api/jung-lab/digest",
-    "full_path": "/admin/api/jung-lab/digest",
-    "endpoint": "run_manual_digest",
-    "line": 1540,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "POST",
-    "path": "/api/jung-lab/scheduler/{action}",
-    "full_path": "/admin/api/jung-lab/scheduler/{action}",
-    "endpoint": "control_scheduler",
-    "line": 1574,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/api/jung-lab/diagnose",
-    "full_path": "/admin/api/jung-lab/diagnose",
-    "endpoint": "diagnose_rumination",
-    "line": 1654,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "POST",
-    "path": "/api/jung-lab/fix-platform",
-    "full_path": "/admin/api/jung-lab/fix-platform",
-    "endpoint": "fix_platform_issue",
-    "line": 1862,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/api/jung-lab/debug-full",
-    "full_path": "/admin/api/jung-lab/debug-full",
-    "endpoint": "debug_rumination_full",
-    "line": 1916,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/api/jung-lab/why-no-insights",
-    "full_path": "/admin/api/jung-lab/why-no-insights",
-    "endpoint": "why_no_insights",
-    "line": 2133,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/api/jung-lab/export-fragments",
-    "full_path": "/admin/api/jung-lab/export-fragments",
-    "endpoint": "export_fragments",
-    "line": 2303,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/api/jung-lab/export-tensions",
-    "full_path": "/admin/api/jung-lab/export-tensions",
-    "endpoint": "export_tensions",
-    "line": 2336,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/api/jung-lab/export-insights",
-    "full_path": "/admin/api/jung-lab/export-insights",
-    "endpoint": "export_insights",
-    "line": 2372,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/jung-mind",
-    "full_path": "/admin/jung-mind",
-    "endpoint": "jung_mind_page",
-    "line": 2410,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
-    "module": "admin_web/routes.py",
-    "method": "GET",
-    "path": "/api/jung-mind-data",
-    "full_path": "/admin/api/jung-mind-data",
-    "endpoint": "jung_mind_data",
-    "line": 2422,
-    "migration_bucket": "legacy_research_lab"
-  },
-  {
     "module": "admin_web/routes/admin_user_routes.py",
     "method": "GET",
     "path": "",
@@ -763,6 +628,141 @@
     "endpoint": "extract_all_evidence",
     "line": 390,
     "migration_bucket": "psychometrics_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "GET",
+    "path": "/memory-metrics",
+    "full_path": "/admin/memory-metrics",
+    "endpoint": "memory_metrics_dashboard",
+    "line": 20,
+    "migration_bucket": "research_lab_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "GET",
+    "path": "/dreams",
+    "full_path": "/admin/dreams",
+    "endpoint": "dreams_dashboard",
+    "line": 30,
+    "migration_bucket": "research_lab_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "GET",
+    "path": "/research",
+    "full_path": "/admin/research",
+    "endpoint": "research_dashboard",
+    "line": 35,
+    "migration_bucket": "research_lab_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "GET",
+    "path": "/jung-lab",
+    "full_path": "/admin/jung-lab",
+    "endpoint": "jung_lab_dashboard",
+    "line": 40,
+    "migration_bucket": "research_lab_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "POST",
+    "path": "/api/jung-lab/digest",
+    "full_path": "/admin/api/jung-lab/digest",
+    "endpoint": "run_manual_digest",
+    "line": 45,
+    "migration_bucket": "research_lab_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "POST",
+    "path": "/api/jung-lab/scheduler/{action}",
+    "full_path": "/admin/api/jung-lab/scheduler/{action}",
+    "endpoint": "control_scheduler",
+    "line": 50,
+    "migration_bucket": "research_lab_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "GET",
+    "path": "/api/jung-lab/diagnose",
+    "full_path": "/admin/api/jung-lab/diagnose",
+    "endpoint": "diagnose_rumination",
+    "line": 55,
+    "migration_bucket": "research_lab_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "POST",
+    "path": "/api/jung-lab/fix-platform",
+    "full_path": "/admin/api/jung-lab/fix-platform",
+    "endpoint": "fix_platform_issue",
+    "line": 60,
+    "migration_bucket": "research_lab_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "GET",
+    "path": "/api/jung-lab/debug-full",
+    "full_path": "/admin/api/jung-lab/debug-full",
+    "endpoint": "debug_rumination_full",
+    "line": 65,
+    "migration_bucket": "research_lab_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "GET",
+    "path": "/api/jung-lab/why-no-insights",
+    "full_path": "/admin/api/jung-lab/why-no-insights",
+    "endpoint": "why_no_insights",
+    "line": 70,
+    "migration_bucket": "research_lab_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "GET",
+    "path": "/api/jung-lab/export-fragments",
+    "full_path": "/admin/api/jung-lab/export-fragments",
+    "endpoint": "export_fragments",
+    "line": 75,
+    "migration_bucket": "research_lab_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "GET",
+    "path": "/api/jung-lab/export-tensions",
+    "full_path": "/admin/api/jung-lab/export-tensions",
+    "endpoint": "export_tensions",
+    "line": 80,
+    "migration_bucket": "research_lab_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "GET",
+    "path": "/api/jung-lab/export-insights",
+    "full_path": "/admin/api/jung-lab/export-insights",
+    "endpoint": "export_insights",
+    "line": 85,
+    "migration_bucket": "research_lab_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "GET",
+    "path": "/jung-mind",
+    "full_path": "/admin/jung-mind",
+    "endpoint": "jung_mind_page",
+    "line": 90,
+    "migration_bucket": "research_lab_routes"
+  },
+  {
+    "module": "admin_web/routes/research_lab_routes.py",
+    "method": "GET",
+    "path": "/api/jung-mind-data",
+    "full_path": "/admin/api/jung-mind-data",
+    "endpoint": "jung_mind_data",
+    "line": 95,
+    "migration_bucket": "research_lab_routes"
   },
   {
     "module": "admin_web/routes/trigger_routes.py",
