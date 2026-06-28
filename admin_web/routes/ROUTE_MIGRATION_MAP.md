@@ -6,8 +6,8 @@ splitting `admin_web/routes.py` without changing the exposed route surface.
 ## Current Inventory
 
 - Total admin routes declared by decorators: 112
-- Legacy monolith routes in `admin_web/routes.py`: 35
-- Already modular routes in `admin_web/routes/`: 77
+- Legacy monolith routes in `admin_web/routes.py`: 32
+- Already modular routes in `admin_web/routes/`: 80
 - Snapshot fixture: `tests/fixtures/admin_route_inventory.json`
 - Guardrail test: `tests/test_admin_route_inventory.py`
 
@@ -18,7 +18,6 @@ splitting `admin_web/routes.py` without changing the exposed route surface.
 | `legacy_research_lab` | 15 | `admin_web/routes/research_lab_routes.py` |
 | `legacy_admin_core` | 13 | `admin_web/routes/admin_core_routes.py` |
 | `legacy_psychometrics_reports` | 4 | existing or new psychometrics/report route module |
-| `legacy_user_analysis` | 3 | existing dashboard/user-analysis module or new user_analysis module |
 
 ## Existing Modular Buckets
 
@@ -31,6 +30,7 @@ splitting `admin_web/routes.py` without changing the exposed route surface.
 | `consciousness_loop_routes.py` | 6 |
 | `organization_routes.py` | 6 |
 | `trigger_routes.py` | 6 |
+| `user_analysis_routes.py` | 3 |
 | `auth_routes.py` | 4 |
 | `dashboard_routes.py` | 4 |
 | `diagnostics_routes.py` | 4 |
@@ -42,9 +42,10 @@ splitting `admin_web/routes.py` without changing the exposed route surface.
 
 1. DONE: Extract `legacy_unesco_export` into `admin_web/routes/unesco_export_routes.py`.
 2. DONE: Extract `legacy_diagnostics` into `admin_web/routes/diagnostics_routes.py`.
-3. Extract `legacy_user_analysis` and `legacy_psychometrics_reports`, keeping report generation behavior unchanged.
-4. Extract `legacy_research_lab`, the largest user-facing legacy cluster.
-5. Extract `legacy_admin_core` last, because it contains root/admin utility routes and instance setup behavior.
+3. DONE: Extract `legacy_user_analysis` into `admin_web/routes/user_analysis_routes.py`.
+4. Extract `legacy_psychometrics_reports`, keeping report generation behavior unchanged.
+5. Extract `legacy_research_lab`, the largest user-facing legacy cluster.
+6. Extract `legacy_admin_core` last, because it contains root/admin utility routes and instance setup behavior.
 
 Each cut should update the route snapshot only when the route list intentionally
 moves modules while preserving method/path/endpoint behavior.

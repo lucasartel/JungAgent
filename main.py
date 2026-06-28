@@ -2040,6 +2040,21 @@ except Exception as e:
     logger.error(f"❌ Erro ao carregar diagnostic routes: {e}")
     logger.error(traceback.format_exc())
 
+# Rotas legadas de analise de usuario/wellness
+try:
+    from admin_web.routes.user_analysis_routes import router as user_analysis_router, init_user_analysis_routes
+
+    if hasattr(bot_state, 'db') and bot_state.db:
+        init_user_analysis_routes(bot_state.db)
+        app.include_router(user_analysis_router)
+        logger.info("✅ Rotas de analise de usuario carregadas")
+    else:
+        logger.warning("⚠️  DatabaseManager não disponível - user analysis routes não carregadas")
+except Exception as e:
+    import traceback
+    logger.error(f"❌ Erro ao carregar user analysis routes: {e}")
+    logger.error(traceback.format_exc())
+
 # Rotas de autenticação multi-tenant
 try:
     from admin_web.routes.auth_routes import router as auth_router, init_auth_routes
