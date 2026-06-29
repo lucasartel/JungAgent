@@ -13,6 +13,9 @@ Circuitos cobertos:
 from __future__ import annotations
 
 import sqlite3
+import threading
+import importlib.util
+from pathlib import Path
 from typing import Any, Dict
 
 import pytest
@@ -31,6 +34,18 @@ from consciousness_loop import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _load_working_memory_mixin():
+    path = Path(__file__).resolve().parents[1] / "core" / "db" / "working_memory.py"
+    spec = importlib.util.spec_from_file_location("working_memory_loop_test", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module.WorkingMemoryDatabaseMixin
+
+
+WorkingMemoryDatabaseMixin = _load_working_memory_mixin()
+
+
 def _insert_phase_config(conn: sqlite3.Connection, phase: str, retry_limit: Any, cooldown_minutes: Any) -> None:
     conn.execute(
         """
@@ -41,6 +56,13 @@ def _insert_phase_config(conn: sqlite3.Connection, phase: str, retry_limit: Any,
         (phase, retry_limit, cooldown_minutes),
     )
     conn.commit()
+
+
+class _LoopWorkingMemoryDB(WorkingMemoryDatabaseMixin):
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+        self._lock = threading.RLock()
+        self._init_working_memory_schema()
 
 
 @pytest.fixture
@@ -223,3 +245,30 @@ class TestClassifyException:
         assert "recoverable" in result
         assert "admin_action" in result
         assert "reason" in result
+
+
+class TestWorkingMemoryObservation:
+    def test_execute_phase_records_candidate_without_consuming_working_memory(self, loop_db, monkeypatch):
+        db = _LoopWorkingMemoryDB(loop_db.conn)
+        manager = ConsciousnessLoopManager(db)
+        monkeypatch.setattr(manager, "_run_work_phase", lambda result: result)
+
+        result = manager.execute_phase(
+            "work",
+            "2026-06-29-test",
+            trigger_source="pytest",
+            execution_mode="manual",
+        )
+
+        candidates = db.list_working_memory_items(
+            agent_instance=manager.agent_instance,
+            status="active",
+            item_type="candidate",
+        )
+
+        assert result["status"] == "success"
+        assert candidates
+        assert candidates[0]["cycle_id"] == "2026-06-29-test"
+        assert candidates[0]["phase"] == "work"
+        assert candidates[0]["source_refs"][0].startswith("loop#")
+        assert result["metrics"]["working_memory_candidate_id"] == candidates[0]["id"]

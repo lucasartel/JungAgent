@@ -61,6 +61,34 @@ def test_working_memory_engine_records_focus_and_fringe(in_memory_conn):
     assert fringe[0]["item_type"] == "fringe"
 
 
+def test_working_memory_engine_observes_phase_result_as_candidate(in_memory_conn):
+    db = _WorkingMemoryDB(in_memory_conn)
+    engine = WorkingMemoryEngine(db, agent_instance="jung_v1")
+
+    candidate_id = engine.observe_phase_result(
+        phase_result_id=42,
+        cycle_id="2026-06-29",
+        phase="world",
+        status="success",
+        output_summary="A fase world deixou material periferico para avaliacao posterior.",
+        trigger_source="pytest",
+        warnings=["sample_warning"],
+        errors=[],
+        metrics={"artifacts_created_count": 2},
+    )
+
+    candidates = db.list_working_memory_items(
+        agent_instance="jung_v1",
+        status="active",
+        item_type="candidate",
+    )
+
+    assert candidate_id == candidates[0]["id"]
+    assert candidates[0]["source_refs"] == ["loop#42"]
+    assert candidates[0]["metadata"]["status"] == "success"
+    assert candidates[0]["metadata"]["artifact_count"] == 2
+
+
 def test_working_memory_rejects_invalid_or_missing_sources(in_memory_conn):
     db = _WorkingMemoryDB(in_memory_conn)
     engine = WorkingMemoryEngine(db, agent_instance="jung_v1")

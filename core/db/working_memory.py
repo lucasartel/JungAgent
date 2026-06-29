@@ -152,7 +152,7 @@ class WorkingMemoryDatabaseMixin:
         refs = self._normalize_source_refs(source_refs)
         clean_type = (item_type or "").strip().lower()
         clean_status = (status or "").strip().lower()
-        if clean_type not in {"focus", "fringe"}:
+        if clean_type not in {"focus", "fringe", "candidate"}:
             raise ValueError(f"invalid_item_type:{item_type}")
         if clean_status not in {"active", "resolved", "expired"}:
             raise ValueError(f"invalid_status:{status}")

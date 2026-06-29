@@ -597,6 +597,48 @@ class ConsciousnessLoopManager:
         result["warnings"] = [warning for warning in result["warnings"] if warning != "placeholder_execution"]
         result["metrics"]["phase_placeholder"] = 0
 
+    def _observe_phase_for_working_memory(self, phase_result_id: int, phase: LoopPhase, result: Dict) -> Optional[int]:
+        if not hasattr(self.db, "create_working_memory_item"):
+            logger.debug("WORKING MEMORY observation skipped: db manager has no working memory API")
+            return None
+        try:
+            from engines.working_memory import WorkingMemoryEngine
+
+            engine = WorkingMemoryEngine(self.db, agent_instance=self.agent_instance)
+            candidate_id = engine.observe_phase_result(
+                phase_result_id=phase_result_id,
+                cycle_id=result.get("cycle_id"),
+                phase=phase.key,
+                status=result.get("status"),
+                output_summary=result.get("output_summary"),
+                trigger_source=result.get("trigger_source"),
+                warnings=result.get("warnings"),
+                errors=result.get("errors"),
+                metrics=result.get("metrics"),
+            )
+            if candidate_id:
+                result["metrics"]["working_memory_candidate_id"] = candidate_id
+                result["raw_result"]["working_memory_observation"] = {
+                    "item_id": candidate_id,
+                    "item_type": "candidate",
+                    "source_ref": f"loop#{phase_result_id}",
+                }
+                logger.info(
+                    "WORKING MEMORY observed phase_result_id=%s phase=%s item_id=%s",
+                    phase_result_id,
+                    phase.key,
+                    candidate_id,
+                )
+            return candidate_id
+        except Exception as exc:
+            logger.warning(
+                "WORKING MEMORY observation failed phase_result_id=%s phase=%s error=%s",
+                phase_result_id,
+                phase.key,
+                exc,
+            )
+            return None
+
     def _feed_loop_failure_to_rumination(
         self,
         phase_result_id: int,
@@ -1866,6 +1908,7 @@ class ConsciousnessLoopManager:
                 )
 
         phase_result_id = self._save_phase_result(result)
+        payloads_changed = self._observe_phase_for_working_memory(phase_result_id, phase, result) is not None
         if result["status"] == "failed":
             fragment_id = self._feed_loop_failure_to_rumination(
                 phase_result_id=phase_result_id,
@@ -1876,7 +1919,9 @@ class ConsciousnessLoopManager:
             if fragment_id:
                 result["metrics"]["failure_rumination_fragment_id"] = fragment_id
                 result["raw_result"]["failure_rumination_fragment_id"] = fragment_id
-                self._update_phase_result_payloads(phase_result_id, result)
+                payloads_changed = True
+        if payloads_changed:
+            self._update_phase_result_payloads(phase_result_id, result)
         self._insert_event(
             cycle_id=cycle_id,
             phase=phase.key,

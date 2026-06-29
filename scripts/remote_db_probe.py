@@ -234,6 +234,68 @@ def query_loop(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
         "probe": "loop",
         "state": state,
         "recent_phase_results": rows_to_dicts(cursor.fetchall()),
+        "working_memory": query_working_memory_summary(cursor, args),
+    }
+
+
+def _parse_working_memory_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    for row in rows:
+        row["source_refs"] = json_or_empty(row.pop("source_refs_json", None), [])
+        row["metadata"] = json_or_empty(row.pop("metadata_json", None), {})
+    return rows
+
+
+def query_working_memory_summary(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
+    table = "working_memory_items"
+    if not table_exists(cursor, table):
+        return {
+            "available": False,
+            "active_counts": [],
+            "recent_active": [],
+        }
+
+    active_counts = grouped_counts(
+        cursor,
+        table,
+        "item_type",
+        where="agent_instance = ? AND status = 'active'",
+        params=(args.agent_instance,),
+    )
+    recent_active = fetch_recent(
+        cursor,
+        table,
+        [
+            "id",
+            "cycle_id",
+            "phase",
+            "item_type",
+            "status",
+            "title",
+            "summary",
+            "priority",
+            "source_refs_json",
+            "metadata_json",
+            "created_at",
+            "updated_at",
+        ],
+        where="agent_instance = ? AND status = 'active'",
+        params=(args.agent_instance,),
+        order_by="priority DESC, updated_at DESC, id DESC",
+        limit=args.limit,
+    )
+    return {
+        "available": True,
+        "active_counts": active_counts,
+        "recent_active": _parse_working_memory_rows(recent_active),
+    }
+
+
+def query_working_memory(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
+    summary = query_working_memory_summary(cursor, args)
+    return {
+        "probe": "working_memory",
+        "agent_instance": args.agent_instance,
+        **summary,
     }
 
 
@@ -1268,6 +1330,7 @@ PROBES: Dict[str, Callable[[sqlite3.Cursor, argparse.Namespace], Dict[str, Any]]
     "rumination": query_rumination,
     "world": query_world,
     "work": query_work,
+    "working_memory": query_working_memory,
     "tables": query_tables,
     "audio": query_audio,
 }
