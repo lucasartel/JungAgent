@@ -252,6 +252,7 @@ def query_working_memory_summary(cursor: sqlite3.Cursor, args: argparse.Namespac
             "available": False,
             "active_counts": [],
             "recent_active": [],
+            "recent_broadcasts": [],
         }
 
     active_counts = grouped_counts(
@@ -287,7 +288,39 @@ def query_working_memory_summary(cursor: sqlite3.Cursor, args: argparse.Namespac
         "available": True,
         "active_counts": active_counts,
         "recent_active": _parse_working_memory_rows(recent_active),
+        "recent_broadcasts": query_working_memory_broadcasts(cursor, args),
     }
+
+
+def query_working_memory_broadcasts(cursor: sqlite3.Cursor, args: argparse.Namespace) -> List[Dict[str, Any]]:
+    table = "working_memory_broadcasts"
+    if not table_exists(cursor, table):
+        return []
+    rows = fetch_recent(
+        cursor,
+        table,
+        [
+            "id",
+            "cycle_id",
+            "from_phase",
+            "to_phase",
+            "focus_items_json",
+            "fringe_items_json",
+            "created_at",
+        ],
+        where="agent_instance = ?",
+        params=(args.agent_instance,),
+        order_by="id DESC",
+        limit=args.limit,
+    )
+    for row in rows:
+        focus_items = json_or_empty(row.pop("focus_items_json", None), [])
+        fringe_items = json_or_empty(row.pop("fringe_items_json", None), [])
+        row["focus_count"] = len(focus_items)
+        row["fringe_count"] = len(fringe_items)
+        row["focus_items"] = focus_items[:3]
+        row["fringe_items"] = fringe_items[:3]
+    return rows
 
 
 def query_working_memory(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:

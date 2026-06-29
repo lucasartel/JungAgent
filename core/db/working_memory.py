@@ -278,3 +278,48 @@ class WorkingMemoryDatabaseMixin:
             )
             self.conn.commit()
             return int(cursor.lastrowid)
+
+    def get_latest_working_memory_broadcast(
+        self,
+        *,
+        agent_instance: str,
+        to_phase: str,
+        cycle_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not agent_instance or not to_phase:
+            raise ValueError("agent_instance_to_phase_required")
+
+        cursor = self.conn.cursor()
+        row = None
+        if cycle_id:
+            cursor.execute(
+                """
+                SELECT *
+                FROM working_memory_broadcasts
+                WHERE agent_instance = ? AND to_phase = ? AND cycle_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (agent_instance, to_phase, cycle_id),
+            )
+            row = cursor.fetchone()
+
+        if not row:
+            cursor.execute(
+                """
+                SELECT *
+                FROM working_memory_broadcasts
+                WHERE agent_instance = ? AND to_phase = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (agent_instance, to_phase),
+            )
+            row = cursor.fetchone()
+
+        if not row:
+            return None
+        broadcast = dict(row)
+        broadcast["focus_items"] = _json_loads(broadcast.pop("focus_items_json", None), [])
+        broadcast["fringe_items"] = _json_loads(broadcast.pop("fringe_items_json", None), [])
+        return broadcast

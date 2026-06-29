@@ -194,6 +194,7 @@ class AgentMetaConsciousnessEngine:
                 "meta_signal": current_state.get("meta_signal"),
                 "recent_shift": current_state.get("recent_shift"),
                 "response_bias": current_state.get("response_bias"),
+                "working_memory_focus_context": current_state.get("working_memory_focus_context"),
             },
             "recent_conversations": conversations,
             "recent_rumination_insights": rumination,

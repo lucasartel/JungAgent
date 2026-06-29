@@ -597,15 +597,107 @@ class ConsciousnessLoopManager:
         result["warnings"] = [warning for warning in result["warnings"] if warning != "placeholder_execution"]
         result["metrics"]["phase_placeholder"] = 0
 
+    def _next_phase_key(self, phase: LoopPhase) -> str:
+        index = PHASES.index(phase)
+        return PHASES[(index + 1) % len(PHASES)].key
+
+    def _working_memory_engine(self):
+        from engines.working_memory import WorkingMemoryEngine
+
+        return WorkingMemoryEngine(self.db, agent_instance=self.agent_instance)
+
+    def _read_working_memory_inbox(self, phase: LoopPhase, result: Dict) -> Optional[Dict[str, Any]]:
+        if not hasattr(self.db, "get_latest_working_memory_broadcast"):
+            logger.debug("WORKING MEMORY inbox skipped: db manager has no broadcast API")
+            return None
+        try:
+            inbox = self._working_memory_engine().latest_broadcast_for_phase(
+                phase=phase.key,
+                cycle_id=result.get("cycle_id"),
+            )
+            if not inbox:
+                result["metrics"]["working_memory_inbox_present"] = 0
+                return None
+
+            result["metrics"]["working_memory_inbox_present"] = 1
+            result["metrics"]["working_memory_inbox_id"] = inbox["id"]
+            result["metrics"]["working_memory_inbox_focus_count"] = inbox["focus_count"]
+            result["metrics"]["working_memory_inbox_fringe_count"] = inbox["fringe_count"]
+            result["raw_result"]["working_memory_inbox"] = inbox
+            logger.info(
+                "WORKING MEMORY inbox phase=%s from_phase=%s broadcast_id=%s focus_count=%s fringe_count=%s",
+                phase.key,
+                inbox.get("from_phase"),
+                inbox.get("id"),
+                inbox.get("focus_count"),
+                inbox.get("fringe_count"),
+            )
+            return inbox
+        except Exception as exc:
+            logger.warning("WORKING MEMORY inbox failed phase=%s error=%s", phase.key, exc)
+            result["metrics"]["working_memory_inbox_error"] = 1
+            return None
+
+    def _working_memory_prompt_context(self, result: Dict) -> Optional[Dict[str, Any]]:
+        inbox = (result.get("raw_result") or {}).get("working_memory_inbox") or {}
+        if not inbox or not inbox.get("focus_summary"):
+            return None
+        return {
+            "broadcast_id": inbox.get("id"),
+            "from_phase": inbox.get("from_phase"),
+            "to_phase": inbox.get("to_phase"),
+            "cycle_id": inbox.get("cycle_id"),
+            "focus_count": inbox.get("focus_count"),
+            "fringe_count": inbox.get("fringe_count"),
+            "focus_summary": inbox.get("focus_summary"),
+            "focus_items": inbox.get("focus_items", [])[:5],
+            "fringe_items": inbox.get("fringe_items", [])[:5],
+        }
+
+    def _inject_working_memory_context(self, result: Dict, payload: Dict[str, Any]) -> Dict[str, Any]:
+        context = self._working_memory_prompt_context(result)
+        if not context:
+            return payload
+        enriched = dict(payload or {})
+        enriched["working_memory_focus_context"] = context
+        result["metrics"]["working_memory_prompt_context_injected"] = 1
+        return enriched
+
+    def _broadcast_working_memory_to_next_phase(self, phase: LoopPhase, result: Dict) -> Optional[int]:
+        if not hasattr(self.db, "create_working_memory_broadcast"):
+            logger.debug("WORKING MEMORY broadcast skipped: db manager has no broadcast API")
+            return None
+        try:
+            next_phase = self._next_phase_key(phase)
+            payload = self._working_memory_engine().broadcast_payload(
+                cycle_id=result["cycle_id"],
+                from_phase=phase.key,
+                to_phase=next_phase,
+            )
+            result["metrics"]["working_memory_broadcast_id"] = payload["id"]
+            result["metrics"]["working_memory_broadcast_focus_count"] = payload["focus_count"]
+            result["metrics"]["working_memory_broadcast_fringe_count"] = payload["fringe_count"]
+            result["raw_result"]["working_memory_broadcast"] = payload
+            logger.info(
+                "WORKING MEMORY broadcast from_phase=%s to_phase=%s broadcast_id=%s focus_count=%s fringe_count=%s",
+                phase.key,
+                next_phase,
+                payload["id"],
+                payload["focus_count"],
+                payload["fringe_count"],
+            )
+            return int(payload["id"])
+        except Exception as exc:
+            logger.warning("WORKING MEMORY broadcast failed phase=%s error=%s", phase.key, exc)
+            result["metrics"]["working_memory_broadcast_error"] = 1
+            return None
+
     def _observe_phase_for_working_memory(self, phase_result_id: int, phase: LoopPhase, result: Dict) -> Optional[int]:
         if not hasattr(self.db, "create_working_memory_item"):
             logger.debug("WORKING MEMORY observation skipped: db manager has no working memory API")
             return None
         try:
-            from engines.working_memory import WorkingMemoryEngine
-
-            engine = WorkingMemoryEngine(self.db, agent_instance=self.agent_instance)
-            candidate_id = engine.observe_phase_result(
+            candidate_id = self._working_memory_engine().observe_phase_result(
                 phase_result_id=phase_result_id,
                 cycle_id=result.get("cycle_id"),
                 phase=phase.key,
@@ -1392,6 +1484,7 @@ class ConsciousnessLoopManager:
             user_id=self.admin_user_id,
             style="concise",
         )
+        current_state = self._inject_working_memory_context(result, current_state)
         meta_engine = AgentMetaConsciousnessEngine(self.db)
         meta_reading = meta_engine.generate_cycle_reading(
             user_id=self.admin_user_id,
@@ -1411,6 +1504,7 @@ class ConsciousnessLoopManager:
             user_id=self.admin_user_id,
             style="concise",
         )
+        current_state = self._inject_working_memory_context(result, current_state)
         extractions_after = self._count_rows("agent_identity_extractions")
 
         result["raw_result"]["identity_consolidation"] = consolidation_result
@@ -1574,6 +1668,7 @@ class ConsciousnessLoopManager:
 
         self._promote_from_placeholder(result)
         world_state = world_consciousness.get_world_state(force_refresh=False)
+        world_state = self._inject_working_memory_context(result, world_state)
         hobby_seeds = world_state.get("hobby_seeds", []) or []
         result["raw_result"]["hobby_inputs"] = {
             "seed_count": len(hobby_seeds),
@@ -1793,6 +1888,7 @@ class ConsciousnessLoopManager:
             user_id=self.admin_user_id,
             style="concise",
         )
+        current_state = self._inject_working_memory_context(result, current_state)
         world_state = world_consciousness.get_world_state(force_refresh=False)
         will_engine = WillEngine(self.db)
         will_result = will_engine.refresh_cycle_state(
@@ -1848,6 +1944,7 @@ class ConsciousnessLoopManager:
         )
 
         result = self._build_placeholder_result(cycle_id, phase, trigger_source, execution_mode)
+        self._read_working_memory_inbox(phase, result)
         try:
             if phase.key == "dream":
                 result = self._run_dream_phase(result)
@@ -1909,6 +2006,9 @@ class ConsciousnessLoopManager:
 
         phase_result_id = self._save_phase_result(result)
         payloads_changed = self._observe_phase_for_working_memory(phase_result_id, phase, result) is not None
+        broadcast_id = self._broadcast_working_memory_to_next_phase(phase, result)
+        if broadcast_id or result["metrics"].get("working_memory_broadcast_error"):
+            payloads_changed = True
         if result["status"] == "failed":
             fragment_id = self._feed_loop_failure_to_rumination(
                 phase_result_id=phase_result_id,

@@ -20,6 +20,7 @@ from typing import Any, Dict
 
 import pytest
 
+from engines.working_memory import WorkingMemoryEngine
 from consciousness_loop import (
     ConsciousnessLoopManager,
     DEFAULT_PHASE_RETRY_LIMIT,
@@ -248,9 +249,19 @@ class TestClassifyException:
 
 
 class TestWorkingMemoryObservation:
-    def test_execute_phase_records_candidate_without_consuming_working_memory(self, loop_db, monkeypatch):
+    def test_execute_phase_reads_inbox_and_broadcasts_to_next_phase(self, loop_db, monkeypatch):
         db = _LoopWorkingMemoryDB(loop_db.conn)
         manager = ConsciousnessLoopManager(db)
+        engine = WorkingMemoryEngine(db, agent_instance=manager.agent_instance)
+        engine.remember_focus(
+            cycle_id="2026-06-29-test",
+            phase="world",
+            title="Foco de mundo",
+            summary="Material ativo que deve chegar ao Work.",
+            source_refs=["loop#77"],
+            priority=0.8,
+        )
+        inbox_id = engine.broadcast(cycle_id="2026-06-29-test", from_phase="world", to_phase="work")
         monkeypatch.setattr(manager, "_run_work_phase", lambda result: result)
 
         result = manager.execute_phase(
@@ -272,3 +283,8 @@ class TestWorkingMemoryObservation:
         assert candidates[0]["phase"] == "work"
         assert candidates[0]["source_refs"][0].startswith("loop#")
         assert result["metrics"]["working_memory_candidate_id"] == candidates[0]["id"]
+        assert result["metrics"]["working_memory_inbox_id"] == inbox_id
+        assert result["raw_result"]["working_memory_inbox"]["from_phase"] == "world"
+        assert result["metrics"]["working_memory_broadcast_id"] > inbox_id
+        assert result["raw_result"]["working_memory_broadcast"]["from_phase"] == "work"
+        assert result["raw_result"]["working_memory_broadcast"]["to_phase"] == "hobby"

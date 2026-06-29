@@ -151,3 +151,34 @@ def test_working_memory_resolve_expire_and_broadcast(in_memory_conn):
     assert engine.expire(fringe_id) is True
     assert engine.active_focus() == []
     assert engine.active_fringe() == []
+
+
+def test_working_memory_broadcast_payload_and_latest_inbox(in_memory_conn):
+    db = _WorkingMemoryDB(in_memory_conn)
+    engine = WorkingMemoryEngine(db, agent_instance="jung_v1")
+    engine.remember_focus(
+        cycle_id="2026-06-29",
+        phase="dream",
+        title="Imagem persistente",
+        summary="Uma imagem que deve acompanhar a proxima fase.",
+        source_refs=["loop#101"],
+        priority=0.8,
+    )
+    engine.remember_fringe(
+        cycle_id="2026-06-29",
+        phase="dream",
+        title="Ruido lateral",
+        summary="Material periferico para manter no campo.",
+        source_refs=["loop#102"],
+    )
+
+    payload = engine.broadcast_payload(cycle_id="2026-06-29", from_phase="dream", to_phase="identity")
+    inbox = engine.latest_broadcast_for_phase(phase="identity", cycle_id="2026-06-29")
+
+    assert payload["id"] == inbox["id"]
+    assert payload["focus_count"] == 1
+    assert payload["fringe_count"] == 1
+    assert inbox["from_phase"] == "dream"
+    assert inbox["to_phase"] == "identity"
+    assert "Foco ativo" in inbox["focus_summary"]
+    assert "loop#101" in inbox["focus_summary"]

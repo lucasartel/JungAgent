@@ -532,6 +532,7 @@ class WillEngine:
                 "active_possible_self": (current_state or {}).get("active_possible_self"),
                 "meta_signal": (current_state or {}).get("meta_signal"),
                 "recent_shift": (current_state or {}).get("recent_shift"),
+                "working_memory_focus_context": (current_state or {}).get("working_memory_focus_context"),
             },
             "dream": {
                 "symbolic_theme": (dream or {}).get("symbolic_theme"),
