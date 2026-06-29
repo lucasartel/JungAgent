@@ -613,8 +613,19 @@ class SchemaDatabaseMixin:
                 topic TEXT NOT NULL,
                 the_gap TEXT NOT NULL,
                 importance_score REAL DEFAULT 0.5,
+                source_origin TEXT,
+                knowledge_kind TEXT,
+                target_area TEXT,
+                target_scope TEXT,
+                focus_terms_json TEXT,
+                source_reason TEXT,
                 
                 status TEXT DEFAULT 'open',
+                closure_summary TEXT,
+                closure_journal_entry TEXT,
+                closure_source_type TEXT,
+                closure_source_id TEXT,
+                closure_evidence_json TEXT,
                 
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 resolved_at DATETIME,
@@ -622,6 +633,24 @@ class SchemaDatabaseMixin:
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
         """)
+
+        for column_def in [
+            "source_origin TEXT",
+            "knowledge_kind TEXT",
+            "target_area TEXT",
+            "target_scope TEXT",
+            "focus_terms_json TEXT",
+            "source_reason TEXT",
+            "closure_summary TEXT",
+            "closure_journal_entry TEXT",
+            "closure_source_type TEXT",
+            "closure_source_id TEXT",
+            "closure_evidence_json TEXT",
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE knowledge_gaps ADD COLUMN {column_def}")
+            except sqlite3.OperationalError:
+                pass
 
         # ========== LOOP DE CONSCIENCIA ==========
         cursor.execute("""

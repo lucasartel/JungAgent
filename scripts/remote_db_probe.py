@@ -549,11 +549,73 @@ def query_world(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, A
         "knowledge_findings": cache_data.get("knowledge_findings"),
         "knowledge_seed": cache_data.get("knowledge_seed"),
         "knowledge_journal_entry": cache_data.get("knowledge_journal_entry"),
+        "knowledge_gap_closure": cache_data.get("knowledge_gap_closure"),
         "epistemic_object": cache_data.get("epistemic_object"),
         "epistemic_receipts": cache_data.get("epistemic_receipts"),
         "epistemic_longitudinal_summary": cache_data.get("epistemic_longitudinal_summary"),
         "work_seeds": cache_data.get("work_seeds"),
         "hobby_seeds": cache_data.get("hobby_seeds"),
+    }
+
+
+def query_knowledge_gaps(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
+    table = "knowledge_gaps"
+    if not table_exists(cursor, table):
+        return {
+            "probe": "knowledge_gaps",
+            "available": False,
+            "active": [],
+            "closed": [],
+        }
+
+    active = fetch_recent(
+        cursor,
+        table,
+        [
+            "id",
+            "topic",
+            "the_gap",
+            "importance_score",
+            "source_origin",
+            "knowledge_kind",
+            "target_area",
+            "target_scope",
+            "status",
+            "created_at",
+        ],
+        where="user_id = ? AND status = 'open'",
+        params=(args.user_id,),
+        order_by="importance_score DESC, created_at DESC, id DESC",
+        limit=args.limit,
+    )
+    closed = fetch_recent(
+        cursor,
+        table,
+        [
+            "id",
+            "topic",
+            "the_gap",
+            "status",
+            "closure_summary",
+            "closure_journal_entry",
+            "closure_source_type",
+            "closure_source_id",
+            "closure_evidence_json",
+            "resolved_at",
+        ],
+        where="user_id = ? AND status = 'resolved'",
+        params=(args.user_id,),
+        order_by="resolved_at DESC, id DESC",
+        limit=args.limit,
+    )
+    for row in closed:
+        row["closure_evidence"] = json_or_empty(row.pop("closure_evidence_json", None), {})
+    return {
+        "probe": "knowledge_gaps",
+        "available": True,
+        "user_id": args.user_id,
+        "active": active,
+        "closed": closed,
     }
 
 
@@ -1356,6 +1418,7 @@ PROBES: Dict[str, Callable[[sqlite3.Cursor, argparse.Namespace], Dict[str, Any]]
     "dreams": query_dreams,
     "identity": query_identity,
     "integration": query_integration,
+    "knowledge_gaps": query_knowledge_gaps,
     "loop": query_loop,
     "will": query_will,
     "pressure": query_pressure,

@@ -70,6 +70,13 @@ def test_schema_mixin_creates_core_tables_and_is_idempotent(in_memory_conn):
     assert {"user_id", "platform_id", "last_seen"} <= _column_names(in_memory_conn, "users")
     assert {"project_id", "action_type", "source_seed"} <= _column_names(in_memory_conn, "work_briefs")
     assert {"agent_instance", "item_type", "source_refs_json"} <= _column_names(in_memory_conn, "working_memory_items")
+    assert {
+        "closure_summary",
+        "closure_journal_entry",
+        "closure_source_type",
+        "closure_source_id",
+        "closure_evidence_json",
+    } <= _column_names(in_memory_conn, "knowledge_gaps")
 
 
 def test_schema_mixin_migrates_legacy_agent_development(in_memory_conn):

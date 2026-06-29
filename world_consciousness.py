@@ -344,6 +344,205 @@ class WorldConsciousnessFetcher:
 
             return LEGACY_DEFAULT_ADMIN_USER_ID
 
+    def _connect_world_db(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self._resolve_sqlite_path())
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def _persist_epistemic_knowledge_gap(self, user_id: str, knowledge_gap: Dict[str, Any], will_state: Dict[str, Any]) -> Optional[int]:
+        if not user_id or not knowledge_gap:
+            return None
+        gap_question = (knowledge_gap.get("gap_question") or knowledge_gap.get("gap_label") or "").strip()
+        if not gap_question:
+            return None
+
+        topic = (knowledge_gap.get("gap_label") or knowledge_gap.get("target_area") or "saber").strip()
+        importance = 0.72
+        try:
+            saber_pressure = float(will_state.get("saber_pressure") or 0.0)
+            importance = max(0.5, min(1.0, saber_pressure / 100.0))
+        except (TypeError, ValueError):
+            importance = 0.72
+
+        try:
+            with self._connect_world_db() as connection:
+                cursor = connection.cursor()
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM knowledge_gaps
+                    WHERE user_id = ? AND the_gap = ? AND status = 'open'
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (user_id, gap_question),
+                )
+                row = cursor.fetchone()
+                values = (
+                    topic,
+                    importance,
+                    knowledge_gap.get("source_origin"),
+                    knowledge_gap.get("knowledge_kind"),
+                    knowledge_gap.get("target_area"),
+                    knowledge_gap.get("target_scope"),
+                    json.dumps(knowledge_gap.get("focus_terms") or [], ensure_ascii=False),
+                    knowledge_gap.get("source_reason") or knowledge_gap.get("psychic_motive"),
+                )
+                if row:
+                    gap_id = int(row["id"])
+                    cursor.execute(
+                        """
+                        UPDATE knowledge_gaps
+                        SET topic = ?,
+                            importance_score = ?,
+                            source_origin = ?,
+                            knowledge_kind = ?,
+                            target_area = ?,
+                            target_scope = ?,
+                            focus_terms_json = ?,
+                            source_reason = ?
+                        WHERE id = ?
+                        """,
+                        (*values, gap_id),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO knowledge_gaps (
+                            user_id, topic, the_gap, importance_score,
+                            source_origin, knowledge_kind, target_area, target_scope,
+                            focus_terms_json, source_reason, status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+                        """,
+                        (user_id, topic, gap_question, *values[1:]),
+                    )
+                    gap_id = int(cursor.lastrowid)
+                connection.commit()
+                return gap_id
+        except sqlite3.OperationalError as exc:
+            logger.warning("World Consciousness: schema de knowledge_gaps indisponivel para persistencia: %s", exc)
+            return None
+        except Exception as exc:
+            logger.warning("World Consciousness: falha ao persistir knowledge gap: %s", exc)
+            return None
+
+    def _build_knowledge_gap_closure_evidence(
+        self,
+        *,
+        knowledge_gap: Dict[str, Any],
+        knowledge_decision: str,
+        knowledge_probe: Dict[str, Any],
+        knowledge_summary: str,
+        knowledge_journal_entry: str,
+        epistemic_object: Dict[str, Any],
+        firecrawl_result: Dict[str, Any],
+        dynamic_queries: List[Dict[str, Any]],
+        source_id: str,
+    ) -> Dict[str, Any]:
+        return {
+            "source_ref": f"world_state_cache#{source_id}",
+            "knowledge_gap": knowledge_gap,
+            "knowledge_source_decision": knowledge_decision,
+            "knowledge_resolution_summary": knowledge_summary,
+            "knowledge_journal_entry": knowledge_journal_entry,
+            "knowledge_findings": knowledge_probe.get("knowledge_findings"),
+            "knowledge_seed": knowledge_probe.get("knowledge_seed"),
+            "latent_probe_summary": knowledge_probe.get("latent_probe_summary"),
+            "epistemic_object": {
+                "question": epistemic_object.get("question"),
+                "found_fact": epistemic_object.get("found_fact"),
+                "conceptual_shape": epistemic_object.get("conceptual_shape"),
+                "source_path": epistemic_object.get("source_path"),
+            },
+            "firecrawl": {
+                "used": bool(firecrawl_result.get("used")),
+                "urls": firecrawl_result.get("urls", []),
+                "summary": firecrawl_result.get("summary") or "; ".join(firecrawl_result.get("findings", [])[:3]),
+                "errors": firecrawl_result.get("errors", []),
+            },
+            "dynamic_queries": dynamic_queries,
+        }
+
+    def _close_epistemic_knowledge_gap(
+        self,
+        *,
+        knowledge_gap: Dict[str, Any],
+        knowledge_decision: str,
+        knowledge_probe: Dict[str, Any],
+        knowledge_summary: str,
+        knowledge_journal_entry: str,
+        epistemic_object: Dict[str, Any],
+        firecrawl_result: Dict[str, Any],
+        dynamic_queries: List[Dict[str, Any]],
+        source_id: str,
+    ) -> Dict[str, Any]:
+        gap_id = knowledge_gap.get("knowledge_gap_id")
+        if not gap_id or knowledge_decision in (None, "", "inactive") or not knowledge_journal_entry:
+            return {}
+        if not any(
+            [
+                knowledge_probe.get("knowledge_findings"),
+                knowledge_probe.get("knowledge_seed"),
+                knowledge_probe.get("latent_probe_summary"),
+                firecrawl_result.get("summary"),
+                epistemic_object.get("found_fact"),
+            ]
+        ):
+            return {}
+
+        evidence = self._build_knowledge_gap_closure_evidence(
+            knowledge_gap=knowledge_gap,
+            knowledge_decision=knowledge_decision,
+            knowledge_probe=knowledge_probe,
+            knowledge_summary=knowledge_summary,
+            knowledge_journal_entry=knowledge_journal_entry,
+            epistemic_object=epistemic_object,
+            firecrawl_result=firecrawl_result,
+            dynamic_queries=dynamic_queries,
+            source_id=source_id,
+        )
+        try:
+            with self._connect_world_db() as connection:
+                cursor = connection.cursor()
+                cursor.execute(
+                    """
+                    UPDATE knowledge_gaps
+                    SET status = 'resolved',
+                        closure_summary = ?,
+                        closure_journal_entry = ?,
+                        closure_source_type = ?,
+                        closure_source_id = ?,
+                        closure_evidence_json = ?,
+                        resolved_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (
+                        knowledge_summary,
+                        knowledge_journal_entry,
+                        "world_state_cache",
+                        source_id,
+                        json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+                        int(gap_id),
+                    ),
+                )
+                connection.commit()
+                if cursor.rowcount <= 0:
+                    return {}
+        except Exception as exc:
+            logger.warning("World Consciousness: falha ao fechar knowledge gap %s: %s", gap_id, exc)
+            return {}
+
+        return {
+            "knowledge_gap_id": int(gap_id),
+            "status": "resolved",
+            "source_ref": evidence["source_ref"],
+            "source_type": "world_state_cache",
+            "source_id": source_id,
+            "closure_summary": knowledge_summary,
+            "journal_entry": knowledge_journal_entry,
+            "evidence": evidence,
+        }
+
     def _resolve_will_state(self, will_state: Optional[Dict]) -> Dict:
         if will_state:
             return will_state
@@ -1131,6 +1330,7 @@ Contexto:
                 "confidence_overall": snapshot.get("confidence_overall"),
                 "knowledge_resolution_summary": snapshot.get("knowledge_resolution_summary"),
                 "knowledge_journal_entry": snapshot.get("knowledge_journal_entry"),
+                "knowledge_gap_closure": snapshot.get("knowledge_gap_closure") or {},
                 "epistemic_object": snapshot.get("epistemic_object") or {},
                 "epistemic_receipts": snapshot.get("epistemic_receipts") or {},
                 "consensus_map": snapshot.get("consensus_map", {}),
@@ -2068,6 +2268,8 @@ Estado estruturado:
         epistemic_trigger: Optional[str] = None,
     ) -> Dict:
         now = datetime.now()
+        closure_source_id = now.strftime("%Y%m%d%H%M%S")
+        user_id = self._admin_user_id()
         resolved_will_state = self._resolve_will_state(will_state)
         attention_profile = self._build_attention_profile(resolved_will_state)
         epistemic_active = self._should_activate_epistemic_discernment(
@@ -2110,6 +2312,9 @@ Estado estruturado:
                 cached_data or {},
                 epistemic_trigger=epistemic_trigger,
             )
+            gap_id = self._persist_epistemic_knowledge_gap(user_id, knowledge_gap, resolved_will_state)
+            if gap_id:
+                knowledge_gap["knowledge_gap_id"] = gap_id
             knowledge_probe = self._probe_knowledge_source(knowledge_gap, resolved_will_state, cached_data or {})
             knowledge_gap, knowledge_probe = self._ensure_saber_release_knowledge(
                 epistemic_trigger=epistemic_trigger,
@@ -2229,6 +2434,22 @@ Estado estruturado:
             )
         epistemic_receipts = self._build_epistemic_receipts(epistemic_object)
         epistemic_memory = self._build_epistemic_longitudinal_summary(history, epistemic_object)
+        knowledge_gap_closure = {}
+        if epistemic_active and not carried_recent_knowledge:
+            knowledge_gap_closure = self._close_epistemic_knowledge_gap(
+                knowledge_gap=knowledge_gap,
+                knowledge_decision=knowledge_decision,
+                knowledge_probe=knowledge_probe,
+                knowledge_summary=knowledge_summary,
+                knowledge_journal_entry=knowledge_journal_entry,
+                epistemic_object=epistemic_object,
+                firecrawl_result=firecrawl_result,
+                dynamic_queries=dynamic_queries,
+                source_id=closure_source_id,
+            )
+            if knowledge_gap_closure:
+                knowledge_gap["status"] = "resolved"
+                knowledge_gap["closure_source_ref"] = knowledge_gap_closure["source_ref"]
         if epistemic_object:
             conceptual_seed = epistemic_object.get("conceptual_shape") or epistemic_object.get("found_fact")
             art_seed = epistemic_object.get("expressive_implication") or epistemic_object.get("self_resonance")
@@ -2284,6 +2505,7 @@ Estado estruturado:
             "knowledge_seed": knowledge_probe.get("knowledge_seed"),
             "knowledge_resolution_summary": knowledge_summary,
             "knowledge_journal_entry": knowledge_journal_entry,
+            "knowledge_gap_closure": knowledge_gap_closure,
             "epistemic_object": epistemic_object,
             "epistemic_receipts": epistemic_receipts,
             "epistemic_longitudinal_summary": epistemic_memory,
