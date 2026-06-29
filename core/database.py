@@ -25,6 +25,7 @@ from core.db.psychometrics import PsychometricsDatabaseMixin
 from core.db.schema import SchemaDatabaseMixin
 from core.db.semantic_memory import SemanticMemoryDatabaseMixin
 from core.db.users import UserDatabaseMixin
+from core.db.working_memory import WorkingMemoryDatabaseMixin
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class HybridDatabaseManager(
     UserDatabaseMixin,
     DreamDatabaseMixin,
     KnowledgeGapDatabaseMixin,
+    WorkingMemoryDatabaseMixin,
     PsychometricsDatabaseMixin,
 ):
     """

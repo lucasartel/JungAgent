@@ -1056,5 +1056,8 @@ class SchemaDatabaseMixin:
         except sqlite3.OperationalError:
             pass
 
+        if hasattr(self, "_init_working_memory_schema"):
+            self._init_working_memory_schema()
+
         self.conn.commit()
         logger.info("âœ… Schema SQLite criado/verificado com Ã­ndices de performance")

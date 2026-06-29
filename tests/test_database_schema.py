@@ -14,10 +14,20 @@ def _load_schema_mixin():
     return module.SchemaDatabaseMixin
 
 
+def _load_working_memory_mixin():
+    path = Path(__file__).resolve().parents[1] / "core" / "db" / "working_memory.py"
+    spec = importlib.util.spec_from_file_location("working_memory_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module.WorkingMemoryDatabaseMixin
+
+
 SchemaDatabaseMixin = _load_schema_mixin()
+WorkingMemoryDatabaseMixin = _load_working_memory_mixin()
 
 
-class _SchemaEngine(SchemaDatabaseMixin):
+class _SchemaEngine(SchemaDatabaseMixin, WorkingMemoryDatabaseMixin):
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
@@ -50,11 +60,16 @@ def test_schema_mixin_creates_core_tables_and_is_idempotent(in_memory_conn):
         "work_projects",
         "work_briefs",
         "work_approval_tickets",
+        "working_memory_items",
+        "working_memory_broadcasts",
+        "goal_threads",
+        "goal_steps",
     ]:
         assert table in tables
 
     assert {"user_id", "platform_id", "last_seen"} <= _column_names(in_memory_conn, "users")
     assert {"project_id", "action_type", "source_seed"} <= _column_names(in_memory_conn, "work_briefs")
+    assert {"agent_instance", "item_type", "source_refs_json"} <= _column_names(in_memory_conn, "working_memory_items")
 
 
 def test_schema_mixin_migrates_legacy_agent_development(in_memory_conn):
