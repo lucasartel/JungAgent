@@ -332,6 +332,64 @@ def query_working_memory(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Di
     }
 
 
+def query_goals(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
+    if not table_exists(cursor, "goal_threads"):
+        return {
+            "probe": "goals",
+            "available": False,
+            "agent_instance": args.agent_instance,
+            "threads": [],
+        }
+
+    threads = fetch_recent(
+        cursor,
+        "goal_threads",
+        [
+            "id",
+            "agent_instance",
+            "cycle_id",
+            "status",
+            "drive",
+            "title",
+            "objective",
+            "source_refs_json",
+            "created_at",
+            "updated_at",
+            "closed_at",
+        ],
+        where="agent_instance = ?",
+        params=(args.agent_instance,),
+        order_by="updated_at DESC, id DESC",
+        limit=args.limit,
+    )
+    for thread in threads:
+        thread["source_refs"] = json_or_empty(thread.pop("source_refs_json", None), [])
+        if table_exists(cursor, "goal_steps"):
+            cursor.execute(
+                """
+                SELECT id, goal_id, status, step_order, title, expected_evidence,
+                       result_summary, source_refs_json, created_at, completed_at
+                FROM goal_steps
+                WHERE goal_id = ?
+                ORDER BY step_order ASC, id ASC
+                """,
+                (thread["id"],),
+            )
+            steps = rows_to_dicts(cursor.fetchall())
+            for step in steps:
+                step["source_refs"] = json_or_empty(step.pop("source_refs_json", None), [])
+            thread["steps"] = steps
+        else:
+            thread["steps"] = []
+
+    return {
+        "probe": "goals",
+        "available": True,
+        "agent_instance": args.agent_instance,
+        "threads": threads,
+    }
+
+
 def query_will(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
     cursor.execute(
         """
@@ -1416,6 +1474,7 @@ def query_audio(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, A
 
 PROBES: Dict[str, Callable[[sqlite3.Cursor, argparse.Namespace], Dict[str, Any]]] = {
     "dreams": query_dreams,
+    "goals": query_goals,
     "identity": query_identity,
     "integration": query_integration,
     "knowledge_gaps": query_knowledge_gaps,

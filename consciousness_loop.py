@@ -1917,6 +1917,31 @@ class ConsciousnessLoopManager:
             summary=will_result.get("daily_text") or will_result.get("will_conflict") or "estado das vontades",
         )
 
+        try:
+            from engines.goal_manager import GoalManager
+
+            goal_result = GoalManager(self.db, agent_instance=self.agent_instance).create_from_will_state(will_result)
+            goal = goal_result.get("goal") or {}
+            result["raw_result"]["goal_manager"] = {
+                "created": goal_result.get("created"),
+                "goal_id": goal.get("id") or goal_result.get("goal_id"),
+                "source_ref": goal_result.get("source_ref"),
+                "step_count": len(goal.get("steps") or goal_result.get("step_ids") or []),
+            }
+            result["metrics"]["goal_thread_id"] = goal.get("id") or goal_result.get("goal_id") or 0
+            result["metrics"]["goal_steps_created"] = len(goal.get("steps") or goal_result.get("step_ids") or [])
+            self._record_virtual_artifact(
+                result,
+                artifact_type="goal_thread",
+                artifact_id=goal.get("id") or goal_result.get("goal_id"),
+                artifact_table="goal_threads",
+                summary=goal.get("title") or "objetivo derivado da vontade",
+            )
+        except Exception as exc:
+            logger.warning("LOOP WILL goal manager failed: %s", exc)
+            result["warnings"].append("goal_manager_failed")
+            result["metrics"]["goal_manager_error"] = 1
+
         if will_result.get("status") in {"generated", "preliminary_generated"}:
             result["output_summary"] = will_result.get("daily_text") or "Modulo Will consolidou o estado atual das tres vontades."
         else:

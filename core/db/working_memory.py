@@ -323,3 +323,236 @@ class WorkingMemoryDatabaseMixin:
         broadcast["focus_items"] = _json_loads(broadcast.pop("focus_items_json", None), [])
         broadcast["fringe_items"] = _json_loads(broadcast.pop("fringe_items_json", None), [])
         return broadcast
+
+    def create_goal_thread(
+        self,
+        *,
+        agent_instance: str,
+        title: str,
+        objective: str,
+        source_refs: Sequence[str],
+        cycle_id: Optional[str] = None,
+        drive: Optional[str] = None,
+        status: str = "active",
+    ) -> int:
+        refs = self._normalize_source_refs(source_refs)
+        clean_status = (status or "").strip().lower()
+        if clean_status not in {"active", "completed", "abandoned"}:
+            raise ValueError(f"invalid_goal_status:{status}")
+        if not agent_instance or not title or not objective:
+            raise ValueError("agent_instance_title_objective_required")
+
+        with self._lock:
+            now = _now_iso()
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO goal_threads (
+                    agent_instance, cycle_id, status, drive, title, objective,
+                    source_refs_json, created_at, updated_at, closed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    agent_instance,
+                    cycle_id,
+                    clean_status,
+                    (drive or "").strip().lower() or None,
+                    title.strip(),
+                    objective.strip(),
+                    _json_dumps(refs),
+                    now,
+                    now,
+                    now if clean_status in {"completed", "abandoned"} else None,
+                ),
+            )
+            self.conn.commit()
+            return int(cursor.lastrowid)
+
+    def find_goal_thread_by_source_ref(
+        self,
+        *,
+        agent_instance: str,
+        source_ref: str,
+    ) -> Optional[Dict[str, Any]]:
+        ref = self._normalize_source_refs([source_ref])[0]
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT *
+            FROM goal_threads
+            WHERE agent_instance = ? AND source_refs_json LIKE ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (agent_instance, f"%{ref}%"),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        thread = self._goal_thread_row_to_dict(row)
+        thread["steps"] = self.list_goal_steps(thread["id"])
+        return thread
+
+    def create_goal_steps(
+        self,
+        *,
+        goal_id: int,
+        steps: Sequence[Dict[str, Any]],
+    ) -> List[int]:
+        if not goal_id:
+            raise ValueError("goal_id_required")
+        if not steps:
+            raise ValueError("goal_steps_required")
+
+        ids: List[int] = []
+        with self._lock:
+            now = _now_iso()
+            cursor = self.conn.cursor()
+            for index, step in enumerate(steps, start=1):
+                title = (step.get("title") or "").strip()
+                expected_evidence = (step.get("expected_evidence") or "").strip()
+                refs = self._normalize_source_refs(step.get("source_refs") or [])
+                if not title or not expected_evidence:
+                    raise ValueError("goal_step_title_expected_evidence_required")
+                cursor.execute(
+                    """
+                    INSERT INTO goal_steps (
+                        goal_id, status, step_order, title, expected_evidence,
+                        result_summary, source_refs_json, created_at, completed_at
+                    ) VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        goal_id,
+                        int(step.get("step_order") or index),
+                        title,
+                        expected_evidence,
+                        None,
+                        _json_dumps(refs),
+                        now,
+                        None,
+                    ),
+                )
+                ids.append(int(cursor.lastrowid))
+            self.conn.commit()
+        return ids
+
+    def list_goal_threads(
+        self,
+        *,
+        agent_instance: str,
+        status: Optional[str] = None,
+        limit: int = 20,
+        include_steps: bool = False,
+    ) -> List[Dict[str, Any]]:
+        clauses = ["agent_instance = ?"]
+        params: List[Any] = [agent_instance]
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        params.append(max(1, int(limit)))
+        cursor = self.conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT *
+            FROM goal_threads
+            WHERE {' AND '.join(clauses)}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        )
+        rows = [self._goal_thread_row_to_dict(row) for row in cursor.fetchall()]
+        if include_steps:
+            for row in rows:
+                row["steps"] = self.list_goal_steps(row["id"])
+        return rows
+
+    def list_goal_steps(self, goal_id: int, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        clauses = ["goal_id = ?"]
+        params: List[Any] = [goal_id]
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        cursor = self.conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT *
+            FROM goal_steps
+            WHERE {' AND '.join(clauses)}
+            ORDER BY step_order ASC, id ASC
+            """,
+            tuple(params),
+        )
+        return [self._goal_step_row_to_dict(row) for row in cursor.fetchall()]
+
+    def complete_goal_step(
+        self,
+        step_id: int,
+        *,
+        result_summary: str,
+        source_refs: Sequence[str],
+    ) -> bool:
+        refs = self._normalize_source_refs(source_refs)
+        if not step_id or not result_summary:
+            raise ValueError("step_id_result_summary_required")
+
+        with self._lock:
+            now = _now_iso()
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                UPDATE goal_steps
+                SET status = 'completed',
+                    result_summary = ?,
+                    source_refs_json = ?,
+                    completed_at = ?
+                WHERE id = ?
+                """,
+                (result_summary.strip(), _json_dumps(refs), now, step_id),
+            )
+            if cursor.rowcount <= 0:
+                self.conn.commit()
+                return False
+
+            cursor.execute("SELECT goal_id FROM goal_steps WHERE id = ?", (step_id,))
+            row = cursor.fetchone()
+            goal_id = int(row["goal_id"]) if row else 0
+            if goal_id:
+                cursor.execute(
+                    """
+                    UPDATE goal_threads
+                    SET updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, goal_id),
+                )
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS pending_count
+                    FROM goal_steps
+                    WHERE goal_id = ? AND status != 'completed'
+                    """,
+                    (goal_id,),
+                )
+                pending = int(cursor.fetchone()["pending_count"])
+                if pending == 0:
+                    cursor.execute(
+                        """
+                        UPDATE goal_threads
+                        SET status = 'completed', updated_at = ?, closed_at = ?
+                        WHERE id = ?
+                        """,
+                        (now, now, goal_id),
+                    )
+            self.conn.commit()
+            return True
+
+    def _goal_thread_row_to_dict(self, row: Any) -> Dict[str, Any]:
+        thread = dict(row)
+        thread["source_refs"] = _json_loads(thread.pop("source_refs_json", None), [])
+        return thread
+
+    def _goal_step_row_to_dict(self, row: Any) -> Dict[str, Any]:
+        step = dict(row)
+        step["source_refs"] = _json_loads(step.pop("source_refs_json", None), [])
+        return step
