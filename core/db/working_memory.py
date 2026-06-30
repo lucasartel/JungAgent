@@ -99,11 +99,33 @@ class WorkingMemoryDatabaseMixin:
             )
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS controlled_action_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_instance TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                goal_id INTEGER,
+                step_id INTEGER,
+                knowledge_gap_id INTEGER,
+                summary TEXT,
+                source_refs_json TEXT NOT NULL,
+                evidence_json TEXT,
+                metadata_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT
+            )
+            """
+        )
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_wm_items_active ON working_memory_items(agent_instance, status, item_type, priority DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_wm_items_cycle ON working_memory_items(agent_instance, cycle_id, phase, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_wm_broadcasts_cycle ON working_memory_broadcasts(agent_instance, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_goal_threads_status ON goal_threads(agent_instance, status, updated_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_goal_steps_goal ON goal_steps(goal_id, step_order)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_controlled_actions_agent ON controlled_action_runs(agent_instance, status, updated_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_controlled_actions_goal ON controlled_action_runs(goal_id, step_id)")
 
     def _normalize_source_refs(self, source_refs: Sequence[str], *, required: bool = True) -> List[str]:
         refs: List[str] = []
@@ -393,6 +415,19 @@ class WorkingMemoryDatabaseMixin:
         thread["steps"] = self.list_goal_steps(thread["id"])
         return thread
 
+    def get_goal_thread(self, goal_id: int, *, include_steps: bool = False) -> Optional[Dict[str, Any]]:
+        if not goal_id:
+            raise ValueError("goal_id_required")
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM goal_threads WHERE id = ? LIMIT 1", (int(goal_id),))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        thread = self._goal_thread_row_to_dict(row)
+        if include_steps:
+            thread["steps"] = self.list_goal_steps(thread["id"])
+        return thread
+
     def create_goal_steps(
         self,
         *,
@@ -556,3 +591,131 @@ class WorkingMemoryDatabaseMixin:
         step = dict(row)
         step["source_refs"] = _json_loads(step.pop("source_refs_json", None), [])
         return step
+
+    def create_controlled_action_run(
+        self,
+        *,
+        agent_instance: str,
+        action_type: str,
+        source_refs: Sequence[str],
+        goal_id: Optional[int] = None,
+        step_id: Optional[int] = None,
+        knowledge_gap_id: Optional[int] = None,
+        status: str = "pending",
+        summary: Optional[str] = None,
+        evidence: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        refs = self._normalize_source_refs(source_refs)
+        clean_status = (status or "").strip().lower()
+        if clean_status not in {"pending", "running", "completed", "failed", "blocked"}:
+            raise ValueError(f"invalid_action_status:{status}")
+        clean_type = (action_type or "").strip().lower()
+        if not agent_instance or not clean_type:
+            raise ValueError("agent_instance_action_type_required")
+
+        with self._lock:
+            now = _now_iso()
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO controlled_action_runs (
+                    agent_instance, action_type, status, goal_id, step_id, knowledge_gap_id,
+                    summary, source_refs_json, evidence_json, metadata_json,
+                    created_at, updated_at, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    agent_instance,
+                    clean_type,
+                    clean_status,
+                    int(goal_id) if goal_id else None,
+                    int(step_id) if step_id else None,
+                    int(knowledge_gap_id) if knowledge_gap_id else None,
+                    (summary or "").strip() or None,
+                    _json_dumps(refs),
+                    _json_dumps(evidence or {}),
+                    _json_dumps(metadata or {}),
+                    now,
+                    now,
+                    now if clean_status in {"completed", "failed", "blocked"} else None,
+                ),
+            )
+            self.conn.commit()
+            return int(cursor.lastrowid)
+
+    def complete_controlled_action_run(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        summary: str,
+        source_refs: Sequence[str],
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        refs = self._normalize_source_refs(source_refs)
+        clean_status = (status or "").strip().lower()
+        if clean_status not in {"completed", "failed", "blocked"}:
+            raise ValueError(f"invalid_terminal_action_status:{status}")
+        if not run_id or not summary:
+            raise ValueError("run_id_summary_required")
+
+        with self._lock:
+            now = _now_iso()
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                UPDATE controlled_action_runs
+                SET status = ?,
+                    summary = ?,
+                    source_refs_json = ?,
+                    evidence_json = ?,
+                    updated_at = ?,
+                    completed_at = ?
+                WHERE id = ?
+                """,
+                (
+                    clean_status,
+                    summary.strip(),
+                    _json_dumps(refs),
+                    _json_dumps(evidence or {}),
+                    now,
+                    now,
+                    int(run_id),
+                ),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+    def list_controlled_action_runs(
+        self,
+        *,
+        agent_instance: str,
+        status: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        clauses = ["agent_instance = ?"]
+        params: List[Any] = [agent_instance]
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        params.append(max(1, int(limit)))
+        cursor = self.conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT *
+            FROM controlled_action_runs
+            WHERE {' AND '.join(clauses)}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        )
+        return [self._controlled_action_row_to_dict(row) for row in cursor.fetchall()]
+
+    def _controlled_action_row_to_dict(self, row: Any) -> Dict[str, Any]:
+        action = dict(row)
+        action["source_refs"] = _json_loads(action.pop("source_refs_json", None), [])
+        action["evidence"] = _json_loads(action.pop("evidence_json", None), {})
+        action["metadata"] = _json_loads(action.pop("metadata_json", None), {})
+        return action

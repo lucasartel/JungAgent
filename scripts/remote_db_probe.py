@@ -382,11 +382,43 @@ def query_goals(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, A
         else:
             thread["steps"] = []
 
+    action_runs: List[Dict[str, Any]] = []
+    if table_exists(cursor, "controlled_action_runs"):
+        action_runs = fetch_recent(
+            cursor,
+            "controlled_action_runs",
+            [
+                "id",
+                "agent_instance",
+                "action_type",
+                "status",
+                "goal_id",
+                "step_id",
+                "knowledge_gap_id",
+                "summary",
+                "source_refs_json",
+                "evidence_json",
+                "metadata_json",
+                "created_at",
+                "updated_at",
+                "completed_at",
+            ],
+            where="agent_instance = ?",
+            params=(args.agent_instance,),
+            order_by="updated_at DESC, id DESC",
+            limit=args.limit,
+        )
+        for action in action_runs:
+            action["source_refs"] = json_or_empty(action.pop("source_refs_json", None), [])
+            action["evidence"] = json_or_empty(action.pop("evidence_json", None), {})
+            action["metadata"] = json_or_empty(action.pop("metadata_json", None), {})
+
     return {
         "probe": "goals",
         "available": True,
         "agent_instance": args.agent_instance,
         "threads": threads,
+        "action_runs": action_runs,
     }
 
 
