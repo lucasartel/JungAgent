@@ -24,6 +24,7 @@ COPY engines/ ./engines/
 COPY admin_web/ ./admin_web/
 COPY scripts/ ./scripts/
 COPY migrations/ ./migrations/
+COPY tests/verify_phase3.py ./tests/verify_phase3.py
 
 # Create runtime directories.
 RUN mkdir -p /data /app/chroma_db /app/logs
