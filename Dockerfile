@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py .
 COPY core/ ./core/
 COPY work/ ./work/
+COPY engines/ ./engines/
 
 # Copy dashboard, helper scripts, and migrations.
 COPY admin_web/ ./admin_web/
