@@ -61,32 +61,65 @@ def test_working_memory_engine_records_focus_and_fringe(in_memory_conn):
     assert fringe[0]["item_type"] == "fringe"
 
 
-def test_working_memory_engine_observes_phase_result_as_candidate(in_memory_conn):
+def test_working_memory_engine_observes_world_phase_as_focus(in_memory_conn):
     db = _WorkingMemoryDB(in_memory_conn)
     engine = WorkingMemoryEngine(db, agent_instance="jung_v1")
 
-    candidate_id = engine.observe_phase_result(
+    focus_id = engine.observe_phase_result(
         phase_result_id=42,
         cycle_id="2026-06-29",
         phase="world",
         status="success",
-        output_summary="A fase world deixou material periferico para avaliacao posterior.",
+        output_summary="A fase world deixou uma direcao ativa para o restante do ciclo.",
         trigger_source="pytest",
-        warnings=["sample_warning"],
+        warnings=[],
         errors=[],
         metrics={"artifacts_created_count": 2},
     )
 
-    candidates = db.list_working_memory_items(
+    focus = db.list_working_memory_items(
         agent_instance="jung_v1",
         status="active",
-        item_type="candidate",
+        item_type="focus",
     )
 
-    assert candidate_id == candidates[0]["id"]
-    assert candidates[0]["source_refs"] == ["loop#42"]
-    assert candidates[0]["metadata"]["status"] == "success"
-    assert candidates[0]["metadata"]["artifact_count"] == 2
+    assert focus_id == focus[0]["id"]
+    assert focus[0]["source_refs"] == ["loop#42"]
+    assert focus[0]["metadata"]["status"] == "success"
+    assert focus[0]["metadata"]["artifact_count"] == 2
+    assert focus[0]["metadata"]["classification_reason"] == "world_directs_next_cycle"
+
+
+def test_working_memory_engine_classifies_fringe_and_candidate(in_memory_conn):
+    db = _WorkingMemoryDB(in_memory_conn)
+    engine = WorkingMemoryEngine(db, agent_instance="jung_v1")
+
+    fringe_id = engine.observe_phase_result(
+        phase_result_id=43,
+        cycle_id="2026-06-29",
+        phase="hobby",
+        status="partial_success",
+        output_summary="A fase hobby deixou material periferico com alerta.",
+        warnings=["hobby_art_payload_failed"],
+        errors=[],
+    )
+    candidate_id = engine.observe_phase_result(
+        phase_result_id=44,
+        cycle_id="2026-06-29",
+        phase="work",
+        status="success",
+        output_summary="Nenhum brief pendente para a fase Work.",
+        warnings=[],
+        errors=[],
+    )
+
+    fringe = db.get_working_memory_item(fringe_id)
+    candidate = db.get_working_memory_item(candidate_id)
+
+    assert fringe["item_type"] == "fringe"
+    assert fringe["metadata"]["classification_reason"] == "partial_success_with_warning"
+    assert candidate["item_type"] == "candidate"
+    assert candidate["metadata"]["classification_reason"] == "low_salience_observation"
 
 
 def test_working_memory_rejects_invalid_or_missing_sources(in_memory_conn):
@@ -124,6 +157,42 @@ def test_working_memory_enforces_active_focus_limit(in_memory_conn):
             summary="Este foco passaria do limite.",
             source_refs=["loop#99"],
         )
+
+
+def test_observed_focus_expires_oldest_when_focus_limit_is_full(in_memory_conn):
+    db = _WorkingMemoryDB(in_memory_conn)
+    engine = WorkingMemoryEngine(db, agent_instance="jung_v1")
+
+    original_ids = []
+    for index in range(ACTIVE_FOCUS_LIMIT):
+        original_ids.append(
+            engine.remember_focus(
+                phase="rumination_intro",
+                title=f"Foco {index}",
+                summary="Um foco ativo com fonte.",
+                source_refs=[f"loop#{index + 1}"],
+            )
+        )
+
+    new_id = engine.observe_phase_result(
+        phase_result_id=99,
+        cycle_id="2026-06-29",
+        phase="will",
+        status="success",
+        output_summary="A vontade definiu a direcao do proximo ciclo.",
+    )
+
+    active_focus = db.list_working_memory_items(
+        agent_instance="jung_v1",
+        status="active",
+        item_type="focus",
+        limit=10,
+    )
+    expired = db.get_working_memory_item(original_ids[0])
+
+    assert new_id in {item["id"] for item in active_focus}
+    assert len(active_focus) == ACTIVE_FOCUS_LIMIT
+    assert expired["status"] == "expired"
 
 
 def test_working_memory_resolve_expire_and_broadcast(in_memory_conn):

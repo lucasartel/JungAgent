@@ -243,6 +243,16 @@ class WorkingMemoryDatabaseMixin:
         )
         return [self._working_memory_row_to_dict(row) for row in cursor.fetchall()]
 
+    def get_working_memory_item(self, item_id: int) -> Optional[Dict[str, Any]]:
+        if not item_id:
+            raise ValueError("item_id_required")
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM working_memory_items WHERE id = ? LIMIT 1", (int(item_id),))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return self._working_memory_row_to_dict(row)
+
     def _working_memory_row_to_dict(self, row: Any) -> Dict[str, Any]:
         item = dict(row)
         item["source_refs"] = _json_loads(item.pop("source_refs_json", None), [])

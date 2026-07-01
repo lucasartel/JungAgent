@@ -14,6 +14,12 @@ class WorkingMemoryEngine:
         self.db = db_manager
         self.agent_instance = agent_instance
 
+    def _truncate(self, value: Any, limit: int = 1000) -> str:
+        text = str(value or "").strip()
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3].rstrip(" ,.;:") + "..."
+
     def remember_focus(
         self,
         *,
@@ -89,6 +95,64 @@ class WorkingMemoryEngine:
             expires_at=expires_at,
         )
 
+    def _classification_for_phase_result(
+        self,
+        *,
+        phase: str,
+        status: str,
+        warnings: Optional[Sequence[str]] = None,
+        errors: Optional[Sequence[str]] = None,
+        metrics: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        clean_phase = (phase or "").strip().lower()
+        clean_status = (status or "unknown").strip().lower()
+        warning_count = len(warnings or [])
+        error_count = len(errors or [])
+        artifact_count = int((metrics or {}).get("artifacts_created_count") or 0)
+
+        if clean_status == "failed" or error_count:
+            return {
+                "item_type": "focus",
+                "priority": 0.9,
+                "reason": "phase_failure",
+            }
+        if clean_phase in {"will", "world"}:
+            return {
+                "item_type": "focus",
+                "priority": 0.75 if clean_phase == "will" else 0.7,
+                "reason": f"{clean_phase}_directs_next_cycle",
+            }
+        if clean_status == "partial_success" and warning_count:
+            return {
+                "item_type": "fringe",
+                "priority": 0.52,
+                "reason": "partial_success_with_warning",
+            }
+        if clean_phase in {"dream", "identity", "rumination_intro", "rumination_extro"}:
+            return {
+                "item_type": "fringe",
+                "priority": 0.45 if artifact_count else 0.38,
+                "reason": f"{clean_phase}_background_material",
+            }
+        return {
+            "item_type": "candidate",
+            "priority": 0.35,
+            "reason": "low_salience_observation",
+        }
+
+    def _make_room_for_focus(self) -> None:
+        focus_items = self.active_focus(limit=50)
+        if len(focus_items) < 5:
+            return
+        oldest = sorted(
+            focus_items,
+            key=lambda item: (
+                str(item.get("updated_at") or item.get("created_at") or ""),
+                int(item.get("id") or 0),
+            ),
+        )[0]
+        self.expire(int(oldest["id"]))
+
     def observe_phase_result(
         self,
         *,
@@ -107,27 +171,52 @@ class WorkingMemoryEngine:
             return None
 
         clean_status = (status or "unknown").strip().lower()
-        priority = 0.4
-        if clean_status == "partial_success":
-            priority = 0.55
-        elif clean_status == "failed":
-            priority = 0.75
+        classification = self._classification_for_phase_result(
+            phase=phase,
+            status=clean_status,
+            warnings=warnings,
+            errors=errors,
+            metrics=metrics,
+        )
 
-        compact_summary = summary[:1000]
+        compact_summary = self._truncate(summary, 1000)
         metadata = {
             "status": clean_status,
             "trigger_source": trigger_source,
             "warning_count": len(warnings or []),
             "error_count": len(errors or []),
             "artifact_count": int((metrics or {}).get("artifacts_created_count") or 0),
+            "classification_reason": classification["reason"],
         }
+        item_type = classification["item_type"]
+        if item_type == "focus":
+            self._make_room_for_focus()
+            return self.remember_focus(
+                cycle_id=cycle_id,
+                phase=phase,
+                title=f"{phase} focus",
+                summary=compact_summary,
+                source_refs=[f"loop#{phase_result_id}"],
+                priority=classification["priority"],
+                metadata=metadata,
+            )
+        if item_type == "fringe":
+            return self.remember_fringe(
+                cycle_id=cycle_id,
+                phase=phase,
+                title=f"{phase} fringe",
+                summary=compact_summary,
+                source_refs=[f"loop#{phase_result_id}"],
+                priority=classification["priority"],
+                metadata=metadata,
+            )
         return self.remember_candidate(
             cycle_id=cycle_id,
             phase=phase,
-            title=f"{phase} observed",
+            title=f"{phase} candidate",
             summary=compact_summary,
             source_refs=[f"loop#{phase_result_id}"],
-            priority=priority,
+            priority=classification["priority"],
             metadata=metadata,
         )
 

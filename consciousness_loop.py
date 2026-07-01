@@ -709,17 +709,25 @@ class ConsciousnessLoopManager:
                 metrics=result.get("metrics"),
             )
             if candidate_id:
-                result["metrics"]["working_memory_candidate_id"] = candidate_id
+                observed_item = None
+                if hasattr(self.db, "get_working_memory_item"):
+                    observed_item = self.db.get_working_memory_item(candidate_id)
+                item_type = (observed_item or {}).get("item_type") or "candidate"
+                result["metrics"]["working_memory_item_id"] = candidate_id
+                result["metrics"]["working_memory_item_type"] = item_type
+                if item_type == "candidate":
+                    result["metrics"]["working_memory_candidate_id"] = candidate_id
                 result["raw_result"]["working_memory_observation"] = {
                     "item_id": candidate_id,
-                    "item_type": "candidate",
+                    "item_type": item_type,
                     "source_ref": f"loop#{phase_result_id}",
                 }
                 logger.info(
-                    "WORKING MEMORY observed phase_result_id=%s phase=%s item_id=%s",
+                    "WORKING MEMORY observed phase_result_id=%s phase=%s item_id=%s item_type=%s",
                     phase_result_id,
                     phase.key,
                     candidate_id,
+                    item_type,
                 )
             return candidate_id
         except Exception as exc:
