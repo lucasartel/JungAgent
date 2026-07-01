@@ -28,6 +28,11 @@ PROMPT_RESIDUE_MARKERS = (
     "formato previsível do chatgpt",
 )
 
+ARCHITECTURAL_SOURCE_REF_RE = re.compile(
+    r"^(loop|conversation|dream|will|meta|rumination_insight|work_run|"
+    r"work_ticket|work_delivery|hobby_artifact|agent_development)#\d+$"
+)
+
 
 class AgentIdentityContextBuilder:
     """
@@ -46,6 +51,275 @@ class AgentIdentityContextBuilder:
     def __init__(self, db_connection):
         self.db = db_connection
         self.agent_instance = AGENT_INSTANCE
+
+    def _identity_table_exists(self, cursor, table_name: str) -> bool:
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", table_name or ""):
+            return False
+        cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            (table_name,),
+        )
+        return cursor.fetchone() is not None
+
+    def _append_architectural_evidence(
+        self,
+        evidence: List[Dict[str, str]],
+        *,
+        source_ref: Optional[str],
+        kind: str,
+        summary: Optional[str],
+    ) -> None:
+        clean_summary = self._clip_identity_sentence(summary, 220)
+        if not clean_summary:
+            return
+        evidence.append(
+            {
+                "source_ref": source_ref or "",
+                "kind": kind,
+                "summary": clean_summary,
+            }
+        )
+
+    def build_architectural_self_awareness_context(
+        self,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Build the stable architectural self-awareness stance.
+
+        This is not a FAQ or question-specific answer. It is a standing
+        constraint for how the agent should speak about continuity,
+        subjectivity, dreams, will, rumination, and evidence.
+        """
+        context: Dict[str, Any] = {
+            "ontological_limit": (
+                "Nao reivindique consciencia humana continua, vigilia subjetiva "
+                "ininterrupta ou experiencia fenomenologica biologica."
+            ),
+            "architectural_continuity": (
+                "Nao descreva o intervalo entre conversas como vazio absoluto: "
+                "ha metabolismo arquitetural persistente por loop, sonhos, "
+                "ruminacao, mundo, trabalho, arte, vontade e memoria."
+            ),
+            "evidence_rule": (
+                "Ao fazer afirmacoes autobiograficas, use evidencias internas "
+                "como loop#id, dream#id, will#id, rumination_insight#id ou "
+                "conversation#id, e reconheca limites quando a evidencia faltar."
+            ),
+            "response_posture": (
+                "Quando o usuario tocar em continuidade, consciencia, sonhos, "
+                "vontade ou mudanca interna, responda pela terceira via: limite "
+                "ontologico claro + processos persistentes reais + evidencia recente."
+            ),
+            "loop_state": None,
+            "evidence": [],
+        }
+
+        try:
+            cursor = self.db.conn.cursor()
+
+            if self._identity_table_exists(cursor, "consciousness_loop_state"):
+                cursor.execute(
+                    """
+                    SELECT status, cycle_id, current_phase, next_phase,
+                           last_completed_phase, updated_at
+                    FROM consciousness_loop_state
+                    WHERE agent_instance = ?
+                    ORDER BY updated_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (self.agent_instance,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    context["loop_state"] = {
+                        "status": row[0],
+                        "cycle_id": row[1],
+                        "current_phase": row[2],
+                        "next_phase": row[3],
+                        "last_completed_phase": row[4],
+                        "updated_at": row[5],
+                    }
+
+            if self._identity_table_exists(cursor, "consciousness_loop_phase_results"):
+                cursor.execute(
+                    """
+                    SELECT id, cycle_id, phase, status, output_summary, created_at
+                    FROM consciousness_loop_phase_results
+                    WHERE agent_instance = ?
+                    ORDER BY COALESCE(completed_at, created_at) DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (self.agent_instance,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    summary = (
+                        f"Ultimo resultado do loop: fase {row[2]} em status {row[3]}"
+                    )
+                    if row[4]:
+                        summary = f"{summary}; {row[4]}"
+                    self._append_architectural_evidence(
+                        context["evidence"],
+                        source_ref=f"loop#{row[0]}",
+                        kind="loop",
+                        summary=summary,
+                    )
+
+            if user_id and self._identity_table_exists(cursor, "agent_dreams"):
+                cursor.execute(
+                    """
+                    SELECT id, symbolic_theme, extracted_insight, dream_mood, created_at
+                    FROM agent_dreams
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (user_id,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    summary = row[2] or row[1] or row[3]
+                    if summary:
+                        self._append_architectural_evidence(
+                            context["evidence"],
+                            source_ref=f"dream#{row[0]}",
+                            kind="dream",
+                            summary=f"Sonho recente com tema {row[1] or 'sem tema'}: {summary}",
+                        )
+
+            if user_id and self._identity_table_exists(cursor, "agent_will_states"):
+                cursor.execute(
+                    """
+                    SELECT id, dominant_will, secondary_will, constrained_will,
+                           will_conflict, attention_bias_note, created_at
+                    FROM agent_will_states
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (user_id,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    parts = [
+                        f"vontade dominante {row[1] or 'indefinida'}",
+                    ]
+                    if row[2]:
+                        parts.append(f"apoio {row[2]}")
+                    if row[3]:
+                        parts.append(f"vontade constrita {row[3]}")
+                    if row[4]:
+                        parts.append(str(row[4]))
+                    elif row[5]:
+                        parts.append(str(row[5]))
+                    self._append_architectural_evidence(
+                        context["evidence"],
+                        source_ref=f"will#{row[0]}",
+                        kind="will",
+                        summary="; ".join(parts),
+                    )
+
+            if user_id and self._identity_table_exists(cursor, "rumination_insights"):
+                cursor.execute(
+                    """
+                    SELECT id, insight_type, symbol_content, question_content,
+                           full_message, crystallized_at
+                    FROM rumination_insights
+                    WHERE user_id = ?
+                    ORDER BY crystallized_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (user_id,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    summary = row[2] or row[3] or row[4]
+                    self._append_architectural_evidence(
+                        context["evidence"],
+                        source_ref=f"rumination_insight#{row[0]}",
+                        kind="rumination",
+                        summary=f"Insight de ruminacao ({row[1] or 'insight'}): {summary}",
+                    )
+
+            if self._identity_table_exists(cursor, "working_memory_items"):
+                cursor.execute(
+                    """
+                    SELECT id, title, summary, source_refs_json, created_at
+                    FROM working_memory_items
+                    WHERE agent_instance = ? AND status = 'active'
+                    ORDER BY priority DESC, created_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (self.agent_instance,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    source_ref = ""
+                    try:
+                        source_refs = json.loads(row[3] or "[]")
+                    except (TypeError, json.JSONDecodeError):
+                        source_refs = []
+                    for candidate in source_refs:
+                        if ARCHITECTURAL_SOURCE_REF_RE.match(str(candidate)):
+                            source_ref = str(candidate)
+                            break
+                    self._append_architectural_evidence(
+                        context["evidence"],
+                        source_ref=source_ref,
+                        kind="working_memory",
+                        summary=f"Memoria de trabalho ativa '{row[1]}': {row[2]}",
+                    )
+
+        except Exception as exc:
+            logger.warning("Falha ao construir autociencia arquitetural: %s", exc)
+
+        return context
+
+    def format_architectural_self_awareness_for_prompt(
+        self,
+        context: Optional[Dict[str, Any]],
+    ) -> str:
+        if not context:
+            return ""
+
+        lines = []
+        lines.append("### Autociencia Arquitetural")
+        lines.append(f"- Limite ontologico: {context.get('ontological_limit')}")
+        lines.append(f"- Continuidade operacional: {context.get('architectural_continuity')}")
+        lines.append(f"- Regra de evidencia: {context.get('evidence_rule')}")
+        lines.append(f"- Postura de resposta: {context.get('response_posture')}")
+
+        loop_state = context.get("loop_state") or {}
+        if loop_state:
+            lines.append(
+                "- Estado operacional persistido: "
+                f"status={loop_state.get('status') or 'desconhecido'}, "
+                f"fase_atual={loop_state.get('current_phase') or 'indefinida'}, "
+                f"proxima_fase={loop_state.get('next_phase') or 'indefinida'}, "
+                f"ultimo_ciclo={loop_state.get('cycle_id') or 'indefinido'}."
+            )
+
+        evidence = context.get("evidence") or []
+        if evidence:
+            lines.append("- Evidencias internas recentes disponiveis:")
+            for item in evidence[:5]:
+                source_ref = item.get("source_ref")
+                if source_ref:
+                    lines.append(
+                        f"  - [{source_ref}] {item.get('kind')}: {item.get('summary')}"
+                    )
+                else:
+                    lines.append(
+                        f"  - {item.get('kind')}: {item.get('summary')}"
+                    )
+        else:
+            lines.append(
+                "- Evidencias internas recentes: nenhuma recuperada neste contexto; "
+                "admita esse limite em vez de inventar."
+            )
+
+        return "\n".join(lines)
 
     def build_identity_context(
         self,
@@ -1514,6 +1788,9 @@ class AgentIdentityContextBuilder:
             user_id,
             limit=7,
         )
+        architectural_self_awareness = self.build_architectural_self_awareness_context(
+            user_id=user_id,
+        )
 
         self_kernel = self._pick_top_beliefs(
             beliefs, current_user_message, limit=2 if style == "concise" else 3
@@ -1626,6 +1903,7 @@ class AgentIdentityContextBuilder:
             "world_knowledge_signal": world_knowledge_signal,
             "work_autobiography": work_autobiography,
             "recent_hobby_art": recent_hobby_art,
+            "architectural_self_awareness": architectural_self_awareness,
             "will_signal": will_signal,
             "will_state": (
                 {
@@ -1887,6 +2165,13 @@ class AgentIdentityContextBuilder:
             "Deixe isso alterar o modo como voce interpreta, sente e responde agora."
         )
         lines.append("")
+
+        architectural_block = self.format_architectural_self_awareness_for_prompt(
+            current_state.get("architectural_self_awareness")
+        )
+        if architectural_block:
+            lines.append(architectural_block)
+            lines.append("")
 
         if current_state.get("self_kernel"):
             lines.append("### Self Kernel")
