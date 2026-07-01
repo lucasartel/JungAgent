@@ -593,6 +593,66 @@ class ConsciousnessLoopManager:
         )
         result["metrics"]["artifacts_created_count"] = len(result["artifacts_created"])
 
+    def _generate_integrative_self_snapshot(self, result: Dict) -> Optional[Dict[str, Any]]:
+        if result.get("phase") != "will":
+            return None
+        try:
+            from engines.integrative_self import IntegrativeSelfModel
+
+            snapshot = IntegrativeSelfModel(
+                self.db,
+                agent_instance=self.agent_instance,
+            ).generate_snapshot(
+                user_id=self.admin_user_id,
+                cycle_id=result.get("cycle_id"),
+                snapshot_date=result.get("cycle_id"),
+                persist=True,
+            )
+            if not snapshot.get("persisted"):
+                result["warnings"].append("integrative_self_not_persisted")
+                result["metrics"]["integrative_self_persisted"] = 0
+                result["raw_result"]["integrative_self"] = {
+                    "persisted": False,
+                    "reason": snapshot.get("reason"),
+                    "status": snapshot.get("status"),
+                    "source_ref_count": len(snapshot.get("source_refs") or []),
+                }
+                return snapshot
+
+            result["metrics"]["integrative_self_persisted"] = 1
+            result["metrics"]["integrative_self_snapshot_id"] = snapshot.get("id") or 0
+            result["metrics"]["integrative_self_component_count"] = (
+                snapshot.get("metadata", {}).get("component_count") or 0
+            )
+            result["raw_result"]["integrative_self"] = {
+                "id": snapshot.get("id"),
+                "persisted": True,
+                "influence_mode": snapshot.get("influence_mode"),
+                "status": snapshot.get("status"),
+                "snapshot_date": snapshot.get("snapshot_date"),
+                "source_refs": snapshot.get("source_refs") or [],
+                "limits": snapshot.get("limits") or {},
+            }
+            self._record_virtual_artifact(
+                result,
+                artifact_type="integrative_self_snapshot",
+                artifact_id=snapshot.get("id"),
+                artifact_table="integrative_self_snapshots",
+                summary=snapshot.get("summary") or "snapshot integrativo passivo",
+            )
+            logger.info(
+                "LOOP ISM snapshot generated cycle_id=%s snapshot_id=%s components=%s",
+                result.get("cycle_id"),
+                snapshot.get("id"),
+                snapshot.get("metadata", {}).get("component_count"),
+            )
+            return snapshot
+        except Exception as exc:
+            logger.warning("LOOP ISM snapshot failed cycle_id=%s error=%s", result.get("cycle_id"), exc)
+            result["warnings"].append("integrative_self_failed")
+            result["metrics"]["integrative_self_error"] = 1
+            return None
+
     def _promote_from_placeholder(self, result: Dict):
         result["warnings"] = [warning for warning in result["warnings"] if warning != "placeholder_execution"]
         result["metrics"]["phase_placeholder"] = 0
@@ -1956,6 +2016,8 @@ class ConsciousnessLoopManager:
             result["status"] = "partial_success"
             result["warnings"].append(f"will_{will_result.get('status', 'unknown')}")
             result["output_summary"] = will_result.get("daily_text") or "Modulo Will consolidado via fallback heuristico."
+
+        self._generate_integrative_self_snapshot(result)
 
         return result
 

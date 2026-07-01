@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from consciousness_loop import ConsciousnessLoopManager
 from engines.integrative_self import IntegrativeSelfModel
 
 
@@ -263,3 +264,84 @@ def test_integrative_self_rejects_active_influence_and_invalid_sources():
             components={},
             source_refs=["loop-1"],
         )
+
+
+def _loop_result(phase: str = "will"):
+    return {
+        "phase": phase,
+        "cycle_id": "2026-07-01",
+        "warnings": [],
+        "metrics": {},
+        "raw_result": {},
+        "artifacts_created": [],
+    }
+
+
+def test_loop_generates_integrative_self_snapshot_only_on_will(monkeypatch):
+    calls = []
+
+    class FakeIntegrativeSelfModel:
+        def __init__(self, db_manager, *, agent_instance):
+            self.db = db_manager
+            self.agent_instance = agent_instance
+
+        def generate_snapshot(self, **kwargs):
+            calls.append(kwargs)
+            return {
+                "id": 15,
+                "persisted": True,
+                "influence_mode": "read_only",
+                "status": "generated",
+                "snapshot_date": kwargs["snapshot_date"],
+                "summary": "Snapshot ISM passivo de teste.",
+                "source_refs": ["loop#42"],
+                "limits": {
+                    "prompt_influence": False,
+                    "loop_decision_influence": False,
+                    "working_memory_mutation": False,
+                    "external_side_effects": False,
+                },
+                "metadata": {"component_count": 4},
+            }
+
+    monkeypatch.setattr("engines.integrative_self.IntegrativeSelfModel", FakeIntegrativeSelfModel)
+    manager = ConsciousnessLoopManager(object())
+
+    skipped = manager._generate_integrative_self_snapshot(_loop_result("world"))
+    result = _loop_result("will")
+    snapshot = manager._generate_integrative_self_snapshot(result)
+
+    assert skipped is None
+    assert snapshot["id"] == 15
+    assert calls == [
+        {
+            "user_id": manager.admin_user_id,
+            "cycle_id": "2026-07-01",
+            "snapshot_date": "2026-07-01",
+            "persist": True,
+        }
+    ]
+    assert result["metrics"]["integrative_self_persisted"] == 1
+    assert result["metrics"]["integrative_self_component_count"] == 4
+    assert result["raw_result"]["integrative_self"]["influence_mode"] == "read_only"
+    assert result["artifacts_created"][0]["artifact_table"] == "integrative_self_snapshots"
+
+
+def test_loop_integrative_self_failure_becomes_warning(monkeypatch):
+    class FailingIntegrativeSelfModel:
+        def __init__(self, db_manager, *, agent_instance):
+            pass
+
+        def generate_snapshot(self, **kwargs):
+            raise RuntimeError("snapshot offline")
+
+    monkeypatch.setattr("engines.integrative_self.IntegrativeSelfModel", FailingIntegrativeSelfModel)
+    manager = ConsciousnessLoopManager(object())
+    result = _loop_result("will")
+
+    snapshot = manager._generate_integrative_self_snapshot(result)
+
+    assert snapshot is None
+    assert "integrative_self_failed" in result["warnings"]
+    assert result["metrics"]["integrative_self_error"] == 1
+    assert result["artifacts_created"] == []
