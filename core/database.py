@@ -20,6 +20,7 @@ from core.db.fact_extraction import FactExtractionDatabaseMixin
 from core.db.facts import FactLookupDatabaseMixin
 from core.db.conversations import ConversationDatabaseMixin
 from core.db.dreams import DreamDatabaseMixin
+from core.db.integrative_self import IntegrativeSelfDatabaseMixin
 from core.db.knowledge_gaps import KnowledgeGapDatabaseMixin
 from core.db.psychometrics import PsychometricsDatabaseMixin
 from core.db.schema import SchemaDatabaseMixin
@@ -49,6 +50,7 @@ class HybridDatabaseManager(
     DreamDatabaseMixin,
     KnowledgeGapDatabaseMixin,
     WorkingMemoryDatabaseMixin,
+    IntegrativeSelfDatabaseMixin,
     PsychometricsDatabaseMixin,
 ):
     """

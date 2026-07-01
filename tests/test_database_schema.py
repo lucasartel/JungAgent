@@ -23,11 +23,21 @@ def _load_working_memory_mixin():
     return module.WorkingMemoryDatabaseMixin
 
 
+def _load_integrative_self_mixin():
+    path = Path(__file__).resolve().parents[1] / "core" / "db" / "integrative_self.py"
+    spec = importlib.util.spec_from_file_location("integrative_self_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module.IntegrativeSelfDatabaseMixin
+
+
 SchemaDatabaseMixin = _load_schema_mixin()
 WorkingMemoryDatabaseMixin = _load_working_memory_mixin()
+IntegrativeSelfDatabaseMixin = _load_integrative_self_mixin()
 
 
-class _SchemaEngine(SchemaDatabaseMixin, WorkingMemoryDatabaseMixin):
+class _SchemaEngine(SchemaDatabaseMixin, IntegrativeSelfDatabaseMixin, WorkingMemoryDatabaseMixin):
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
@@ -64,12 +74,14 @@ def test_schema_mixin_creates_core_tables_and_is_idempotent(in_memory_conn):
         "working_memory_broadcasts",
         "goal_threads",
         "goal_steps",
+        "integrative_self_snapshots",
     ]:
         assert table in tables
 
     assert {"user_id", "platform_id", "last_seen"} <= _column_names(in_memory_conn, "users")
     assert {"project_id", "action_type", "source_seed"} <= _column_names(in_memory_conn, "work_briefs")
     assert {"agent_instance", "item_type", "source_refs_json"} <= _column_names(in_memory_conn, "working_memory_items")
+    assert {"influence_mode", "components_json", "limits_json"} <= _column_names(in_memory_conn, "integrative_self_snapshots")
     assert {
         "closure_summary",
         "closure_journal_entry",

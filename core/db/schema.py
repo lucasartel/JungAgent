@@ -1085,6 +1085,9 @@ class SchemaDatabaseMixin:
         except sqlite3.OperationalError:
             pass
 
+        if hasattr(self, "_init_integrative_self_schema"):
+            self._init_integrative_self_schema()
+
         if hasattr(self, "_init_working_memory_schema"):
             self._init_working_memory_schema()
 
