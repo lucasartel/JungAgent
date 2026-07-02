@@ -5,6 +5,7 @@ Checks the passive Integrative Self Model seed:
 - latest snapshot is read-only;
 - snapshot has internal evidence anchors that resolve to real rows;
 - snapshot explicitly declares no prompt, loop, WM, or external influence.
+- optionally, snapshot includes the phase_pulses component seeded by IV.0.
 """
 from __future__ import annotations
 
@@ -133,6 +134,7 @@ def verify_integrative_self(
     agent_instance: str,
     user_id: str,
     min_components: int,
+    require_phase_pulses: bool = False,
 ) -> Dict[str, Any]:
     snapshot = latest_snapshot(conn, agent_instance=agent_instance, user_id=user_id)
     if not snapshot:
@@ -143,6 +145,8 @@ def verify_integrative_self(
     source_refs = json_loads(snapshot.get("source_refs_json"), [])
     limits = json_loads(snapshot.get("limits_json"), {})
     source_check = valid_source_refs(conn, source_refs)
+    component_keys = [str(item.get("key") or "") for item in items if isinstance(item, dict)]
+    has_phase_pulses = "phase_pulses" in component_keys
     read_only = snapshot.get("influence_mode") == "read_only"
     no_influence = all(
         limits.get(key) is False
@@ -160,13 +164,17 @@ def verify_integrative_self(
             and no_influence
             and len(items) >= min_components
             and source_check["passed"]
+            and (has_phase_pulses or not require_phase_pulses)
         ),
         "snapshot_id": snapshot.get("id"),
         "snapshot_date": snapshot.get("snapshot_date"),
         "status": snapshot.get("status"),
         "influence_mode": snapshot.get("influence_mode"),
         "component_count": len(items),
+        "component_keys": component_keys,
         "min_components": min_components,
+        "phase_pulses_required": require_phase_pulses,
+        "phase_pulses_present": has_phase_pulses,
         "source_count": len(source_refs),
         "valid_source_count": len(source_check["valid"]),
         "invalid_sources": source_check["invalid"][:20],
@@ -184,6 +192,7 @@ def run_verification(args: argparse.Namespace) -> Dict[str, Any]:
             agent_instance=args.agent_instance,
             user_id=args.user_id,
             min_components=args.min_components,
+            require_phase_pulses=args.require_phase_pulses,
         )
     finally:
         conn.close()
@@ -211,6 +220,8 @@ def format_markdown(result: Dict[str, Any]) -> str:
         f"- Snapshot: `{check.get('snapshot_id')}` em `{check.get('snapshot_date')}`",
         f"- Influence mode: `{check.get('influence_mode')}`",
         f"- Componentes: {check.get('component_count')} / minimo {check.get('min_components')}",
+        f"- Phase pulses: {'presente' if check.get('phase_pulses_present') else 'ausente'}"
+        f"{' (obrigatorio)' if check.get('phase_pulses_required') else ''}",
         f"- Fontes validas: {check.get('valid_source_count')}",
         f"- Fontes invalidas: {check.get('invalid_sources') or []}",
         "",
@@ -226,6 +237,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--agent-instance", default=os.getenv("AGENT_INSTANCE", "jung_v1"))
     parser.add_argument("--user-id", default=os.getenv("ADMIN_USER_ID", "367f9e509e396d51"))
     parser.add_argument("--min-components", type=int, default=3)
+    parser.add_argument("--require-phase-pulses", action="store_true")
     parser.add_argument("--format", choices={"json", "markdown"}, default="markdown")
     parser.add_argument("--pretty", action="store_true")
     return parser

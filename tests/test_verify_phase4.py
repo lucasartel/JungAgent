@@ -8,7 +8,7 @@ from pathlib import Path
 from tests.verify_phase4 import run_verification
 
 
-def _make_db(path: Path, *, influence_mode: str = "read_only") -> None:
+def _make_db(path: Path, *, influence_mode: str = "read_only", include_phase_pulses: bool = False) -> None:
     conn = sqlite3.connect(path)
     cursor = conn.cursor()
     cursor.executescript(
@@ -24,6 +24,16 @@ def _make_db(path: Path, *, influence_mode: str = "read_only") -> None:
         CREATE TABLE agent_will_states (
             id INTEGER PRIMARY KEY,
             user_id TEXT
+        );
+        CREATE TABLE consciousness_phase_pulses (
+            id INTEGER PRIMARY KEY,
+            agent_instance TEXT,
+            cycle_id TEXT,
+            phase TEXT,
+            pulse_index INTEGER,
+            pulse_count INTEGER,
+            status TEXT,
+            phase_result_id INTEGER
         );
         CREATE TABLE integrative_self_snapshots (
             id INTEGER PRIMARY KEY,
@@ -48,6 +58,31 @@ def _make_db(path: Path, *, influence_mode: str = "read_only") -> None:
     cursor.execute("INSERT INTO consciousness_loop_phase_results (id, agent_instance) VALUES (42, 'jung_v1')")
     cursor.execute("INSERT INTO agent_dreams (id, user_id) VALUES (7, 'u1')")
     cursor.execute("INSERT INTO agent_will_states (id, user_id) VALUES (3, 'u1')")
+    cursor.execute(
+        """
+        INSERT INTO consciousness_phase_pulses (
+            id, agent_instance, cycle_id, phase, pulse_index, pulse_count, status, phase_result_id
+        ) VALUES (1, 'jung_v1', '2026-07-01', 'world', 1, 1, 'completed', 42)
+        """
+    )
+
+    items = [
+        {"key": "loop", "source_ref": "loop#42"},
+        {"key": "dream", "source_ref": "dream#7"},
+        {"key": "will", "source_ref": "will#3"},
+    ]
+    if include_phase_pulses:
+        items.append(
+            {
+                "key": "phase_pulses",
+                "source_ref": "loop#42",
+                "payload": {
+                    "recent_pulses": [
+                        {"phase": "world", "pulse_index": 1, "pulse_count": 1, "status": "completed"}
+                    ]
+                },
+            }
+        )
 
     limits = {
         "prompt_influence": False,
@@ -74,15 +109,7 @@ def _make_db(path: Path, *, influence_mode: str = "read_only") -> None:
             influence_mode,
             "Snapshot passivo.",
             "Eu observo sem agir.",
-            json.dumps(
-                {
-                    "items": [
-                        {"key": "loop", "source_ref": "loop#42"},
-                        {"key": "dream", "source_ref": "dream#7"},
-                        {"key": "will", "source_ref": "will#3"},
-                    ]
-                }
-            ),
+            json.dumps({"items": items}),
             json.dumps(["loop#42", "dream#7", "will#3"]),
             json.dumps(limits),
             json.dumps({"implementation": "deterministic_read_only"}),
@@ -105,6 +132,7 @@ def test_verify_phase4_accepts_read_only_integrative_self(tmp_path):
             agent_instance="jung_v1",
             user_id="u1",
             min_components=3,
+            require_phase_pulses=False,
         )
     )
 
@@ -113,6 +141,7 @@ def test_verify_phase4_accepts_read_only_integrative_self(tmp_path):
     assert check["influence_mode"] == "read_only"
     assert check["valid_source_count"] == 3
     assert check["component_count"] == 3
+    assert check["phase_pulses_present"] is False
 
 
 def test_verify_phase4_rejects_non_read_only_snapshot(tmp_path):
@@ -125,8 +154,50 @@ def test_verify_phase4_rejects_non_read_only_snapshot(tmp_path):
             agent_instance="jung_v1",
             user_id="u1",
             min_components=3,
+            require_phase_pulses=False,
         )
     )
 
     assert result["passed"] is False
     assert result["checks"]["integrative_self_read_only"]["influence_mode"] == "prompt"
+
+
+def test_verify_phase4_accepts_required_phase_pulses_component(tmp_path):
+    db_path = tmp_path / "jung_hybrid.db"
+    _make_db(db_path, include_phase_pulses=True)
+
+    result = run_verification(
+        Namespace(
+            db_path=str(db_path),
+            agent_instance="jung_v1",
+            user_id="u1",
+            min_components=4,
+            require_phase_pulses=True,
+        )
+    )
+
+    assert result["passed"] is True
+    check = result["checks"]["integrative_self_read_only"]
+    assert check["phase_pulses_required"] is True
+    assert check["phase_pulses_present"] is True
+    assert "phase_pulses" in check["component_keys"]
+
+
+def test_verify_phase4_rejects_missing_required_phase_pulses_component(tmp_path):
+    db_path = tmp_path / "jung_hybrid.db"
+    _make_db(db_path)
+
+    result = run_verification(
+        Namespace(
+            db_path=str(db_path),
+            agent_instance="jung_v1",
+            user_id="u1",
+            min_components=3,
+            require_phase_pulses=True,
+        )
+    )
+
+    assert result["passed"] is False
+    check = result["checks"]["integrative_self_read_only"]
+    assert check["phase_pulses_required"] is True
+    assert check["phase_pulses_present"] is False
