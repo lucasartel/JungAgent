@@ -238,6 +238,95 @@ def query_loop(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
     }
 
 
+def query_phase_pulses(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
+    phase_columns = table_columns(cursor, "consciousness_phase_config")
+    pulse_columns = table_columns(cursor, "consciousness_phase_pulses")
+    required_pulse_columns = [
+        "cycle_id",
+        "agent_instance",
+        "phase",
+        "pulse_index",
+        "pulse_count",
+        "scheduled_at",
+        "executed_at",
+        "status",
+        "attempts",
+        "phase_result_id",
+    ]
+
+    phase_config: List[Dict[str, Any]] = []
+    if phase_columns:
+        selected = [
+            column
+            for column in [
+                "phase",
+                "enabled",
+                "order_index",
+                "default_duration_minutes",
+                "retry_limit",
+                "cooldown_minutes",
+                "pulse_count",
+                "updated_at",
+            ]
+            if column in phase_columns
+        ]
+        cursor.execute(
+            f"SELECT {', '.join(selected)} FROM consciousness_phase_config ORDER BY order_index ASC"
+        )
+        phase_config = rows_to_dicts(cursor.fetchall())
+
+    recent_pulses: List[Dict[str, Any]] = []
+    status_counts: List[Dict[str, Any]] = []
+    if pulse_columns:
+        recent_pulses = fetch_recent(
+            cursor,
+            "consciousness_phase_pulses",
+            [
+                "id",
+                "cycle_id",
+                "agent_instance",
+                "phase",
+                "pulse_index",
+                "pulse_count",
+                "scheduled_at",
+                "executed_at",
+                "status",
+                "attempts",
+                "phase_result_id",
+                "last_error",
+                "updated_at",
+            ],
+            where="agent_instance = ?",
+            params=(args.agent_instance,),
+            order_by="scheduled_at DESC, id DESC",
+            limit=args.limit,
+        )
+        status_counts = grouped_counts(
+            cursor,
+            "consciousness_phase_pulses",
+            "status",
+            where="agent_instance = ?",
+            params=(args.agent_instance,),
+        )
+
+    return {
+        "probe": "phase_pulses",
+        "agent_instance": args.agent_instance,
+        "schema": {
+            "phase_config_available": bool(phase_columns),
+            "phase_config_has_pulse_count": "pulse_count" in phase_columns,
+            "pulse_table_available": bool(pulse_columns),
+            "pulse_table_has_required_columns": all(column in pulse_columns for column in required_pulse_columns),
+            "missing_pulse_columns": [
+                column for column in required_pulse_columns if column not in pulse_columns
+            ],
+        },
+        "phase_config": phase_config,
+        "pulse_status_counts": status_counts,
+        "recent_pulses": recent_pulses,
+    }
+
+
 def _parse_working_memory_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for row in rows:
         row["source_refs"] = json_or_empty(row.pop("source_refs_json", None), [])
@@ -1511,6 +1600,7 @@ PROBES: Dict[str, Callable[[sqlite3.Cursor, argparse.Namespace], Dict[str, Any]]
     "integration": query_integration,
     "knowledge_gaps": query_knowledge_gaps,
     "loop": query_loop,
+    "phase_pulses": query_phase_pulses,
     "will": query_will,
     "pressure": query_pressure,
     "meta": query_meta,
