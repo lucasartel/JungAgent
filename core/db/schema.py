@@ -739,7 +739,28 @@ class SchemaDatabaseMixin:
                 default_duration_minutes INTEGER NOT NULL,
                 retry_limit INTEGER DEFAULT 2,
                 cooldown_minutes INTEGER DEFAULT 10,
+                pulse_count INTEGER DEFAULT 1,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS consciousness_phase_pulses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_id TEXT NOT NULL,
+                agent_instance TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                pulse_index INTEGER NOT NULL,
+                pulse_count INTEGER NOT NULL,
+                scheduled_at DATETIME NOT NULL,
+                executed_at DATETIME,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                phase_result_id INTEGER,
+                last_error TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(agent_instance, cycle_id, phase, pulse_index)
             )
         """)
 
@@ -1062,6 +1083,7 @@ class SchemaDatabaseMixin:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_events_cycle ON consciousness_loop_events(agent_instance, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_results_cycle ON consciousness_loop_phase_results(agent_instance, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_loop_artifacts_cycle ON consciousness_loop_artifacts(agent_instance, cycle_id, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_phase_pulses_due ON consciousness_phase_pulses(agent_instance, cycle_id, phase, status, scheduled_at)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_meta_consciousness_user_cycle ON agent_meta_consciousness(agent_instance, user_id, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_settings_key ON agent_settings(setting_key)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_settings_history_key ON agent_settings_history(setting_key, created_at DESC)")
@@ -1082,6 +1104,11 @@ class SchemaDatabaseMixin:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_experience_project ON work_experience_events(project_id, created_at DESC)")
         try:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_rumination_fragments_source ON rumination_fragments(source_kind, source_table, source_id)")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE consciousness_phase_config ADD COLUMN pulse_count INTEGER DEFAULT 1")
         except sqlite3.OperationalError:
             pass
 

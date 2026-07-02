@@ -33,6 +33,7 @@ DEFAULT_LOOP_MODE = "24h"
 CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 3
 DEFAULT_PHASE_RETRY_LIMIT = 2
 DEFAULT_PHASE_RETRY_COOLDOWN_MINUTES = 10
+MAX_PHASE_PULSE_COUNT = 8
 
 RECOVERABLE_EXCEPTION_HINTS = (
     "timeout",
@@ -272,6 +273,206 @@ class ConsciousnessLoopManager:
             "max_attempts": 1 + max(0, retry_limit),
         }
 
+    def _get_phase_pulse_count(self, phase_key: str) -> int:
+        self._ensure_phase_config()
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT pulse_count
+            FROM consciousness_phase_config
+            WHERE phase = ?
+            LIMIT 1
+            """,
+            (phase_key,),
+        )
+        row = cursor.fetchone()
+        try:
+            pulse_count = int(row["pulse_count"] if row and row["pulse_count"] is not None else 1)
+        except Exception:
+            pulse_count = 1
+        return max(1, min(MAX_PHASE_PULSE_COUNT, pulse_count))
+
+    def _pulse_schedule_times(
+        self,
+        phase_started_at: datetime,
+        phase_deadline_at: datetime,
+        pulse_count: int,
+    ) -> List[datetime]:
+        safe_count = max(1, min(MAX_PHASE_PULSE_COUNT, int(pulse_count or 1)))
+        if safe_count == 1:
+            return [phase_started_at]
+        total_seconds = max(1.0, (phase_deadline_at - phase_started_at).total_seconds())
+        step_seconds = total_seconds / safe_count
+        return [
+            phase_started_at + timedelta(seconds=round(step_seconds * index))
+            for index in range(safe_count)
+        ]
+
+    def _ensure_phase_pulse_agenda(
+        self,
+        *,
+        cycle_id: str,
+        phase: LoopPhase,
+        phase_started_at: datetime,
+        phase_deadline_at: datetime,
+    ) -> List[Dict[str, Any]]:
+        pulse_count = self._get_phase_pulse_count(phase.key)
+        scheduled_times = self._pulse_schedule_times(phase_started_at, phase_deadline_at, pulse_count)
+        now_iso = self._now().isoformat()
+        cursor = self.db.conn.cursor()
+        for index, scheduled_at in enumerate(scheduled_times, start=1):
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO consciousness_phase_pulses (
+                    cycle_id, agent_instance, phase, pulse_index, pulse_count,
+                    scheduled_at, status, attempts, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
+                """,
+                (
+                    cycle_id,
+                    self.agent_instance,
+                    phase.key,
+                    index,
+                    pulse_count,
+                    scheduled_at.isoformat(),
+                    now_iso,
+                    now_iso,
+                ),
+            )
+        cursor.execute(
+            """
+            SELECT *
+            FROM consciousness_phase_pulses
+            WHERE agent_instance = ? AND cycle_id = ? AND phase = ?
+            ORDER BY pulse_index ASC
+            """,
+            (self.agent_instance, cycle_id, phase.key),
+        )
+        rows = [dict(row) for row in cursor.fetchall()]
+
+        if pulse_count == 1 and rows and rows[0].get("status") == "pending":
+            latest = self._get_latest_phase_attempt(cycle_id, phase.key)
+            if latest:
+                terminal_status = "completed" if latest.get("status") != "failed" else "failed"
+                cursor.execute(
+                    """
+                    UPDATE consciousness_phase_pulses
+                    SET status = ?, attempts = MAX(attempts, 1), executed_at = ?,
+                        phase_result_id = ?, updated_at = ?
+                    WHERE id = ? AND status = 'pending'
+                    """,
+                    (
+                        terminal_status,
+                        latest.get("completed_at"),
+                        latest.get("id"),
+                        now_iso,
+                        rows[0]["id"],
+                    ),
+                )
+                self.db.conn.commit()
+                rows[0]["status"] = terminal_status
+                rows[0]["attempts"] = max(int(rows[0].get("attempts") or 0), 1)
+                rows[0]["executed_at"] = latest.get("completed_at")
+                rows[0]["phase_result_id"] = latest.get("id")
+                return rows
+
+        self.db.conn.commit()
+        return rows
+
+    def _parse_loop_datetime(self, value: Any) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=LOOP_TIMEZONE)
+            return parsed.astimezone(LOOP_TIMEZONE)
+        except Exception:
+            return None
+
+    def _get_due_phase_pulse(
+        self,
+        *,
+        cycle_id: str,
+        phase: LoopPhase,
+        now: Optional[datetime] = None,
+    ) -> Optional[Dict[str, Any]]:
+        policy = self._get_phase_retry_policy(phase.key)
+        current = (now or self._now()).astimezone(LOOP_TIMEZONE)
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT *
+            FROM consciousness_phase_pulses
+            WHERE agent_instance = ?
+              AND cycle_id = ?
+              AND phase = ?
+              AND status IN ('pending', 'failed')
+            ORDER BY scheduled_at ASC, pulse_index ASC
+            """,
+            (self.agent_instance, cycle_id, phase.key),
+        )
+        for row in cursor.fetchall():
+            pulse = dict(row)
+            scheduled_at = self._parse_loop_datetime(pulse.get("scheduled_at"))
+            if scheduled_at and scheduled_at > current:
+                continue
+            attempts = int(pulse.get("attempts") or 0)
+            if pulse.get("status") == "failed":
+                if attempts >= policy["max_attempts"]:
+                    cursor.execute(
+                        """
+                        UPDATE consciousness_phase_pulses
+                        SET status = 'exhausted', updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (current.isoformat(), pulse["id"]),
+                    )
+                    self.db.conn.commit()
+                    continue
+                executed_at = self._parse_loop_datetime(pulse.get("executed_at"))
+                if executed_at and policy["cooldown_minutes"] > 0:
+                    cooldown_until = executed_at + timedelta(minutes=policy["cooldown_minutes"])
+                    if cooldown_until > current:
+                        continue
+            return pulse
+        return None
+
+    def _mark_phase_pulse_running(self, pulse: Dict[str, Any]) -> Dict[str, Any]:
+        now_iso = self._now().isoformat()
+        attempts = int(pulse.get("attempts") or 0) + 1
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            UPDATE consciousness_phase_pulses
+            SET status = 'running', attempts = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (attempts, now_iso, pulse["id"]),
+        )
+        self.db.conn.commit()
+        pulse["status"] = "running"
+        pulse["attempts"] = attempts
+        return pulse
+
+    def _finish_phase_pulse(self, pulse: Optional[Dict[str, Any]], result: Dict, phase_result_id: int) -> None:
+        if not pulse:
+            return
+        now_iso = self._now().isoformat()
+        status = "completed" if result.get("status") != "failed" else "failed"
+        last_error = "; ".join((result.get("errors") or [])[:2]) if status == "failed" else None
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            UPDATE consciousness_phase_pulses
+            SET status = ?, executed_at = ?, phase_result_id = ?,
+                last_error = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (status, result.get("completed_at") or now_iso, phase_result_id, last_error, now_iso, pulse["id"]),
+        )
+        self.db.conn.commit()
+
     def _get_latest_phase_attempt(self, cycle_id: str, phase_key: str) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
         cursor.execute(
@@ -380,8 +581,8 @@ class ConsciousnessLoopManager:
             cursor.execute(
                 """
                 INSERT OR IGNORE INTO consciousness_phase_config (
-                    phase, enabled, order_index, default_duration_minutes, retry_limit, cooldown_minutes
-                ) VALUES (?, 1, ?, ?, 2, 10)
+                    phase, enabled, order_index, default_duration_minutes, retry_limit, cooldown_minutes, pulse_count
+                ) VALUES (?, 1, ?, ?, 2, 10, 1)
                 """,
                 (phase.key, order_index, default_duration_minutes),
             )
@@ -2028,6 +2229,7 @@ class ConsciousnessLoopManager:
         trigger_source: str = "consciousness_loop",
         execution_mode: str = "automatic",
         notify_admin: bool = False,
+        pulse: Optional[Dict[str, Any]] = None,
     ) -> Dict:
         phase = PHASE_BY_KEY[phase_key]
         logger.info(
@@ -2039,6 +2241,20 @@ class ConsciousnessLoopManager:
         )
 
         result = self._build_placeholder_result(cycle_id, phase, trigger_source, execution_mode)
+        if pulse:
+            pulse = self._mark_phase_pulse_running(pulse)
+            result["metrics"]["pulse_id"] = pulse.get("id")
+            result["metrics"]["pulse_index"] = pulse.get("pulse_index")
+            result["metrics"]["pulse_count"] = pulse.get("pulse_count")
+            result["metrics"]["pulse_scheduled_at"] = pulse.get("scheduled_at")
+            result["metrics"]["pulse_attempt"] = pulse.get("attempts")
+            result["raw_result"]["phase_pulse"] = {
+                "id": pulse.get("id"),
+                "pulse_index": pulse.get("pulse_index"),
+                "pulse_count": pulse.get("pulse_count"),
+                "scheduled_at": pulse.get("scheduled_at"),
+                "attempt": pulse.get("attempts"),
+            }
         self._read_working_memory_inbox(phase, result)
         try:
             if phase.key == "dream":
@@ -2100,6 +2316,7 @@ class ConsciousnessLoopManager:
                 )
 
         phase_result_id = self._save_phase_result(result)
+        self._finish_phase_pulse(pulse, result, phase_result_id)
         payloads_changed = self._observe_phase_for_working_memory(phase_result_id, phase, result) is not None
         broadcast_id = self._broadcast_working_memory_to_next_phase(phase, result)
         if broadcast_id or result["metrics"].get("working_memory_broadcast_error"):
@@ -2226,12 +2443,20 @@ class ConsciousnessLoopManager:
                 input_summary="estado inicial do loop",
                 output_summary=f"fase inicial definida em {target_phase.key}",
             )
+            self._ensure_phase_pulse_agenda(
+                cycle_id=cycle_id,
+                phase=target_phase,
+                phase_started_at=phase_started_at,
+                phase_deadline_at=phase_deadline_at,
+            )
+            due_pulse = self._get_due_phase_pulse(cycle_id=cycle_id, phase=target_phase)
             phase_result = self.execute_phase(
                 target_phase.key,
                 cycle_id,
                 trigger_source=trigger_source,
                 execution_mode="automatic",
                 notify_admin=notify_admin,
+                pulse=due_pulse,
             )
             return {
                 "success": True,
@@ -2299,12 +2524,20 @@ class ConsciousnessLoopManager:
                 input_summary=f"metabolização de fase: {previous_phase} -> {target_phase.key}",
                 output_summary=f"fase atual sincronizada para {target_phase.key}",
             )
+            self._ensure_phase_pulse_agenda(
+                cycle_id=cycle_id,
+                phase=target_phase,
+                phase_started_at=phase_started_at,
+                phase_deadline_at=phase_deadline_at,
+            )
+            due_pulse = self._get_due_phase_pulse(cycle_id=cycle_id, phase=target_phase)
             phase_result = self.execute_phase(
                 target_phase.key,
                 cycle_id,
                 trigger_source=trigger_source,
                 execution_mode="automatic",
                 notify_admin=notify_admin,
+                pulse=due_pulse,
             )
             action = "phase_transition"
         else:
@@ -2322,30 +2555,27 @@ class ConsciousnessLoopManager:
                 ),
             )
             self.db.conn.commit()
-            run_stats = self._get_phase_run_stats(cycle_id, target_phase.key)
-            retry_assessment = self._assess_phase_retry(cycle_id, target_phase.key, run_stats)
-            if retry_assessment["should_retry"]:
-                notify_this_execution = notify_admin and run_stats["total_runs"] == 0
-                execution_mode = "automatic" if run_stats["total_runs"] == 0 else "automatic_retry"
+            self._ensure_phase_pulse_agenda(
+                cycle_id=cycle_id,
+                phase=target_phase,
+                phase_started_at=phase_started_at,
+                phase_deadline_at=phase_deadline_at,
+            )
+            due_pulse = self._get_due_phase_pulse(cycle_id=cycle_id, phase=target_phase)
+            if due_pulse:
+                pulse_attempts = int(due_pulse.get("attempts") or 0)
+                is_retry = due_pulse.get("status") == "failed" or pulse_attempts > 0
+                notify_this_execution = notify_admin and pulse_attempts == 0
+                execution_mode = "automatic_retry" if is_retry else "automatic"
                 phase_result = self.execute_phase(
                     target_phase.key,
                     cycle_id,
                     trigger_source=trigger_source,
                     execution_mode=execution_mode,
                     notify_admin=notify_this_execution,
+                    pulse=due_pulse,
                 )
-                if run_stats["total_runs"] == 0:
-                    action = "phase_window_first_run"
-                else:
-                    action = "phase_window_retry"
-            elif (
-                run_stats["successful_runs"] == 0
-                and run_stats["total_runs"] > 0
-                and retry_assessment.get("reason") != "phase_already_succeeded"
-            ):
-                action = f"phase_retry_deferred:{retry_assessment.get('reason')}"
-            else:
-                retry_assessment = None
+                action = "phase_pulse_retry" if is_retry else "phase_pulse_due"
 
         return {
             "success": True,
@@ -2560,7 +2790,7 @@ class ConsciousnessLoopManager:
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
-            SELECT phase, enabled, order_index, default_duration_minutes, retry_limit, cooldown_minutes, updated_at
+            SELECT phase, enabled, order_index, default_duration_minutes, retry_limit, cooldown_minutes, pulse_count, updated_at
             FROM consciousness_phase_config
             ORDER BY order_index ASC
             """

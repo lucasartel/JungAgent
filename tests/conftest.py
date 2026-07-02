@@ -148,7 +148,26 @@ def _create_loop_schema(conn: sqlite3.Connection) -> None:
             default_duration_minutes INTEGER NOT NULL,
             retry_limit INTEGER DEFAULT 2,
             cooldown_minutes INTEGER DEFAULT 10,
+            pulse_count INTEGER DEFAULT 1,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS consciousness_phase_pulses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cycle_id TEXT NOT NULL,
+            agent_instance TEXT NOT NULL,
+            phase TEXT NOT NULL,
+            pulse_index INTEGER NOT NULL,
+            pulse_count INTEGER NOT NULL,
+            scheduled_at DATETIME NOT NULL,
+            executed_at DATETIME,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            phase_result_id INTEGER,
+            last_error TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(agent_instance, cycle_id, phase, pulse_index)
         );
 
         CREATE TABLE IF NOT EXISTS consciousness_loop_events (

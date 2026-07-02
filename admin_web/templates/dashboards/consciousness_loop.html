@@ -75,7 +75,7 @@ function renderState(state, config) {
         ["Deadline", state.phase_deadline_at || "-"],
         ["Last completed phase", state.last_completed_phase || "-"],
         ["Clock-recommended phase", state.recommended_clock_phase || "-"],
-        ["Cycle configuration", (config || []).map((item) => `${item.order_index}. ${item.phase} (${item.default_duration_minutes} min)`).join(" | ") || "-"]
+        ["Cycle configuration", (config || []).map((item) => `${item.order_index}. ${item.phase} (${item.default_duration_minutes} min, pulses ${item.pulse_count || 1})`).join(" | ") || "-"]
     ];
 
     document.getElementById("stateGrid").innerHTML = cards.map(([label, value]) => `

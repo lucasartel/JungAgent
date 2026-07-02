@@ -17,6 +17,8 @@ import threading
 import importlib.util
 from pathlib import Path
 from typing import Any, Dict
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -25,6 +27,7 @@ from consciousness_loop import (
     ConsciousnessLoopManager,
     DEFAULT_PHASE_RETRY_LIMIT,
     DEFAULT_PHASE_RETRY_COOLDOWN_MINUTES,
+    MAX_PHASE_PULSE_COUNT,
     PHASES,
     PHASE_BY_KEY,
     FATAL_EXCEPTION_TYPES,
@@ -132,6 +135,110 @@ class TestRetryPolicyFromDB:
         policy = manager._get_phase_retry_policy("will")
         assert policy["retry_limit"] == 99
         assert policy["cooldown_minutes"] == 1440
+
+
+class TestPhasePulses:
+    def test_default_pulse_count_is_one(self, manager):
+        config = manager.get_phase_config()
+
+        assert config
+        assert all(int(item["pulse_count"]) == 1 for item in config)
+
+    def test_pulse_schedule_distributes_inside_phase_window(self, manager):
+        tz = ZoneInfo("America/Sao_Paulo")
+        start = datetime(2026, 7, 2, 0, 0, tzinfo=tz)
+        deadline = datetime(2026, 7, 2, 2, 0, tzinfo=tz)
+
+        scheduled = manager._pulse_schedule_times(start, deadline, 3)
+
+        assert [item.strftime("%H:%M") for item in scheduled] == ["00:00", "00:40", "01:20"]
+        assert manager._pulse_schedule_times(start, deadline, 1) == [start]
+
+    def test_pulse_count_is_clamped_to_safe_limit(self, manager, loop_db):
+        manager._ensure_phase_config()
+        loop_db.conn.execute("UPDATE consciousness_phase_config SET pulse_count = 99 WHERE phase = 'dream'")
+        loop_db.conn.commit()
+
+        assert manager._get_phase_pulse_count("dream") == MAX_PHASE_PULSE_COUNT
+
+    def test_agenda_records_all_configured_pulses(self, manager, loop_db):
+        tz = ZoneInfo("America/Sao_Paulo")
+        start = datetime(2026, 7, 2, 0, 0, tzinfo=tz)
+        deadline = datetime(2026, 7, 2, 2, 0, tzinfo=tz)
+        manager._ensure_phase_config()
+        loop_db.conn.execute("UPDATE consciousness_phase_config SET pulse_count = 3 WHERE phase = 'dream'")
+        loop_db.conn.commit()
+
+        rows = manager._ensure_phase_pulse_agenda(
+            cycle_id="2026-07-02",
+            phase=PHASE_BY_KEY["dream"],
+            phase_started_at=start,
+            phase_deadline_at=deadline,
+        )
+
+        assert [row["pulse_index"] for row in rows] == [1, 2, 3]
+        assert all(row["pulse_count"] == 3 for row in rows)
+        assert rows[0]["status"] == "pending"
+
+    def test_failed_pulse_retry_does_not_consume_future_due_pulse(self, manager, loop_db, monkeypatch):
+        tz = ZoneInfo("America/Sao_Paulo")
+        start = datetime(2026, 7, 2, 0, 0, tzinfo=tz)
+        deadline = datetime(2026, 7, 2, 2, 0, tzinfo=tz)
+        manager._ensure_phase_config()
+        loop_db.conn.execute("UPDATE consciousness_phase_config SET pulse_count = 2, cooldown_minutes = 90 WHERE phase = 'dream'")
+        loop_db.conn.commit()
+        rows = manager._ensure_phase_pulse_agenda(
+            cycle_id="2026-07-02",
+            phase=PHASE_BY_KEY["dream"],
+            phase_started_at=start,
+            phase_deadline_at=deadline,
+        )
+        loop_db.conn.execute(
+            """
+            UPDATE consciousness_phase_pulses
+            SET status = 'failed', attempts = 1, executed_at = ?
+            WHERE id = ?
+            """,
+            (start.isoformat(), rows[0]["id"]),
+        )
+        loop_db.conn.commit()
+        monkeypatch.setattr(manager, "_now", lambda: start + timedelta(hours=1))
+
+        due = manager._get_due_phase_pulse(cycle_id="2026-07-02", phase=PHASE_BY_KEY["dream"])
+
+        assert due["pulse_index"] == 2
+
+    def test_execute_phase_records_pulse_metadata(self, loop_db, monkeypatch):
+        db = _LoopWorkingMemoryDB(loop_db.conn)
+        manager = ConsciousnessLoopManager(db)
+        tz = ZoneInfo("America/Sao_Paulo")
+        start = datetime(2026, 7, 2, 9, 0, tzinfo=tz)
+        deadline = datetime(2026, 7, 2, 15, 0, tzinfo=tz)
+        rows = manager._ensure_phase_pulse_agenda(
+            cycle_id="2026-07-02",
+            phase=PHASE_BY_KEY["work"],
+            phase_started_at=start,
+            phase_deadline_at=deadline,
+        )
+        monkeypatch.setattr(manager, "_run_work_phase", lambda result: result)
+
+        result = manager.execute_phase(
+            "work",
+            "2026-07-02",
+            trigger_source="pytest",
+            execution_mode="automatic",
+            pulse=rows[0],
+        )
+
+        assert result["metrics"]["pulse_index"] == 1
+        assert result["metrics"]["pulse_count"] == 1
+        assert result["raw_result"]["phase_pulse"]["id"] == rows[0]["id"]
+        pulse_row = loop_db.conn.execute(
+            "SELECT status, phase_result_id FROM consciousness_phase_pulses WHERE id = ?",
+            (rows[0]["id"],),
+        ).fetchone()
+        assert pulse_row["status"] == "completed"
+        assert pulse_row["phase_result_id"] is not None
 
 
 # ---------------------------------------------------------------------------

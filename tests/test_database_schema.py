@@ -75,11 +75,14 @@ def test_schema_mixin_creates_core_tables_and_is_idempotent(in_memory_conn):
         "goal_threads",
         "goal_steps",
         "integrative_self_snapshots",
+        "consciousness_phase_pulses",
     ]:
         assert table in tables
 
     assert {"user_id", "platform_id", "last_seen"} <= _column_names(in_memory_conn, "users")
     assert {"project_id", "action_type", "source_seed"} <= _column_names(in_memory_conn, "work_briefs")
+    assert {"pulse_count", "retry_limit", "cooldown_minutes"} <= _column_names(in_memory_conn, "consciousness_phase_config")
+    assert {"pulse_index", "pulse_count", "scheduled_at", "phase_result_id"} <= _column_names(in_memory_conn, "consciousness_phase_pulses")
     assert {"agent_instance", "item_type", "source_refs_json"} <= _column_names(in_memory_conn, "working_memory_items")
     assert {"influence_mode", "components_json", "limits_json"} <= _column_names(in_memory_conn, "integrative_self_snapshots")
     assert {
