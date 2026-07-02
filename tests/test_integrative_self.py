@@ -59,6 +59,20 @@ def _create_source_tables(conn: sqlite3.Connection) -> None:
             completed_at TEXT,
             created_at TEXT
         );
+        CREATE TABLE consciousness_phase_pulses (
+            id INTEGER PRIMARY KEY,
+            cycle_id TEXT,
+            agent_instance TEXT,
+            phase TEXT,
+            pulse_index INTEGER,
+            pulse_count INTEGER,
+            scheduled_at TEXT,
+            executed_at TEXT,
+            status TEXT,
+            attempts INTEGER,
+            phase_result_id INTEGER,
+            last_error TEXT
+        );
         CREATE TABLE agent_dreams (
             id INTEGER PRIMARY KEY,
             user_id TEXT,
@@ -132,6 +146,26 @@ def _create_source_tables(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        INSERT INTO consciousness_phase_pulses (
+            id, cycle_id, agent_instance, phase, pulse_index, pulse_count,
+            scheduled_at, executed_at, status, attempts, phase_result_id, last_error
+        ) VALUES (1, '2026-07-01', 'jung_v1', 'world', 1, 2,
+                  '2026-07-01T08:00:00', '2026-07-01T08:10:00',
+                  'completed', 1, 42, NULL)
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO consciousness_phase_pulses (
+            id, cycle_id, agent_instance, phase, pulse_index, pulse_count,
+            scheduled_at, executed_at, status, attempts, phase_result_id, last_error
+        ) VALUES (2, '2026-07-01', 'jung_v1', 'world', 2, 2,
+                  '2026-07-01T08:45:00', NULL,
+                  'pending', 0, NULL, NULL)
+        """
+    )
+    conn.execute(
+        """
         INSERT INTO agent_dreams (
             id, user_id, symbolic_theme, extracted_insight, dream_mood, created_at
         ) VALUES (7, 'u1', 'ponte', 'uma passagem pede forma', 'quieto',
@@ -198,6 +232,9 @@ def test_integrative_self_generates_read_only_snapshot_from_sources():
         "rumination_insight#5",
         "knowledge_gap#11",
     }
+    pulse_component = next(item for item in snapshot["components"]["items"] if item["key"] == "phase_pulses")
+    assert "world 1/2 completed" in pulse_component["summary"]
+    assert pulse_component["payload"]["recent_pulses"][0]["pulse_index"] == 2
     assert "nao como prova de consciencia humana continua" in snapshot["first_person_snapshot"]
 
     latest = db.get_latest_integrative_self_snapshot(agent_instance="jung_v1", user_id="u1")

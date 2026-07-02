@@ -161,6 +161,19 @@ class TestPhasePulses:
 
         assert manager._get_phase_pulse_count("dream") == MAX_PHASE_PULSE_COUNT
 
+    def test_update_phase_pulse_count_clamps_to_safe_limit(self, manager, loop_db):
+        result = manager.update_phase_pulse_count("dream", 99)
+
+        assert result["pulse_count"] == MAX_PHASE_PULSE_COUNT
+        row = loop_db.conn.execute(
+            "SELECT pulse_count FROM consciousness_phase_config WHERE phase = 'dream'"
+        ).fetchone()
+        assert row["pulse_count"] == MAX_PHASE_PULSE_COUNT
+
+    def test_update_phase_pulse_count_rejects_unknown_phase(self, manager):
+        with pytest.raises(ValueError, match="invalid_phase"):
+            manager.update_phase_pulse_count("new_phase", 2)
+
     def test_agenda_records_all_configured_pulses(self, manager, loop_db):
         tz = ZoneInfo("America/Sao_Paulo")
         start = datetime(2026, 7, 2, 0, 0, tzinfo=tz)

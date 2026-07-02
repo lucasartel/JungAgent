@@ -49,10 +49,13 @@ def get_loop_manager():
 async def get_loop_state(request: Request, admin: Dict = Depends(require_master)):
     try:
         manager = get_loop_manager()
+        from consciousness_loop import MAX_PHASE_PULSE_COUNT
+
         return {
             "success": True,
             "state": manager.get_state(),
             "phase_config": manager.get_phase_config(),
+            "max_phase_pulse_count": MAX_PHASE_PULSE_COUNT,
         }
     except Exception as e:
         logger.error(f"Erro ao obter estado do loop: {e}")
@@ -104,6 +107,22 @@ async def execute_current_phase(request: Request, admin: Dict = Depends(require_
         return {"success": True, "result": result}
     except Exception as e:
         logger.error(f"Erro ao executar fase atual do loop: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
+@router.post("/phase-config/pulse-count")
+async def update_phase_pulse_count(request: Request, admin: Dict = Depends(require_master)):
+    try:
+        payload = await request.json()
+        phase = payload.get("phase")
+        pulse_count = payload.get("pulse_count")
+        manager = get_loop_manager()
+        result = await asyncio.to_thread(manager.update_phase_pulse_count, phase, pulse_count)
+        return {"success": True, "result": result, "phase_config": manager.get_phase_config()}
+    except ValueError as exc:
+        return JSONResponse({"success": False, "error": str(exc)}, status_code=400)
+    except Exception as e:
+        logger.error(f"Erro ao atualizar pulse_count da fase: {e}")
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 

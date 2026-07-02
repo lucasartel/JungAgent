@@ -20,6 +20,32 @@
 
     <section class="dashboard-grid-v2" id="stateGrid"></section>
 
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Phase pulse configuration</h2>
+                <p class="panel-subtitle-v2">Safe per-phase pulse density for future automatic loop agendas.</p>
+            </div>
+            <span class="table-badge-v2" id="pulseConfigStatus">read only until saved</span>
+        </div>
+        <div class="panel-body-v2">
+            <div class="table-wrap-v2">
+                <table class="data-table-v2">
+                    <thead>
+                        <tr>
+                            <th>Phase</th>
+                            <th>Window</th>
+                            <th>Retries</th>
+                            <th>Pulse count</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="phaseConfigRows"></tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
     <section class="dashboard-columns-v2">
         <section class="panel-v2">
             <div class="panel-header-v2">
@@ -60,12 +86,13 @@ async function loadDashboard() {
     const eventsData = await eventsRes.json();
     const resultsData = await resultsRes.json();
 
-    renderState(stateData.state || {}, stateData.phase_config || []);
+    renderState(stateData.state || {});
+    renderPhaseConfig(stateData.phase_config || [], stateData.max_phase_pulse_count || 8);
     renderEvents(eventsData.events || []);
     renderResults(resultsData.results || []);
 }
 
-function renderState(state, config) {
+function renderState(state) {
     const cards = [
         ["Status", state.status || "-"],
         ["Current cycle", state.cycle_id || "-"],
@@ -74,8 +101,7 @@ function renderState(state, config) {
         ["Phase started at", state.phase_started_at || "-"],
         ["Deadline", state.phase_deadline_at || "-"],
         ["Last completed phase", state.last_completed_phase || "-"],
-        ["Clock-recommended phase", state.recommended_clock_phase || "-"],
-        ["Cycle configuration", (config || []).map((item) => `${item.order_index}. ${item.phase} (${item.default_duration_minutes} min, pulses ${item.pulse_count || 1})`).join(" | ") || "-"]
+        ["Clock-recommended phase", state.recommended_clock_phase || "-"]
     ];
 
     document.getElementById("stateGrid").innerHTML = cards.map(([label, value]) => `
@@ -84,6 +110,37 @@ function renderState(state, config) {
             <strong class="cell-primary-v2">${escapeHtml(value)}</strong>
         </article>
     `).join("");
+}
+
+function renderPhaseConfig(config, maxPulseCount) {
+    const rows = document.getElementById("phaseConfigRows");
+    rows.innerHTML = config.length
+        ? config.map((item) => `
+            <tr>
+                <td>
+                    <strong>${escapeHtml(item.phase)}</strong>
+                    <div class="meta-line-v2">order ${Number(item.order_index || 0)}</div>
+                </td>
+                <td>${Number(item.default_duration_minutes || 0)} min</td>
+                <td>${Number(item.retry_limit || 0)} / ${Number(item.cooldown_minutes || 0)} min</td>
+                <td>
+                    <input
+                        class="input-v2"
+                        type="number"
+                        min="1"
+                        max="${Number(maxPulseCount || 8)}"
+                        step="1"
+                        value="${Number(item.pulse_count || 1)}"
+                        data-phase-pulse-input="${escapeHtml(item.phase)}"
+                        style="max-width: 96px;"
+                    >
+                </td>
+                <td>
+                    <button class="button-v2 button-v2--ghost" onclick="savePulseCount('${escapeJs(item.phase)}')">Save</button>
+                </td>
+            </tr>
+        `).join("")
+        : '<tr><td colspan="5" class="empty-row-v2">No phase config found.</td></tr>';
 }
 
 function renderEvents(events) {
@@ -160,6 +217,36 @@ async function syncLoop() {
 async function executeCurrent() {
     await fetch("/admin/consciousness-loop/execute-current", { method: "POST" });
     await loadDashboard();
+}
+
+async function savePulseCount(phase) {
+    const status = document.getElementById("pulseConfigStatus");
+    const input = document.querySelector(`[data-phase-pulse-input="${cssEscape(phase)}"]`);
+    if (!input) return;
+    status.textContent = "saving";
+    const response = await fetch("/admin/consciousness-loop/phase-config/pulse-count", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phase, pulse_count: Number(input.value || 1) })
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+        status.textContent = payload.error || "save failed";
+        return;
+    }
+    status.textContent = `${phase}: pulses ${payload.result.pulse_count}`;
+    await loadDashboard();
+}
+
+function cssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === "function") {
+        return window.CSS.escape(value);
+    }
+    return String(value).replace(/"/g, '\\"');
+}
+
+function escapeJs(value) {
+    return String(value ?? "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
 loadDashboard();

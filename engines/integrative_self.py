@@ -86,7 +86,60 @@ class IntegrativeSelfModel:
         ).fetchone()
         return dict(row) if row else None
 
-    def _latest_components(self, *, user_id: str) -> List[Dict[str, Any]]:
+    def _recent_phase_pulse_component(self, *, cycle_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not self._table_exists("consciousness_phase_pulses"):
+            return None
+
+        cursor = self.db.conn.cursor()
+        where = "agent_instance = ?"
+        params: List[Any] = [self.agent_instance]
+        if cycle_id:
+            where += " AND cycle_id = ?"
+            params.append(cycle_id)
+
+        rows = cursor.execute(
+            f"""
+            SELECT id, cycle_id, phase, pulse_index, pulse_count, scheduled_at,
+                   executed_at, status, attempts, phase_result_id, last_error
+            FROM consciousness_phase_pulses
+            WHERE {where}
+            ORDER BY COALESCE(executed_at, scheduled_at) DESC, id DESC
+            LIMIT 12
+            """,
+            tuple(params),
+        ).fetchall()
+        pulses = [dict(row) for row in rows]
+        if not pulses:
+            return None
+
+        source_refs = []
+        for pulse in pulses:
+            phase_result_id = pulse.get("phase_result_id")
+            if phase_result_id:
+                ref = f"loop#{phase_result_id}"
+                if ref not in source_refs:
+                    source_refs.append(ref)
+
+        latest_ref = source_refs[0] if source_refs else ""
+        phase_trace = []
+        for pulse in reversed(pulses[-6:]):
+            phase_trace.append(
+                f"{pulse.get('phase')} {pulse.get('pulse_index')}/{pulse.get('pulse_count')} {pulse.get('status')}"
+            )
+        summary = "Trajetoria curta de pulsos: " + "; ".join(phase_trace)
+        return self._component(
+            key="phase_pulses",
+            source_ref=latest_ref,
+            title="Pulsos recentes do loop",
+            summary=summary,
+            payload={
+                "cycle_id": cycle_id,
+                "recent_pulses": pulses,
+                "source_refs": source_refs,
+            },
+        )
+
+    def _latest_components(self, *, user_id: str, cycle_id: Optional[str] = None) -> List[Dict[str, Any]]:
         components: List[Dict[str, Any]] = []
         cursor = self.db.conn.cursor()
 
@@ -111,6 +164,10 @@ class IntegrativeSelfModel:
                         payload=dict(row),
                     )
                 )
+
+        pulse_component = self._recent_phase_pulse_component(cycle_id=cycle_id)
+        if pulse_component:
+            components.append(pulse_component)
 
         if self._table_exists("agent_dreams"):
             row = cursor.execute(
@@ -254,12 +311,15 @@ class IntegrativeSelfModel:
         day = snapshot_date or (
             effective_cycle if re.match(r"^\d{4}-\d{2}-\d{2}$", str(effective_cycle or "")) else date.today().isoformat()
         )
-        components = self._latest_components(user_id=user_id)
+        components = self._latest_components(user_id=user_id, cycle_id=effective_cycle)
         source_refs = []
         for component in components:
             ref = component.get("source_ref")
             if ref and ref not in source_refs:
                 source_refs.append(ref)
+            for payload_ref in component.get("payload", {}).get("source_refs", []):
+                if SOURCE_REF_RE.fullmatch(str(payload_ref)) and payload_ref not in source_refs:
+                    source_refs.append(str(payload_ref))
 
         component_titles = ", ".join(component["key"] for component in components) or "nenhum subsistema com evidencia"
         summary = (

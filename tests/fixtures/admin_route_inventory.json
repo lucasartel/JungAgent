@@ -347,7 +347,7 @@
     "path": "/events",
     "full_path": "/admin/consciousness-loop/events",
     "endpoint": "get_loop_events",
-    "line": 63,
+    "line": 66,
     "migration_bucket": "consciousness_loop_routes"
   },
   {
@@ -356,7 +356,7 @@
     "path": "/results",
     "full_path": "/admin/consciousness-loop/results",
     "endpoint": "get_loop_results",
-    "line": 76,
+    "line": 79,
     "migration_bucket": "consciousness_loop_routes"
   },
   {
@@ -365,7 +365,7 @@
     "path": "/sync",
     "full_path": "/admin/consciousness-loop/sync",
     "endpoint": "sync_loop",
-    "line": 89,
+    "line": 92,
     "migration_bucket": "consciousness_loop_routes"
   },
   {
@@ -374,7 +374,16 @@
     "path": "/execute-current",
     "full_path": "/admin/consciousness-loop/execute-current",
     "endpoint": "execute_current_phase",
-    "line": 100,
+    "line": 103,
+    "migration_bucket": "consciousness_loop_routes"
+  },
+  {
+    "module": "admin_web/routes/consciousness_loop_routes.py",
+    "method": "POST",
+    "path": "/phase-config/pulse-count",
+    "full_path": "/admin/consciousness-loop/phase-config/pulse-count",
+    "endpoint": "update_phase_pulse_count",
+    "line": 114,
     "migration_bucket": "consciousness_loop_routes"
   },
   {
@@ -383,7 +392,7 @@
     "path": "/dashboard",
     "full_path": "/admin/consciousness-loop/dashboard",
     "endpoint": "consciousness_loop_dashboard",
-    "line": 111,
+    "line": 130,
     "migration_bucket": "consciousness_loop_routes"
   },
   {

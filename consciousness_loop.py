@@ -292,6 +292,35 @@ class ConsciousnessLoopManager:
             pulse_count = 1
         return max(1, min(MAX_PHASE_PULSE_COUNT, pulse_count))
 
+    def update_phase_pulse_count(self, phase_key: str, pulse_count: Any) -> Dict[str, Any]:
+        self._ensure_phase_config()
+        clean_phase = str(phase_key or "").strip()
+        if clean_phase not in PHASE_BY_KEY:
+            raise ValueError("invalid_phase")
+        try:
+            requested_count = int(pulse_count)
+        except Exception as exc:
+            raise ValueError("invalid_pulse_count") from exc
+        safe_count = max(1, min(MAX_PHASE_PULSE_COUNT, requested_count))
+        now_iso = self._now().isoformat()
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            UPDATE consciousness_phase_config
+            SET pulse_count = ?, updated_at = ?
+            WHERE phase = ?
+            """,
+            (safe_count, now_iso, clean_phase),
+        )
+        self.db.conn.commit()
+        return {
+            "phase": clean_phase,
+            "pulse_count": safe_count,
+            "requested_pulse_count": requested_count,
+            "max_pulse_count": MAX_PHASE_PULSE_COUNT,
+            "updated_at": now_iso,
+        }
+
     def _pulse_schedule_times(
         self,
         phase_started_at: datetime,
