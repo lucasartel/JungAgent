@@ -368,6 +368,8 @@ class ConsciousnessLoopManager:
                     now_iso,
                 ),
             )
+        self.db.conn.commit()
+        self.reconcile_phase_pulses(cycle_id=cycle_id, phase_key=phase.key)
         cursor.execute(
             """
             SELECT *
@@ -501,6 +503,113 @@ class ConsciousnessLoopManager:
             (status, result.get("completed_at") or now_iso, phase_result_id, last_error, now_iso, pulse["id"]),
         )
         self.db.conn.commit()
+
+    def _matching_phase_result_for_pulse(self, pulse: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, status, completed_at, metrics_json, errors_json
+            FROM consciousness_loop_phase_results
+            WHERE agent_instance = ?
+              AND cycle_id = ?
+              AND phase = ?
+            ORDER BY id DESC
+            LIMIT 50
+            """,
+            (self.agent_instance, pulse.get("cycle_id"), pulse.get("phase")),
+        )
+        pulse_id = int(pulse.get("id") or 0)
+        pulse_index = int(pulse.get("pulse_index") or 0)
+        pulse_count = int(pulse.get("pulse_count") or 0)
+        for row in cursor.fetchall():
+            candidate = dict(row)
+            metrics = self._decode_json_dict(candidate.get("metrics_json"))
+            try:
+                metrics_pulse_id = int(metrics.get("pulse_id") or 0)
+            except Exception:
+                metrics_pulse_id = 0
+            if metrics_pulse_id and metrics_pulse_id == pulse_id:
+                candidate["metrics"] = metrics
+                candidate["errors"] = self._decode_json_list(candidate.get("errors_json"))
+                return candidate
+            try:
+                metrics_pulse_index = int(metrics.get("pulse_index") or 0)
+                metrics_pulse_count = int(metrics.get("pulse_count") or 0)
+            except Exception:
+                continue
+            if (
+                not metrics_pulse_id
+                and metrics_pulse_index == pulse_index
+                and metrics_pulse_count == pulse_count
+            ):
+                candidate["metrics"] = metrics
+                candidate["errors"] = self._decode_json_list(candidate.get("errors_json"))
+                return candidate
+        return None
+
+    def reconcile_phase_pulses(
+        self,
+        *,
+        cycle_id: Optional[str] = None,
+        phase_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        cursor = self.db.conn.cursor()
+        clauses = ["agent_instance = ?", "status = 'running'", "phase_result_id IS NULL"]
+        params: List[Any] = [self.agent_instance]
+        if cycle_id:
+            clauses.append("cycle_id = ?")
+            params.append(cycle_id)
+        if phase_key:
+            clauses.append("phase = ?")
+            params.append(phase_key)
+
+        cursor.execute(
+            f"""
+            SELECT *
+            FROM consciousness_phase_pulses
+            WHERE {' AND '.join(clauses)}
+            ORDER BY scheduled_at ASC, id ASC
+            """,
+            tuple(params),
+        )
+        repaired: List[Dict[str, Any]] = []
+        for pulse in [dict(row) for row in cursor.fetchall()]:
+            result = self._matching_phase_result_for_pulse(pulse)
+            if not result or not result.get("completed_at"):
+                continue
+            status = "completed" if result.get("status") != "failed" else "failed"
+            last_error = "; ".join((result.get("errors") or [])[:2]) if status == "failed" else None
+            cursor.execute(
+                """
+                UPDATE consciousness_phase_pulses
+                SET status = ?, executed_at = ?, phase_result_id = ?,
+                    last_error = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    status,
+                    result.get("completed_at"),
+                    result.get("id"),
+                    last_error,
+                    self._now().isoformat(),
+                    pulse["id"],
+                ),
+            )
+            repaired.append(
+                {
+                    "pulse_id": pulse["id"],
+                    "cycle_id": pulse.get("cycle_id"),
+                    "phase": pulse.get("phase"),
+                    "pulse_index": pulse.get("pulse_index"),
+                    "status": status,
+                    "phase_result_id": result.get("id"),
+                }
+            )
+        self.db.conn.commit()
+        return {
+            "repaired_count": len(repaired),
+            "repaired": repaired,
+        }
 
     def _get_latest_phase_attempt(self, cycle_id: str, phase_key: str) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()

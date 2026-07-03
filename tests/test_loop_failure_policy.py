@@ -15,6 +15,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 import importlib.util
+import json
 from pathlib import Path
 from typing import Any, Dict
 from datetime import datetime, timedelta
@@ -252,6 +253,77 @@ class TestPhasePulses:
         ).fetchone()
         assert pulse_row["status"] == "completed"
         assert pulse_row["phase_result_id"] is not None
+
+    def test_reconcile_phase_pulses_repairs_running_rows_from_phase_result(self, manager, loop_db):
+        tz = ZoneInfo("America/Sao_Paulo")
+        start = datetime(2026, 7, 3, 2, 0, tzinfo=tz)
+        deadline = datetime(2026, 7, 3, 3, 0, tzinfo=tz)
+        manager._ensure_phase_config()
+        loop_db.conn.execute("UPDATE consciousness_phase_config SET pulse_count = 2 WHERE phase = 'identity'")
+        loop_db.conn.commit()
+        rows = manager._ensure_phase_pulse_agenda(
+            cycle_id="2026-07-03",
+            phase=PHASE_BY_KEY["identity"],
+            phase_started_at=start,
+            phase_deadline_at=deadline,
+        )
+        pulse = rows[0]
+        completed_at = "2026-07-03T02:02:50-03:00"
+        loop_db.conn.execute(
+            """
+            UPDATE consciousness_phase_pulses
+            SET status = 'running', attempts = 1
+            WHERE id = ?
+            """,
+            (pulse["id"],),
+        )
+        cursor = loop_db.conn.execute(
+            """
+            INSERT INTO consciousness_loop_phase_results (
+                cycle_id, agent_instance, phase, trigger_name, trigger_source,
+                started_at, completed_at, duration_ms, status,
+                input_summary, output_summary, artifacts_created_json,
+                warnings_json, errors_json, metrics_json, raw_result_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "2026-07-03",
+                manager.agent_instance,
+                "identity",
+                "identity_phase",
+                "scheduled_trigger",
+                "2026-07-03T02:00:48-03:00",
+                completed_at,
+                122000,
+                "success",
+                "",
+                "Identidade sincronizada.",
+                "[]",
+                "[]",
+                "[]",
+                json.dumps(
+                    {
+                        "pulse_id": pulse["id"],
+                        "pulse_index": pulse["pulse_index"],
+                        "pulse_count": pulse["pulse_count"],
+                    }
+                ),
+                "{}",
+            ),
+        )
+        phase_result_id = cursor.lastrowid
+        loop_db.conn.commit()
+
+        result = manager.reconcile_phase_pulses(cycle_id="2026-07-03", phase_key="identity")
+
+        assert result["repaired_count"] == 1
+        pulse_row = loop_db.conn.execute(
+            "SELECT status, executed_at, phase_result_id FROM consciousness_phase_pulses WHERE id = ?",
+            (pulse["id"],),
+        ).fetchone()
+        assert pulse_row["status"] == "completed"
+        assert pulse_row["executed_at"] == completed_at
+        assert pulse_row["phase_result_id"] == phase_result_id
 
 
 # ---------------------------------------------------------------------------
