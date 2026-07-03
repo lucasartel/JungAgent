@@ -6,6 +6,7 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 READ_ONLY_INFLUENCE_MODE = "read_only"
+CONTEXT_PREVIEW_MODE = "preview_only"
 SOURCE_REF_RE = re.compile(
     r"\b(?:loop|conversation|dream|will|meta|rumination_insight|work_run|"
     r"work_ticket|work_delivery|hobby_artifact|agent_development|knowledge_gap)#\d+\b"
@@ -29,6 +30,9 @@ class IntegrativeSelfModel:
         if len(text) <= limit:
             return text
         return text[: limit - 3].rstrip(" ,.;:") + "..."
+
+    def _bool_flag(self, value: Any) -> str:
+        return "true" if bool(value) else "false"
 
     def _table_exists(self, table_name: str) -> bool:
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", table_name or ""):
@@ -402,3 +406,104 @@ class IntegrativeSelfModel:
         snapshot["id"] = snapshot_id
         snapshot["persisted"] = True
         return snapshot
+
+    def build_context_preview(
+        self,
+        *,
+        user_id: str,
+        max_components: int = 6,
+        max_source_refs: int = 8,
+    ) -> Dict[str, Any]:
+        if not user_id:
+            raise ValueError("user_id_required")
+        if not hasattr(self.db, "get_latest_integrative_self_snapshot"):
+            raise RuntimeError("integrative_self_snapshot_reader_unavailable")
+
+        snapshot = self.db.get_latest_integrative_self_snapshot(
+            agent_instance=self.agent_instance,
+            user_id=user_id,
+        )
+        if not snapshot:
+            return {
+                "agent_instance": self.agent_instance,
+                "user_id": user_id,
+                "status": "missing",
+                "influence_mode": READ_ONLY_INFLUENCE_MODE,
+                "preview_mode": CONTEXT_PREVIEW_MODE,
+                "injectable": False,
+                "component_keys": [],
+                "source_refs": [],
+                "limits": {
+                    "prompt_influence": False,
+                    "loop_decision_influence": False,
+                    "working_memory_mutation": False,
+                    "external_side_effects": False,
+                },
+                "context_block": (
+                    "ISM CONTEXT PREVIEW (NAO INJETADO)\n"
+                    "Status: sem snapshot ISM persistido para este usuario.\n"
+                    "Influencia: prompt=false; loop=false; memoria=false; acoes_externas=false."
+                ),
+            }
+
+        components = (snapshot.get("components") or {}).get("items") or []
+        clean_components = [item for item in components if isinstance(item, dict)]
+        component_keys = [str(item.get("key") or "") for item in clean_components if item.get("key")]
+        source_refs = [
+            str(ref)
+            for ref in snapshot.get("source_refs") or []
+            if SOURCE_REF_RE.fullmatch(str(ref))
+        ][: max(1, max_source_refs)]
+        limits = snapshot.get("limits") or {}
+        phase_pulse_summary = ""
+        component_lines = []
+        for item in clean_components[: max(1, max_components)]:
+            key = self._clip(item.get("key"), 60)
+            source_ref = str(item.get("source_ref") or "").strip()
+            ref_text = f" [{source_ref}]" if SOURCE_REF_RE.fullmatch(source_ref) else ""
+            summary = self._clip(item.get("summary"), 240)
+            if key == "phase_pulses":
+                phase_pulse_summary = summary
+            component_lines.append(f"- {key}{ref_text}: {summary}")
+
+        if not component_lines:
+            component_lines.append("- nenhum componente auditavel disponivel")
+
+        limit_line = (
+            "Limites: "
+            f"human_consciousness_claim={self._bool_flag(limits.get('human_consciousness_claim'))}; "
+            f"prompt_influence={self._bool_flag(limits.get('prompt_influence'))}; "
+            f"loop_decision_influence={self._bool_flag(limits.get('loop_decision_influence'))}; "
+            f"working_memory_mutation={self._bool_flag(limits.get('working_memory_mutation'))}; "
+            f"external_side_effects={self._bool_flag(limits.get('external_side_effects'))}."
+        )
+        source_line = "Fontes: " + (", ".join(source_refs) if source_refs else "nenhuma fonte valida")
+        context_lines = [
+            "ISM CONTEXT PREVIEW (NAO INJETADO)",
+            f"Snapshot: id={snapshot.get('id')} date={snapshot.get('snapshot_date')} status={snapshot.get('status')}",
+            "Modo: preview_only; influencia_prompt=false; influencia_loop=false; mutacao_memoria=false.",
+            self._clip(snapshot.get("summary"), 420),
+            "Componentes: " + (", ".join(component_keys) if component_keys else "nenhum"),
+            source_line,
+            limit_line,
+        ]
+        if phase_pulse_summary:
+            context_lines.append("Pulso de fase: " + self._clip(phase_pulse_summary, 260))
+        context_lines.append("Leitura auditavel:")
+        context_lines.extend(component_lines)
+
+        return {
+            "agent_instance": self.agent_instance,
+            "user_id": user_id,
+            "snapshot_id": snapshot.get("id"),
+            "snapshot_date": snapshot.get("snapshot_date"),
+            "status": "available",
+            "influence_mode": snapshot.get("influence_mode") or READ_ONLY_INFLUENCE_MODE,
+            "preview_mode": CONTEXT_PREVIEW_MODE,
+            "injectable": False,
+            "component_keys": component_keys,
+            "source_refs": source_refs,
+            "limits": limits,
+            "phase_pulse_summary": phase_pulse_summary,
+            "context_block": "\n".join(line for line in context_lines if line),
+        }

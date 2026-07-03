@@ -244,6 +244,46 @@ def test_integrative_self_generates_read_only_snapshot_from_sources():
     assert latest["metadata"]["implementation"] == "deterministic_read_only"
 
 
+def test_integrative_self_builds_non_injected_context_preview():
+    conn = _conn()
+    db = _IntegrativeSelfDB(conn)
+    _create_source_tables(conn)
+    model = IntegrativeSelfModel(db, agent_instance="jung_v1")
+    model.generate_snapshot(user_id="u1", persist=True)
+
+    preview = model.build_context_preview(user_id="u1")
+
+    assert preview["status"] == "available"
+    assert preview["influence_mode"] == "read_only"
+    assert preview["preview_mode"] == "preview_only"
+    assert preview["injectable"] is False
+    assert "phase_pulses" in preview["component_keys"]
+    assert "loop#42" in preview["source_refs"]
+    assert preview["limits"]["prompt_influence"] is False
+    assert "world 1/2 completed" in preview["phase_pulse_summary"]
+    context = preview["context_block"]
+    assert "ISM CONTEXT PREVIEW (NAO INJETADO)" in context
+    assert "Modo: preview_only; influencia_prompt=false" in context
+    assert "Componentes: loop, phase_pulses" in context
+    assert "Fontes: loop#42" in context
+    assert "Pulso de fase: Trajetoria curta de pulsos" in context
+
+
+def test_integrative_self_context_preview_missing_snapshot_is_safe():
+    db = _IntegrativeSelfDB(_conn())
+    model = IntegrativeSelfModel(db, agent_instance="jung_v1")
+
+    preview = model.build_context_preview(user_id="u1")
+
+    assert preview["status"] == "missing"
+    assert preview["preview_mode"] == "preview_only"
+    assert preview["injectable"] is False
+    assert preview["component_keys"] == []
+    assert preview["source_refs"] == []
+    assert preview["limits"]["prompt_influence"] is False
+    assert "sem snapshot ISM persistido" in preview["context_block"]
+
+
 def test_integrative_self_upsert_keeps_one_daily_snapshot():
     conn = _conn()
     db = _IntegrativeSelfDB(conn)
