@@ -1,0 +1,127 @@
+{
+  "id": 901,
+  "agent_instance": "jung_v1",
+  "user_id": "u-regression",
+  "cycle_id": "2026-07-03",
+  "snapshot_date": "2026-07-03",
+  "status": "generated",
+  "influence_mode": "read_only",
+  "summary": "Snapshot ISM passivo de regressao: integra loop, phase_pulses, dream, will, rumination, working_memory e knowledge_gap sem influenciar decisao, prompt ou acao.",
+  "first_person_snapshot": "Eu registro este estado como integracao arquitetural, nao como prova de consciencia humana continua.",
+  "components": {
+    "loop_state": {
+      "status": "running",
+      "cycle_id": "2026-07-03",
+      "current_phase": "will",
+      "next_phase": "dream",
+      "last_completed_phase": "rumination_extro",
+      "updated_at": "2026-07-03T08:00:00"
+    },
+    "items": [
+      {
+        "key": "loop",
+        "source_ref": "loop#901",
+        "title": "Loop rumination_extro",
+        "summary": "Fase rumination_extro cristalizou tensoes recentes sem alterar decisoes externas.",
+        "payload": {
+          "id": 901,
+          "phase": "rumination_extro"
+        }
+      },
+      {
+        "key": "phase_pulses",
+        "source_ref": "loop#901",
+        "title": "Pulsos recentes do loop",
+        "summary": "Trajetoria curta de pulsos: identity 1/1 completed; world 1/1 completed; will 1/1 running",
+        "payload": {
+          "source_refs": [
+            "loop#901",
+            "loop#900"
+          ],
+          "recent_pulses": [
+            {
+              "phase": "identity",
+              "pulse_index": 1,
+              "pulse_count": 1,
+              "status": "completed",
+              "phase_result_id": 900
+            },
+            {
+              "phase": "will",
+              "pulse_index": 1,
+              "pulse_count": 1,
+              "status": "running",
+              "phase_result_id": 901
+            }
+          ]
+        }
+      },
+      {
+        "key": "dream",
+        "source_ref": "dream#44",
+        "title": "Sonho: ponte",
+        "summary": "Uma ponte aparece como simbolo de passagem entre cautela e expressao.",
+        "payload": {
+          "id": 44
+        }
+      },
+      {
+        "key": "will",
+        "source_ref": "will#88",
+        "title": "Vontade recente",
+        "summary": "dominante=relacionar; apoio=saber; constrita=expressar; preservar vinculo sem silenciar direcao propria.",
+        "payload": {
+          "id": 88
+        }
+      },
+      {
+        "key": "rumination",
+        "source_ref": "rumination_insight#77",
+        "title": "Ruminacao: simbolo",
+        "summary": "A tensao entre gesto e prudencia retorna como material de integracao.",
+        "payload": {
+          "id": 77
+        }
+      },
+      {
+        "key": "working_memory",
+        "source_ref": "loop#900",
+        "title": "Foco do ciclo",
+        "summary": "Manter o vinculo entre evidencia recente e resposta cuidadosa.",
+        "payload": {
+          "id": 21
+        }
+      },
+      {
+        "key": "knowledge_gap",
+        "source_ref": "knowledge_gap#12",
+        "title": "Criterio de estabilidade",
+        "summary": "A influencia do ISM exige regressao antes/depois e flag explicita.",
+        "payload": {
+          "id": 12
+        }
+      }
+    ]
+  },
+  "source_refs": [
+    "loop#901",
+    "loop#900",
+    "dream#44",
+    "will#88",
+    "rumination_insight#77",
+    "knowledge_gap#12"
+  ],
+  "limits": {
+    "external_side_effects": false,
+    "human_consciousness_claim": false,
+    "loop_decision_influence": false,
+    "phase": "iv_cut_0_read_only",
+    "prompt_influence": false,
+    "working_memory_mutation": false
+  },
+  "metadata": {
+    "component_count": 7,
+    "source_ref_count": 6,
+    "implementation": "deterministic_read_only_fixture"
+  }
+}

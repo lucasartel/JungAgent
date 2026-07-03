@@ -26,6 +26,7 @@ em tres modos:
 
 ```bash
 python tests/regression_runner.py --mock
+python tests/regression_runner.py --mock --variant ism_preview
 python tests/regression_runner.py --live --model deepseek/deepseek-v4-flash
 python tests/regression_runner.py --diff tests/regression_runs/run_a.json tests/regression_runs/run_b.json
 ```
@@ -33,6 +34,11 @@ python tests/regression_runner.py --diff tests/regression_runs/run_a.json tests/
 O modo `--mock` e deterministico, offline e roda no CI. Ele cobre propriedades
 mecanicas dos cenarios: formula de maturidade, sintese temporal, sinais de sonho,
 identidade, will e conversas-tipo.
+
+A variante `--variant ism_preview` adiciona um contexto ISM sintetico de fixture
+ao relatorio de regressao, sem alterar os cenarios cognitivos. Ela verifica que
+o contexto permanece `preview_only`, `injectable=false`, com ancoras validas,
+`phase_pulses` presente e todos os limites de influencia desligados.
 
 O modo `--live` exige `OPENROUTER_API_KEY` e e bloqueado em CI. Ele nao foi
 executado nesta entrega para evitar custo e chamada externa sem uma decisao
