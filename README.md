@@ -216,12 +216,16 @@ ENABLE_LEGACY_CHROMA=false
 
 PROACTIVE_ENABLED=true
 ACTIVE_CONSCIOUSNESS_ENABLED=true
+ISM_PROMPT_CONTEXT_ENABLED=false
+ISM_PROMPT_CONTEXT_ADMIN_ONLY=true
 ENABLE_UNSAFE_ADMIN_ENDPOINTS=false
 ```
 
 For new Telegram-only installations, prefer setting `ADMIN_PLATFORM_ID` to the numeric Telegram id of the instance admin and leaving `ADMIN_USER_ID` empty. JungAgent will derive the internal admin memory id as `sha256(ADMIN_PLATFORM_ID)[:16]`.
 
 Set `ADMIN_USER_ID` directly only when migrating an existing installation that already has memory under a known user id.
+
+`ISM_PROMPT_CONTEXT_ENABLED` is an IV.2 feature flag for future canary activation of the Integrative Self Model in the prompt. Keep it disabled until the local regression runner passes with `--variant ism_preview` and the production ISM preview probe is healthy. `ISM_PROMPT_CONTEXT_ADMIN_ONLY=true` keeps the first activation limited to the admin.
 
 ### Semantic Memory With Qdrant
 

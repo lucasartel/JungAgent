@@ -47,6 +47,8 @@ class Config:
     CONVERSATION_MODEL = os.getenv("CONVERSATION_MODEL", "z-ai/glm-5")
     INTERNAL_MODEL = os.getenv("INTERNAL_MODEL", "z-ai/glm-5")
     ACTIVE_CONSCIOUSNESS_ENABLED = os.getenv("ACTIVE_CONSCIOUSNESS_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+    ISM_PROMPT_CONTEXT_ENABLED = os.getenv("ISM_PROMPT_CONTEXT_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+    ISM_PROMPT_CONTEXT_ADMIN_ONLY = os.getenv("ISM_PROMPT_CONTEXT_ADMIN_ONLY", "true").strip().lower() in ("1", "true", "yes", "on")
 
     # mem0/Qdrant is the production semantic memory backend.
     DATABASE_URL = os.getenv("DATABASE_URL")  # PostgreSQL Railway (obrigatório para mem0)
@@ -468,4 +470,3 @@ Jung:"""
         """Garante que os diretórios de dados existem"""
         os.makedirs(cls.DATA_DIR, exist_ok=True)
         os.makedirs(os.path.dirname(cls.SQLITE_PATH), exist_ok=True)
-

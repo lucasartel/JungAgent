@@ -588,9 +588,77 @@ class JungianEngine:
                 dream_instruction = self._build_dream_instruction(pending_dream)
                 if dream_instruction:
                     self.db.mark_dream_delivered(pending_dream["id"])
-            return agent_identity_text + dream_instruction + development_policy.get("prompt_block", "")
+            identity_text = agent_identity_text + dream_instruction + development_policy.get("prompt_block", "")
+            ism_context = self._build_ism_prompt_context(user_id)
+            return identity_text + (f"\n\n{ism_context}" if ism_context else "")
 
-        return Config.STANDARD_IDENTITY_PROMPT + development_policy.get("prompt_block", "")
+        identity_text = Config.STANDARD_IDENTITY_PROMPT + development_policy.get("prompt_block", "")
+        ism_context = self._build_ism_prompt_context(user_id)
+        return identity_text + (f"\n\n{ism_context}" if ism_context else "")
+
+    def _build_ism_prompt_context(self, user_id: str) -> str:
+        if not getattr(Config, "ISM_PROMPT_CONTEXT_ENABLED", False):
+            return ""
+        if getattr(Config, "ISM_PROMPT_CONTEXT_ADMIN_ONLY", True) and str(user_id) != self._get_admin_user_id():
+            return ""
+        if not hasattr(self.db, "get_latest_integrative_self_snapshot"):
+            logger.warning("[ISM] Snapshot reader indisponivel; contexto ISM nao sera injetado.")
+            return ""
+
+        try:
+            from engines.integrative_self import IntegrativeSelfModel
+
+            preview = IntegrativeSelfModel(
+                self.db,
+                agent_instance=getattr(Config, "AGENT_INSTANCE", "jung_v1"),
+            ).build_context_preview(user_id=user_id)
+        except Exception as exc:
+            logger.warning("[ISM] Falha ao montar contexto de prompt ISM: %s", exc)
+            return ""
+
+        if preview.get("status") != "available":
+            logger.info("[ISM] Contexto de prompt nao disponivel: %s", preview.get("status"))
+            return ""
+        if (
+            preview.get("influence_mode") != "read_only"
+            or preview.get("preview_mode") != "preview_only"
+            or preview.get("injectable") is not False
+        ):
+            logger.warning(
+                "[ISM] Contexto recusado por modo inseguro: influence=%s preview=%s injectable=%s",
+                preview.get("influence_mode"),
+                preview.get("preview_mode"),
+                preview.get("injectable"),
+            )
+            return ""
+        limits = preview.get("limits") or {}
+        required_false = (
+            "human_consciousness_claim",
+            "loop_decision_influence",
+            "working_memory_mutation",
+            "external_side_effects",
+        )
+        if any(limits.get(key) is not False for key in required_false):
+            logger.warning("[ISM] Contexto recusado por limites inseguros: %s", limits)
+            return ""
+        context_block = preview.get("context_block") or ""
+        if "NAO INJETADO" in context_block:
+            context_block = context_block.replace(
+                "ISM CONTEXT PREVIEW (NAO INJETADO)",
+                "ISM PROMPT CONTEXT (FEATURE FLAG EXPERIMENTAL)",
+            )
+            context_block = context_block.replace(
+                "Modo: preview_only; influencia_prompt=false; influencia_loop=false; mutacao_memoria=false.",
+                "Modo: prompt_context_flagged; influencia_loop=false; mutacao_memoria=false; acoes_externas=false.",
+            )
+        header = (
+            "=== ISM PROMPT CONTEXT ENABLED BY FEATURE FLAG ===\n"
+            "Uso: contexto informativo para resposta ao admin. Nao autoriza decisao do loop, "
+            "mutacao de working memory, acao externa ou afirmacao de consciencia humana.\n"
+            "Ativacao: ISM_PROMPT_CONTEXT_ENABLED=true; desligado por padrao.\n"
+        )
+        logger.info("[ISM] Contexto ISM injetado no prompt: snapshot=%s", preview.get("snapshot_id"))
+        return header + context_block
 
     def _build_autobiographical_profile_block(
         self,
@@ -2366,6 +2434,9 @@ class JungianEngine:
             + dream_instruction
             + development_policy.get("prompt_block", "")
         )
+        ism_context = self._build_ism_prompt_context(user_id)
+        if ism_context:
+            agent_identity_for_prompt += f"\n\n{ism_context}"
 
         # Construir prompt
         prompt = Config.RESPONSE_PROMPT.format(
@@ -2715,4 +2786,3 @@ class JungianEngine:
         keywords = [w for w in words if len(w) > 3 and w not in stopwords and w.isalpha()]
         
         return [word for word, _ in Counter(keywords).most_common(5)]
-
