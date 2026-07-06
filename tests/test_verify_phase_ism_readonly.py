@@ -5,7 +5,7 @@ import sqlite3
 from argparse import Namespace
 from pathlib import Path
 
-from tests.verify_phase4 import run_verification
+from tests.verify_phase_ism_readonly import run_verification
 
 
 def _make_db(path: Path, *, influence_mode: str = "read_only", include_phase_pulses: bool = False) -> None:
@@ -122,7 +122,7 @@ def _make_db(path: Path, *, influence_mode: str = "read_only", include_phase_pul
     conn.close()
 
 
-def test_verify_phase4_accepts_read_only_integrative_self(tmp_path):
+def test_verify_phase_ism_readonly_accepts_read_only_integrative_self(tmp_path):
     db_path = tmp_path / "jung_hybrid.db"
     _make_db(db_path)
 
@@ -144,7 +144,7 @@ def test_verify_phase4_accepts_read_only_integrative_self(tmp_path):
     assert check["phase_pulses_present"] is False
 
 
-def test_verify_phase4_rejects_non_read_only_snapshot(tmp_path):
+def test_verify_phase_ism_readonly_rejects_non_read_only_snapshot(tmp_path):
     db_path = tmp_path / "jung_hybrid.db"
     _make_db(db_path, influence_mode="prompt")
 
@@ -162,7 +162,7 @@ def test_verify_phase4_rejects_non_read_only_snapshot(tmp_path):
     assert result["checks"]["integrative_self_read_only"]["influence_mode"] == "prompt"
 
 
-def test_verify_phase4_accepts_required_phase_pulses_component(tmp_path):
+def test_verify_phase_ism_readonly_accepts_required_phase_pulses_component(tmp_path):
     db_path = tmp_path / "jung_hybrid.db"
     _make_db(db_path, include_phase_pulses=True)
 
@@ -183,7 +183,7 @@ def test_verify_phase4_accepts_required_phase_pulses_component(tmp_path):
     assert "phase_pulses" in check["component_keys"]
 
 
-def test_verify_phase4_rejects_missing_required_phase_pulses_component(tmp_path):
+def test_verify_phase_ism_readonly_rejects_missing_required_phase_pulses_component(tmp_path):
     db_path = tmp_path / "jung_hybrid.db"
     _make_db(db_path)
 

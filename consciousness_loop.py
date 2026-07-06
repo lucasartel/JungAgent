@@ -683,85 +683,6 @@ class ConsciousnessLoopManager:
         data["warnings"] = self._decode_json_list(data.get("warnings_json"))
         return data
 
-    def _assess_phase_retry(
-        self,
-        cycle_id: str,
-        phase_key: str,
-        run_stats: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        latest = self._get_latest_phase_attempt(cycle_id, phase_key)
-        policy = self._get_phase_retry_policy(phase_key)
-        if run_stats.get("successful_runs", 0) > 0:
-            return {"should_retry": False, "reason": "phase_already_succeeded", "policy": policy, "latest": latest}
-        if not latest:
-            return {"should_retry": True, "reason": "phase_never_executed", "policy": policy, "latest": latest}
-        if latest.get("status") != "failed":
-            return {"should_retry": False, "reason": "latest_attempt_not_failed", "policy": policy, "latest": latest}
-
-        failure_policy = (latest.get("raw_result") or {}).get("failure_policy") or {}
-        if failure_policy and not failure_policy.get("recoverable", True):
-            return {
-                "should_retry": False,
-                "reason": "non_recoverable_failure",
-                "policy": policy,
-                "latest": latest,
-                "failure_policy": failure_policy,
-            }
-        if run_stats.get("total_runs", 0) >= policy["max_attempts"]:
-            return {
-                "should_retry": False,
-                "reason": "retry_limit_reached",
-                "policy": policy,
-                "latest": latest,
-                "failure_policy": failure_policy,
-            }
-
-        cooldown_until = None
-        completed_at = latest.get("completed_at")
-        if completed_at and policy["cooldown_minutes"] > 0:
-            try:
-                last_completed = datetime.fromisoformat(str(completed_at))
-                cooldown_until = last_completed + timedelta(minutes=policy["cooldown_minutes"])
-                if cooldown_until > self._now():
-                    return {
-                        "should_retry": False,
-                        "reason": "cooldown_active",
-                        "cooldown_until": cooldown_until.isoformat(),
-                        "policy": policy,
-                        "latest": latest,
-                        "failure_policy": failure_policy,
-                    }
-            except Exception:
-                pass
-
-        return {
-            "should_retry": True,
-            "reason": "recoverable_failure_retry",
-            "cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
-            "policy": policy,
-            "latest": latest,
-            "failure_policy": failure_policy,
-        }
-
-    def _summarize_retry_assessment(self, retry_assessment: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        if not retry_assessment:
-            return None
-        latest = retry_assessment.get("latest") or {}
-        return {
-            "should_retry": bool(retry_assessment.get("should_retry")),
-            "reason": retry_assessment.get("reason"),
-            "cooldown_until": retry_assessment.get("cooldown_until"),
-            "policy": retry_assessment.get("policy"),
-            "failure_policy": retry_assessment.get("failure_policy"),
-            "latest": {
-                "id": latest.get("id"),
-                "status": latest.get("status"),
-                "completed_at": latest.get("completed_at"),
-                "errors": (latest.get("errors") or [])[:3],
-                "warnings": (latest.get("warnings") or [])[:3],
-            } if latest else None,
-        }
-
     def _ensure_phase_config(self):
         cursor = self.db.conn.cursor()
         for order_index, phase in enumerate(PHASES, start=1):
@@ -2658,7 +2579,6 @@ class ConsciousnessLoopManager:
         state = dict(state_row)
         action = "noop"
         phase_result = None
-        retry_assessment = None
         diary_result = None
 
         if state["current_phase"] != target_phase.key or state["cycle_id"] != cycle_id:
@@ -2776,7 +2696,6 @@ class ConsciousnessLoopManager:
             "next_phase": next_phase.key,
             "phase_result": phase_result,
             "diary_result": diary_result,
-            "retry_assessment": self._summarize_retry_assessment(retry_assessment),
         }
 
     def execute_current_phase(self, trigger_source: str = "manual_admin_trigger", notify_admin: bool = False) -> Dict:
