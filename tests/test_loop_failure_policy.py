@@ -325,6 +325,163 @@ class TestPhasePulses:
         assert pulse_row["executed_at"] == completed_at
         assert pulse_row["phase_result_id"] == phase_result_id
 
+    def test_skip_stale_phase_pulses_marks_pending_as_skipped(self, manager, loop_db):
+        """Criterio #5: pulsos pending da fase anterior viram skipped na transicao."""
+        tz = ZoneInfo("America/Sao_Paulo")
+        start = datetime(2026, 7, 4, 0, 0, tzinfo=tz)
+        deadline = datetime(2026, 7, 4, 2, 0, tzinfo=tz)
+        manager._ensure_phase_config()
+        loop_db.conn.execute("UPDATE consciousness_phase_config SET pulse_count = 3 WHERE phase = 'dream'")
+        loop_db.conn.commit()
+        rows = manager._ensure_phase_pulse_agenda(
+            cycle_id="2026-07-04",
+            phase=PHASE_BY_KEY["dream"],
+            phase_started_at=start,
+            phase_deadline_at=deadline,
+        )
+        # Nenhum pulso rodou ainda: todos os 3 estao pending
+        assert len(rows) == 3
+        assert all(row["status"] == "pending" for row in rows)
+
+        result = manager._skip_stale_phase_pulses(cycle_id="2026-07-04", phase_key="dream")
+
+        assert result["skipped_count"] == 3
+        statuses = [
+            dict(row)["status"]
+            for row in loop_db.conn.execute(
+                "SELECT status FROM consciousness_phase_pulses WHERE cycle_id = ? AND phase = ?",
+                ("2026-07-04", "dream"),
+            ).fetchall()
+        ]
+        assert all(s == "skipped" for s in statuses)
+
+    def test_skip_stale_phase_pulses_marks_failed_as_skipped(self, manager, loop_db):
+        """Pulsos failed (com cooldown pendente) tambem viram skipped quando a janela fecha."""
+        tz = ZoneInfo("America/Sao_Paulo")
+        start = datetime(2026, 7, 4, 0, 0, tzinfo=tz)
+        deadline = datetime(2026, 7, 4, 2, 0, tzinfo=tz)
+        manager._ensure_phase_config()
+        loop_db.conn.execute("UPDATE consciousness_phase_config SET pulse_count = 2 WHERE phase = 'dream'")
+        loop_db.conn.commit()
+        rows = manager._ensure_phase_pulse_agenda(
+            cycle_id="2026-07-04",
+            phase=PHASE_BY_KEY["dream"],
+            phase_started_at=start,
+            phase_deadline_at=deadline,
+        )
+        loop_db.conn.execute(
+            "UPDATE consciousness_phase_pulses SET status = 'failed', attempts = 1 WHERE id = ?",
+            (rows[0]["id"],),
+        )
+        loop_db.conn.commit()
+
+        result = manager._skip_stale_phase_pulses(cycle_id="2026-07-04", phase_key="dream")
+
+        # 1 failed + 1 pending = 2 skipped
+        assert result["skipped_count"] == 2
+
+    def test_skip_stale_phase_pulses_preserves_completed_and_running(self, manager, loop_db):
+        """Saneamento nao toca pulsos ja finalizados (completed/running/exhausted)."""
+        tz = ZoneInfo("America/Sao_Paulo")
+        start = datetime(2026, 7, 4, 0, 0, tzinfo=tz)
+        deadline = datetime(2026, 7, 4, 2, 0, tzinfo=tz)
+        manager._ensure_phase_config()
+        loop_db.conn.execute("UPDATE consciousness_phase_config SET pulse_count = 3 WHERE phase = 'dream'")
+        loop_db.conn.commit()
+        rows = manager._ensure_phase_pulse_agenda(
+            cycle_id="2026-07-04",
+            phase=PHASE_BY_KEY["dream"],
+            phase_started_at=start,
+            phase_deadline_at=deadline,
+        )
+        loop_db.conn.execute(
+            "UPDATE consciousness_phase_pulses SET status = 'completed', phase_result_id = 100 WHERE id = ?",
+            (rows[0]["id"],),
+        )
+        loop_db.conn.execute(
+            "UPDATE consciousness_phase_pulses SET status = 'running', attempts = 1 WHERE id = ?",
+            (rows[1]["id"],),
+        )
+        loop_db.conn.execute(
+            "UPDATE consciousness_phase_pulses SET status = 'exhausted' WHERE id = ?",
+            (rows[2]["id"],),
+        )
+        loop_db.conn.commit()
+
+        result = manager._skip_stale_phase_pulses(cycle_id="2026-07-04", phase_key="dream")
+
+        # Nenhum pending/failed restante -> 0 skipped, completed/running/exhausted preservados
+        assert result["skipped_count"] == 0
+        statuses = [
+            dict(row)["status"]
+            for row in loop_db.conn.execute(
+                "SELECT status FROM consciousness_phase_pulses WHERE cycle_id = ? AND phase = ? ORDER BY pulse_index",
+                ("2026-07-04", "dream"),
+            ).fetchall()
+        ]
+        assert statuses == ["completed", "running", "exhausted"]
+
+    def test_skip_stale_phase_pulses_scoped_to_phase(self, manager, loop_db):
+        """Saneamento de uma fase nao afeta pulsos de outra fase no mesmo ciclo."""
+        tz = ZoneInfo("America/Sao_Paulo")
+        dream_start = datetime(2026, 7, 4, 0, 0, tzinfo=tz)
+        dream_deadline = datetime(2026, 7, 4, 2, 0, tzinfo=tz)
+        identity_start = datetime(2026, 7, 4, 2, 0, tzinfo=tz)
+        identity_deadline = datetime(2026, 7, 4, 3, 0, tzinfo=tz)
+        manager._ensure_phase_config()
+        manager._ensure_phase_pulse_agenda(
+            cycle_id="2026-07-04",
+            phase=PHASE_BY_KEY["dream"],
+            phase_started_at=dream_start,
+            phase_deadline_at=dream_deadline,
+        )
+        manager._ensure_phase_pulse_agenda(
+            cycle_id="2026-07-04",
+            phase=PHASE_BY_KEY["identity"],
+            phase_started_at=identity_start,
+            phase_deadline_at=identity_deadline,
+        )
+
+        manager._skip_stale_phase_pulses(cycle_id="2026-07-04", phase_key="dream")
+
+        dream_status = dict(
+            loop_db.conn.execute(
+                "SELECT status FROM consciousness_phase_pulses WHERE cycle_id = ? AND phase = 'dream'",
+                ("2026-07-04",),
+            ).fetchone()
+        )
+        identity_status = dict(
+            loop_db.conn.execute(
+                "SELECT status FROM consciousness_phase_pulses WHERE cycle_id = ? AND phase = 'identity'",
+                ("2026-07-04",),
+            ).fetchone()
+        )
+        assert dream_status["status"] == "skipped"
+        assert identity_status["status"] == "pending"
+
+    def test_get_due_phase_pulse_returns_none_after_skip(self, manager, loop_db):
+        """Apos saneamento, _get_due_phase_pulse nao retorna o pulso skipped."""
+        tz = ZoneInfo("America/Sao_Paulo")
+        start = datetime(2026, 7, 4, 0, 0, tzinfo=tz)
+        deadline = datetime(2026, 7, 4, 2, 0, tzinfo=tz)
+        manager._ensure_phase_config()
+        loop_db.conn.execute("UPDATE consciousness_phase_config SET pulse_count = 2 WHERE phase = 'dream'")
+        loop_db.conn.commit()
+        manager._ensure_phase_pulse_agenda(
+            cycle_id="2026-07-04",
+            phase=PHASE_BY_KEY["dream"],
+            phase_started_at=start,
+            phase_deadline_at=deadline,
+        )
+        manager._skip_stale_phase_pulses(cycle_id="2026-07-04", phase_key="dream")
+
+        # Mesmo com scheduled_at no passado, nenhum pulso devido (todos skipped)
+        monkeypatch_now = start + timedelta(hours=1)
+        manager._now = lambda: monkeypatch_now
+        due = manager._get_due_phase_pulse(cycle_id="2026-07-04", phase=PHASE_BY_KEY["dream"])
+
+        assert due is None
+
 
 # ---------------------------------------------------------------------------
 # 4. _get_phase_retry_policy — valores invalidos no DB

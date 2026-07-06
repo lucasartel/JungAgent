@@ -611,6 +611,56 @@ class ConsciousnessLoopManager:
             "repaired": repaired,
         }
 
+    def _skip_stale_phase_pulses(
+        self,
+        *,
+        cycle_id: str,
+        phase_key: str,
+    ) -> Dict[str, Any]:
+        """Marca pulsos pending/failed como skipped quando a janela da fase fecha.
+
+        Criterio #5 da Fase IV.0: o scheduler executa apenas pulsos vencidos dentro
+        da janela temporal da fase. Quando a fase transiciona (ou o processo caiu e
+        voltou depois da janela), pulsos `pending` da fase anterior ficariam stalled
+        para sempre no banco. Este metodo saneia esses rows, marcando-os `skipped`
+        para preservar a integridade da agenda e da evidencia observada pelo ISM.
+        """
+        now_iso = self._now().isoformat()
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            UPDATE consciousness_phase_pulses
+            SET status = 'skipped',
+                updated_at = ?,
+                last_error = COALESCE(NULLIF(last_error, ''), ?)
+            WHERE agent_instance = ?
+              AND cycle_id = ?
+              AND phase = ?
+              AND status IN ('pending', 'failed')
+            """,
+            (
+                now_iso,
+                "skipped: phase window closed",
+                self.agent_instance,
+                cycle_id,
+                phase_key,
+            ),
+        )
+        self.db.conn.commit()
+        skipped_count = int(cursor.rowcount or 0)
+        if skipped_count:
+            logger.info(
+                "Skipped %d stale phase pulses for cycle=%s phase=%s (window closed)",
+                skipped_count,
+                cycle_id,
+                phase_key,
+            )
+        return {
+            "skipped_count": skipped_count,
+            "cycle_id": cycle_id,
+            "phase": phase_key,
+        }
+
     def _get_latest_phase_attempt(self, cycle_id: str, phase_key: str) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
         cursor.execute(
@@ -2614,6 +2664,9 @@ class ConsciousnessLoopManager:
         if state["current_phase"] != target_phase.key or state["cycle_id"] != cycle_id:
             previous_phase = state["current_phase"]
             previous_cycle_id = state["cycle_id"]
+            # Saneamento (criterio #5 da Fase IV.0): pulsos pending/failed da fase
+            # anterior viram skipped quando a janela fecha, para nao acumular stalled.
+            self._skip_stale_phase_pulses(cycle_id=previous_cycle_id, phase_key=previous_phase)
             cycle_completed = target_phase.key == "dream" and previous_phase in {"will", "scholar"}
             cursor.execute(
                 """
