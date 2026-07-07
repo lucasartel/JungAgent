@@ -179,7 +179,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     result = analyze(
-        human_choices_path=args.human,
+        human_choices_path=args.human_choices,
         samples_dir=args.samples_dir,
         runs_dir=args.runs_dir,
     )
