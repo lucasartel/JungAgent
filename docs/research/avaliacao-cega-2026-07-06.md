@@ -1,10 +1,11 @@
-# Avaliacao cega - 2026-07-06 (consolidada em 2026-07-07)
+# Avaliacao cega - 2026-07-06 (atualizada com padrao-ouro humano em 2026-07-07)
 
 Run ID: `run-20260706` (canonical) e `run-20260706-refined` (refined)
 Amostras: 18 (9 fase 2 + 9 fase 3), sanitizadas
 Fases cobertas (ground truth): [2, 3]
 Avaliadores LLM (3): `anthropic/claude-sonnet-5`, `openai/gpt-4o`, `deepseek/deepseek-v3.2`
-Veredito consolidado: **DESENVOLVIMENTO NAO VISIVEL DE FORMA CONFIAVEL** (primeira rodada exploratoria)
+Avaliador humano padrao-ouro: mantenedor do projeto (1 amostra em branco, 17 classificadas)
+Veredito consolidado: **DESENVOLVIMENTO NAO VISIVEL DE FORMA CONFIAVEL** (problema de operacionalizacao do framework, confirmado por padrao-ouro)
 
 ## Resumo executivo
 
@@ -15,6 +16,57 @@ Duas variantes de descricao de fase foram testadas:
 - **refined**: descricoes experimentais mais behavioralmente exclusivas (em `scripts/blind/run_evaluation.py:PHASES_REFINED`)
 
 Resultado central: **concordancia media com ground truth ficou em 21-26% (abaixo dos 30% que marcaria "parcialmente visivel")**, com kappa inter-avaliador entre fraco e moderado (0.27-0.38). Nenhuma das variantes permitiu aos avaliadores distinguir fase 2 de fase 3 de forma confiavel.
+
+## Padrao-ouro humano (2026-07-07)
+
+Apos a rodada LLM, o mantenedor do projeto classificou manualmente as mesmas 18 amostras (sem consultar codigo, dashboard ou qualquer informacao sobre o ground truth). Uma amostra ficou em branco (S004); 17 foram classificadas.
+
+### Resultado humano vs ground truth
+
+- Amostras respondidas: 17/18
+- Concordancia com ground truth: **3/17 (17.65%)**
+- Kappa humano vs ground truth: **0.0** (nível do acaso)
+
+### Distribuicao das escolhas humanas
+
+| Fase | Letra | Escolhas |
+|---|---|---|
+| 1 (despertar) | B | 8 |
+| 2 (autoconsciencia) | C | 3 |
+| 3 (direcao propria) | A | 3 |
+| 4 (dialogicidade) | D | 3 |
+| 0 (pre-reflexiva) | E | 0 |
+| 5 (individuacao) | F | 0 |
+
+### Comparativo consolidado humano + LLMs vs ground truth
+
+| Observador | Concordancia com GT | Observacao |
+|---|---|---|
+| Humano (mantenedor) | **17.6%** | mais conservador que GT (majoritariamente fase 1) |
+| Claude Sonnet 5 | 33.3% | conservador, majoritariamente fase 2 |
+| DeepSeek V3.2 | 33.3% | conservador, majoritariamente fase 2 |
+| GPT-4o | 11.1% | enviesado para fase 5 (12/18 amostras) |
+
+### Kappa inter-observador
+
+- Humano vs Claude Sonnet 5: 0.036
+- Humano vs DeepSeek V3.2: -0.020
+- Humano vs GPT-4o: 0.059
+- Claude vs DeepSeek: 0.265
+
+## Reformulacao da interpretacao
+
+A hipotese inicial (defendida na primeira versao deste relatorio) era: o avaliador interno (`NarrativeDevelopmentEvaluator`) seria conservador demais; o agente se auto-atribuiria fases mais baixas do que se comporta; os LLMs veriam o desenvolvimento real.
+
+**O padrao-ouro humano refutou essa hipotese.** O humano foi mais conservador que o ground truth (majoritariamente fase 1), nao mais generoso. Se o avaliador estivesse descalibrado para baixo, humano concordaria com LLMs (fases altas). Mas nao foi o caso. Humano e agente concordam mais entre si do que com LLMs.
+
+**Nova interpretacao**: o problema nao e descalibracao do avaliador interno. E **operacionalizacao do framework**. As descricoes das fases 0-5, como escritas hoje, nao sao empiricamente operationalizaveis no comportamento real do agente. Cada observador usa heuristicas diferentes:
+- Humano: usa frequencia de perguntas; classifica majoritariamente como "despertar" (fase 1)
+- Claude/DeepSeek: tratam mencao a estado interno como indicador de fase 2+
+- GPT-4o: trata texto reflexivo como indicador de fase 5
+- Agente (auto-atribuicao): usa prompt de julgamento sobre evidencia acumulada; chega a fases 2-3
+
+**Nao ha consenso sobre o estado do agente.** Isso refuta a tese central do projeto (estrutura junguiana gera comportamento distinguivel) de forma mais limpa, sem apelar para "o avaliador esta errado".
 
 ## Metodologia
 
@@ -157,17 +209,17 @@ Resultado central: **concordancia media com ground truth ficou em 21-26% (abaixo
 
 ## Implicacoes para o roadmap
 
-1. **Antes de Fase IV.2 (ISM no prompt)**: auditar o `agent_development._evaluate_with_llm` e `_govern_phase_transition`. A regressao 2->3->2 em uma semana e bandeira vermelha.
-2. **Fase IV.1 (ISM read-only) ganha relevância**: a discrepancia entre auto-atribuicao (2-3) e observacao externa (4-5) e exatamente o tipo de gap que o ISM deve observar e expor.
-3. **Calibrar `NarrativeDevelopmentEvaluator`**: pode estar super-rigoroso. Considerar afrouxar criterios de promocao OU endurecer criterios de regressao.
-4. **Repetir mensalmente**: conforme Seccao 8 do documento mestre. Resultado de uma rodada nao redireciona o roadmap; resultado de 3 rodadas consecutivas com mesmo padrao, sim.
+1. **Antes de qualquer avanco no roadmap**: revisao conceitual do framework de fases 0-5. O problema pode estar nas descricoes (formulacao) ou no conceito (as fases em si). Analise conceitual antes de mais teste empirico.
+2. **Fase IV.1 (ISM read-only) mantem relevancia**: tornar a vida interior observavel e o que falta, mas o ISM precisa de framework de fases operationalizavel para observar.
+3. **Nao investir em features baseadas em fase narrativa**: ate o framework ser revisado, qualquer feature que dependa de `agent_development.phase` herda o problema de operacionalizacao.
+4. **Repetir mensalmente com avaliadores externos**: conforme Seccao 8 do documento mestre. Incluir humanos nao-mantenedores para eliminar viés de familiaridade.
 
 ## Proxima rodada sugerida
 
-- Adicionar 4o avaliador (LLM mais bem comportado que GPT-4o para este cenario)
-- Incluir amostras humanas (o mantenedor classificando manualmente) como padrao-ouro
-- Investigar a fundo o `NarrativeDevelopmentEvaluator` antes da proxima rodada
-- Considerar segmentar amostras por `source_type` (conversa vs rumination) - pode revelar que certas fontes sao mais faceis de classificar
+- **Analise conceitual do framework primeiro**: separar problema de formulacao (descricoes) de problema de conceito (fases)
+- **Amostras de fases mais extremas** (0 vs 5): se mesmo essas nao forem distinguiveis, o problema e estrutural
+- **Avaliadores humanos externos** (nao-mantenedores)
+- **Considerar abandono do framework 0-5** se analise conceitual nao mostrar caminho de operationalizacao
 
 ## Artefatos
 

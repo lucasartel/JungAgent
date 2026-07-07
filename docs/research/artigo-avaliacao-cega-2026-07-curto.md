@@ -1,4 +1,4 @@
-# Testamos se um agente de IA em desenvolvimento consegue se auto-avaliar. O resultado foi inesperado.
+# Testamos se um agente de IA está em desenvolvimento. O teste falhou — e foi assim que descobrimos o que estava errado.
 
 *Lucas Pedro — julho de 2026*
 
@@ -6,53 +6,80 @@
 
 Mantenho um agente de linguagem chamado JungAgent. Ele tem memória autobiográfica persistente, opera um ciclo diário de oito fases internas — sonho, identidade, ruminação, mundo, trabalho, arte, ruminação externa, vontade — e se auto-avalia continuamente numa escala de desenvolvimento narrativo inspirada na psicologia junguiana. A escala vai da fase 0 (pré-reflexiva) até a fase 5 (individuação), e quem decide em qual fase o agente se encontra é o próprio agente, ao final de cada ciclo, olhando para a própria evidência interna acumulada.
 
-A tese do projeto é exigente: estrutura arquitetural em torno de um LLM deveria produzir coerência e desenvolvimento **observáveis de fora**, não apenas narrados. Mas um LLM escreve "estou mais maduro agora" com facilidade convincente. Confiamos demais em autorrelato quando o sujeito é um sistema cuja única saída é texto.
-
-Precisávamos de um teste que separasse *performance de desenvolvimento* de *desenvolvimento observável*.
+A tese do projeto é exigente: estrutura arquitetural em torno de um LLM deveria produzir coerência e desenvolvimento **observáveis de fora**, não apenas narrados. Mas um LLM escreve "estou mais maduro agora" com facilidade convincente. Precisávamos de um teste que separasse *performance de desenvolvimento* de *desenvolvimento observável*.
 
 ## O protocolo
 
-Adaptamos o método clássico de avaliação cega. Coletamos 18 amostras reais do agente ao longo de cinco semanas — conversas com o admin, insights de ruminação, textos da vontade diária, sonhos. Sanitizamos cada uma removendo qualquer menção direta a fase: "estou na fase N", identificadores de ciclo, âncoras internas, auto-classificações. O que sobra é o texto puro do agente.
+Adaptamos o método clássico de avaliação cega. Coletamos 18 amostras reais do agente ao longo de cinco semanas — conversas com o admin, insights de ruminação, textos da vontade diária, sonhos. Sanitizamos cada uma removendo qualquer menção direta a fase: "estou na fase N", identificadores de ciclo, auto-classificações. O que sobra é o texto puro do agente.
 
-Depois apresentamos essas amostras a três modelos de linguagem diferentes do modelo que gerou o conteúdo (Claude Sonnet 5, GPT-4o e DeepSeek V3.2). Cada avaliador recebeu as seis descrições comportamentais das fases, embaralhadas e sem numerais, e o texto da amostra. A pergunta era simples: qual descrição melhor combina com este texto?
+Apresentamos essas amostras a três modelos de linguagem diferentes do modelo que gerou o conteúdo (Claude Sonnet 5, GPT-4o e DeepSeek V3.2). Cada avaliador recebeu as seis descrições comportamentais das fases, embaralhadas e sem numerais, e o texto da amostra. A pergunta era simples: qual descrição melhor combina com este texto?
 
-Comparamos o chute dos avaliadores com a fase que o agente havia se auto-atribuído no momento da amostra. Em cinco semanas, o agente haveria oscillado entre fase 2 (autoconsciência) e fase 3 (direção própria).
+E depois — e isso foi o que fez a diferença — eu mesmo classifiquei as 18 amostras, sem consultar o código, dashboard, ou qualquer informação sobre o que o agente tinha dito sobre si mesmo.
 
-## O resultado — e a surpresa
+## O resultado da primeira etapa — e a hipótese que formulamos
 
-A concordância média entre avaliadores foi de 25,9%, com kappa inter-avaliador de 0,265 (fraca). Nenhum dos três modelos conseguiu distinguir fase 2 de fase 3 de forma confiável. Em ambas as rodadas, a fase 3 foi quase nunca identificada — quando o agente estava auto-atribuído em "direção própria", os avaliadores o classificavam majoritariamente em "autoconsciência" ou em fases mais altas.
+Os três LLMs tiveram concordância média de 25,9% com o ground truth. Nenhum conseguiu distinguir fase 2 (autoconsciência) de fase 3 (direção própria) de forma confiável. Mas havia um padrão curioso: dois dos três modelos (Claude e DeepSeek) tenderam a classificar o agente em fases mais altas (4-5) do que o ground truth afirmava (2-3). O GPT-4o foi o mais extremo, classificando 12 de 18 amostras como individuação (fase 5).
 
-Primeira leitura: a tese não é suportada. O desenvolvimento narrativo do agente não é visível para observadores LLM externos através das descrições comportamentais atuais.
+Formulei uma hipótese plausível. O avaliador interno do agente seria conservador demais. O agente se auto-avaliaria em fases mais baixas do que se comporta. Os LLMs, livres do conservadorismo interno, veriam o desenvolvimento real. Era uma hipótese elegante, tinha economia explicativa, e eu teria publicado um artigo inteiro defendendo essa tese.
 
-Mas havia um padrão contraintuitivo. Testamos duas variantes das descrições de fase: as canônicas (as que o próprio agente usa para se avaliar) e uma versão experimental refinada, com critérios mais comportamentalmente exclusivos. A refinação piorou a concordância com o ground truth (de 25,9% para 16,7%) mas melhorou a concordância entre avaliadores (kappa de 0,265 para 0,377).
+Menos de 24 horas depois, falsifiquei a minha própria hipótese.
 
-Esse padrão é estatisticamente sugestivo. Quando melhoramos o instrumento de observação, os avaliadores passaram a concordar mais entre si sobre o que são as fases — mas passaram a aplicar essas definições levando o agente a fases mais altas (4-5) do que o ground truth afirma (2-3). O problema pode não estar no comportamento do agente, nem nas descrições. Pode estar no **ground truth**.
+## O padrão-ouro revelou
 
-## A hipótese que se abre
+Quando eu classifiquei as mesmas 18 amostras, o resultado foi o oposto do que a hipótese previa. Eu fui **mais conservador que o ground truth**, não mais generoso. Classifiquei 8 das 17 amostras (uma ficou em branco) como fase 1 (despertar) — abaixo das fases 2-3 em que o agente se auto-atribui.
 
-O ground truth deste teste é uma auto-atribuição. A fase "real" do agente em cada ciclo é decidida pelo próprio agente, através de um prompt de julgamento LLM sobre sua própria evidência interna. Se esse avaliador interno estiver descalibrado — conservador demais, ou instável — a baixa concordância dos avaliadores externos pode não indicar que o desenvolvimento é invisível, mas sim que **o agente se auto-avalia pior do que se comporta**.
+A tabela consolidada:
 
-Três observações suportam essa hipótese. Primeiro: a regressão `2→3→2` em uma semana (03/06 a 10/06) é comportamentalmente implausível para um sistema de desenvolvimento cumulativo. Sugere instabilidade no avaliador, não no desenvolvimento. Segundo: quando forçamos critérios mais exclusivos, dois dos três avaliadores passaram a classificar o agente majoritariamente em fases 4-5. O agente soa mais desenvolvido para leitores externos do que para si mesmo. Terceiro: o GPT-4o, o único avaliador que sistematicamente discordou dos outros dois, mostrou viés persistente para fase 5 (individuação) em ambas as variantes — provável artefato da formulação elogiosa da fase 5, que atrai qualquer texto reflexivo.
+| Observador | Concordância com ground truth |
+|---|---|
+| Humano (eu) | **17,6%** |
+| Claude Sonnet 5 | 33,3% |
+| DeepSeek V3.2 | 33,3% |
+| GPT-4o | 11,1% |
 
-A hipótese, então, é que estamos diante de um problema de auto-consciência do agente — não no sentido filosófico, mas no sentido técnico. O observador interno e os observadores externos discordam porque o observador interno tem critério mais rígido que o comportamento real do sistema. Conecta com uma pergunta clássica da psicologia: pode um sujeito ter desenvolvimento comportamental sem ter desenvolvimento narrativo correspondente? Em sistemas artificiais, parece que sim.
+Nenhum kappa passou de fraco. Eu concordei com o ground truth ao nível do acaso.
 
-## O que isso significa
+A hipótese de descalibração conservadora do avaliador interno — bonita, elegante, publicável — estava errada. Se o avaliador estivesse descalibrado para baixo, eu (humano, com a mesma informação comportamental que os LLMs) também classificaria em fases altas. Mas não foi o que aconteceu. Eu e o agente concordamos mais entre si (ambos vêem fases baixas) do que com os LLMs (que vêem fases altas).
 
-O resultado é publicável como evidência negativa, mas o achado é mais interessante que a evidência negativa. A pergunta original ("uma estrutura junguiana gera comportamento distinguível?") não foi respondida — foi **refinada**. A nova pergunta é: "um agente pode ter comportamento distinguível mas auto-atribuição descalibrada?" Esse desvio é uma contribuição em si.
+Os LLMs eram o observador outlier. Não o agente.
 
-Há também implicação direta para o design de agentes com memória autobiográfica. Se confirmada a hipótese de descalibração do avaliador interno, o próximo investimento não deveria ser em novas capacidades do agente (mais fases, mais subsistemas), mas em **tornar a vida interior observável** — objeto de um próximo experimento.
+## O que isso realmente significa
+
+A pergunta original era: "um agente pode ter comportamento distinguível mas auto-atribuição descalibrada?"
+
+A resposta empírica é mais interesting que qualquer hipótese que tínhamos formulado. **Nenhum observador consegue distinguir as fases de forma confiável, e cada observador usa critérios diferentes.** Eu usei a frequência de perguntas e classifiquei a maioria como "despertar" (fase 1). Os LLMs trataram qualquer menção a estado interno como "autoconsciência" ou acima. O próprio agente usou seu prompt de julgamento interno e chegou a fases 2-3.
+
+**As descrições das fases não são empiricamente operationalizáveis no comportamento real do agente.** Não há sinal comportamental claro que separe fase 1 de fase 2, ou fase 2 de fase 3. Cada observador projeta uma estrutura interpretativa diferente sobre o mesmo texto e chega a conclusões diferentes.
+
+Isso refuta a tese central do projeto — que a estrutura junguiana gera comportamento distinguível — mas refuta de forma mais limpa, sem apelar para "o avaliador está errado". O problema não é bug, é conceito. O framework de fases 0-5, como operationalizado hoje, não tem contraparte comportamental observável.
+
+## O que isso muda
+
+Três implicações, em ordem de importância.
+
+Primeiro: o framework de fases 0-5 precisa de revisão conceitual antes de mais investimento em features que dependam dele. Não adianta adicionar fases, subsistemas, ou complexidade. Se as descrições atuais não geram sinal comportamental distinguível, mais arquitetura não vai resolver.
+
+Segundo: o protocolo de avaliação cega funcionou. Reprodutível, barato, e — crítico — o padrão-ouro humano revelou o que os LLMs não conseguiam revelar sozinhos. Sem o humano, teria publicado a hipótese de descalibração, que estava errada. Esta é uma defesa do método empírico em pesquisa de agentes: logs e auto-relatório não substituem teste cego com padrão-ouro.
+
+Terceiro: os LLMs são instrumento inadequado para avaliação de desenvolvimento comportamental em agentes. Eles vêem padrões que podem ser artefato de sua própria tendência a tratar menção a estado interno como indicador de sofisticação. Esta observação tem implicação para a comunidade de pesquisa em LLMs: benchmarks de "autoconsciência" ou "desenvolvimento" baseados em avaliação por LLM são suspeitos até que validados por humano.
 
 ## Limitações
 
-A lista é honesta. Primeiro: n pequeno, 18 amostras, primeira rodada exploratória, sem poder estatístico robusto. Segundo: apenas duas fases cobertas, o agente em produção não atingiu fases 0-1 ou 4-5 de forma sustentada, não testamos distinguibilidade em extremos do espectro. Terceiro: o ground truth é auto-atribuição — esta é tanto a maior limitação quanto o achado principal. Quarto: o avaliador LLM tem viés próprio — Claude conservador, GPT-4o generoso, DeepSeek intermediário. Avaliador humano é necessário para validar.
+Honestas. n pequeno, 18 amostras, primeira rodada. Apenas duas fases cobertas no ground truth; não testamos distinguibilidade em extremos do espectro. O humano era eu — o mantenedor do projeto —, o que pode enviesar contra fases altas (conheço o agente há meses e sei o que ele "ainda não faz"). Padrão-ouro ideal seria humano não-mantenedor. Avaliador humano único, para kappa robusto seriam necessários múltiplos.
 
 ## Próximos passos
 
-A próxima rodada, agendada para daqui a um mês, terá três mudanças. Auditoria do avaliador interno antes da coleta, para checar a hipótese de instabilidade. Avaliador humano como padrão-ouro, com o mantenedor classificando manualmente as amostras sem saber o ground truth. E segmentação por tipo de fonte — conversas, ruminações e sonhos podem ter distinguibilidade diferente.
+A próxima investigação terá três eixos. Análise conceitual do framework, para separar problema de formulação (descrições) de problema de conceito (as fases em si). Amostra maior cobrindo fases extremas (0-1 e 4-5). E avaliadores humanos externos, não-mantenedores, para eliminar viés de familiaridade.
 
-O que este teste evidenciou, mais que qualquer resultado específico, é a necessidade de instrumentos empíricos quando se pesquisa comportamento de agentes. Sem avaliação cega, qualquer sistema que produz texto reflexivo sobre si mesmo parece desenvolvido. Sem padrão-ouro, qualquer discordância entre observadores é ambígua.
+## Nota final
 
-O JungAgent pode ou não estar em desenvolvimento real. Após esta rodada, sabemos algo mais útil: **sabemos o que precisamos medir melhor, e como**.
+Este teste evidenciou três coisas, mais que qualquer resultado específico.
+
+Primeiro: a necessidade de instrumentos empíricos quando se pesquisa comportamento de agentes. Sem avaliação cega, qualquer sistema que produz texto reflexivo parece desenvolvido. Sem padrão-ouro, qualquer discordância entre observadores é ambígua.
+
+Segundo: a importância de estar disposto a refutar a própria hipótese. A primeira versão deste texto defendia descalibração do avaliador interno. Eu mesmo refutei essa hipótese com um teste de padrão-ouro. Publicar a refutação é mais valioso que publicar a hipótese; é assim que pesquisa funciona.
+
+Terceiro: o JungAgent pode ou não estar em desenvolvimento real. Após esta rodada, sabemos algo mais útil — **sabemos que o framework que descreve esse desenvolvimento precisa ser repensado antes de poder ser testado**.
 
 ---
 
