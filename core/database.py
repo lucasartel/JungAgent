@@ -23,6 +23,7 @@ from core.db.dreams import DreamDatabaseMixin
 from core.db.integrative_self import IntegrativeSelfDatabaseMixin
 from core.db.knowledge_gaps import KnowledgeGapDatabaseMixin
 from core.db.psychometrics import PsychometricsDatabaseMixin
+from core.db.relational_state import RelationalStateDatabaseMixin
 from core.db.schema import SchemaDatabaseMixin
 from core.db.semantic_memory import SemanticMemoryDatabaseMixin
 from core.db.users import UserDatabaseMixin
@@ -51,6 +52,7 @@ class HybridDatabaseManager(
     KnowledgeGapDatabaseMixin,
     WorkingMemoryDatabaseMixin,
     IntegrativeSelfDatabaseMixin,
+    RelationalStateDatabaseMixin,
     PsychometricsDatabaseMixin,
 ):
     """

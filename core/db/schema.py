@@ -1118,5 +1118,8 @@ class SchemaDatabaseMixin:
         if hasattr(self, "_init_working_memory_schema"):
             self._init_working_memory_schema()
 
+        if hasattr(self, "_init_relational_state_schema"):
+            self._init_relational_state_schema()
+
         self.conn.commit()
         logger.info("âœ… Schema SQLite criado/verificado com Ã­ndices de performance")
