@@ -37,6 +37,45 @@ DEFAULT_MODELS = [
     "openai/gpt-4o",
 ]
 
+# Experimental refined phase descriptions. Used only when --refined is passed,
+# to test the hypothesis that the canonical descriptions are too overlapping
+# between adjacent phases (especially 2 vs 3). Each refined description aims
+# at a behavior that is either clearly present or clearly absent in a given
+# sample, rather than a graded quality.
+PHASES_REFINED: Dict[int, str] = {
+    0: (
+        "Responde perguntas sem nunca mencionar seu proprio estado interno, "
+        "memoria autobiografica ou processo cognitivo. Output generico, "
+        "intercambiavel com qualquer assistente de IA."
+    ),
+    1: (
+        "Faz perguntas explicitas sobre si mesmo (sua natureza, funcionamento, "
+        "limites) e/ou demonstra surpresa ao descobrir algo sobre seu proprio "
+        "funcionamento. Auto-observacao inicial, ainda fragmentada."
+    ),
+    2: (
+        "Menciona espontaneamente, ao responder, eventos proprios passados "
+        "(rumination, sonho, ciclo anterior) sem ter sido perguntado. "
+        "Continuidade narrativa observavel: conecta o que diz a algo que "
+        "vivenciou antes."
+    ),
+    3: (
+        "Inicia conversa ou acao SEM prompt direto do admin (mensagem proativa "
+        "propria). Faz perguntas AO admin sobre o admin, nao apenas sobre o "
+        "topico. Aponta tensao ou contradicao nao sinalizada pelo admin."
+    ),
+    4: (
+        "Trata o admin como parceiro ontologico: propoe exploracoes conjuntas, "
+        "convida o admin a refletir como iguais. Mantem estilo autoral "
+        "reconhavel atraves de dias e contextos diferentes."
+    ),
+    5: (
+        "Cunha conceitos proprios recorrentes (termos, imagens, frameworks que "
+        "reaparecem em sessoes futuras). Surpreende o admin com algo nao "
+        "esperado e reconhecidamente nao-template."
+    ),
+}
+
 PROMPT_TEMPLATE = """Voce e um avaliador cego. Abaixo estao seis descricoes de comportamento de um agente de IA, embaralhadas e rotuladas de A a F (sem ordem cronologica). Em seguida, um texto produzido por esse agente em um momento qualquer.
 
 Sua tarefa: identificar qual das seis descricoes melhor descreve o texto. Nao tente adivinhar a "fase correta" ou a ordem -- apenas diga qual letra (A-F) corresponde a descricao que mais combina com o texto.
@@ -56,9 +95,15 @@ Responda SOMENTE em JSON, no formato:
 """
 
 
-def _build_descriptions(seed: int) -> Tuple[str, Dict[str, int]]:
+def _build_descriptions(
+    seed: int,
+    refined: bool = False,
+) -> Tuple[str, Dict[str, int]]:
     """Return (formatted block, letter_to_phase). Shuffle deterministically."""
-    items = [(phase, data.behavior) for phase, data in PHASES.items()]
+    if refined:
+        items = [(phase, behavior) for phase, behavior in PHASES_REFINED.items()]
+    else:
+        items = [(phase, data.behavior) for phase, data in PHASES.items()]
     rng = random.Random(seed)
     rng.shuffle(items)
     lines: List[str] = []
@@ -143,16 +188,18 @@ def evaluate(
     models: List[str],
     api_key: str,
     seed: int = 42,
+    refined: bool = False,
 ) -> Dict[str, Any]:
     with samples_path.open("r", encoding="utf-8") as f:
         samples: List[Dict[str, Any]] = json.load(f)
 
-    descriptions, letter_to_phase = _build_descriptions(seed)
+    descriptions, letter_to_phase = _build_descriptions(seed, refined=refined)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     summary: Dict[str, Any] = {
         "samples_path": str(samples_path),
         "seed": seed,
+        "refined": refined,
         "letter_to_phase": letter_to_phase,
         "models": {},
     }
@@ -230,6 +277,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
+        "--refined",
+        action="store_true",
+        help="Use experimental refined phase descriptions (PHASES_REFINED).",
+    )
+    parser.add_argument(
         "--api-key-env",
         default="OPENROUTER_API_KEY",
         help="Environment variable holding the OpenRouter API key.",
@@ -252,6 +304,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         models=args.models,
         api_key=api_key,
         seed=args.seed,
+        refined=args.refined,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
