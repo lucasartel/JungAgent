@@ -146,6 +146,10 @@ REMOTE_DB_ACCESS.md
 # Logs
 *.log
 
+# Blind evaluation samples/runs (texto do agente, potencialmente sensivel)
+tests/blind_samples/
+tests/blind_runs/
+
 # OS
 .DS_Store
 Thumbs.db
