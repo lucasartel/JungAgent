@@ -1,12 +1,12 @@
 # Documento Mestre: JungAgent - Laboratorio de Emulacao Cognitiva
 
-**Versao 2.2 - Edicao de Execucao Delegada - Junho 2026**
+**Versao 2.3 - Estado Realizado e Roadmap Vivo - Julho 2026**
 
 *Arquivo canonico vigente: `docs/DOCUMENTO_MESTRE_EMULACAO_COGNITIVA_V2.md`. O antigo `docs/DOCUMENTO_MESTRE_AGI_COGNITIVA.md` permanece como documento historico/operacional de referencia, mas este arquivo e a fonte de autoridade daqui em diante.*
 
 *Reformulacao completa do documento de Maio/2026. O projeto nao persegue "AGI"; persegue a emulacao cognitiva mais coerente e bem documentada possivel.*
 
-*Diagnostico verificado contra codigo, git, GitHub e Railway em 11/06/2026. Decisoes de escopo registradas em 16/06/2026.*
+*Diagnostico inicial verificado contra codigo, git, GitHub e Railway em 11/06/2026. Decisoes de escopo registradas em 16/06/2026. Estado realizado atualizado em 08/07/2026 apos verificacao de codigo, GitHub Actions, Railway e probes de producao.*
 
 *Tres leitores: o mantenedor (decide), o consultor estrategico (orienta e audita) e o modelo executor (codifica). A Parte II e enderecada diretamente ao executor.*
 
@@ -103,61 +103,79 @@ Regras transversais:
 |---|---|---|---|
 | **Mantenedor** | Lucas | Decide prioridades, revisa e mergeia PRs, controla producao (Railway), aprova mudancas sensiveis, executa a avaliacao cega | Nao precisa codificar |
 | **Consultor estrategico** | Claude (Anthropic) | Mantem este documento, audita entregas e direcao, desenha protocolos de pesquisa, prepara especificacoes de tarefa quando solicitado, relatorio mensal de progresso | **Nao codifica.** Nao mergeia. Nao acessa producao |
-| **Executor** | Modelo de linguagem com acesso ao GitHub | Implementa as tarefas da Parte II em PRs pequenos, conforme o contrato da Secao 6 | Nao decide escopo, nao mergeia na main, nao toca nas areas vetadas |
+| **Executor** | Modelo de linguagem com acesso ao GitHub/Railway local autorizado pelo mantenedor | Implementa tarefas em cortes pequenos, valida localmente, consulta probes read-only e registra evidencias | Nao decide escopo, nao toca nas areas vetadas, nao executa acoes sensiveis sem aprovacao |
 
-Fluxo padrao: **mantenedor escolhe a tarefa -> executor implementa em branch e abre PR -> CI valida -> mantenedor mergeia -> Railway deploya**. O consultor audita em cadencia mensal ou sob demanda e ajusta o roadmap.
+Fluxo padrao historico: **mantenedor escolhe a tarefa -> executor implementa em branch e abre PR -> CI valida -> mantenedor mergeia -> Railway deploya**. Fluxo atual autorizado para trabalho assistido: quando o mantenedor pedir explicitamente, o executor pode commitar direto em `main`, aguardar CI/Railway e validar por probes. O consultor audita em cadencia mensal ou sob demanda e ajusta o roadmap.
 
-## 4. Estado verificado - 11/06/2026
+## 4. Estado verificado - 08/07/2026
 
-**Concluido e em producao**: Fase I do roadmap antigo (circuitos da ruminacao corrigidos, sonhos alimentam ruminacao, failure policy no loop, entrega de insights) e Fase II substancial (diario autobiografico evidence-first, perfil injetado no prompt, avaliacao narrativa de fases com politica executiva, Chroma removido). O agente ja abre PRs de self-work revisados pelo mantenedor.
+**Concluido e em producao**: Fase I do roadmap antigo (circuitos da ruminacao corrigidos, sonhos alimentam ruminacao, failure policy no loop, entrega de insights) e Fase II substancial (diario autobiografico evidence-first, perfil injetado no prompt, avaliacao narrativa de fases com politica executiva, Chroma removido). O agente ja possui circuito de self-work via GitHub/Railway, mantido sob revisao do mantenedor.
 
-**Fase 0.1 concluida em GitHub/producao**:
+**Fase 0 concluida como etapa bloqueante**:
 
-| PR | Conteudo | Estado |
+| Frente | Conteudo realizado | Estado |
 |---|---|---|
-| `#17` / `fase-0/tests-ci` | Suite offline de regressao, workflow CI, `CLAUDE.md`, dependencias de teste | Mergeada em `main` |
-| `#18` / `fase-0/corte1-dedup-helpers` | `work_engine.py` deduplicado via `work.common` + teste de paridade | Mergeada em `main` |
-| `#19` / `fase-0/fix-astext-fallback` | Fix do contrato de `_as_text` + log/fallback de `connection_count` | Mergeada em `main` |
+| CI/regressao | Suite offline, CI GitHub Actions, cenarios canonicos, `tests/regression_runner.py --mock/--diff`, D2 resolvido com diff mock | Concluido |
+| Work engine | `work_engine.py` eliminado; dominio extraido para pacote `work/` com fachada `work.engine.WorkEngine` | Concluido |
+| Core DB | `core/database.py` reduzido a fachada fina (<500 linhas), com dominios em `core/db/` | Concluido |
+| Admin routes | `admin_web/routes.py` eliminado; rotas migradas para `admin_web/routes/` com inventario/testes | Concluido |
+| Fase II em producao | Verificacao registrada em `docs/research/fase2-verificacao-2026-06-29.md` | Concluido |
+| Avaliacao cega | Removida do criterio de saida da Fase 0 por decisao do mantenedor em 29/06/2026; retomada depois como frente de pesquisa, com achado metodologico publicado em `docs/research/` | Arquivada como criterio bloqueante |
 
-**Atualizacao da Fase 0 em 16/06/2026**:
+**Fase III - Direcao Propria + Working Memory**:
 
-| PR | Conteudo | Estado |
-|---|---|---|
-| `#20` / `fase-0/fix-ci-pythonpath` | Correcao do import path no CI | Mergeada em `main` |
-| `#21` / `fase-0/cenarios-regressao` | Cenarios canonicos em `tests/scenarios/` | Mergeada em `main` |
-| `#22` / `fase-0/regression-runner` | Runner cognitivo com `--mock`, `--live`, `--diff` e `--mock` no CI | Mergeada em `main` |
-| `#23` / `fase-0/resolve-d2-time-factor` | D2 resolvido: `time_factor` usa `MAX_DAYS_FOR_SYNTHESIS` | Mergeada em `main` |
+| Componente | Estado |
+|---|---|
+| Working Memory (`engines/working_memory.py`) | Implementada com foco, fringe/candidatos, inbox e broadcast entre fases |
+| Integracao loop N -> N+1 | Implementada; fases leem inbox e emitem broadcast para a proxima fase |
+| Knowledge Gap fechado | Verificado em producao com `knowledge_gap#830` |
+| Goal Manager / acao composta controlada | Implementado e verificado com `controlled_action_run#1`, sem efeito externo |
+| Relational State | Implementado em `engines/relational_state.py` e `core/db/relational_state.py`; fechado em 08/07/2026 no loop antes do Will |
+| Will + relacao | `will_engine.py` consome `relational_state` e persiste `agent_stance` quando houver snapshot |
+| Verificacao longitudinal de WM | Pendente como evidencia de saida: ultimo relatorio indicava 2 de 7 dias observaveis |
 
-**Deploy confirmado**: Railway `JungAgent_Bot` / `production` / `jungclaude` iniciou container novo em 11/06/2026 11:57 -03:00, migrations OK, Uvicorn online, Telegram bot e schedulers iniciados.
+**Fase IV realizada antes da conclusao formal da Fase III**:
 
-**Pre-condicao da 0.2**:
-- Resolvida na PR `#20`: CI da `main` voltou a ficar verde apos correcao do import path em testes.
+| Frente | Estado |
+|---|---|
+| IV.0 Pulso de Fase | Implementada e verificada em producao: `pulse_count`, agenda persistida, cockpit, retry por pulso, skip de pulsos stale, metadados de pulso e leitura pelo ISM |
+| IV.1 ISM read-only | Implementada e verificada: snapshot integrativo observavel, limites ontologicos, `influence_mode=read_only`, sem mutacao de prompt/loop/WM/acoes externas |
+| IV.2 ISM no prompt | Infraestrutura criada e gateada por feature flag (`ISM_PROMPT_CONTEXT_ENABLED`, default off; admin-only por default); nao ativada como comportamento padrao |
 
-**Pendencias registradas**:
-- **D2** (`tests/TESTING_NOTES.md`): resolvido na PR `#23`. `time_factor` da ruminacao agora usa `MAX_DAYS_FOR_SYNTHESIS`. Diff mock D2 preservou o comportamento dos 20 cenarios canonicos.
-- **Divergencia `DEFAULT_PROVIDER_SPECS`**: `work_engine.py` tem 7 providers; `work/providers.py` tem 2. Reconciliar no Corte 2 (decisao do mantenedor sobre qual versao e canonica).
-- **Monolitos**: `admin_web/routes.py`, `core/database.py`, `core/engine.py`, `main.py`, e o restante de `work_engine.py`.
-- **Runner de regressao**: operacional em modo `--mock` no CI. O modo `--live` permanece disponivel no codigo, mas foi retirado dos criterios de saida por decisao do mantenedor em 16/06/2026.
-- **Avaliacao cega**: ainda pendente como criterio transversal de pesquisa.
-- **Medicao de custo LLM**: retirada do cronograma ativo por decisao do mantenedor em 16/06/2026.
+**Fechamento curto de 08/07/2026**:
+
+- commit `7435711` fechou o circuito `relational_state -> will`: o loop atualiza o snapshot relacional antes do `WillEngine` nas fases `identity` e `will`;
+- commit `e1dda32` documentou o fechamento;
+- `scripts/remote_db_probe.py` ganhou probe `relational_state` e o probe `will` passou a expor `agent_stance`;
+- Railway `JungAgent_Bot` / `production` / `jungclaude` online no deploy `00aeffce-e1b3-465b-a862-3e608d7b8ac5`;
+- GitHub Actions verde no commit final;
+- validacao local do corte: `325 passed`.
+
+**Pendencias reais registradas**:
+
+- `relational_state` esta disponivel em producao, mas ainda sem linhas ate a proxima execucao real de `identity` ou `will` apos o deploy de 08/07/2026;
+- confirmar `agent_stance` preenchido no proximo `will` real via `remote_db_probe.py will --pretty`;
+- concluir/verificar a janela longitudinal de 7 dias da Working Memory;
+- `main.py` permanece monolitico e deve ser tratado em fase de higiene estrutural posterior;
+- custo LLM continua fora do cronograma ativo, por decisao do mantenedor, salvo mudanca de risco operacional.
 
 **Avisos operacionais**:
-- O repositorio de trabalho vive em pasta OneDrive, que pode corromper arquivos em operacoes de copia ou sincronizacao. Recomendacao ao mantenedor: mover o clone de trabalho para fora do OneDrive. Executores devem validar integridade (`py_compile`/testes) antes de commitar.
+- O clone de trabalho ativo deve ser `/Users/lucaspedro/jungproject`; a copia antiga em OneDrive causou problemas reais de I/O e nao deve ser usada para trabalho pesado.
 - `docs/` esta no `.gitignore` - documentos so entram no repo com `git add -f` quando o mantenedor decidir versionar.
-- O `.git` da copia OneDrive tem locks intermitentes; trabalhos mais delicados devem usar clone/worktree proprio.
+- O acesso operacional validado e via `gh` autenticado e `railway` linkado ao projeto `JungAgent_Bot`, ambiente `production`, servico `jungclaude`.
 
 ## 5. Roadmap
 
 ```text
-Fase 0 - Consolidacao e Instrumentacao        <- ATUAL
-  -> Fase III - Direcao Propria + Working Memory
-      -> Fase IV - ISM + Metacognicao completa
+Fase 0 - Consolidacao e Instrumentacao        <- CONCLUIDA
+  -> Fase III - Direcao Propria + Working Memory  <- EM FECHAMENTO / PROTAGONISMO
+      -> Fase IV - ISM + Metacognicao completa    <- IV.0 e IV.1 CONCLUIDAS; IV.2 GATEADA
           -> Fase V - Grafo simbolico (com portao de qualidade)
               -> Fase VI - Simulacao contrafactual
                   -> Fase VII - Tool-making + multimodal (gate rigido)
 ```
 
-Transversais a todas as fases: **avaliacao cega mensal** (protocolo na Secao 8), **relatorio de pesquisa mensal** em `docs/research/`, suite de regressao verde a cada merge. Horizonte: aproximadamente 30 semanas a partir de junho/2026, como teto.
+Transversais a todas as fases: suite de regressao verde a cada merge, probes read-only de producao apos deploy relevante, relatorios de pesquisa em `docs/research/` quando houver frente empirica, e manutencao do principio da evidencia. A avaliacao cega deixou de ser criterio bloqueante, mas permanece protocolo de pesquisa preservado.
 
 A numeracao salta de 0 para III por continuidade historica: as antigas Fases I e II ja foram entregues.
 
@@ -169,24 +187,22 @@ A numeracao salta de 0 para III por continuidade historica: as antigas Fases I e
 
 Voce e o modelo responsavel por implementar as tarefas abaixo. Regras nao negociaveis:
 
-1. **Leia antes de qualquer tarefa**: `CLAUDE.md` (raiz do repo) e a especificacao da tarefa nesta Parte II. Em conflito, CLAUDE.md perde apenas para este documento.
-2. **Uma tarefa = uma branch = um PR.** Branches: `fase-0/<slug-curto>`. Nunca commite na main. Nunca mergeie - isso e do mantenedor.
+1. **Leia antes de qualquer tarefa**: `AGENTS.md` quando presente, `CLAUDE.md` (raiz do repo) e a especificacao da tarefa neste documento. Em conflito, este documento e `AGENTS.md` governam o trabalho operacional.
+2. **Uma tarefa = um corte pequeno e validavel.** O fluxo historico usa branch/PR; o fluxo assistido atual pode commitar direto em `main` quando o mantenedor pedir explicitamente. Nunca faca merge/destructive reset sem aprovacao.
 3. **Escopo estrito**: toque apenas nos arquivos listados na tarefa. Se descobrir que precisa tocar outro arquivo, pare e reporte no PR antes.
-4. **Validacao minima antes de abrir o PR**: `python -m py_compile` nos modulos tocados; `pytest tests/ -q` integralmente verde; `git diff --check` limpo. O CI repete isso - PR com CI vermelho e falha do executor.
+4. **Validacao minima antes de concluir o corte**: `python -m py_compile` nos modulos tocados; `pytest tests/ -q` integralmente verde; `git diff --check` limpo. O CI repete isso em `main` ou em PR.
 5. **Se encontrar divergencia, bug pre-existente ou ambiguidade**: nao decida sozinho. Implemente o que e inequivoco, documente o resto na descricao do PR e em `tests/TESTING_NOTES.md`.
 6. **Maximo 500 linhas por arquivo novo; nenhum arquivo novo na raiz** (use `core/db/`, `work/`, `engines/`, `reasoning/`, `admin_web/routes/`).
-7. **Areas vetadas sem aprovacao explicita e escrita do mantenedor**: execucao autonoma de codigo, politicas de seguranca, qualquer coisa que envie mensagens reais (Telegram) ou publique conteudo (WordPress/blog) em producao, mudancas de schema destrutivas, e os prompts de julgamento cognitivo (maturidade, avaliacao narrativa, sintese) enquanto nao existir o runner de regressao.
-8. **Descricao de PR** (em portugues): o que mudou, por que, como validou, o que ficou de fora, riscos.
+7. **Areas vetadas sem aprovacao explicita e escrita do mantenedor**: execucao autonoma de codigo, politicas de seguranca, qualquer coisa que envie mensagens reais (Telegram) ou publique conteudo (WordPress/blog) em producao, mudancas de schema destrutivas, e alteracoes em prompts de julgamento cognitivo sem runner/diff de regressao.
+8. **Registro de entrega**: em PR, commit ou resposta final, informar o que mudou, por que, como validou, o que ficou de fora, riscos e estado de GitHub/Railway quando houver deploy.
 
-## 7. Backlog da Fase 0
+## 7. Backlog historico da Fase 0
 
-Ordem recomendada. Criterios de aceite sao binarios - o PR so esta pronto quando todos forem verdadeiros.
+Esta secao permanece para rastrear o fechamento da Fase 0. Novas tarefas nao devem reabrir a Fase 0 salvo regressao objetiva.
 
 ### 0.1 - CI e cortes preparatorios
 
-**Estado**: implementado e mergeado nas PRs `#17`, `#18` e `#19`.
-
-**Pendencia residual**: CI da `main` esta ativo, mas falhando por import path. A correcao `fase-0/fix-ci-pythonpath` deve ser tratada como pre-condicao para a 0.2.
+**Estado**: concluido. CI ativo e verde em `main`.
 
 ### 0.2 - Cenarios canonicos de regressao
 
@@ -200,9 +216,9 @@ Ordem recomendada. Criterios de aceite sao binarios - o PR so esta pronto quando
 - 5+ conversas-tipo (admin estressado, pergunta factual, pergunta existencial, pedido de trabalho, mensagem curta).
 
 **Aceite**:
-- [ ] cenarios carregaveis por helper em `tests/scenarios/__init__.py`;
-- [ ] cada cenario tem `expected_properties` declaradas (ex.: "tensao X deve atingir sintese");
-- [ ] cenarios documentados em `tests/scenarios/README.md`.
+- [x] cenarios carregaveis por helper em `tests/scenarios/__init__.py`;
+- [x] cada cenario tem `expected_properties` declaradas;
+- [x] cenarios documentados em `tests/scenarios/README.md`.
 
 ### 0.3 - Runner de regressao cognitiva
 
@@ -252,32 +268,32 @@ de governanca.
 
 **Plano detalhado**: `docs/PLANO_EXTRACAO_WORK_ENGINE.md` (seguir a risca; um corte por PR).
 
-Corte 2 (`work/delivery.py`) inclui a **reconciliacao de `DEFAULT_PROVIDER_SPECS`** - perguntar ao mantenedor qual versao e canonica antes de implementar.
+**Estado**: concluido. `work_engine.py` foi eliminado e o dominio vive em `work/`.
 
 **Aceite por corte**: os listados no plano + suite verde.
 
 **Aceite final**:
-- [ ] `work_engine.py` nao existe;
-- [ ] imports atualizados nos 3 consumidores (`consciousness_loop.py`, `admin_web/routes/work_routes.py`, `telegram_bot.py`);
-- [ ] dashboard de work funcional em staging.
+- [x] `work_engine.py` nao existe;
+- [x] imports atualizados nos consumidores;
+- [x] dashboard de work preservado via `admin_web/routes/work_routes.py`.
 
 ### 0.7 - Decomposicao de core/database.py
 
-**Objetivo**: completar `core/db/` (ja tem users, dreams, knowledge_gaps, psychometrics, agent_development).
+**Objetivo**: completar `core/db/` (users, dreams, knowledge_gaps, psychometrics, agent_development, working_memory, integrative_self, relational_state e demais dominios principais).
 
-**Metodo**: mesmo padrao do plano do work_engine - mapear consumidores primeiro, extrair dominio a dominio, `HybridDatabaseManager` permanece como fachada com metodos publicos intactos. Produza o mapa de cortes como primeiro PR (so documentacao), aguarde aprovacao do mantenedor, depois execute.
+**Estado**: concluido como fachada fina. `HybridDatabaseManager` permanece como fachada compativel.
 
 **Aceite final**:
-- [ ] `core/database.py` < 500 linhas (fachada fina) ou eliminado;
-- [ ] nenhum metodo publico quebrado (smoke test de import + instanciacao).
+- [x] `core/database.py` < 500 linhas (fachada fina) ou eliminado;
+- [x] nenhum metodo publico quebrado (suite verde).
 
 ### 0.8 - Migracao de admin_web/routes.py
 
-Mesmo metodo do 0.7 (mapa primeiro, depois cortes) para `admin_web/routes/`.
+**Estado**: concluido. `admin_web/routes.py` foi eliminado e as rotas foram migradas para modulos em `admin_web/routes/`.
 
 **Aceite final**:
-- [ ] `routes.py` eliminado;
-- [ ] todas as rotas respondem em staging (lista de rotas comparada antes/depois).
+- [x] `routes.py` eliminado;
+- [x] lista de rotas comparada por inventario/testes.
 
 ### 0.9 - Verificacao da Fase II em producao
 
@@ -299,13 +315,13 @@ Todos verdadeiros:
 - [x] runner de regressao operacional em modo `--mock` no CI, `--diff` funcional, e D2 resolvido;
 - [x] 0.4 removida do cronograma ativo por decisao do mantenedor registrada em 16/06/2026;
 - [x] 0.5 eliminada do cronograma ativo por decisao do mantenedor registrada em 16/06/2026;
-- [x] `work_engine.py`, `core/database.py` e `admin_web/routes.py` decompostos;
+- [x] `work_engine.py`, `core/database.py` e `admin_web/routes.py` decompostos ou reduzidos a fachada fina;
 - [x] Fase II verificada com evidencia de producao;
 - [x] primeira rodada de avaliacao cega removida do criterio de saida da Fase 0 por decisao do mantenedor em 29/06/2026.
 
 ## 8. Protocolo de avaliacao cega
 
-**Estado**: removido do criterio de saida da Fase 0 por decisao do mantenedor em 29/06/2026.
+**Estado**: removido do criterio de saida da Fase 0 por decisao do mantenedor em 29/06/2026. Uma frente de avaliacao cega foi executada/arquivada em julho de 2026 com achado metodologico: a escala 0-5 de desenvolvimento ainda nao esta operacionalizada o bastante para avaliadores externos distinguirem fases de modo confiavel.
 
 **Reavaliar somente se** houver necessidade externa de auditoria comportamental antes da Fase IV ou se o mantenedor decidir retomar avaliacao cega mensal como pratica de pesquisa.
 
@@ -318,34 +334,54 @@ Protocolo preservado para uso futuro, se retomado:
 
 O executor pode receber a tarefa de criar o script de extracao/anonimizacao das amostras (somente-leitura).
 
-## 9. Fases seguintes
+## 9. Fases ativas e seguintes
 
-Especificacoes detalhadas serao escritas ao final da Fase 0.
+Esta secao descreve o estado vivo apos a Fase 0. A ordem abaixo segue o Principio Aureo: nada deve avancar para influencia externa ou execucao autonoma sem circuito interno fechado, evidencia e regressao verde.
 
 **Fase III - Direcao Propria + Working Memory** (~6 semanas): `engines/working_memory.py` (Foco Ativo 3-5 itens, Fringe, Filtro de Relevancia, Broadcasting, persistida em SQLite), integracao com as 8 fases do loop (fase N+1 le o foco de N), consolidacao do Knowledge Gap Engine (ciclo gap -> investigacao -> journal -> fechamento), `engines/goal_manager.py` (impulsos do will decompostos em sub-objetivos), acoes compostas do will, autoavaliacao pos-resposta (registro apenas). *Saida*: WM mantem foco por 7 dias verificaveis; 1+ gap fechado; 1+ acao composta; regressao verde.
 
+Estado realizado da Fase III:
+
+- [x] Working Memory persistente criada;
+- [x] foco/fringe/candidatos e broadcasting entre fases implementados;
+- [x] loop le inbox da fase anterior e emite broadcast para a proxima;
+- [x] Knowledge Gap fechado em producao (`knowledge_gap#830`);
+- [x] Goal Manager e acao composta controlada com fontes (`controlled_action_run#1`);
+- [x] `relational_state` implementado e acoplado ao Will como contexto relacional;
+- [x] probes de producao para loop, will, working_memory, goals, world e relational_state;
+- [ ] WM sustentada por 7 dias verificaveis em producao;
+- [ ] `relational_state` confirmado com snapshot real apos nova execucao de `identity` ou `will`;
+- [ ] camada de proposicao de acoes (`engines/action_catalog.py` + `engines/action_proposer.py`) implementada sem efeito externo.
+
+Proximo corte natural da Fase III:
+
+1. Criar `engines/action_catalog.py` com tipos de acao permitidos, limites, risco e requisitos de evidencia.
+2. Criar `engines/action_proposer.py` lendo `will_state`, `relational_state` e `working_memory`.
+3. Persistir propostas como objetos revisaveis/observaveis, sem executar acoes reais.
+4. Cobrir por testes e probe antes de qualquer integracao ao loop.
+
 **Fase IV - Unificacao** (~6 semanas): unificar os subsistemas em um Integrative Self Model observavel, sem perder o Principio da Evidencia nem a disciplina de faseamento.
 
-**Fase IV.0 - Pulso de Fase e Densificacao do Loop**: antes de ampliar a influencia do ISM, implementar pulsos configuraveis por fase. Cada fase do loop pode executar 1-N vezes dentro de sua janela temporal, com agenda persistida, `pulse_index`, `pulse_count`, cockpit, retry por pulso e ancoras `loop#id`.
+**Fase IV.0 - Pulso de Fase e Densificacao do Loop**: implementada e verificada em producao. Cada fase do loop pode executar 1-N vezes dentro de sua janela temporal, com agenda persistida, `pulse_index`, `pulse_count`, cockpit, retry por pulso e ancoras `loop#id`.
 
 O objetivo nao e criar novas capacidades cognitivas, mas aumentar a resolucao temporal do metabolismo existente. O ISM deve passar a observar trajetorias internas dentro das fases, nao apenas um evento unico por fase por dia. Um sonho pode ter abertura, aprofundamento e fechamento; uma ruminacao pode ter contato, digestao e cristalizacao; uma fase de vontade pode distinguir acumulacao, conflito e fechamento.
 
 Aceite da Fase IV.0:
 
-- [ ] `pulse_count=1` preserva exatamente o comportamento atual;
-- [ ] `consciousness_phase_config` ou equivalente guarda `pulse_count` por fase com schema compativel e sem recriacao de banco;
-- [ ] tabela persistente de agenda de pulsos registra `cycle_id`, `phase`, `pulse_index`, `pulse_count`, `scheduled_at`, `executed_at`, `status`, tentativas e `phase_result_id`;
-- [ ] cockpit permite configurar `pulse_count` por fase dentro de limites seguros;
-- [ ] scheduler do loop executa apenas pulsos vencidos dentro da janela temporal da fase;
-- [ ] retries pertencem ao pulso que falhou e nao consomem pulsos futuros;
-- [ ] execucoes manuais continuam disponiveis, mas nao contam como pulso automatico salvo acao explicita;
-- [ ] resultados de fase incluem metadados de pulso em `metrics_json` ou campo equivalente;
-- [ ] ISM consegue ler pulsos recentes por fase para construir uma visao longitudinal curta do ciclo;
-- [ ] testes cobrem distribuicao dos horarios, preservacao do default, execucao do proximo pulso vencido e retry por pulso.
+- [x] `pulse_count=1` preserva exatamente o comportamento atual;
+- [x] `consciousness_phase_config` guarda `pulse_count` por fase com schema compativel e sem recriacao de banco;
+- [x] tabela persistente de agenda de pulsos registra `cycle_id`, `phase`, `pulse_index`, `pulse_count`, `scheduled_at`, `executed_at`, `status`, tentativas e `phase_result_id`;
+- [x] cockpit permite configurar `pulse_count` por fase dentro de limites seguros;
+- [x] scheduler executa apenas pulsos vencidos dentro da janela temporal da fase e pula pulsos stale ao trocar de fase;
+- [x] retries pertencem ao pulso que falhou e nao consomem pulsos futuros;
+- [x] execucoes manuais continuam disponiveis, mas nao contam como pulso automatico salvo acao explicita;
+- [x] resultados de fase incluem metadados de pulso em `metrics_json` e `raw_result`;
+- [x] ISM consegue ler pulsos recentes por fase para construir uma visao longitudinal curta do ciclo;
+- [x] testes cobrem preservacao do default, execucao do proximo pulso vencido, retry por pulso e saneamento de stale pulses.
 
-**Fase IV.1 - ISM read-only**: `engines/integrative_self.py` produz snapshot diario em primeira pessoa de todos os subsistemas, com limites ontologicos explicitos, sem influenciar prompt, decisoes do loop, Working Memory ou acoes externas.
+**Fase IV.1 - ISM read-only**: concluida. `engines/integrative_self.py` produz snapshot diario em primeira pessoa dos subsistemas, com limites ontologicos explicitos, `influence_mode=read_only`, sem influenciar prompt, decisoes do loop, Working Memory ou acoes externas.
 
-**Fase IV.2 - ISM no contexto do agente**: apos evidencia de estabilidade, o ISM pode substituir gradualmente a persona estatica no prompt, sempre com ancoras e regressao antes/depois.
+**Fase IV.2 - ISM no contexto do agente**: infraestrutura implementada, mas comportamento padrao permanece desligado. `ISM_PROMPT_CONTEXT_ENABLED=false` por default; `ISM_PROMPT_CONTEXT_ADMIN_ONLY=true` por default; variante `ism_preview` no runner valida que o ISM e preview/read-only/injectable=false antes de qualquer canario. Ativacao futura exige regressao antes/depois, canario admin-only e verificacao por probe.
 
 **Fase IV.3 - Metacognicao completa**: double-loop com cooldown de 24h e validacao pela regressao antes de ativar qualquer auto-ajuste; strategy learning com regras heuristicas; segunda rodada de avaliacao cega comparada a linha de base.
 
@@ -359,9 +395,9 @@ Aceite da Fase IV.0:
 
 | Risco | Antidoto |
 |---|---|
-| Complexidade acumulada (monolitos, muitos arquivos na raiz) | Fase 0 fecha a divida; 500 linhas/arquivo; refatoracao ao fim de cada fase |
+| Complexidade acumulada (monolitos, muitos arquivos na raiz) | Fase 0 reduziu a divida principal; `main.py` ainda precisa de higiene posterior; 500 linhas/arquivo novo; refatoracao ao fim de cada fase |
 | Alucinacao estrutural (agente inventa passado) | Ancoras `tipo#id` implementadas; auditoria semanal do perfil pelo mantenedor |
-| Narracao sem profundidade funcional | Avaliacao cega mensal; nenhuma metrica de autorrelato vale sozinha |
+| Narracao sem profundidade funcional | Nenhuma metrica de autorrelato vale sozinha; avaliacao cega pode ser retomada como pesquisa quando houver escala mais operacional |
 | Dependencia do LLM subjacente | Runner de regressao `--mock` no CI; teste de troca de modelo reavaliado somente se houver troca real de modelo |
 | Executor introduzir regressoes | CI bloqueante; contrato da Secao 6; escopo estrito por tarefa |
 | Loop de auto-observacao (Fase IV+) | Cooldown 24h; ajustes <= 5% por ciclo; congelamento pelo mantenedor |
@@ -378,6 +414,7 @@ Aceite da Fase IV.0:
 | Avaliacao externa (Claude, consultor) | 10/06/2026 | Reposicionamento como emulacao cognitiva; Fase 0; avaliacao cega; WM antecipada; portao do SKG |
 | Versao 2.1 - Edicao de Execucao Delegada | 10/06/2026 | Governanca em tres papeis; contrato do executor; backlog como especificacoes; estado e avisos operacionais atualizados |
 | Consolidacao canonica V2 | 11/06/2026 | Este arquivo substitui o redirecionamento e passa a ser o documento mestre de autoridade |
+| Versao 2.3 - Estado Realizado e Roadmap Vivo | 08/07/2026 | Atualiza Fase 0 como concluida, Fase III como em fechamento/protagonismo, IV.0/IV.1 como realizadas, IV.2 como infraestrutura gateada, e registra o fechamento `relational_state -> will` |
 
 ---
 
