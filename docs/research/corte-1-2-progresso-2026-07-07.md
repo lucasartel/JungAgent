@@ -35,6 +35,12 @@
 - **Smoke check comportamental**: o próximo `sync_loop` na fase `will` (~22:00 SP) deve produzir um `agent_will_states` com `agent_stance` preenchido. Verificar via `railway run python scripts/remote_db_probe.py will --pretty` amanhã.
 - **Atualizar `tests/TESTING_NOTES.md`**: 320 testes agora, não documentado desde 164 (Fase 0.1).
 
+## Atualizacao 2026-07-08 - fechamento curto
+
+- `RelationalStateEngine.refresh()` foi acoplado ao `ConsciousnessLoopManager` antes do `WillEngine` nas fases `identity` e `will`, sem criar fase nova nem chamada LLM adicional.
+- `remote_db_probe.py will` passou a expor `agent_stance`, e o novo probe `relational_state` permite validar snapshots em producao.
+- Deploy Railway `ba6b940e-7eed-41cc-a082-114e7a1e47ef` subiu com sucesso. O probe `relational_state` esta disponivel, mas ainda sem linhas ate a proxima execucao real de `identity` ou `will` apos o deploy.
+
 ## Próximo passo recomendado
 
 **Corte 2**: `engines/action_catalog.py` (registro de tipos de ação) + `engines/action_proposer.py` (lê `will_state` + `relational_state` + `working_memory`, propõe ações). Subsistema que permite ao agente propor ações com base nas vontades.
