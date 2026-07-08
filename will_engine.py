@@ -21,6 +21,11 @@ from typing import Any, Dict, List, Optional
 
 from llm_providers import get_llm_response
 
+try:
+    from instance_config import AGENT_INSTANCE
+except Exception:
+    AGENT_INSTANCE = os.getenv("AGENT_INSTANCE", "jung_v1")
+
 logger = logging.getLogger(__name__)
 
 WILL_ORDER = ("saber", "relacionar", "expressar")
@@ -337,6 +342,7 @@ def load_latest_will_state(db_manager, user_id: str, cycle_id: Optional[str] = N
 class WillEngine:
     def __init__(self, db_manager):
         self.db = db_manager
+        self.agent_instance = AGENT_INSTANCE
 
     def _truncate(self, text: str, limit: int = 220) -> str:
         cleaned = " ".join((text or "").strip().split())
@@ -490,6 +496,16 @@ class WillEngine:
             logger.debug("WillEngine: sem estado de mundo adicional: %s", exc)
             return {}
 
+    def _latest_relational_state(self, user_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            return self.db.get_latest_relational_state(
+                agent_instance=self.agent_instance,
+                user_id=user_id,
+            )
+        except Exception as exc:
+            logger.debug("WillEngine: sem estado relacional adicional: %s", exc)
+            return None
+
     def _build_source_payload(
         self,
         user_id: str,
@@ -505,6 +521,7 @@ class WillEngine:
         meta = self._latest_meta_consciousness(user_id)
         hobby = self._latest_hobby(user_id)
         world = self._latest_world_state(world_state)
+        relational = self._latest_relational_state(user_id)
         conversations = self._recent_conversations(user_id)
         pressure_state = None
         try:
@@ -576,6 +593,21 @@ class WillEngine:
             "pressure_state": pressure_state,
             "message_signal_summary": message_signal_summary,
             "recent_conversations": conversations,
+            "relational_state": (
+                {
+                    "agent_stance": relational.get("agent_stance"),
+                    "silence_delta_hours": relational.get("silence_delta_hours"),
+                    "cadence_baseline_hours": relational.get("cadence_baseline_hours"),
+                    "recurring_themes": [
+                        t.get("theme")
+                        for t in (relational.get("recurring_themes") or [])
+                        if isinstance(t, dict)
+                    ][:5],
+                    "affective_tone": relational.get("affective_tone_recent") or {},
+                }
+                if relational
+                else None
+            ),
             "source_summary": {
                 "conversation_count": len(conversations),
                 "rumination_count": len(rumination),
@@ -585,6 +617,7 @@ class WillEngine:
                 "has_meta_consciousness": 1 if meta else 0,
                 "has_hobby": 1 if hobby else 0,
                 "has_pressure_state": 1 if pressure_state else 0,
+                "has_relational_state": 1 if relational else 0,
                 "message_signal_count": message_signal_summary.get("count", 0),
             },
         }
@@ -892,8 +925,9 @@ Material do ciclo:
                 user_id, cycle_id, phase, trigger_source, status,
                 saber_score, relacionar_score, expressar_score,
                 dominant_will, secondary_will, constrained_will,
-                will_conflict, attention_bias_note, daily_text, source_summary_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                will_conflict, attention_bias_note, daily_text,
+                source_summary_json, agent_stance
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
@@ -911,6 +945,7 @@ Material do ciclo:
                 state["attention_bias_note"],
                 state["daily_text"],
                 json.dumps(source_summary or {}, ensure_ascii=False),
+                state.get("agent_stance"),
             ),
         )
         self.db.conn.commit()
@@ -945,6 +980,15 @@ Material do ciclo:
             logger.warning("WillEngine caiu em fallback heuristico: %s", exc)
             state = self._fallback_state(payload, source_phase)
             status = "fallback"
+
+        # Enrich state with agent_stance from relational_state (always available
+        # when relational_state exists; LLM does not produce this field, so we
+        # never overwrite a value the model produced).
+        if not state.get("agent_stance"):
+            relational_payload = payload.get("relational_state") or {}
+            stance = relational_payload.get("agent_stance")
+            if stance:
+                state["agent_stance"] = stance
 
         if source_phase == "identity":
             status = f"preliminary_{status}"

@@ -1112,6 +1112,11 @@ class SchemaDatabaseMixin:
         except sqlite3.OperationalError:
             pass
 
+        try:
+            cursor.execute("ALTER TABLE agent_will_states ADD COLUMN agent_stance TEXT")
+        except sqlite3.OperationalError:
+            pass
+
         if hasattr(self, "_init_integrative_self_schema"):
             self._init_integrative_self_schema()
 
