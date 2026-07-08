@@ -1,95 +1,59 @@
-# Corte 1.2 - Estado de progresso (pausa em 2026-07-07)
+# Corte 1.2 - Concluído (2026-07-08)
 
-**Branch**: main (Corte 1 commitado e deployado em 319e6ed)
-**Próxima retomada**: Corte 1.2 — integração do `relational_state` no `will_engine`
+**Branch**: `fase-iii/corte1-2-will-relational-integration` (mergeada em `1cd0a7c`)
+**Deploy**: push para origin/main em 2026-07-08 10:24 UTC, container novo online, `/health` saudável
 
-## Contexto operacional
+## O que foi entregue
 
-- **Corte 1 deployado em produção**: schema `relational_state` criado, mixin ativo em `HybridDatabaseManager`, engine funcional standalone
-- **312 testes verdes**, regression_runner --mock pass sobre 20 cenários
-- `/health` saudável em produção
+### Código
+- `will_engine.py` (+48 linhas):
+  - `_latest_relational_state(user_id)` — busca snapshot relacional via mixin
+  - `agent_instance` no `__init__` (lê de `instance_config` com fallback)
+  - `relational_state` incluído no payload do `_build_source_payload`
+  - `agent_stance` enriquece estado após LLM/fallback (nunca sobrescreve LLM)
+  - `_save_state` persiste `agent_stance` em nova coluna
+- `core/db/schema.py` (+5 linhas): `ALTER TABLE agent_will_states ADD COLUMN agent_stance TEXT` com guarda
+- `tests/test_will_engine_relational.py` (8 testes): DB lookup, payload, enriquecimento LLM+fallback, não-overwrite
 
-## Plano do Corte 1.2 (decidido, não iniciado)
+### Validação
+- 320 testes verdes (+8)
+- regression_runner --mock pass sem diff nos 20 cenários (incluindo os 4 will_*)
+- py_compile limpo
+- git diff --check limpo
+- /health saudável pós-deploy
+- Schema "criado/verificado" log confirma execução das migrations
 
-**Objetivo**: fechar o circuito entre o subsistema relacional e a vontade. Hoje o `relational_state` é passivo (produz snapshots que ninguém lê). Após o Corte 1.2, o `WillEngine.refresh_cycle_state` lerá o snapshot como insumo, e o `agent_stance` vira campo do `will_state`.
+## Decisões de design aplicadas
 
-### Decisões de design já tomadas
+1. **NÃO mexi no schema JSON de saída do LLM** — só enriqueci input. Confirmado por regression_runner --mock sem diff.
+2. **`agent_stance` é fallback determinístico** — nunca sobrescreve o que o LLM produz (testado explicitamente).
+3. **Coluna `agent_stance` adicionada via `ALTER TABLE` com guarda** — aderente à regra de schema compatível do AGENTS.md.
 
-1. **NÃO mexer no prompt de julgamento do LLM** (`will_engine._generate_with_llm`). É prompt crítico (regra do AGENTS.md exige regression runner + diff para mudar). Em vez disso, adicionar `agent_stance` ao estado via fallback determinístico após a chamada LLM, sem mudar o schema JSON de saída que o LLM produz.
-2. **Adicionar `relational_state` ao payload do prompt** (input adicional, não output). O LLM recebe mais contexto mas continua produzindo o mesmo schema.
-3. **Schema do `agent_will_states`**: o estado é salvo como JSON em `source_summary_json` ou similar — não precisa de `ALTER TABLE`. Validar onde exatamente o estado é serializado antes de implementar.
+## Pendências deixadas
 
-### Passos a executar (em ordem)
+- **Validação completa da coluna em produção**: o download do DB via `railway volume files` foi interrompido por timeout. Confirmar amanhã via probe ou download estável que a coluna `agent_stance` existe em `agent_will_states` no SQLite de produção.
+- **Smoke check comportamental**: o próximo `sync_loop` na fase `will` (~22:00 SP) deve produzir um `agent_will_states` com `agent_stance` preenchido. Verificar via `railway run python scripts/remote_db_probe.py will --pretty` amanhã.
+- **Atualizar `tests/TESTING_NOTES.md`**: 320 testes agora, não documentado desde 164 (Fase 0.1).
 
-1. **Adicionar método `_latest_relational_state(self, user_id)` ao `WillEngine`** (linha ~485, ao lado de `_latest_dream`, `_latest_meta_consciousness`, etc.). Padrão:
-   ```python
-   def _latest_relational_state(self, user_id: str) -> Optional[Dict[str, Any]]:
-       try:
-           return self.db.get_latest_relational_state(
-               agent_instance=self.agent_instance, user_id=user_id,
-           )
-       except Exception as exc:
-           logger.debug("WillEngine: sem estado relacional: %s", exc)
-           return None
-   ```
-   **Atenção**: confirmar se `WillEngine.__init__` tem `self.agent_instance`. Caso contrário, ler de `instance_config.AGENT_INSTANCE`.
+## Próximo passo recomendado
 
-2. **Em `_build_source_payload`** (linha 493-), adicionar chamada `relational = self._latest_relational_state(user_id)` e incluir no return:
-   ```python
-   "relational_state": {
-       "agent_stance": relational.get("agent_stance"),
-       "silence_delta_hours": relational.get("silence_delta_hours"),
-       "cadence_baseline_hours": relational.get("cadence_baseline_hours"),
-       "recurring_themes": [t.get("theme") for t in relational.get("recurring_themes", [])][:5],
-       "affective_tone": relational.get("affective_tone_recent", {}),
-   } if relational else None,
-   ```
+**Corte 2**: `engines/action_catalog.py` (registro de tipos de ação) + `engines/action_proposer.py` (lê `will_state` + `relational_state` + `working_memory`, propõe ações). Subsistema que permite ao agente propor ações com base nas vontades.
 
-3. **Em `refresh_cycle_state`** (linha 919), após obter `state` (LLM ou fallback), enriquecer com `agent_stance`:
-   ```python
-   if not state.get("agent_stance"):
-       relational = self._latest_relational_state(user_id)
-       if relational:
-           state["agent_stance"] = relational.get("agent_stance")
-   ```
-   Isso garante que `agent_stance` está sempre presente no estado final sem mudar o schema que o LLM produz.
+Outras opções: smoke check em produção primeiro, ou pausa.
 
-4. **Em `_fallback_state`** (linha 635), também incluir `agent_stance` no retorno se disponível. Verificar se `_fallback_state` tem acesso ao payload (sim, recebe `payload`) — extrair de `payload.get("relational_state", {}).get("agent_stance")`.
+## Estado do plano de protagonismo
 
-5. **Atualizar prompt do LLM** (`_generate_with_llm` linha 813): incluir no prompt uma instrução como "considere o estado relacional abaixo ao formular a vontade" + o bloco `relational_state`. **NÃO mudar o schema JSON de saída** que o LLM produz — só enriquecer input.
+- ✅ Corte 1 (relational_state standalone)
+- ✅ Corte 1.2 (integração no will_engine)
+- 🔜 Corte 2 (action_catalog + action_proposer)
+- 🔜 Corte 3 (controlled_action expandido + 5 ações iniciais)
+- 🔜 Corte 4 (engines/research_action — reuso scholar_engine)
+- 🔜 Corte 5 (engines/expressive_action)
+- 🔜 Corte 6 (integração ao loop)
 
-6. **Criar `tests/test_will_engine_relational.py`** — testes cobrindo:
-   - `_latest_relational_state` retorna None quando mixin ausente (DB sem schema)
-   - `_latest_relational_state` retorna dict quando há snapshot
-   - `refresh_cycle_state` enriquece estado com `agent_stance` mesmo em fallback
-   - Payload do prompt inclui `relational_state` quando disponível, `None` quando não
-   - Monkeypatch do LLM para validar que o schema de saída não mudou
+## Referências rápidas
 
-7. **Validação final**:
-   - `pytest tests/ -q` verde
-   - `regression_runner.py --mock` pass (sem diff nos 20 cenários, porque o mock não usa LLM)
-   - `git diff --check` limpo
-   - py_compile em will_engine.py
-
-8. **Branch + commit + push**: `fase-iii/corte1-2-will-relational-integration`. Deploy single-shot com confirmação.
-
-### Pontos de atenção para amanhã
-
-- **AGENTS.md regra de prompts críticos**: mudar input do prompt é mais brando que mudar schema de saída, mas ainda é sensível. Documentar bem no PR se houver mudança visível de comportamento.
-- **Custo LLM**: o novo input pode aumentar o tempo de geração (mais tokens no prompt). Verificar tamanho do `recurring_themes` (limite a 5) e `affective_tone_recent` (já é pequeno).
-- **Testar com regression_runner --live** (decisão do mantenedor): para ver se a adição de contexto relacional muda os outputs do LLM nos 4 cenários `will_*` do canonical. Se mudar, é diferença a documentar.
-- **Smoke check em produção após deploy**: rodar um sync_loop manual via admin endpoint e ver se `agent_stance` aparece no `agent_will_states` final.
-
-### Referências rápidas
-
-- Corte 1 mixin: `core/db/relational_state.py:RelationalStateDatabaseMixin`
-- Corte 1 engine: `engines/relational_state.py:RelationalStateEngine`
-- Corte 1 tests: `tests/test_relational_state.py` (19 testes, todos verdes)
-- WillEngine alvo: `will_engine.py:493` (`_build_source_payload`), `:919` (`refresh_cycle_state`)
-- Schema SQLite: já em produção via `core/db/schema.py:1115`
-- Plano de protagonismo original: este Corte 1.2 fecha o substrato relacional; depois segue para Corte 2 (`action_catalog` + `action_proposer`)
-
-## Pendências menores
-
-- Atualizar `tests/TESTING_NOTES.md` com a cobertura de relational_state (19 testes novos).
-- Decidir se `relational_state` deve ser exposto no admin web (dashboard de relação) — pode ser Corte 1.3 separado.
+- Corte 1 commit: `319e6ed`
+- Corte 1.2 commit: `1cd0a7c`
+- Schema SQLite: `core/db/schema.py` (migrations com guarda)
+- Testes: `tests/test_relational_state.py` (19) + `tests/test_will_engine_relational.py` (8)
