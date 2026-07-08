@@ -903,6 +903,63 @@ class ConsciousnessLoopManager:
         )
         result["metrics"]["artifacts_created_count"] = len(result["artifacts_created"])
 
+    def _refresh_relational_state_snapshot(self, result: Dict) -> Optional[Dict[str, Any]]:
+        try:
+            from engines.relational_state import RelationalStateEngine
+
+            snapshot = RelationalStateEngine(
+                self.db,
+                agent_instance=self.agent_instance,
+            ).refresh(
+                user_id=self.admin_user_id,
+                snapshot_date=result.get("cycle_id"),
+            )
+        except Exception as exc:
+            logger.warning(
+                "LOOP RELATIONAL STATE refresh failed phase=%s cycle=%s: %s",
+                result.get("phase"),
+                result.get("cycle_id"),
+                exc,
+            )
+            result["warnings"].append("relational_state_refresh_failed")
+            result["metrics"]["relational_state_refreshed"] = 0
+            result["raw_result"]["relational_state"] = {
+                "available": False,
+                "error": type(exc).__name__,
+            }
+            return None
+
+        source_refs = snapshot.get("source_refs") or []
+        compact_snapshot = {
+            "available": True,
+            "id": snapshot.get("id"),
+            "agent_stance": snapshot.get("agent_stance"),
+            "silence_delta_hours": snapshot.get("silence_delta_hours"),
+            "cadence_baseline_hours": snapshot.get("cadence_baseline_hours"),
+            "source_ref_count": len(source_refs),
+            "skipped_reason": snapshot.get("skipped_reason"),
+        }
+        result["raw_result"]["relational_state"] = compact_snapshot
+        result["metrics"]["relational_state_refreshed"] = 1
+        result["metrics"]["relational_state_persisted"] = 1 if snapshot.get("id") else 0
+        result["metrics"]["relational_state_source_ref_count"] = len(source_refs)
+
+        if snapshot.get("id"):
+            self._record_virtual_artifact(
+                result,
+                artifact_type="relational_state",
+                artifact_id=snapshot.get("id"),
+                artifact_table="relational_state",
+                summary=(
+                    f"postura={snapshot.get('agent_stance') or 'curious'}; "
+                    f"fontes={len(source_refs)}"
+                ),
+            )
+        elif snapshot.get("skipped_reason"):
+            result["warnings"].append(f"relational_state_{snapshot['skipped_reason']}")
+
+        return snapshot
+
     def _generate_integrative_self_snapshot(self, result: Dict) -> Optional[Dict[str, Any]]:
         if result.get("phase") != "will":
             return None
@@ -1870,6 +1927,7 @@ class ConsciousnessLoopManager:
             current_state=current_state,
             trigger_source="consciousness_loop_identity",
         )
+        relational_snapshot = self._refresh_relational_state_snapshot(result)
         will_engine = WillEngine(self.db)
         preliminary_will = will_engine.refresh_cycle_state(
             user_id=self.admin_user_id,
@@ -1888,6 +1946,7 @@ class ConsciousnessLoopManager:
         result["raw_result"]["identity_consolidation"] = consolidation_result
         result["raw_result"]["current_mind_state"] = current_state
         result["raw_result"]["meta_consciousness"] = meta_reading
+        result["raw_result"]["relational_state_snapshot"] = result["raw_result"].get("relational_state")
         result["raw_result"]["will_state"] = preliminary_will
         result["metrics"]["conversations_processed"] = consolidation_result.get("processed_count", 0)
         result["metrics"]["elements_extracted"] = consolidation_result.get("elements_total", 0)
@@ -1895,6 +1954,7 @@ class ConsciousnessLoopManager:
         result["metrics"]["meta_consciousness_generated"] = 1
         result["metrics"]["meta_consciousness_question_count"] = len(meta_reading.get("internal_questions") or [])
         result["metrics"]["will_seeded"] = 1
+        result["metrics"]["will_seeded_with_relational_state"] = 1 if relational_snapshot and relational_snapshot.get("id") else 0
 
         self._record_virtual_artifact(
             result,
@@ -2268,6 +2328,7 @@ class ConsciousnessLoopManager:
         )
         current_state = self._inject_working_memory_context(result, current_state)
         world_state = world_consciousness.get_world_state(force_refresh=False)
+        relational_snapshot = self._refresh_relational_state_snapshot(result)
         will_engine = WillEngine(self.db)
         will_result = will_engine.refresh_cycle_state(
             user_id=self.admin_user_id,
@@ -2286,6 +2347,7 @@ class ConsciousnessLoopManager:
         result["metrics"]["saber_pressure"] = will_result.get("saber_pressure", 0.0)
         result["metrics"]["relacionar_pressure"] = will_result.get("relacionar_pressure", 0.0)
         result["metrics"]["expressar_pressure"] = will_result.get("expressar_pressure", 0.0)
+        result["metrics"]["will_with_relational_state"] = 1 if relational_snapshot and relational_snapshot.get("id") else 0
 
         self._record_virtual_artifact(
             result,

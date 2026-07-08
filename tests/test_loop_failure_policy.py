@@ -13,7 +13,9 @@ Circuitos cobertos:
 from __future__ import annotations
 
 import sqlite3
+import sys
 import threading
+import types
 import importlib.util
 import json
 from pathlib import Path
@@ -637,3 +639,152 @@ class TestWorkingMemoryObservation:
         assert result["metrics"]["working_memory_broadcast_id"] > inbox_id
         assert result["raw_result"]["working_memory_broadcast"]["from_phase"] == "work"
         assert result["raw_result"]["working_memory_broadcast"]["to_phase"] == "hobby"
+
+
+class TestRelationalStateLoopClosure:
+    def test_refresh_relational_state_snapshot_records_metrics_and_artifact(self, manager, monkeypatch):
+        calls = []
+
+        class _FakeRelationalStateEngine:
+            def __init__(self, db, agent_instance=None):
+                calls.append(("init", db, agent_instance))
+
+            def refresh(self, *, user_id, snapshot_date):
+                calls.append(("refresh", user_id, snapshot_date))
+                return {
+                    "id": 42,
+                    "agent_stance": "companionable",
+                    "silence_delta_hours": 3.5,
+                    "cadence_baseline_hours": 8.0,
+                    "source_refs": ["conversation#7", "conversation#8"],
+                }
+
+        fake_module = types.ModuleType("engines.relational_state")
+        fake_module.RelationalStateEngine = _FakeRelationalStateEngine
+        monkeypatch.setitem(sys.modules, "engines.relational_state", fake_module)
+
+        result = manager._build_placeholder_result(
+            "2026-07-08",
+            PHASE_BY_KEY["will"],
+            trigger_source="pytest",
+            execution_mode="manual",
+        )
+
+        snapshot = manager._refresh_relational_state_snapshot(result)
+
+        assert snapshot["id"] == 42
+        assert calls == [
+            ("init", manager.db, manager.agent_instance),
+            ("refresh", manager.admin_user_id, "2026-07-08"),
+        ]
+        assert result["metrics"]["relational_state_refreshed"] == 1
+        assert result["metrics"]["relational_state_persisted"] == 1
+        assert result["metrics"]["relational_state_source_ref_count"] == 2
+        assert result["raw_result"]["relational_state"]["agent_stance"] == "companionable"
+        assert result["artifacts_created"][-1]["artifact_type"] == "relational_state"
+        assert result["artifacts_created"][-1]["artifact_id"] == "42"
+
+    def test_refresh_relational_state_snapshot_reports_skipped_snapshot(self, manager, monkeypatch):
+        class _FakeRelationalStateEngine:
+            def __init__(self, db, agent_instance=None):
+                pass
+
+            def refresh(self, *, user_id, snapshot_date):
+                return {
+                    "id": None,
+                    "agent_stance": "curious",
+                    "source_refs": [],
+                    "skipped_reason": "no_conversations_observed",
+                }
+
+        fake_module = types.ModuleType("engines.relational_state")
+        fake_module.RelationalStateEngine = _FakeRelationalStateEngine
+        monkeypatch.setitem(sys.modules, "engines.relational_state", fake_module)
+
+        result = manager._build_placeholder_result(
+            "2026-07-08",
+            PHASE_BY_KEY["identity"],
+            trigger_source="pytest",
+            execution_mode="manual",
+        )
+
+        snapshot = manager._refresh_relational_state_snapshot(result)
+
+        assert snapshot["id"] is None
+        assert result["metrics"]["relational_state_refreshed"] == 1
+        assert result["metrics"]["relational_state_persisted"] == 0
+        assert "relational_state_no_conversations_observed" in result["warnings"]
+        assert not [
+            artifact
+            for artifact in result["artifacts_created"]
+            if artifact["artifact_type"] == "relational_state"
+        ]
+
+    def test_run_will_phase_refreshes_relational_state_before_will(self, loop_db, monkeypatch):
+        events = []
+        loop_db.conn.execute(
+            """
+            CREATE TABLE agent_will_states (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                cycle_id TEXT
+            )
+            """
+        )
+        loop_db.conn.commit()
+        manager = ConsciousnessLoopManager(loop_db)
+
+        class _FakeBuilder:
+            def __init__(self, db):
+                self.db = db
+
+            def build_current_mind_state(self, *, user_id, style):
+                return {"current_phase": {"name": "teste"}}
+
+        identity_module = types.ModuleType("agent_identity_context_builder")
+        identity_module.AgentIdentityContextBuilder = _FakeBuilder
+        monkeypatch.setitem(sys.modules, "agent_identity_context_builder", identity_module)
+
+        world_module = types.ModuleType("world_consciousness")
+        world_module.world_consciousness = types.SimpleNamespace(
+            get_world_state=lambda force_refresh=False: {}
+        )
+        monkeypatch.setitem(sys.modules, "world_consciousness", world_module)
+
+        class _FakeWillEngine:
+            def __init__(self, db):
+                self.db = db
+
+            def refresh_cycle_state(self, **kwargs):
+                events.append("will")
+                return {
+                    "id": 77,
+                    "saber_score": 0.4,
+                    "relacionar_score": 0.35,
+                    "expressar_score": 0.25,
+                    "saber_pressure": 0.0,
+                    "relacionar_pressure": 0.0,
+                    "expressar_pressure": 0.0,
+                    "daily_text": "estado das vontades",
+                }
+
+        will_module = types.ModuleType("will_engine")
+        will_module.WillEngine = _FakeWillEngine
+        monkeypatch.setitem(sys.modules, "will_engine", will_module)
+        monkeypatch.setattr(
+            manager,
+            "_refresh_relational_state_snapshot",
+            lambda result: events.append("relational") or {"id": 12},
+        )
+
+        result = manager._build_placeholder_result(
+            "2026-07-08",
+            PHASE_BY_KEY["will"],
+            trigger_source="pytest",
+            execution_mode="manual",
+        )
+
+        result = manager._run_will_phase(result)
+
+        assert events == ["relational", "will"]
+        assert result["metrics"]["will_with_relational_state"] == 1

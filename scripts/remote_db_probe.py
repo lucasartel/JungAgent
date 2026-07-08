@@ -512,8 +512,10 @@ def query_goals(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, A
 
 
 def query_will(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
+    columns = table_columns(cursor, "agent_will_states")
+    agent_stance_select = "agent_stance," if "agent_stance" in columns else "NULL AS agent_stance,"
     cursor.execute(
-        """
+        f"""
         SELECT
             id,
             cycle_id,
@@ -530,6 +532,7 @@ def query_will(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
             attention_bias_note,
             daily_text,
             source_summary_json,
+            {agent_stance_select}
             created_at,
             updated_at
         FROM agent_will_states
@@ -548,6 +551,60 @@ def query_will(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
             row["source_summary"] = {}
     return {
         "probe": "will",
+        "user_id": args.user_id,
+        "rows": rows,
+    }
+
+
+def query_relational_state(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
+    if not table_exists(cursor, "relational_state"):
+        return {
+            "probe": "relational_state",
+            "available": False,
+            "assessment": "relational_state table is not available",
+            "rows": [],
+        }
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            agent_instance,
+            user_id,
+            snapshot_date,
+            cadence_baseline_hours,
+            last_contact_at,
+            silence_delta_hours,
+            affective_tone_recent_json,
+            recurring_themes_json,
+            agent_stance,
+            source_refs_json,
+            notes,
+            created_at,
+            updated_at
+        FROM relational_state
+        WHERE agent_instance = ? AND user_id = ?
+        ORDER BY snapshot_date DESC, id DESC
+        LIMIT ?
+        """,
+        (args.agent_instance, args.user_id, args.limit),
+    )
+    rows = rows_to_dicts(cursor.fetchall())
+    for row in rows:
+        row["affective_tone_recent"] = json_or_empty(
+            row.pop("affective_tone_recent_json", None),
+            {},
+        )
+        row["recurring_themes"] = json_or_empty(
+            row.pop("recurring_themes_json", None),
+            [],
+        )
+        row["source_refs"] = json_or_empty(row.pop("source_refs_json", None), [])
+
+    return {
+        "probe": "relational_state",
+        "available": True,
+        "agent_instance": args.agent_instance,
         "user_id": args.user_id,
         "rows": rows,
     }
@@ -1603,6 +1660,7 @@ PROBES: Dict[str, Callable[[sqlite3.Cursor, argparse.Namespace], Dict[str, Any]]
     "phase_pulses": query_phase_pulses,
     "will": query_will,
     "pressure": query_pressure,
+    "relational_state": query_relational_state,
     "meta": query_meta,
     "rumination": query_rumination,
     "world": query_world,

@@ -144,11 +144,12 @@ def _decide_stance(
 class RelationalStateEngine:
     """Builds relational_state snapshots from observed conversation signals."""
 
-    def __init__(self, db_manager: Any):
+    def __init__(self, db_manager: Any, agent_instance: Optional[str] = None):
         self.db = db_manager
-        try:
-            self.agent_instance = db_manager.agent_instance  # type: ignore[attr-defined]
-        except AttributeError:
+        self.agent_instance = agent_instance
+        if not self.agent_instance:
+            self.agent_instance = getattr(db_manager, "agent_instance", None)
+        if not self.agent_instance:
             from instance_config import AGENT_INSTANCE
             self.agent_instance = AGENT_INSTANCE
 
