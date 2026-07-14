@@ -15,6 +15,7 @@ from openai import OpenAI
 
 from core.config import Config
 from core.db.analysis_records import AnalysisRecordsDatabaseMixin
+from core.db.action_proposals import ActionProposalDatabaseMixin
 from core.db.context_builder import ContextBuilderDatabaseMixin
 from core.db.fact_extraction import FactExtractionDatabaseMixin
 from core.db.facts import FactLookupDatabaseMixin
@@ -53,6 +54,7 @@ class HybridDatabaseManager(
     WorkingMemoryDatabaseMixin,
     IntegrativeSelfDatabaseMixin,
     RelationalStateDatabaseMixin,
+    ActionProposalDatabaseMixin,
     PsychometricsDatabaseMixin,
 ):
     """
