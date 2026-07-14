@@ -208,3 +208,144 @@ class ControlledActionRunner:
             "source_refs": source_refs,
             "summary": summary,
         }
+
+    # ------------------------------------------------------------------
+    # Proposal dispatch (Corte 3)
+    # ------------------------------------------------------------------
+    #
+    # Proposal handlers are looked up by action_type. Each handler receives
+    # the proposal row and the user_id, performs the work (or returns
+    # skipped/failed), and the dispatcher updates the proposal status.
+    #
+    # Handlers currently implemented:
+    #   - update_relational_state  : refreshes relational snapshot from
+    #                                recent conversations (internal_only)
+    #
+    # Handlers pending future cuts (return status=skipped, no-op):
+    #   - synthesize_cross_source  : Corte 4 (uses scholar_engine)
+    #   - pose_strategic_question  : Corte 3.1 (needs Telegram integration)
+    #   - proactive_check_in       : Corte 3.1 (needs Telegram integration)
+    #   - follow_up_theme          : Corte 3.1 (needs Telegram integration)
+    #   - compose_essay_draft      : Corte 5
+    #   - curate_portfolio         : Corte 5
+    #
+    # External publish is always skipped here (gate blocked until Fase VII).
+
+    PROPOSAL_HANDLERS = {
+        "update_relational_state": "_handle_update_relational_state",
+    }
+    PENDING_HANDLERS = {
+        "synthesize_cross_source",
+        "pose_strategic_question",
+        "proactive_check_in",
+        "follow_up_theme",
+        "compose_essay_draft",
+        "curate_portfolio",
+    }
+
+    def dispatch_proposal(self, *, proposal_id: int, user_id: str) -> Dict[str, Any]:
+        """Look up an action_proposal row and run its handler if available.
+
+        Updates the proposal row with status=executed/skipped/failed and
+        returns a summary. Never raises on handler failure: logs and marks
+        the proposal as failed so the next cycle can move on.
+        """
+        if not user_id:
+            raise ValueError("user_id_required")
+        rows = self.db.list_action_proposals(
+            agent_instance=self.agent_instance, limit=200
+        )
+        proposal = next((r for r in rows if int(r["id"]) == int(proposal_id)), None)
+        if proposal is None:
+            raise ValueError(f"proposal_not_found:{proposal_id}")
+        if proposal.get("status") not in ("proposed", "approved"):
+            raise ValueError(
+                f"proposal_not_dispatchable:{proposal.get('status')}"
+            )
+
+        action_type = proposal.get("action_type") or ""
+        gate_level = proposal.get("gate_level") or ""
+        # External publish is always skipped regardless of handler presence.
+        if gate_level == "external_publish":
+            return self._skip_proposal(
+                proposal, reason="external_publish_blocked_until_fase_vii"
+            )
+
+        handler_name = self.PROPOSAL_HANDLERS.get(action_type)
+        if handler_name is None:
+            if action_type in self.PENDING_HANDLERS:
+                return self._skip_proposal(
+                    proposal, reason=f"handler_pending:{action_type}"
+                )
+            return self._skip_proposal(
+                proposal, reason=f"no_handler_for:{action_type}"
+            )
+
+        handler = getattr(self, handler_name, None)
+        if handler is None:
+            return self._skip_proposal(
+                proposal, reason=f"handler_missing:{handler_name}"
+            )
+
+        try:
+            result = handler(proposal, user_id)
+            self.db.update_action_proposal_status(
+                proposal_id=int(proposal_id), status="executed"
+            )
+            return {
+                "proposal_id": int(proposal_id),
+                "action_type": action_type,
+                "gate_level": gate_level,
+                "status": "executed",
+                **result,
+            }
+        except Exception as exc:
+            self.db.update_action_proposal_status(
+                proposal_id=int(proposal_id), status="failed"
+            )
+            return {
+                "proposal_id": int(proposal_id),
+                "action_type": action_type,
+                "gate_level": gate_level,
+                "status": "failed",
+                "error": str(exc),
+            }
+
+    def _skip_proposal(self, proposal: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
+        self.db.update_action_proposal_status(
+            proposal_id=int(proposal["id"]), status="skipped"
+        )
+        return {
+            "proposal_id": int(proposal["id"]),
+            "action_type": proposal.get("action_type"),
+            "gate_level": proposal.get("gate_level"),
+            "status": "skipped",
+            "skipped_reason": reason,
+        }
+
+    def _handle_update_relational_state(
+        self,
+        proposal: Dict[str, Any],
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """Refresh relational_state snapshot from recent conversations.
+
+        Gate: internal_only. Side effects: writes one relational_state row
+        (upsert by snapshot_date). No external communication.
+        """
+        from engines.relational_state import RelationalStateEngine
+
+        engine = RelationalStateEngine(self.db)
+        result = engine.refresh(user_id=user_id)
+        snapshot_id = result.get("id")
+        if not snapshot_id:
+            return {
+                "skipped_reason": result.get("skipped_reason") or "no_snapshot_produced",
+                "relational_state_status": "skipped",
+            }
+        return {
+            "relational_state_id": int(snapshot_id),
+            "agent_stance": result.get("agent_stance"),
+            "silence_delta_hours": result.get("silence_delta_hours"),
+            "relational_state_status": "refreshed",
+        }
