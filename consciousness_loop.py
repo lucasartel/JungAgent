@@ -2314,6 +2314,60 @@ class ConsciousnessLoopManager:
 
         return result
 
+    def _run_action_proposal_cycle(self, result: Dict) -> None:
+        """Propose actions from current state and dispatch internal_only ones.
+
+        Reads will_state + relational_state + working_memory, generates 1-3
+        action proposals per cycle, then auto-dispatches proposals whose
+        gate_level is internal_only. admin_communicate and above stay as
+        'proposed' for explicit gating in later cuts.
+
+        Failures are logged and recorded as warnings; they never break the
+        will phase itself (rule #5 of AGENTS.md).
+        """
+        try:
+            from engines.action_proposer import ActionProposer
+            from engines.controlled_action import ControlledActionRunner
+
+            proposer = ActionProposer(self.db)
+            proposal_result = proposer.propose(
+                cycle_id=result["cycle_id"],
+                user_id=self.admin_user_id,
+            )
+            result["raw_result"]["action_proposals"] = proposal_result
+            result["metrics"]["action_proposals_generated"] = proposal_result.get("proposed_count", 0)
+
+            runner = ControlledActionRunner(self.db, agent_instance=self.agent_instance)
+            dispatched = []
+            for prop in proposal_result.get("proposals", []):
+                prop_id = prop.get("id")
+                if not prop_id:
+                    continue
+                if prop.get("gate_level") != "internal_only":
+                    continue
+                dispatch_result = runner.dispatch_proposal(
+                    proposal_id=prop_id, user_id=self.admin_user_id
+                )
+                dispatched.append(
+                    {
+                        "proposal_id": prop_id,
+                        "action_type": dispatch_result.get("action_type"),
+                        "status": dispatch_result.get("status"),
+                    }
+                )
+            result["metrics"]["action_proposals_dispatched"] = len(dispatched)
+            result["raw_result"]["action_dispatched"] = dispatched
+            if dispatched:
+                logger.info(
+                    "LOOP WILL dispatched %d internal_only action proposals (cycle=%s)",
+                    len(dispatched),
+                    result["cycle_id"],
+                )
+        except Exception as exc:
+            logger.warning("LOOP WILL action proposer/dispatcher failed: %s", exc)
+            result["warnings"].append("action_proposer_failed")
+            result["metrics"]["action_proposer_error"] = 1
+
     def _run_will_phase(self, result: Dict) -> Dict:
         from agent_identity_context_builder import AgentIdentityContextBuilder
         from will_engine import WillEngine
@@ -2381,6 +2435,9 @@ class ConsciousnessLoopManager:
             logger.warning("LOOP WILL goal manager failed: %s", exc)
             result["warnings"].append("goal_manager_failed")
             result["metrics"]["goal_manager_error"] = 1
+
+        # Action proposer + dispatcher (Corte 6).
+        self._run_action_proposal_cycle(result)
 
         if will_result.get("status") in {"generated", "preliminary_generated"}:
             result["output_summary"] = will_result.get("daily_text") or "Modulo Will consolidou o estado atual das tres vontades."
