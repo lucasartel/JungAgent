@@ -127,6 +127,35 @@ class WorkTaskDatabaseMixin:
             "CREATE INDEX IF NOT EXISTS idx_work_task_attachments_task "
             "ON work_task_attachments(task_id)"
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS work_task_schedule (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                agent_instance TEXT NOT NULL,
+                cycle_id TEXT NOT NULL,
+                pulse_index INTEGER DEFAULT 1,
+                planned_effort REAL,
+                planned_effort_unit TEXT,
+                actual_effort REAL,
+                actual_effort_unit TEXT,
+                status TEXT NOT NULL DEFAULT 'planned',
+                work_run_id INTEGER,
+                notes TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES work_tasks(id)
+            )
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_work_task_schedule_cycle "
+            "ON work_task_schedule(agent_instance, cycle_id, pulse_index)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_work_task_schedule_task "
+            "ON work_task_schedule(task_id, cycle_id)"
+        )
         self.conn.commit()
 
     def create_work_task(
@@ -452,3 +481,132 @@ class WorkTaskDatabaseMixin:
         data = dict(zip(cols, row))
         data["schedule"] = _json_loads(data.pop("schedule_json", "{}"), default={})
         return data
+
+    # ------------------------------------------------------------------
+    # Work Task Schedule (daily pulse planning)
+    # ------------------------------------------------------------------
+
+    def create_task_schedule_entry(
+        self,
+        *,
+        task_id: int,
+        agent_instance: str,
+        cycle_id: str,
+        pulse_index: int = 1,
+        planned_effort: Optional[float] = None,
+        planned_effort_unit: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> int:
+        cursor = self.conn.cursor()
+        with self._lock:
+            cursor.execute(
+                """
+                INSERT INTO work_task_schedule (
+                    task_id, agent_instance, cycle_id, pulse_index,
+                    planned_effort, planned_effort_unit, status,
+                    notes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?)
+                """,
+                (
+                    int(task_id),
+                    agent_instance,
+                    cycle_id,
+                    int(pulse_index),
+                    planned_effort,
+                    planned_effort_unit,
+                    notes,
+                    datetime.utcnow().isoformat(),
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+            self.conn.commit()
+            return int(cursor.lastrowid)
+
+    def list_task_schedule(
+        self,
+        *,
+        agent_instance: str,
+        cycle_id: str,
+        pulse_index: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        clauses = ["agent_instance = ?", "cycle_id = ?"]
+        params: List[Any] = [agent_instance, cycle_id]
+        if pulse_index is not None:
+            clauses.append("pulse_index = ?")
+            params.append(int(pulse_index))
+        cursor = self.conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT * FROM work_task_schedule
+            WHERE {' AND '.join(clauses)}
+            ORDER BY pulse_index ASC, id ASC
+            """,
+            tuple(params),
+        )
+        cols = (
+            "id", "task_id", "agent_instance", "cycle_id", "pulse_index",
+            "planned_effort", "planned_effort_unit",
+            "actual_effort", "actual_effort_unit",
+            "status", "work_run_id", "notes", "created_at", "updated_at",
+        )
+        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+    def count_task_schedule_entries(
+        self,
+        *,
+        agent_instance: str,
+        cycle_id: str,
+        status: Optional[str] = None,
+    ) -> int:
+        extra = ""
+        params: List[Any] = [agent_instance, cycle_id]
+        if status is not None:
+            extra = "AND status = ?"
+            params.append(status)
+        cursor = self.conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT COUNT(*) AS n FROM work_task_schedule
+            WHERE agent_instance = ? AND cycle_id = ? {extra}
+            """,
+            tuple(params),
+        )
+        row = cursor.fetchone()
+        return int(row[0]) if row else 0
+
+    def update_task_schedule_entry(
+        self,
+        *,
+        entry_id: int,
+        status: Optional[str] = None,
+        actual_effort: Optional[float] = None,
+        actual_effort_unit: Optional[str] = None,
+        work_run_id: Optional[int] = None,
+    ) -> bool:
+        now_iso = datetime.utcnow().isoformat()
+        sets: List[str] = ["updated_at = ?"]
+        params: List[Any] = [now_iso]
+        if status is not None:
+            valid = ("planned", "in_progress", "completed", "skipped")
+            if status not in valid:
+                raise ValueError(f"invalid_schedule_status:{status}")
+            sets.append("status = ?")
+            params.append(status)
+        if actual_effort is not None:
+            sets.append("actual_effort = ?")
+            params.append(float(actual_effort))
+        if actual_effort_unit is not None:
+            sets.append("actual_effort_unit = ?")
+            params.append(actual_effort_unit)
+        if work_run_id is not None:
+            sets.append("work_run_id = ?")
+            params.append(int(work_run_id))
+        params.append(int(entry_id))
+        cursor = self.conn.cursor()
+        with self._lock:
+            cursor.execute(
+                f"UPDATE work_task_schedule SET {', '.join(sets)} WHERE id = ?",
+                tuple(params),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
