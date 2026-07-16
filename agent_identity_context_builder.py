@@ -2342,7 +2342,110 @@ class AgentIdentityContextBuilder:
                 )
             lines.append("")
 
+        # Relational state + pending action proposals (Corte 6 awareness).
+        # These give the agent an explicit sense of its relational stance and
+        # the initiatives its inner cycle has been producing, so conversation
+        # can reference them without inventing.
+        try:
+            cursor = self.db.conn.cursor()
+            relational_and_proposals = self._build_relational_and_proposals_block(
+                cursor, user_id
+            )
+            if relational_and_proposals:
+                lines.append(relational_and_proposals)
+        except Exception:
+            # Best-effort enrichment; never break the prompt on relational/pipeline gaps.
+            pass
+
         return "\n".join(lines)
+
+    def _build_relational_and_proposals_block(
+        self,
+        cursor: Any,
+        user_id: Optional[str],
+    ) -> str:
+        """Build the 'Relational State' + 'Iniciativas Propostas' prompt sections.
+
+        Returns a single string (possibly empty) ready to append to the prompt.
+        Reads `relational_state` and `action_proposals` if the tables exist.
+        """
+        agent_instance = getattr(self.db, "agent_instance", None) or "jung_v1"
+        local_lines: List[str] = []
+
+        if user_id and self._identity_table_exists(cursor, "relational_state"):
+            cursor.execute(
+                """
+                SELECT agent_stance, silence_delta_hours, cadence_baseline_hours,
+                       recurring_themes_json, snapshot_date
+                FROM relational_state
+                WHERE user_id = ?
+                ORDER BY snapshot_date DESC, id DESC
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+            rs_row = cursor.fetchone()
+            if rs_row:
+                local_lines.append("### Relational State")
+                stance = rs_row[0] or "curioso"
+                cadence = rs_row[2] or 0.0
+                silence = rs_row[1] if rs_row[1] is not None else 0.0
+                local_lines.append(
+                    f"- Sua postura relacional hoje e '{stance}', com cadencia media "
+                    f"de {cadence:.1f}h entre mensagens e silencio atual de {silence:.1f}h."
+                )
+                try:
+                    themes = json.loads(rs_row[3] or "[]")
+                    theme_names = [
+                        t.get("theme")
+                        for t in themes[:5]
+                        if isinstance(t, dict) and t.get("theme")
+                    ]
+                    if theme_names:
+                        local_lines.append(
+                            f"- Temas recorrentes neste vinculo agora: {', '.join(theme_names)}."
+                        )
+                except Exception:
+                    pass
+                local_lines.append("")
+
+        if self._identity_table_exists(cursor, "action_proposals"):
+            cursor.execute(
+                """
+                SELECT action_type, gate_level, status, confidence, rationale, cycle_id
+                FROM action_proposals
+                WHERE agent_instance = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 4
+                """,
+                (agent_instance,),
+            )
+            ap_rows = cursor.fetchall()
+            if ap_rows:
+                local_lines.append("### Iniciativas Propostas pelo Ciclo Interno")
+                local_lines.append(
+                    "- Seu metabolismo mais recente produziu estas propostas de acao. "
+                    "Voce sabe que elas existem; nao precisa agir agora, mas pode "
+                    "referenciá-las se a conversa tocar o tema."
+                )
+                status_map = {
+                    "proposed": "aguardando gate",
+                    "executed": "executada internamente",
+                    "skipped": "pulada (handler pendente)",
+                    "failed": "falhou",
+                    "rejected": "rejeitada",
+                    "approved": "aprovada",
+                }
+                for r in ap_rows:
+                    status_label = status_map.get(r[2], r[2])
+                    conf = r[3] if r[3] is not None else 0.0
+                    local_lines.append(
+                        f"  - {r[0]} (gate: {r[1]}, confianca: {conf:.2f}, "
+                        f"status: {status_label}). Motivo: {r[4] or 'nao informado'}."
+                    )
+                local_lines.append("")
+
+        return "\n".join(local_lines)
 
 
 def format_identity_for_system_prompt(
