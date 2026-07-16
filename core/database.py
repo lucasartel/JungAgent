@@ -29,6 +29,7 @@ from core.db.schema import SchemaDatabaseMixin
 from core.db.semantic_memory import SemanticMemoryDatabaseMixin
 from core.db.users import UserDatabaseMixin
 from core.db.working_memory import WorkingMemoryDatabaseMixin
+from core.db.work_tasks import WorkTaskDatabaseMixin
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class HybridDatabaseManager(
     IntegrativeSelfDatabaseMixin,
     RelationalStateDatabaseMixin,
     ActionProposalDatabaseMixin,
+    WorkTaskDatabaseMixin,
     PsychometricsDatabaseMixin,
 ):
     """

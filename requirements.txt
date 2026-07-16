@@ -45,3 +45,6 @@ qdrant-client>=1.7.0
 
 # Pagamentos (Stripe)
 stripe>=8.0.0
+
+# PDF extraction (work tasks)
+PyPDF2>=3.0.0
