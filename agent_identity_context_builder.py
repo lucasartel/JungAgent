@@ -11,7 +11,7 @@ epistemic hunger, and recent identity shifts.
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from instance_config import ADMIN_USER_ID, AGENT_INSTANCE
@@ -2355,6 +2355,21 @@ class AgentIdentityContextBuilder:
                 lines.append(relational_and_proposals)
         except Exception:
             # Best-effort enrichment; never break the prompt on relational/pipeline gaps.
+            pass
+
+        # Reading task awareness (Corte W5): show what the agent is currently
+        # reading so it can reference naturalmente during conversation.
+        try:
+            cursor = self.db.conn.cursor()
+            today = date.today().isoformat()
+            if self._identity_table_exists(cursor, "work_task_schedule"):
+                from engines.work_scheduler import WorkScheduler
+
+                scheduler = WorkScheduler(self.db)
+                reading_ctx = scheduler.get_reading_context(cycle_id=today)
+                if reading_ctx:
+                    lines.append(reading_ctx)
+        except Exception:
             pass
 
         return "\n".join(lines)

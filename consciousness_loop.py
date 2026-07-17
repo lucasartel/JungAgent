@@ -2132,6 +2132,14 @@ class ConsciousnessLoopManager:
             result["metrics"]["work_window_minutes"] = window_minutes
             result["metrics"]["work_planned_entries"] = schedule_plan.get("planned_entries", 0)
             result["metrics"]["work_overdue_count"] = schedule_plan.get("overdue_count", 0)
+
+            # Reading awareness (Corte W5): inform the pulse what it is working on.
+            pulse_index = pulses_used + 1
+            pulse_awareness = scheduler.get_pulse_awareness(
+                cycle_id=cycle_id, pulse_index=pulse_index
+            )
+            result["raw_result"]["work_pulse_awareness"] = pulse_awareness
+            result["metrics"]["work_pulse_awareness_present"] = 1
         except Exception as exc:
             logger.warning("LOOP WORK scheduler failed: %s", exc)
             result["warnings"].append("work_scheduler_failed")

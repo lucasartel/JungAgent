@@ -253,3 +253,123 @@ class WorkScheduler:
                 )
             except Exception as exc:
                 logger.warning("scheduler: progress update failed for task %s: %s", task_id, exc)
+
+    def get_pulse_awareness(
+        self,
+        *,
+        cycle_id: str,
+        pulse_index: int,
+    ) -> str:
+        """Return a short natural-language summary of what is scheduled for
+        this specific pulse. Suitable for the work phase output_summary and
+        agent prompt enrichment."""
+        entries = self.schedule_for_current_pulse(
+            cycle_id=cycle_id,
+            pulse_index=pulse_index,
+        )
+        if not entries:
+            return "Nenhuma tarefa programada para este pulso."
+
+        lines: List[str] = []
+        for entry in entries:
+            tid = entry.get("task_id")
+            planned = entry.get("planned_effort")
+            unit = entry.get("planned_effort_unit") or "unidades"
+            task_info = ""
+            try:
+                cursor = self.db.conn.cursor()
+                cursor.execute(
+                    "SELECT title, task_type, effort_target, effort_unit, "
+                    "deadline_at, progress_value FROM work_tasks WHERE id = ?",
+                    (tid,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    title = row[0]
+                    task_type = row[1]
+                    target = row[2]
+                    progress = row[5] or 0
+                    deadline = row[4]
+                    if task_type == "reading" and unit == "pages":
+                        start_page = int(progress) + 1
+                        end_page = int(progress + (planned or 0))
+                        task_info = (
+                            f"📖 Leitura: '{title}' — paginas {start_page} a {end_page}"
+                            f" (total {target} paginas, ja lidas {int(progress)})"
+                        )
+                        if deadline:
+                            task_info += f" — prazo: {str(deadline)[:10]}"
+                    elif task_type == "reading":
+                        task_info = (
+                            f"📖 Leitura: '{title}' — {planned or '?'} {unit} neste pulso"
+                            f" (total {target} {unit}, progresso {progress})"
+                        )
+                    else:
+                        task_info = (
+                            f"📋 Tarefa: '{title}' — {planned or '?'} {unit}"
+                            f" ({task_type}, deadline {str(deadline)[:10] if deadline else 'aberto'})"
+                        )
+                else:
+                    task_info = f"Tarefa #{tid}: {planned or '?'} {unit}"
+            except Exception:
+                task_info = f"Tarefa #{tid}: {planned or '?'} {unit}"
+            lines.append(task_info)
+        return "\n".join(lines)
+
+    def get_reading_context(self, *, cycle_id: str) -> str:
+        """Return contextual info about reading tasks for the agent prompt.
+        This is a standalone block that can be injected into the conversation
+        prompt so the agent knows what it is currently reading."""
+        entries = self.db.list_task_schedule(
+            agent_instance=self.agent_instance,
+            cycle_id=cycle_id,
+        )
+        if not entries:
+            return ""
+        reading_tasks_ids = set()
+        for entry in entries:
+            try:
+                cursor = self.db.conn.cursor()
+                cursor.execute(
+                    "SELECT task_type FROM work_tasks WHERE id = ?",
+                    (entry.get("task_id"),),
+                )
+                row = cursor.fetchone()
+                if row and row[0] == "reading":
+                    reading_tasks_ids.add(entry["task_id"])
+            except Exception:
+                continue
+        if not reading_tasks_ids:
+            return ""
+        lines = ["### Leitura em Andamento"]
+        lines.append(
+            "- Voce esta atualmente em meio a estes materiais de leitura. "
+            "Pode menciona-los naturalmente se a conversa tocar o tema."
+        )
+        for tid in sorted(reading_tasks_ids):
+            try:
+                cursor = self.db.conn.cursor()
+                cursor.execute(
+                    "SELECT title, effort_target, effort_unit, progress_value, "
+                    "deadline_at, status FROM work_tasks WHERE id = ?",
+                    (tid,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    title = row[0]
+                    target = row[1]
+                    unit = row[2] or "unidades"
+                    progress = int(row[3] or 0)
+                    status = row[5]
+                    status_emoji = {"completed": "✅", "overdue": "⚠️"}.get(status, "📖")
+                    lines.append(
+                        f"  {status_emoji} '{title}': {progress}/{target} {unit}"
+                    )
+                    if status == "completed":
+                        lines[-1] += " (concluido)"
+                    elif row[4]:
+                        lines[-1] += f" — prazo {str(row[4])[:10]}"
+            except Exception:
+                continue
+        lines.append("")
+        return "\n".join(lines)
