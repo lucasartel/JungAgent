@@ -292,6 +292,37 @@ class ConsciousnessLoopManager:
             pulse_count = 1
         return max(1, min(MAX_PHASE_PULSE_COUNT, pulse_count))
 
+    def _get_phase_window_minutes(self, phase_key: str) -> int:
+        """Return the default duration in minutes configured for a phase."""
+        phase = PHASE_BY_KEY.get(phase_key)
+        if phase is None:
+            return 360
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            "SELECT default_duration_minutes FROM consciousness_phase_config WHERE phase = ?",
+            (phase_key,),
+        )
+        row = cursor.fetchone()
+        if row and row[0] is not None:
+            return int(row[0])
+        return (phase.end_hour - phase.start_hour) * 60
+
+    def _count_phase_pulses_executed(self, *, cycle_id: str, phase_key: str) -> int:
+        """Count how many pulses have already run (or are running) for a phase today."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS n FROM consciousness_phase_pulses
+            WHERE agent_instance = ?
+              AND cycle_id = ?
+              AND phase = ?
+              AND status IN ('completed', 'running', 'failed', 'exhausted')
+            """,
+            (self.agent_instance, cycle_id, phase_key),
+        )
+        row = cursor.fetchone()
+        return int(row[0]) if row else 0
+
     def update_phase_pulse_count(self, phase_key: str, pulse_count: Any) -> Dict[str, Any]:
         self._ensure_phase_config()
         clean_phase = str(phase_key or "").strip()
@@ -2075,11 +2106,66 @@ class ConsciousnessLoopManager:
         from work import WorkEngine
 
         self._promote_from_placeholder(result)
+        cycle_id = result.get("cycle_id")
+        phase_key = "work"
+
+        # Phase awareness: how much time and how many pulses are available.
+        pulse_count = self._get_phase_pulse_count(phase_key)
+        window_minutes = self._get_phase_window_minutes(phase_key)
+        pulses_used = self._count_phase_pulses_executed(cycle_id=cycle_id, phase_key=phase_key)
+
+        # Plan work for today's remaining pulses (Corte W4).
+        schedule_plan: Dict[str, Any] = {}
+        try:
+            from engines.work_scheduler import WorkScheduler
+
+            scheduler = WorkScheduler(self.db)
+            schedule_plan = scheduler.plan_for_phase(
+                cycle_id=cycle_id,
+                pulse_count=pulse_count,
+                pulses_used_today=pulses_used,
+                phase_window_minutes=window_minutes,
+            )
+            result["raw_result"]["work_schedule"] = schedule_plan
+            result["metrics"]["work_pulse_count"] = pulse_count
+            result["metrics"]["work_pulses_used"] = pulses_used
+            result["metrics"]["work_window_minutes"] = window_minutes
+            result["metrics"]["work_planned_entries"] = schedule_plan.get("planned_entries", 0)
+            result["metrics"]["work_overdue_count"] = schedule_plan.get("overdue_count", 0)
+        except Exception as exc:
+            logger.warning("LOOP WORK scheduler failed: %s", exc)
+            result["warnings"].append("work_scheduler_failed")
+            result["metrics"]["work_scheduler_error"] = 1
+
         engine = WorkEngine(self.db)
         work_result = engine.run_work_phase(
             trigger_source=result.get("trigger_source") or "consciousness_loop",
-            cycle_id=result.get("cycle_id"),
+            cycle_id=cycle_id,
         )
+
+        # Record schedule completion after work runs (Corte W4).
+        pulse_index = pulses_used + 1
+        schedule_entries = schedule_plan.get("planned", [])
+        completed = 0
+        for entry in schedule_entries:
+            ep = entry.get("pulse_index")
+            if ep is None or ep != pulse_index:
+                continue
+            eid = entry.get("entry_id")
+            tid = entry.get("task_id")
+            if eid is None:
+                continue
+            try:
+                scheduler.record_pulse_completion(
+                    entry_id=int(eid),
+                    actual_effort=entry.get("planned_effort"),
+                    actual_effort_unit=entry.get("unit"),
+                    task_id=tid,
+                )
+                completed += 1
+            except Exception as exc:
+                logger.warning("LOOP WORK schedule completion failed for entry %s: %s", eid, exc)
+        result["metrics"]["work_schedule_completed"] = completed
 
         result["status"] = "success" if work_result.get("success") else "partial_success"
         result["warnings"].extend(work_result.get("warnings") or [])
