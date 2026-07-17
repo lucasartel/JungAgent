@@ -1,0 +1,213 @@
+{% extends "base_v2.html" %}
+{% block title %}Work Tasks - JungAgent Admin{% endblock %}
+
+{% block content %}
+<section class="page-shell-v2">
+    <header class="page-header-v2">
+        <div>
+            <p class="page-kicker-v2">Work · Tasks</p>
+            <h1 class="page-title-v2">Tasks com Prazo e Progresso</h1>
+            <p class="page-subtitle-v2">Crie tarefas com deadline, acompanhe leitura e distribua entre pulsos.</p>
+        </div>
+    </header>
+
+    {% include "partials/admin_agent_subnav.html" %}
+
+    <!-- Create Task Card -->
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Nova Task</h2>
+            </div>
+        </div>
+        <div class="panel-body-v2">
+            <form id="createTaskForm" onsubmit="return createTask(event)" style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
+                <div style="flex:1; min-width:200px;">
+                    <label style="font-size:12px; color:#999;">Titulo *</label>
+                    <input type="text" id="taskTitle" required style="width:100%; padding:6px;">
+                </div>
+                <div style="min-width:100px;">
+                    <label style="font-size:12px; color:#999;">Tipo</label>
+                    <select id="taskType" style="padding:6px;">
+                        <option value="reading" selected>Leitura</option>
+                        <option value="daily">Diaria</option>
+                        <option value="short_term">Curto prazo</option>
+                        <option value="medium_term">Medio prazo</option>
+                        <option value="long_term">Longo prazo</option>
+                    </select>
+                </div>
+                <div style="min-width:120px;">
+                    <label style="font-size:12px; color:#999;">Deadline</label>
+                    <input type="date" id="taskDeadline" style="padding:6px;">
+                </div>
+                <div style="width:70px;">
+                    <label style="font-size:12px; color:#999;">Meta</label>
+                    <input type="number" id="taskEffort" placeholder="300" style="width:100%; padding:6px;">
+                </div>
+                <div style="width:80px;">
+                    <label style="font-size:12px; color:#999;">Unidade</label>
+                    <select id="taskEffortUnit" style="padding:6px;">
+                        <option value="pages">paginas</option>
+                        <option value="hours">horas</option>
+                        <option value="sections">secoes</option>
+                        <option value="words">palavras</option>
+                    </select>
+                </div>
+                <div style="width:60px;">
+                    <label style="font-size:12px; color:#999;">Prio</label>
+                    <input type="number" id="taskPriority" value="50" min="1" max="100" style="width:100%; padding:6px;">
+                </div>
+                <button type="submit" class="btn-2" style="padding:7px 16px;">Criar</button>
+            </form>
+            <div id="createStatus" style="margin-top:8px; font-size:13px;"></div>
+        </div>
+    </section>
+
+    <!-- Tasks List Card -->
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Tasks</h2>
+                <p class="panel-subtitle-v2" id="taskCount">Carregando...</p>
+            </div>
+            <button onclick="loadTasks()" class="btn-2" style="padding:6px 12px;">⟳ Recarregar</button>
+        </div>
+        <div class="panel-body-v2">
+            <div id="tasksList" style="display:flex; flex-direction:column; gap:10px;">Carregando...</div>
+        </div>
+    </section>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const STATUS_COLORS = {
+    open: '#999', in_progress: '#3498db', completed: '#27ae60',
+    overdue: '#e74c3c', cancelled: '#666'
+};
+
+async function loadTasks() {
+    const resp = await fetch('/admin/work/tasks?limit=50');
+    const data = await resp.json();
+    if (!data.success) return;
+    const tasks = data.tasks || [];
+    const summary = data.summary || {};
+    document.getElementById('taskCount').textContent =
+        `${summary.total_open || tasks.length} tasks | ${summary.overdue_count || 0} atrasadas | ${summary.in_progress_count || 0} em progresso`;
+    const list = document.getElementById('tasksList');
+    if (tasks.length === 0) {
+        list.innerHTML = '<p style="color:#999;">Nenhuma task criada ainda.</p>';
+        return;
+    }
+    list.innerHTML = tasks.map(t => {
+        const color = STATUS_COLORS[t.status] || '#999';
+        const progress = t.effort_target ? Math.min(100, (t.progress_value || 0) / t.effort_target * 100) : 0;
+        const deadline = t.deadline_at ? t.deadline_at.substring(0, 10) : 'sem prazo';
+        const attBtn = `<button onclick="uploadAttachment(${t.id})" style="padding:2px 6px; font-size:11px;">📎</button>`;
+        const progressBar = t.effort_target ? `
+            <div style="flex:1; background:#333; border-radius:3px; height:6px; margin:4px 0;">
+                <div style="width:${progress}%; background:${color}; border-radius:3px; height:6px;"></div>
+            </div>
+            <span style="font-size:11px; color:#999; min-width:60px;">${t.progress_value || 0}/${t.effort_target} ${t.effort_unit || ''}</span>` : '';
+        const progressInput = (t.status !== 'completed' && t.status !== 'cancelled') ? `
+            <div style="display:flex; gap:4px; align-items:center; margin-top:4px;">
+                <input type="number" id="prog_${t.id}" placeholder="${t.progress_value || 0}" style="width:60px; padding:2px; font-size:12px;">
+                <button onclick="updateProgress(${t.id})" style="padding:2px 8px; font-size:11px;">Atualizar</button>
+            </div>` : '';
+        return `<div style="border-left:3px solid ${color}; padding:8px 12px; background:#1a1a2e; border-radius:4px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <strong style="color:#ddd;">#${t.id} ${escapeHtml(t.title)}</strong>
+                <span style="display:flex; gap:6px; align-items:center;">
+                    <span style="background:${color}; color:#111; padding:2px 8px; border-radius:3px; font-size:11px; font-weight:bold;">${t.status}</span>
+                    ${attBtn}
+                </span>
+            </div>
+            <div style="font-size:12px; color:#888; margin-top:4px;">
+                ${t.task_type} · ${deadline} · prioridade ${t.priority || 50}
+                ${t.description ? ' · ' + escapeHtml(t.description).substring(0, 80) : ''}
+            </div>
+            ${progressBar}
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+                ${progressInput}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+async function createTask(e) {
+    e.preventDefault();
+    const st = document.getElementById('createStatus');
+    st.textContent = 'Criando...';
+    const resp = await fetch('/admin/work/tasks', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            title: document.getElementById('taskTitle').value,
+            task_type: document.getElementById('taskType').value,
+            deadline_at: document.getElementById('taskDeadline').value || null,
+            effort_target: parseFloat(document.getElementById('taskEffort').value) || null,
+            effort_unit: document.getElementById('taskEffortUnit').value || null,
+            priority: parseInt(document.getElementById('taskPriority').value) || 50,
+        })
+    });
+    const data = await resp.json();
+    if (data.success) {
+        st.innerHTML = '<span style="color:#27ae60;">Task #' + data.task.id + ' criada.</span>';
+        document.getElementById('taskTitle').value = '';
+        loadTasks();
+    } else {
+        st.innerHTML = '<span style="color:#e74c3c;">' + escapeHtml(data.error || 'Erro') + '</span>';
+    }
+}
+
+async function updateProgress(taskId) {
+    const inp = document.getElementById('prog_' + taskId);
+    const val = parseFloat(inp.value);
+    if (isNaN(val)) return alert('Digite um numero valido.');
+    const resp = await fetch('/admin/work/tasks/' + taskId + '/progress', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({progress_value: val, progress_unit: null})
+    });
+    const data = await resp.json();
+    if (data.success) {
+        loadTasks();
+    } else {
+        alert('Erro: ' + (data.error || 'desconhecido'));
+    }
+}
+
+async function uploadAttachment(taskId) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.md,.epub';
+    input.onchange = async () => {
+        const file = input.files[0];
+        if (!file) return;
+        if (file.size > 50 * 1024 * 1024) return alert('Arquivo muito grande (max 50MB).');
+        const form = new FormData();
+        form.append('file', file);
+        const resp = await fetch('/admin/work/tasks/' + taskId + '/attachments', {
+            method: 'POST', body: form
+        });
+        const data = await resp.json();
+        if (data.success) {
+            alert('Anexo salvo: ' + file.name + (data.attachment?.extraction?.page_count ? ' (' + data.attachment.extraction.page_count + ' paginas extraidas)' : ''));
+            loadTasks();
+        } else {
+            alert('Erro: ' + (data.error || 'desconhecido'));
+        }
+    };
+    input.click();
+}
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str || '';
+    return div.innerHTML;
+}
+
+loadTasks();
+setInterval(loadTasks, 60000);
+</script>
+{% endblock %}

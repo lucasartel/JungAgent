@@ -383,3 +383,14 @@ async def update_task_progress(
     except Exception as e:
         logger.error(f"Erro ao atualizar progresso da task {task_id}: {e}")
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
+@router.get("/tasks/dashboard", response_class=HTMLResponse)
+async def work_tasks_dashboard(request: Request, admin: Dict = Depends(require_master)):
+    return templates.TemplateResponse(
+        "dashboards/work_tasks.html",
+        {
+            "request": request,
+            "active_nav": "work",
+        },
+    )
