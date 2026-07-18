@@ -21,6 +21,7 @@ from work.common import (
     _truncate,
 )
 from work.autonomy import WorkAutonomyMixin
+from work.attachments import WorkAttachmentMixin
 from work.briefs import WorkBriefMixin
 from work.delivery import WorkDeliveryMixin
 from work.destinations import WorkDestinationRegistry
@@ -41,6 +42,7 @@ class WorkEngine(
     WorkAutonomyMixin,
     WorkPersistenceMixin,
     WorkDeliveryMixin,
+    WorkAttachmentMixin,
 ):
     def __init__(self, db_manager):
         self.db = db_manager

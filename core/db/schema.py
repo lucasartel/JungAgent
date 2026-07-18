@@ -1148,5 +1148,31 @@ class SchemaDatabaseMixin:
         if hasattr(self, "_init_work_tasks_schema"):
             self._init_work_tasks_schema()
 
+        # R2: project-level attachments (replaces work_task_attachments)
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS work_project_attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                filename TEXT NOT NULL,
+                stored_path TEXT NOT NULL,
+                size_bytes INTEGER,
+                mime_type TEXT,
+                uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                uploaded_by TEXT DEFAULT 'admin',
+                extracted_text TEXT,
+                extraction_status TEXT DEFAULT 'pending',
+                extracted_at DATETIME,
+                page_count INTEGER,
+                word_count INTEGER,
+                FOREIGN KEY (project_id) REFERENCES work_projects(id)
+            )
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_work_project_attachments_project "
+            "ON work_project_attachments(project_id)"
+        )
+
         self.conn.commit()
         logger.info("âœ… Schema SQLite criado/verificado com Ã­ndices de performance")

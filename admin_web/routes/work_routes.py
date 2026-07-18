@@ -156,6 +156,47 @@ async def delete_project(project_id: int, request: Request, admin: Dict = Depend
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 
+@router.post("/projects/{project_id}/attachments")
+async def upload_project_attachment(
+    project_id: int,
+    file: UploadFile = File(...),
+    admin: Dict = Depends(require_master),
+):
+    """Upload a file (PDF/DOC/etc) to a work project."""
+    try:
+        content = await file.read()
+        if not content:
+            return JSONResponse({"success": False, "error": "empty_file"}, status_code=400)
+        if len(content) > 50 * 1024 * 1024:
+            return JSONResponse({"success": False, "error": "file_too_large_max_50mb"}, status_code=413)
+        engine = get_work_engine()
+        result = await asyncio.to_thread(
+            engine.save_project_attachment,
+            project_id=project_id,
+            filename=file.filename or "upload",
+            content=content,
+            uploaded_by=admin.get("email", "admin"),
+        )
+        return {"success": True, "attachment": result}
+    except ValueError as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=400)
+    except Exception as e:
+        logger.error(f"Erro ao fazer upload para projeto {project_id}: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
+@router.get("/projects/{project_id}/attachments")
+async def list_project_attachments(project_id: int, admin: Dict = Depends(require_master)):
+    """List attachments for a work project."""
+    try:
+        engine = get_work_engine()
+        attachments = engine.list_project_attachments(project_id)
+        return {"success": True, "attachments": attachments}
+    except Exception as e:
+        logger.error(f"Erro ao listar anexos do projeto {project_id}: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
 @router.post("/briefs/manual")
 async def create_manual_brief(request: Request, admin: Dict = Depends(require_master)):
     try:
