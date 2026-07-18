@@ -190,6 +190,11 @@ class WorkProjectMixin:
             "editorial_policy",
             "seo_policy",
             "daily_action_limit",
+            "deadline_at",
+            "effort_target",
+            "effort_unit",
+            "progress_value",
+            "progress_unit",
         }
         payload = {}
         for key, value in (updates or {}).items():
@@ -298,3 +303,59 @@ class WorkProjectMixin:
             "cancelled_briefs": cancelled_briefs,
             "cancelled_tickets": cancelled_tickets,
         }
+
+    # ------------------------------------------------------------------
+    # Deadline + effort + progress tracking (R1 realignment)
+    # ------------------------------------------------------------------
+
+    def list_projects_with_deadline(self) -> List[Dict[str, Any]]:
+        """Return active projects that have a deadline_at set."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM work_projects
+            WHERE status = 'active' AND deadline_at IS NOT NULL
+            ORDER BY deadline_at ASC, priority DESC
+            """
+        )
+        return [self._project_row_to_dict(row) for row in cursor.fetchall()]
+
+    def update_project_progress(
+        self,
+        project_id: int,
+        *,
+        progress_value: float,
+        progress_unit: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Update progress on a project. Auto-completes if target reached."""
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("Projeto nao encontrado")
+
+        now_iso = _now_iso()
+        cursor = self.db.conn.cursor()
+
+        # Check if completed
+        target = project.get("effort_target")
+        new_status = project.get("status", "active")
+        if target is not None and float(progress_value) >= float(target):
+            new_status = "completed"
+
+        cursor.execute(
+            """
+            UPDATE work_projects
+            SET progress_value = ?,
+                progress_unit = COALESCE(?, progress_unit),
+                last_progress_at = ?,
+                status = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (float(progress_value), progress_unit, now_iso, new_status, now_iso, project_id),
+        )
+        self.db.conn.commit()
+        return self.get_project(project_id)
+
+    def _project_row_to_dict(self, row: Any) -> Dict[str, Any]:
+        cols = [d[0] for d in self.db.conn.execute("SELECT * FROM work_projects LIMIT 0").description]
+        return dict(zip(cols, row)) if not isinstance(row, dict) else row

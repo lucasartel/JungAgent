@@ -1117,6 +1117,22 @@ class SchemaDatabaseMixin:
         except sqlite3.OperationalError:
             pass
 
+        # R1: extend work_projects with deadline, effort and progress tracking
+        # so reading tasks (and any long-term project) can have explicit targets.
+        for col_def in (
+            "deadline_at DATETIME",
+            "effort_target REAL",
+            "effort_unit TEXT",
+            "progress_value REAL DEFAULT 0",
+            "progress_unit TEXT",
+            "last_progress_at DATETIME",
+        ):
+            col_name = col_def.split()[0]
+            try:
+                cursor.execute(f"ALTER TABLE work_projects ADD COLUMN {col_def}")
+            except sqlite3.OperationalError:
+                pass
+
         if hasattr(self, "_init_integrative_self_schema"):
             self._init_integrative_self_schema()
 
