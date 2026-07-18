@@ -973,20 +973,11 @@
   },
   {
     "module": "admin_web/routes/work_routes.py",
-    "method": "GET",
-    "path": "/dashboard",
-    "full_path": "/admin/work/dashboard",
-    "endpoint": "work_dashboard",
-    "line": 246,
-    "migration_bucket": "work_routes"
-  },
-  {
-    "module": "admin_web/routes/work_routes.py",
     "method": "POST",
     "path": "/tasks",
     "full_path": "/admin/work/tasks",
     "endpoint": "create_work_task",
-    "line": 278,
+    "line": 268,
     "migration_bucket": "work_routes"
   },
   {
@@ -995,34 +986,7 @@
     "path": "/tasks",
     "full_path": "/admin/work/tasks",
     "endpoint": "list_work_tasks",
-    "line": 301,
-    "migration_bucket": "work_routes"
-  },
-  {
-    "module": "admin_web/routes/work_routes.py",
-    "method": "GET",
-    "path": "/tasks/{task_id}",
-    "full_path": "/admin/work/tasks/{task_id}",
-    "endpoint": "get_work_task",
-    "line": 318,
-    "migration_bucket": "work_routes"
-  },
-  {
-    "module": "admin_web/routes/work_routes.py",
-    "method": "POST",
-    "path": "/tasks/{task_id}/attachments",
-    "full_path": "/admin/work/tasks/{task_id}/attachments",
-    "endpoint": "upload_task_attachment",
-    "line": 332,
-    "migration_bucket": "work_routes"
-  },
-  {
-    "module": "admin_web/routes/work_routes.py",
-    "method": "POST",
-    "path": "/tasks/{task_id}/progress",
-    "full_path": "/admin/work/tasks/{task_id}/progress",
-    "endpoint": "update_task_progress",
-    "line": 365,
+    "line": 291,
     "migration_bucket": "work_routes"
   },
   {
@@ -1031,7 +995,34 @@
     "path": "/tasks/dashboard",
     "full_path": "/admin/work/tasks/dashboard",
     "endpoint": "work_tasks_dashboard",
-    "line": 389,
+    "line": 308,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "GET",
+    "path": "/tasks/{task_id}",
+    "full_path": "/admin/work/tasks/{task_id}",
+    "endpoint": "get_work_task",
+    "line": 319,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "POST",
+    "path": "/tasks/{task_id}/attachments",
+    "full_path": "/admin/work/tasks/{task_id}/attachments",
+    "endpoint": "upload_task_attachment",
+    "line": 333,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "POST",
+    "path": "/tasks/{task_id}/progress",
+    "full_path": "/admin/work/tasks/{task_id}/progress",
+    "endpoint": "update_task_progress",
+    "line": 366,
     "migration_bucket": "work_routes"
   },
   {
