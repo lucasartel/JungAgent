@@ -2130,7 +2130,7 @@ class ConsciousnessLoopManager:
             result["metrics"]["work_pulse_count"] = pulse_count
             result["metrics"]["work_pulses_used"] = pulses_used
             result["metrics"]["work_window_minutes"] = window_minutes
-            result["metrics"]["work_planned_entries"] = schedule_plan.get("planned_entries", 0)
+            result["metrics"]["work_briefs_created"] = schedule_plan.get("briefs_created", 0)
             result["metrics"]["work_overdue_count"] = schedule_plan.get("overdue_count", 0)
 
             # Reading awareness (Corte W5): inform the pulse what it is working on.
@@ -2151,28 +2151,22 @@ class ConsciousnessLoopManager:
             cycle_id=cycle_id,
         )
 
-        # Record schedule completion after work runs (Corte W4).
-        pulse_index = pulses_used + 1
+        # Record schedule completion after work runs.
         schedule_entries = schedule_plan.get("planned", [])
         completed = 0
         for entry in schedule_entries:
-            ep = entry.get("pulse_index")
-            if ep is None or ep != pulse_index:
-                continue
-            eid = entry.get("entry_id")
-            tid = entry.get("task_id")
-            if eid is None:
+            project_id = entry.get("project_id")
+            if project_id is None:
                 continue
             try:
                 scheduler.record_pulse_completion(
-                    entry_id=int(eid),
+                    project_id=int(project_id),
                     actual_effort=entry.get("planned_effort"),
                     actual_effort_unit=entry.get("unit"),
-                    task_id=tid,
                 )
                 completed += 1
             except Exception as exc:
-                logger.warning("LOOP WORK schedule completion failed for entry %s: %s", eid, exc)
+                logger.warning("LOOP WORK schedule completion failed for project %s: %s", project_id, exc)
         result["metrics"]["work_schedule_completed"] = completed
 
         result["status"] = "success" if work_result.get("success") else "partial_success"
