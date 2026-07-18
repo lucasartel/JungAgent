@@ -1053,6 +1053,15 @@
     "migration_bucket": "work_routes"
   },
   {
+    "module": "admin_web/routes/work_routes.py",
+    "method": "GET",
+    "path": "/dashboard",
+    "full_path": "/admin/work/dashboard",
+    "endpoint": "work_dashboard",
+    "line": 443,
+    "migration_bucket": "work_routes"
+  },
+  {
     "module": "admin_web/routes/world_consciousness_routes.py",
     "method": "GET",
     "path": "/state",
