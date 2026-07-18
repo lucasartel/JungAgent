@@ -1,10 +1,14 @@
 """Work tasks persistence mixin.
 
-Stores tasks with deadlines, progress tracking, and file attachments.
-Tasks can be daily (same-day deadline), short/medium/long term (distributed
-across days and pulses), or reading tasks (pages per pulse).
+DEPRECATED (R6): This module has been superseded by the work_projects +
+work_briefs architecture (see work/projects.py and work/attachments.py).
+The scheduler now reads from work_projects with deadline_at and generates
+work_briefs instead of work_task_schedule entries.
 
-Schema is idempotent (CREATE TABLE IF NOT EXISTS). No destructive ALTERs.
+The tables and methods remain for backward compatibility (data in
+production is not deleted) but no new code should depend on them.
+New code should use WorkProjectMixin.list_projects_with_deadline() and
+WorkAttachmentMixin.save_project_attachment() instead.
 """
 from __future__ import annotations
 

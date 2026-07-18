@@ -128,6 +128,19 @@
             <div class="scroll-list-v2" id="runsList"></div>
         </div>
     </section>
+
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
+                <h2 class="panel-title-v2">Projetos com Prazo e Leitura</h2>
+                <p class="panel-subtitle-v2">Projetos com deadline, esforço e progresso. Anexe PDFs e acompanhe a leitura.</p>
+            </div>
+            <button onclick="loadProjectsWithDeadline()" class="btn-2" style="padding:6px 12px;">⟳ Recarregar</button>
+        </div>
+        <div class="panel-body-v2">
+            <div id="projectsWithDeadline" style="display:flex; flex-direction:column; gap:10px;">Carregando...</div>
+        </div>
+    </section>
 </section>
 {% endblock %}
 
@@ -663,5 +676,72 @@ document.getElementById("pendingApprovalsList").addEventListener("click", async 
 
 loadWork();
 setInterval(loadWork, 30000);
+
+// --- Projects with deadline (R4) ---
+async function loadProjectsWithDeadline() {
+    const list = document.getElementById('projectsWithDeadline');
+    if (!list) return;
+    try {
+        const resp = await fetch('/admin/work/projects?limit=50');
+        const data = await resp.json();
+        if (!data.success) { list.innerHTML = 'Erro ao carregar.'; return; }
+        const projects = (data.projects || []).filter(p => p.deadline_at || p.effort_target);
+        if (projects.length === 0) {
+            list.innerHTML = '<p style="color:#999;">Nenhum projeto com prazo. Use a API /admin/work/projects com deadline_at e effort_target para criar.</p>';
+            return;
+        }
+        list.innerHTML = projects.map(p => {
+            const progress = p.effort_target ? Math.min(100, (p.progress_value || 0) / p.effort_target * 100) : 0;
+            const color = p.status === 'completed' ? '#27ae60' : p.status === 'paused' ? '#999' : '#3498db';
+            const deadline = p.deadline_at ? p.deadline_at.substring(0, 10) : 'sem prazo';
+            const progressBar = p.effort_target ? `
+                <div style="flex:1; background:#333; border-radius:3px; height:6px; margin:4px 0;">
+                    <div style="width:${progress}%; background:${color}; border-radius:3px; height:6px;"></div>
+                </div>
+                <span style="font-size:11px; color:#999; min-width:80px;">${p.progress_value || 0}/${p.effort_target} ${p.effort_unit || ''}</span>` : '';
+            const attBtn = `<button onclick="uploadProjectFile(${p.id})" style="padding:2px 6px; font-size:11px;">📎 PDF</button>`;
+            return `<div style="border-left:3px solid ${color}; padding:8px 12px; background:#1a1a2e; border-radius:4px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <strong style="color:#ddd;">${escapeHtml(p.name || 'Projeto #' + p.id)}</strong>
+                    <span style="display:flex; gap:6px; align-items:center;">
+                        <span style="background:${color}; color:#111; padding:2px 8px; border-radius:3px; font-size:11px; font-weight:bold;">${p.status}</span>
+                        ${attBtn}
+                    </span>
+                </div>
+                <div style="font-size:12px; color:#888; margin-top:4px;">
+                    ${p.effort_unit || 'projeto'} · ${deadline} · prio ${p.priority || 50}
+                </div>
+                ${progressBar}
+            </div>`;
+        }).join('');
+    } catch (e) { list.innerHTML = 'Erro: ' + e.message; }
+}
+
+async function uploadProjectFile(projectId) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.md,.epub';
+    input.onchange = async () => {
+        const file = input.files[0];
+        if (!file) return;
+        if (file.size > 50 * 1024 * 1024) return alert('Arquivo muito grande (max 50MB).');
+        const form = new FormData();
+        form.append('file', file);
+        const resp = await fetch('/admin/work/projects/' + projectId + '/attachments', {
+            method: 'POST', body: form
+        });
+        const data = await resp.json();
+        if (data.success) {
+            alert('Anexo salvo: ' + file.name + (data.attachment?.page_count ? ' (' + data.attachment.page_count + ' paginas)' : ''));
+            loadProjectsWithDeadline();
+        } else {
+            alert('Erro: ' + (data.error || 'desconhecido'));
+        }
+    };
+    input.click();
+}
+
+loadProjectsWithDeadline();
+setInterval(loadProjectsWithDeadline, 60000);
 </script>
 {% endblock %}

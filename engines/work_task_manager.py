@@ -1,11 +1,10 @@
 """Work task manager.
 
-CRUD for work_tasks (tasks with deadlines, progress, attachments).
-Also handles file attachment storage and PDF text extraction.
-
-This module is the entry point for admin routes and the scheduler.
-It does NOT decide what to work on (that's the scheduler's job); it just
-manages the lifecycle of tasks.
+DEPRECATED (R6): Use WorkEngine (work/projects.py + work/attachments.py)
+for new code. This module remains for backward compatibility and for the
+extract_pdf_text() function which is still reused by WorkAttachmentMixin.
+The admin routes /admin/work/tasks/* still work but are legacy; prefer
+/admin/work/projects and /admin/work/projects/{id}/attachments.
 """
 from __future__ import annotations
 

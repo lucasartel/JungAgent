@@ -928,11 +928,20 @@
   },
   {
     "module": "admin_web/routes/work_routes.py",
+    "method": "GET",
+    "path": "/projects",
+    "full_path": "/admin/work/projects",
+    "endpoint": "list_projects",
+    "line": 160,
+    "migration_bucket": "work_routes"
+  },
+  {
+    "module": "admin_web/routes/work_routes.py",
     "method": "POST",
     "path": "/projects/{project_id}/attachments",
     "full_path": "/admin/work/projects/{project_id}/attachments",
     "endpoint": "upload_project_attachment",
-    "line": 160,
+    "line": 172,
     "migration_bucket": "work_routes"
   },
   {
@@ -941,7 +950,7 @@
     "path": "/projects/{project_id}/attachments",
     "full_path": "/admin/work/projects/{project_id}/attachments",
     "endpoint": "list_project_attachments",
-    "line": 189,
+    "line": 201,
     "migration_bucket": "work_routes"
   },
   {
@@ -950,7 +959,7 @@
     "path": "/briefs/manual",
     "full_path": "/admin/work/briefs/manual",
     "endpoint": "create_manual_brief",
-    "line": 201,
+    "line": 213,
     "migration_bucket": "work_routes"
   },
   {
@@ -959,7 +968,7 @@
     "path": "/briefs/{brief_id}/compose",
     "full_path": "/admin/work/briefs/{brief_id}/compose",
     "endpoint": "compose_brief",
-    "line": 231,
+    "line": 243,
     "migration_bucket": "work_routes"
   },
   {
@@ -968,7 +977,7 @@
     "path": "/tickets/{ticket_id}/approve",
     "full_path": "/admin/work/tickets/{ticket_id}/approve",
     "endpoint": "approve_ticket",
-    "line": 248,
+    "line": 260,
     "migration_bucket": "work_routes"
   },
   {
@@ -977,7 +986,7 @@
     "path": "/tickets/{ticket_id}/reject",
     "full_path": "/admin/work/tickets/{ticket_id}/reject",
     "endpoint": "reject_ticket",
-    "line": 259,
+    "line": 271,
     "migration_bucket": "work_routes"
   },
   {
@@ -986,7 +995,7 @@
     "path": "/artifacts/{artifact_id}/request-publish",
     "full_path": "/admin/work/artifacts/{artifact_id}/request-publish",
     "endpoint": "request_publish",
-    "line": 276,
+    "line": 288,
     "migration_bucket": "work_routes"
   },
   {
@@ -995,7 +1004,7 @@
     "path": "/tasks",
     "full_path": "/admin/work/tasks",
     "endpoint": "create_work_task",
-    "line": 309,
+    "line": 321,
     "migration_bucket": "work_routes"
   },
   {
@@ -1004,7 +1013,7 @@
     "path": "/tasks",
     "full_path": "/admin/work/tasks",
     "endpoint": "list_work_tasks",
-    "line": 332,
+    "line": 344,
     "migration_bucket": "work_routes"
   },
   {
@@ -1013,7 +1022,7 @@
     "path": "/tasks/dashboard",
     "full_path": "/admin/work/tasks/dashboard",
     "endpoint": "work_tasks_dashboard",
-    "line": 349,
+    "line": 361,
     "migration_bucket": "work_routes"
   },
   {
@@ -1022,7 +1031,7 @@
     "path": "/tasks/{task_id}",
     "full_path": "/admin/work/tasks/{task_id}",
     "endpoint": "get_work_task",
-    "line": 360,
+    "line": 372,
     "migration_bucket": "work_routes"
   },
   {
@@ -1031,7 +1040,7 @@
     "path": "/tasks/{task_id}/attachments",
     "full_path": "/admin/work/tasks/{task_id}/attachments",
     "endpoint": "upload_task_attachment",
-    "line": 374,
+    "line": 386,
     "migration_bucket": "work_routes"
   },
   {
@@ -1040,7 +1049,7 @@
     "path": "/tasks/{task_id}/progress",
     "full_path": "/admin/work/tasks/{task_id}/progress",
     "endpoint": "update_task_progress",
-    "line": 407,
+    "line": 419,
     "migration_bucket": "work_routes"
   },
   {

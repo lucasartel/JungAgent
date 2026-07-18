@@ -156,6 +156,18 @@ async def delete_project(project_id: int, request: Request, admin: Dict = Depend
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 
+@router.get("/projects")
+async def list_projects(admin: Dict = Depends(require_master)):
+    """List all work projects for the dashboard."""
+    try:
+        engine = get_work_engine()
+        projects = engine.list_projects()
+        return {"success": True, "projects": projects}
+    except Exception as e:
+        logger.error(f"Erro ao listar projetos: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
 @router.post("/projects/{project_id}/attachments")
 async def upload_project_attachment(
     project_id: int,
