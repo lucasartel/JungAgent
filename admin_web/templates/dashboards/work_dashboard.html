@@ -132,6 +132,52 @@
     <section class="panel-v2">
         <div class="panel-header-v2">
             <div>
+                <h2 class="panel-title-v2">Novo Projeto com Prazo</h2>
+                <p class="panel-subtitle-v2">Crie um projeto de leitura ou trabalho com deadline e esforço. O scheduler distribui automaticamente entre pulsos.</p>
+            </div>
+        </div>
+        <div class="panel-body-v2">
+            <form id="createProjectForm" onsubmit="return createProject(event)" style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
+                <div style="flex:1; min-width:200px;">
+                    <label style="font-size:12px; color:#999;">Nome do projeto *</label>
+                    <input type="text" id="projName" required placeholder="Ler Morin - Pensamento Complexo" style="width:100%; padding:6px;">
+                </div>
+                <div style="min-width:100px;">
+                    <label style="font-size:12px; color:#999;">Tipo</label>
+                    <select id="projType" style="padding:6px;">
+                        <option value="pages" selected>Leitura (paginas)</option>
+                        <option value="hours">Trabalho (horas)</option>
+                        <option value="sections">Relatorio (secoes)</option>
+                        <option value="words">Escrita (palavras)</option>
+                    </select>
+                </div>
+                <div style="width:70px;">
+                    <label style="font-size:12px; color:#999;">Meta</label>
+                    <input type="number" id="projEffort" placeholder="300" style="width:100%; padding:6px;">
+                </div>
+                <div style="min-width:120px;">
+                    <label style="font-size:12px; color:#999;">Deadline</label>
+                    <input type="date" id="projDeadline" style="padding:6px;">
+                </div>
+                <div style="width:60px;">
+                    <label style="font-size:12px; color:#999;">Prio</label>
+                    <input type="number" id="projPriority" value="80" min="1" max="100" style="width:100%; padding:6px;">
+                </div>
+                <div style="min-width:120px;">
+                    <label style="font-size:12px; color:#999;">Destination</label>
+                    <select id="projDestination" style="padding:6px;">
+                        <option value="">-- auto --</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn-2" style="padding:7px 16px;">Criar</button>
+            </form>
+            <div id="createProjStatus" style="margin-top:8px; font-size:13px;"></div>
+        </div>
+    </section>
+
+    <section class="panel-v2">
+        <div class="panel-header-v2">
+            <div>
                 <h2 class="panel-title-v2">Projetos com Prazo e Leitura</h2>
                 <p class="panel-subtitle-v2">Projetos com deadline, esforço e progresso. Anexe PDFs e acompanhe a leitura.</p>
             </div>
@@ -743,5 +789,75 @@ async function uploadProjectFile(projectId) {
 
 loadProjectsWithDeadline();
 setInterval(loadProjectsWithDeadline, 60000);
+
+// --- Create project form ---
+async function loadDestinations() {
+    try {
+        const resp = await fetch('/admin/work/state');
+        const data = await resp.json();
+        if (!data.success) return;
+        const dests = (data.state?.destinations || []);
+        const sel = document.getElementById('projDestination');
+        if (!sel) return;
+        dests.forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.id;
+            opt.textContent = d.label || d.destination_key;
+            sel.appendChild(opt);
+        });
+    } catch(e) {}
+}
+
+async function createProject(e) {
+    e.preventDefault();
+    const st = document.getElementById('createProjStatus');
+    st.textContent = 'Criando...';
+    const name = document.getElementById('projName').value.trim();
+    if (!name) { st.innerHTML = '<span style="color:#e74c3c;">Nome obrigatorio.</span>'; return false; }
+    const effortType = document.getElementById('projType').value;
+    const effort = parseFloat(document.getElementById('projEffort').value) || null;
+    const deadline = document.getElementById('projDeadline').value || null;
+    const priority = parseInt(document.getElementById('projPriority').value) || 80;
+    const destId = parseInt(document.getElementById('projDestination').value) || null;
+
+    // Step 1: create project
+    const body = { name, priority, daily_action_limit: 1 };
+    if (destId) body.default_destination_id = destId;
+    const resp1 = await fetch('/admin/work/projects', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+    });
+    const data1 = await resp1.json();
+    if (!data1.success) {
+        st.innerHTML = '<span style="color:#e74c3c;">' + escapeHtml(data1.error || 'Erro') + '</span>';
+        return false;
+    }
+    const pid = data1.result?.id || data1.project?.id;
+    if (!pid) {
+        st.innerHTML = '<span style="color:#e74c3c;">Projeto criado mas ID nao retornado.</span>';
+        return false;
+    }
+
+    // Step 2: patch with deadline + effort
+    const patchBody = {};
+    if (deadline) patchBody.deadline_at = deadline + 'T23:59:59';
+    if (effort) { patchBody.effort_target = effort; patchBody.effort_unit = effortType; }
+    if (Object.keys(patchBody).length > 0) {
+        await fetch('/admin/work/projects/' + pid, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(patchBody)
+        });
+    }
+
+    st.innerHTML = '<span style="color:#27ae60;">Projeto #' + pid + ' criado: ' + escapeHtml(name) + '</span>';
+    document.getElementById('projName').value = '';
+    document.getElementById('projEffort').value = '';
+    loadProjectsWithDeadline();
+    return false;
+}
+
+loadDestinations();
 </script>
 {% endblock %}
