@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from work.common import _now_iso
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,7 +75,7 @@ class WorkAttachmentMixin:
             ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
             """,
             (project_id, safe_name, str(stored_path), size_bytes, mime_type,
-             uploaded_by, self._now_iso()),
+             uploaded_by, _now_iso()),
         )
         self.db.conn.commit()
         attachment_id = cursor.lastrowid
@@ -104,7 +106,7 @@ class WorkAttachmentMixin:
                 WHERE id = ?
                 """,
                 (extracted_text, status, result.get("page_count"),
-                 result.get("word_count"), self._now_iso(), attachment_id),
+                 result.get("word_count"), _now_iso(), attachment_id),
             )
             self.db.conn.commit()
             return result
