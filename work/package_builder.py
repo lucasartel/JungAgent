@@ -82,6 +82,7 @@ class WorkPackageBuilderMixin:
         permanent_seo_policy = extracted.get("seo_policy") or ""
 
         project_context = ""
+        reading_context = ""
         if brief.get("project_id"):
             project = self.get_project(int(brief["project_id"]))
             if project:
@@ -95,6 +96,11 @@ class WorkPackageBuilderMixin:
                     f"Politica editorial/voz: {permanent_editorial_policy}\n"
                     f"Politica SEO/descoberta: {permanent_seo_policy}"
                 )
+                # If this is a reading brief, fetch the actual PDF text for the
+                # pages scheduled in this pulse. This is what lets the agent
+                # truly READ the book instead of generating from training data.
+                if brief.get("action_type") == "reading":
+                    reading_context = self._build_reading_context(brief, project)
 
         if provider_key == "github":
             return self._build_github_work_package(brief, world_summary, identity_summary, project_context)
@@ -135,6 +141,8 @@ TAREFA DO DIA:
 PROJETO DE WORK:
 {project_context or 'Sem projeto especifico.'}
 
+{reading_context}
+
 ESTADO INTERNO RELEVANTE:
 {identity_summary[:2200]}
 
@@ -159,6 +167,7 @@ Regras obrigatorias:
 - A diretriz permanente do projeto orienta limites e estilo; ela nao e o trabalho final.
 - A tarefa do dia e o que deve ser produzido agora.
 - Use o mundo apenas como materia tematica complementar; o destino e o provider definem forma, voz, idioma e publico.
+- Se ha CONTEUDO DO LIVRO fornecido acima, voce DEVE basear suas notas de leitura NELE. Cite passagens reais, parafraseie trechos especificos e referencie ideias que estao de fato no texto fornecido. NAO invente conteudo que nao esta no texto.
 - Nao cite fontes gerais do mundo como se fossem referencias editoriais do destino.
 - NUNCA copie a diretriz permanente ou o briefing no corpo final.
 - Se o provider for WordPress e content_type for post, produza um artigo publicavel coerente com o destino.
@@ -302,3 +311,100 @@ Regras obrigatorias:
                 "errors": firecrawl_research.get("errors", []),
             },
         }
+
+    def _build_reading_context(
+        self,
+        brief: Dict[str, Any],
+        project: Dict[str, Any],
+    ) -> str:
+        """Fetch the actual PDF text for this reading pulse and format it
+        as context for the LLM. Returns empty string if no attachment found.
+
+        The method:
+        1. Finds the project's PDF attachment with extracted text.
+        2. Calculates which pages this pulse covers (based on project progress
+           and the brief's planned effort).
+        3. Slices the extracted text to approximate those pages.
+        4. Returns a formatted block for the LLM prompt.
+        """
+        try:
+            attachments = self.list_project_attachments(int(project["id"]))
+        except Exception as exc:
+            logger.warning("reading_context: could not list attachments: %s", exc)
+            return ""
+
+        pdf_att = None
+        for att in attachments:
+            if att.get("extraction_status") == "extracted" and att.get("mime_type") == "application/pdf":
+                pdf_att = att
+                break
+        if not pdf_att:
+            logger.info("reading_context: no extracted PDF attachment for project %s", project.get("id"))
+            return ""
+
+        # Get the full extracted text.
+        raw = self.get_project_attachment(pdf_att["id"])
+        if not raw or not raw.get("extracted_text"):
+            return ""
+        full_text = raw["extracted_text"]
+
+        # Calculate page range for this pulse.
+        progress = float(project.get("progress_value") or 0)
+        target = float(project.get("effort_target") or 0)
+        unit = project.get("effort_unit") or "pages"
+        total_pages = int(raw.get("page_count") or 0)
+        if total_pages <= 0:
+            total_pages = max(1, len(full_text.split("\f")))  # fallback: form-feed split
+
+        # Parse the brief objective to find planned effort.
+        # The scheduler writes "Ler paginas X a Y" or similar.
+        planned_pages = 0
+        objective = brief.get("objective") or ""
+        import re
+        page_match = re.search(r"paginas?\s+(\d+)\s+a\s+(\d+)", objective, re.IGNORECASE)
+        if page_match:
+            start_page = int(page_match.group(1))
+            end_page = int(page_match.group(2))
+            planned_pages = end_page - start_page + 1
+        else:
+            # Fallback: estimate from progress and remaining pages.
+            remaining = max(0, target - progress) if target else 0
+            planned_pages = max(1, int(remaining))
+
+        current_page = int(progress) + 1
+        end_page = min(total_pages, current_page + planned_pages - 1)
+
+        # Slice the text. PyPDF2 separates pages with \n\n, so we split by
+        # double newlines and approximate page boundaries.
+        # A more robust approach would store per-page text, but for now
+        # we use character-based slicing proportional to pages.
+        if total_pages > 0 and len(full_text) > 0:
+            chars_per_page = len(full_text) / total_pages
+            start_char = int((current_page - 1) * chars_per_page)
+            end_char = int(end_page * chars_per_page)
+            page_text = full_text[start_char:end_char]
+        else:
+            page_text = full_text[:5000]
+
+        # Cap to 12000 chars to avoid token explosion.
+        if len(page_text) > 12000:
+            page_text = page_text[:12000] + "\n\n[texto truncado para fitar limite de tokens]"
+
+        logger.info(
+            "reading_context: project=%s pages %d-%d of %d, %d chars extracted",
+            project.get("id"),
+            current_page,
+            end_page,
+            total_pages,
+            len(page_text),
+        )
+
+        return (
+            f"CONTEUDO DO LIVRO (paginas {current_page} a {end_page} de {total_pages}):\n"
+            f"---\n"
+            f"{page_text}\n"
+            f"---\n"
+            f"FIM DO CONTEUDO DO LIVRO.\n"
+            f"Escreva suas notas de leitura baseadas EXCLUSIVAMENTE no texto acima.\n"
+            f"Cite passagens reais, parafraseie trechos especificos.\n"
+        )
