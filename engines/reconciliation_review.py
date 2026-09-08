@@ -50,6 +50,19 @@ class ReconciliationReview:
             candidates.extend({"source_kind": kind, "source_id": str(row["phase_result_id"]), "state": "exhausted",
                 "evidence": {"phase": row["phase"], "attempts": row["integration_attempts"], "reason": row["integration_error"]}}
                 for row in rows)
+        exists = self.db.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='will_expressions'").fetchone()
+        if exists:
+            rows = self.db.conn.execute("""SELECT e.id, e.status, e.will_name, e.capability_key, e.scope_kind,
+                e.relation_id, e.user_id, e.cycle_id, e.delivery_event_id, e.reason, r.result_code
+                FROM will_expressions e LEFT JOIN will_expression_receipts r ON r.id = (
+                    SELECT id FROM will_expression_receipts WHERE expression_id = e.id ORDER BY id DESC LIMIT 1)
+                WHERE e.agent_instance = ? AND e.status IN ('preparation_uncertain', 'delivery_uncertain')
+                ORDER BY e.id DESC LIMIT ?""", (self.agent_instance, limit)).fetchall()
+            candidates.extend({"source_kind": "will_expression", "source_id": str(row["id"]), "state": row["status"],
+                "evidence": {"will_name": row["will_name"], "capability_key": row["capability_key"],
+                "scope_kind": row["scope_kind"], "relation_id": row["relation_id"], "user_id": row["user_id"],
+                "cycle_id": row["cycle_id"], "delivery_event_id": row["delivery_event_id"],
+                "reason": row["reason"], "receipt_code": row["result_code"]}} for row in rows)
         return candidates[:limit]
 
     def record(self, *, source_kind, source_id, state, decision, evidence_ref, reviewer_id, note=None):

@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from engines.reconciliation_review import ReconciliationReview
+from engines.will_expression import WillExpressionEngine
 
 
 def test_candidates_expose_terminal_pulse_evidence(loop_db):
@@ -33,3 +34,16 @@ def test_record_rejects_any_action_beyond_review(loop_db):
     assistant = ReconciliationReview(loop_db, "test_jung_v0")
     with pytest.raises(ValueError, match="invalid"):
         assistant.record(source_kind="phase_pulse", source_id="1", state="interrupted", decision="retry", evidence_ref="incident-42", reviewer_id="admin")
+
+
+def test_candidates_include_uncertain_will_delivery_without_payload(loop_db):
+    WillExpressionEngine(loop_db)
+    loop_db.conn.execute("""INSERT INTO will_expressions
+        (agent_instance, scope_kind, user_id, cycle_id, will_name, capability_key, gate_level, cost_class, idempotency_key, status, reason)
+        VALUES ('test_jung_v0', 'global', 'admin', '2026-09-08', 'relacionar', 'relacionar_proactive_message', 'admin_communicate', 'proactive_message', 'review-test', 'delivery_uncertain', 'interrupted_attempt_requires_review')""")
+    loop_db.conn.commit()
+    row = ReconciliationReview(loop_db, "test_jung_v0").candidates()[0]
+    assert row["source_kind"] == "will_expression"
+    assert row["state"] == "delivery_uncertain"
+    assert row["evidence"]["capability_key"] == "relacionar_proactive_message"
+    assert "payload" not in str(row)
