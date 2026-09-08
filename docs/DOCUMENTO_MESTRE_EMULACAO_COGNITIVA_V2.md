@@ -1,6 +1,6 @@
 # Documento Mestre: JungAgent - Laboratorio de Emulacao Cognitiva
 
-**Versao 3.18 - C9c3 em andamento: recuperacao local de falhas e conciliacao pendente - Setembro 2026**
+**Versao 3.19 - C9c3 em andamento: conciliacao assistida e gates pendentes - Setembro 2026**
 
 *Arquivo canonico vigente: `docs/DOCUMENTO_MESTRE_EMULACAO_COGNITIVA_V2.md`. O antigo `docs/DOCUMENTO_MESTRE_AGI_COGNITIVA.md` permanece como documento historico/operacional de referencia, mas este arquivo e a fonte de autoridade daqui em diante.*
 
@@ -20,7 +20,7 @@
 
 *Publicacao posterior autorizada: os sete commits ate `0fe253a` foram enviados a main publica de `lucasartel/JungAgent`. Railway confirmou SUCCESS no deploy `129fd623-6a52-4c5a-9f5e-12acfd191f26` em 07/09/2026 UTC (noite de 06/09 no Brasil). Verificacao pos-deploy: HTTP 200, bot/loop iniciados, sondas acessiveis, IMAGE_GENERATION_ENABLED=false e primeiro pulso com expression_reused, sem reenvio da tentativa antiga. Isso confirma inicializacao, nao exercita todos os caminhos de recuperacao em producao.*
 
-*C9c3 iniciado em 07/09/2026: primeiro bloco local no commit `5291360`, com 598 testes e 20 cenarios mock aprovados. O segundo bloco local fecha o recibo proativo duravel e sua retomada sem repetir processamento de memoria. O terceiro fecha a integracao pos-commit de resultados normais bem-sucedidos; o quarto fecha a agenda de pulsos e suas reservas quando a janela termina ou as tentativas acabam. O quinto fecha a recuperacao transacional dos efeitos locais de uma falha. C9c3 e C9 continuam abertos para conciliacao assistida e gates. Nenhum desses blocos realizou novo push, deploy ou sondagem de producao.*
+*C9c3 iniciado em 07/09/2026: primeiro bloco local no commit `5291360`, com 598 testes e 20 cenarios mock aprovados. O segundo bloco local fecha o recibo proativo duravel e sua retomada sem repetir processamento de memoria. O terceiro fecha a integracao pos-commit de resultados normais bem-sucedidos; o quarto fecha a agenda de pulsos e suas reservas quando a janela termina ou as tentativas acabam. O quinto fecha a recuperacao transacional dos efeitos locais de uma falha; o sexto cria o registro assistido de revisao. C9c3 e C9 continuam abertos para ampliar a conciliacao e fechar gates. Nenhum desses blocos realizou novo push, deploy ou sondagem de producao.*
 
 ---
 
@@ -625,10 +625,16 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 - **Fronteira explicita**: o fragmento so e criado quando o limiar ja calculado de falhas consecutivas o exige; bancos legados sem Working Memory preservam o caminho anterior. A recuperacao nao altera o pulso terminal, nao desativa a notificacao de falha e nao tenta interpretar efeitos externos ou incertos. Esses casos pertencem a conciliacao assistida seguinte.
 - **Validacao / habilitacao**: 8 testes novos cobrem integracao unica, rollback em cada gravacao, ausencia de fragmento parcial, banco sem a tabela lazy de ruminação e recuperacao sem reexecutar a fase. Suite completa: 621 testes aprovados. Os testes sao inteiramente locais e nao ativam custo, Telegram, imagem ou participante. Commit local desta entrega; nenhum push, deploy ou alteracao de producao.
 
+**C9c3 - Sexto bloco: registro assistido de conciliacao (08/09/2026; checkpoint local; C9c3 ainda em andamento).**
+
+- **Implementado**: `ReconciliationReview` lista evidencias resumidas de pulsos `interrupted`/`exhausted` e de filas pos-commit que esgotaram tentativas. A ferramenta somente admite duas decisoes humanas: `acknowledge` e `hold`. Toda decisao exige identificacao do revisor e uma referencia de evidencia, ficando gravada de modo idempotente com estado observado e data.
+- **Limite de poder**: ela nao oferece `retry`, `reset`, reenvio, reativacao de reserva, mudanca do estado-fonte ou qualquer efeito externo. Registrar uma revisao nao afirma que uma entrega ocorreu, nem autoriza nova entrega ou gasto. A adaptacao para preparacoes e recibos incertos sera acrescentada apenas depois de mapear suas evidencias persistidas e seus escopos.
+- **Validacao / habilitacao**: 3 testes locais verificam listagem de evidencia terminal, obrigatoriedade de evidencia/revisor e rejeicao de qualquer acao alem de revisao; nao ha acesso a provedor, Telegram, imagem ou participante. Commit local desta entrega; nenhum push, deploy ou alteracao de producao.
+
 **Continuacao obrigatoria: restante do C9c3 e fechamento do C9c.**
 
-1. Proxima acao: desenhar a ferramenta assistida para `interrupted`, `exhausted`, preparacao incerta e efeitos parciais. Ela deve exigir evidencia confiavel, registrar a decisao e nunca equivaler a um reset que autorize reenvio ou gasto cego.
-2. Criar procedimento/ferramenta assistida para preparacao incerta, entrega sem evidencia integral, evento ausente e recuperacao esgotada. Exigir evidencia confiavel e registrar a decisao; nao oferecer reset de estado que autorize reenvio ou gasto cego. A quarentena do C9c2 torna esses casos observaveis, mas nao os resolve automaticamente.
+1. Proxima acao: ampliar a ferramenta assistida para preparacao incerta, entrega sem evidencia integral e evento ausente, mapeando antes as evidencias persistidas e o escopo de cada recibo. Manter a exigencia de evidencia/revisor e nao introduzir reset, reenvio ou gasto cego.
+2. Depois, decidir a superficie administrativa dessa ferramenta e testar o acesso por instancia; a primeira versao e deliberadamente um nucleo local de decisao auditavel, sem comando exposto no cockpit.
 3. Executar os gates restantes de capacidade, consentimento e orcamento. O atalho `WillExpressionEngine.finalize_delivery` foi bloqueado no C9c1; manter o contrato integrado como unico caminho de confirmacao e testar os gates antes de qualquer nova tentativa.
 4. Registrar o aceite do escopo world-only ou implementar e validar um adaptador proprio antes de autorizar supressao de hobby. A ausencia desse adaptador nunca autoriza satisfacao automatica por imagem ou envio; nao exige reativar geracao paga.
 5. Completar regressao ponta a ponta, publicar apenas com autorizacao e validar por probes antes de encerrar C9. Nao iniciar C10 nem convidar participantes como consequencia automatica dos commits locais.
