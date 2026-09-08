@@ -1,6 +1,6 @@
 # Documento Mestre: JungAgent - Laboratorio de Emulacao Cognitiva
 
-**Versao 3.20 - C9c3 em andamento: conciliacao WILL e gates pendentes - Setembro 2026**
+**Versao 3.21 - C9c3 em andamento: integridade de evidencias WILL e gates pendentes - Setembro 2026**
 
 *Arquivo canonico vigente: `docs/DOCUMENTO_MESTRE_EMULACAO_COGNITIVA_V2.md`. O antigo `docs/DOCUMENTO_MESTRE_AGI_COGNITIVA.md` permanece como documento historico/operacional de referencia, mas este arquivo e a fonte de autoridade daqui em diante.*
 
@@ -637,10 +637,16 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 - **Limite de poder**: a revisao continua restrita a `acknowledge` e `hold`, com evidencia e revisor obrigatorios. Uma decisao nao converte o recibo em entrega confirmada, nao altera pressao, nao libera periodo refratario, nao chama capacidade e nao permite repetir transporte. O tratamento de evento ausente permanece pendente, pois exige validar o vinculo entre recibo e evento antes de expor qualquer evidencia.
 - **Validacao / habilitacao**: 1 teste local novo verifica a listagem de entrega incerta e a ausencia de payload privado. Nenhum provedor, Telegram, imagem ou participante foi ativado. Commit local desta entrega; nenhum push, deploy ou alteracao de producao.
 
+**C9c3 - Oitavo bloco: integridade de recibo e evento WILL (08/09/2026; checkpoint local; C9c3 ainda em andamento).**
+
+- **Implementado**: cada candidato WILL incerto agora informa apenas a forma da evidencia do recibo (`empty`, `object` ou `invalid`) e o vinculo do evento (`absent`, `missing`, `matched`, `scope_mismatch` ou `unverifiable_legacy`). O vinculo so e considerado `matched` quando instancia, Relation, escopo, usuario, ciclo e vontade coincidem. O conteudo do recibo e do payload continua fora da ferramenta.
+- **Limite de poder**: esses sinais tornam a ausencia ou ambiguidade explicitamente revisavel, mas nao a resolvem por inferencia. `matched` nao e confirmacao de entrega; `object` nao atesta validade do transporte. Nenhum estado, pressao, recibo, evento ou capacidade e alterado por essa leitura.
+- **Validacao / habilitacao**: teste local ampliado verifica recibo vazio e evento ausente sem exposicao de payload; suite completa: 625 testes aprovados e 20 cenarios simulados aprovados. Nenhum provedor, Telegram, imagem ou participante foi ativado. Commit local desta entrega; nenhum push, deploy ou alteracao de producao.
+
 **Continuacao obrigatoria: restante do C9c3 e fechamento do C9c.**
 
-1. Proxima acao: mapear e incluir o caso de evento ausente ou recibo sem evidencia integral, validando antes instancia, escopo e vinculo entre expressao, recibo e evento. Manter a exigencia de evidencia/revisor e nao introduzir reset, reenvio ou gasto cego.
-2. Depois, decidir a superficie administrativa dessa ferramenta e testar o acesso por instancia; ela continua deliberadamente um nucleo local de decisao auditavel, sem comando exposto no cockpit.
+1. Proxima acao: testar os cinco estados de vinculo de evento/recibo e decidir a superficie administrativa por instancia; a ferramenta continua deliberadamente um nucleo local de decisao auditavel, sem comando exposto no cockpit.
+2. Depois, executar os gates restantes de capacidade, consentimento e orcamento, mantendo a ausencia de reset, reenvio ou gasto cego.
 3. Executar os gates restantes de capacidade, consentimento e orcamento. O atalho `WillExpressionEngine.finalize_delivery` foi bloqueado no C9c1; manter o contrato integrado como unico caminho de confirmacao e testar os gates antes de qualquer nova tentativa.
 4. Registrar o aceite do escopo world-only ou implementar e validar um adaptador proprio antes de autorizar supressao de hobby. A ausencia desse adaptador nunca autoriza satisfacao automatica por imagem ou envio; nao exige reativar geracao paga.
 5. Completar regressao ponta a ponta, publicar apenas com autorizacao e validar por probes antes de encerrar C9. Nao iniciar C10 nem convidar participantes como consequencia automatica dos commits locais.
