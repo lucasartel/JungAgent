@@ -1,6 +1,7 @@
 """Evidence-bound, read-first review records for uncertain operational states."""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 
@@ -29,6 +30,29 @@ class ReconciliationReview:
         self.agent_instance = agent_instance
         ensure_schema(db)
 
+    def _will_evidence(self, row):
+        """Describe receipt/event integrity without returning their private contents."""
+        receipt = self.db.conn.execute("""SELECT evidence_json FROM will_expression_receipts
+            WHERE expression_id = ? ORDER BY id DESC LIMIT 1""", (row["id"],)).fetchone()
+        try:
+            evidence = json.loads(receipt["evidence_json"]) if receipt else None
+            receipt_evidence = "object" if isinstance(evidence, dict) and evidence else "empty"
+        except (TypeError, ValueError, json.JSONDecodeError):
+            receipt_evidence = "invalid"
+        if row["delivery_event_id"] is None:
+            return receipt_evidence, "absent"
+        columns = {item[1] for item in self.db.conn.execute("PRAGMA table_info(agent_will_pulse_events)")}
+        required = {"agent_instance", "relation_id", "scope_kind", "user_id", "cycle_id", "winning_will"}
+        if not required <= columns:
+            return receipt_evidence, "unverifiable_legacy"
+        event = self.db.conn.execute("SELECT * FROM agent_will_pulse_events WHERE id = ?", (row["delivery_event_id"],)).fetchone()
+        if event is None:
+            return receipt_evidence, "missing"
+        matches = (event["agent_instance"] == row["agent_instance"] and event["relation_id"] == row["relation_id"]
+                   and event["scope_kind"] == row["scope_kind"] and event["user_id"] == row["user_id"]
+                   and event["cycle_id"] == row["cycle_id"] and event["winning_will"] == row["will_name"])
+        return receipt_evidence, "matched" if matches else "scope_mismatch"
+
     def candidates(self, limit=50):
         """Return concise local evidence for terminal pulses and exhausted integrations."""
         limit = max(1, min(int(limit), 200))
@@ -52,7 +76,7 @@ class ReconciliationReview:
                 for row in rows)
         exists = self.db.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='will_expressions'").fetchone()
         if exists:
-            rows = self.db.conn.execute("""SELECT e.id, e.status, e.will_name, e.capability_key, e.scope_kind,
+            rows = self.db.conn.execute("""SELECT e.id, e.agent_instance, e.status, e.will_name, e.capability_key, e.scope_kind,
                 e.relation_id, e.user_id, e.cycle_id, e.delivery_event_id, e.reason, r.result_code
                 FROM will_expressions e LEFT JOIN will_expression_receipts r ON r.id = (
                     SELECT id FROM will_expression_receipts WHERE expression_id = e.id ORDER BY id DESC LIMIT 1)
@@ -62,7 +86,8 @@ class ReconciliationReview:
                 "evidence": {"will_name": row["will_name"], "capability_key": row["capability_key"],
                 "scope_kind": row["scope_kind"], "relation_id": row["relation_id"], "user_id": row["user_id"],
                 "cycle_id": row["cycle_id"], "delivery_event_id": row["delivery_event_id"],
-                "reason": row["reason"], "receipt_code": row["result_code"]}} for row in rows)
+                "reason": row["reason"], "receipt_code": row["result_code"],
+                "receipt_evidence": self._will_evidence(row)[0], "event_link": self._will_evidence(row)[1]}} for row in rows)
         return candidates[:limit]
 
     def record(self, *, source_kind, source_id, state, decision, evidence_ref, reviewer_id, note=None):

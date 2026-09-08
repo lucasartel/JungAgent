@@ -46,4 +46,6 @@ def test_candidates_include_uncertain_will_delivery_without_payload(loop_db):
     assert row["source_kind"] == "will_expression"
     assert row["state"] == "delivery_uncertain"
     assert row["evidence"]["capability_key"] == "relacionar_proactive_message"
+    assert row["evidence"]["event_link"] == "absent"
+    assert row["evidence"]["receipt_evidence"] == "empty"
     assert "payload" not in str(row)
