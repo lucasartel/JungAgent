@@ -1,6 +1,6 @@
 # Documento Mestre: JungAgent - Laboratorio de Emulacao Cognitiva
 
-**Versao 3.19 - C9c3 em andamento: conciliacao assistida e gates pendentes - Setembro 2026**
+**Versao 3.20 - C9c3 em andamento: conciliacao WILL e gates pendentes - Setembro 2026**
 
 *Arquivo canonico vigente: `docs/DOCUMENTO_MESTRE_EMULACAO_COGNITIVA_V2.md`. O antigo `docs/DOCUMENTO_MESTRE_AGI_COGNITIVA.md` permanece como documento historico/operacional de referencia, mas este arquivo e a fonte de autoridade daqui em diante.*
 
@@ -631,10 +631,16 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 - **Limite de poder**: ela nao oferece `retry`, `reset`, reenvio, reativacao de reserva, mudanca do estado-fonte ou qualquer efeito externo. Registrar uma revisao nao afirma que uma entrega ocorreu, nem autoriza nova entrega ou gasto. A adaptacao para preparacoes e recibos incertos sera acrescentada apenas depois de mapear suas evidencias persistidas e seus escopos.
 - **Validacao / habilitacao**: 3 testes locais verificam listagem de evidencia terminal, obrigatoriedade de evidencia/revisor e rejeicao de qualquer acao alem de revisao; nao ha acesso a provedor, Telegram, imagem ou participante. Commit local desta entrega; nenhum push, deploy ou alteracao de producao.
 
+**C9c3 - Setimo bloco: conciliacao de preparacoes e entregas WILL incertas (08/09/2026; checkpoint local; C9c3 ainda em andamento).**
+
+- **Implementado**: a mesma ferramenta de revisao agora inclui expressoes WILL em `preparation_uncertain` ou `delivery_uncertain`. Ela expoe somente instancia, escopo, Relation, ciclo, vontade, capacidade, evento vinculado, codigo de recibo e motivo tecnico; nunca o payload preparado, texto de mensagem, ids de mensagem ou evidencia de transporte.
+- **Limite de poder**: a revisao continua restrita a `acknowledge` e `hold`, com evidencia e revisor obrigatorios. Uma decisao nao converte o recibo em entrega confirmada, nao altera pressao, nao libera periodo refratario, nao chama capacidade e nao permite repetir transporte. O tratamento de evento ausente permanece pendente, pois exige validar o vinculo entre recibo e evento antes de expor qualquer evidencia.
+- **Validacao / habilitacao**: 1 teste local novo verifica a listagem de entrega incerta e a ausencia de payload privado. Nenhum provedor, Telegram, imagem ou participante foi ativado. Commit local desta entrega; nenhum push, deploy ou alteracao de producao.
+
 **Continuacao obrigatoria: restante do C9c3 e fechamento do C9c.**
 
-1. Proxima acao: ampliar a ferramenta assistida para preparacao incerta, entrega sem evidencia integral e evento ausente, mapeando antes as evidencias persistidas e o escopo de cada recibo. Manter a exigencia de evidencia/revisor e nao introduzir reset, reenvio ou gasto cego.
-2. Depois, decidir a superficie administrativa dessa ferramenta e testar o acesso por instancia; a primeira versao e deliberadamente um nucleo local de decisao auditavel, sem comando exposto no cockpit.
+1. Proxima acao: mapear e incluir o caso de evento ausente ou recibo sem evidencia integral, validando antes instancia, escopo e vinculo entre expressao, recibo e evento. Manter a exigencia de evidencia/revisor e nao introduzir reset, reenvio ou gasto cego.
+2. Depois, decidir a superficie administrativa dessa ferramenta e testar o acesso por instancia; ela continua deliberadamente um nucleo local de decisao auditavel, sem comando exposto no cockpit.
 3. Executar os gates restantes de capacidade, consentimento e orcamento. O atalho `WillExpressionEngine.finalize_delivery` foi bloqueado no C9c1; manter o contrato integrado como unico caminho de confirmacao e testar os gates antes de qualquer nova tentativa.
 4. Registrar o aceite do escopo world-only ou implementar e validar um adaptador proprio antes de autorizar supressao de hobby. A ausencia desse adaptador nunca autoriza satisfacao automatica por imagem ou envio; nao exige reativar geracao paga.
 5. Completar regressao ponta a ponta, publicar apenas com autorizacao e validar por probes antes de encerrar C9. Nao iniciar C10 nem convidar participantes como consequencia automatica dos commits locais.
