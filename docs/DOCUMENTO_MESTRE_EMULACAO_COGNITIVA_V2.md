@@ -1,6 +1,6 @@
 # Documento Mestre: JungAgent - Laboratorio de Emulacao Cognitiva
 
-**Versao 3.21 - C9c3 em andamento: integridade de evidencias WILL e gates pendentes - Setembro 2026**
+**Versao 3.22 - C9c3 em andamento: evidencias WILL validadas e gates pendentes - Setembro 2026**
 
 *Arquivo canonico vigente: `docs/DOCUMENTO_MESTRE_EMULACAO_COGNITIVA_V2.md`. O antigo `docs/DOCUMENTO_MESTRE_AGI_COGNITIVA.md` permanece como documento historico/operacional de referencia, mas este arquivo e a fonte de autoridade daqui em diante.*
 
@@ -643,9 +643,14 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 - **Limite de poder**: esses sinais tornam a ausencia ou ambiguidade explicitamente revisavel, mas nao a resolvem por inferencia. `matched` nao e confirmacao de entrega; `object` nao atesta validade do transporte. Nenhum estado, pressao, recibo, evento ou capacidade e alterado por essa leitura.
 - **Validacao / habilitacao**: teste local ampliado verifica recibo vazio e evento ausente sem exposicao de payload; suite completa: 625 testes aprovados e 20 cenarios simulados aprovados. Nenhum provedor, Telegram, imagem ou participante foi ativado. Commit local desta entrega; nenhum push, deploy ou alteracao de producao.
 
+**C9c3 - Nono bloco: cobertura dos estados de integridade WILL (09/09/2026; checkpoint local; C9c3 ainda em andamento).**
+
+- **Implementado**: a leitura de integridade deixou de consultar o mesmo recibo duas vezes e passou a ter cobertura para `unverifiable_legacy`, `missing`, `matched` e `scope_mismatch`, alem de `absent`. A classificacao continua ser apenas uma descricao de evidencia: nao presume que um evento compativel represente entrega externa confirmada.
+- **Validacao / habilitacao**: quatro cenarios novos cobrem todos os estados de vinculo de evento, inclusive schema legado e divergencia de vontade. Suite completa: 629 testes aprovados; regressao simulada: 20 cenarios aprovados. Nenhum provedor, Telegram, imagem ou participante foi ativado.
+
 **Continuacao obrigatoria: restante do C9c3 e fechamento do C9c.**
 
-1. Proxima acao: testar os cinco estados de vinculo de evento/recibo e decidir a superficie administrativa por instancia; a ferramenta continua deliberadamente um nucleo local de decisao auditavel, sem comando exposto no cockpit.
+1. Proxima acao: decidir a superficie administrativa por instancia para a ferramenta de conciliacao, mantendo-a como decisao auditavel sem comando de reenvio/reset.
 2. Depois, executar os gates restantes de capacidade, consentimento e orcamento, mantendo a ausencia de reset, reenvio ou gasto cego.
 3. Executar os gates restantes de capacidade, consentimento e orcamento. O atalho `WillExpressionEngine.finalize_delivery` foi bloqueado no C9c1; manter o contrato integrado como unico caminho de confirmacao e testar os gates antes de qualquer nova tentativa.
 4. Registrar o aceite do escopo world-only ou implementar e validar um adaptador proprio antes de autorizar supressao de hobby. A ausencia desse adaptador nunca autoriza satisfacao automatica por imagem ou envio; nao exige reativar geracao paga.
