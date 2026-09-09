@@ -82,12 +82,14 @@ class ReconciliationReview:
                     SELECT id FROM will_expression_receipts WHERE expression_id = e.id ORDER BY id DESC LIMIT 1)
                 WHERE e.agent_instance = ? AND e.status IN ('preparation_uncertain', 'delivery_uncertain')
                 ORDER BY e.id DESC LIMIT ?""", (self.agent_instance, limit)).fetchall()
-            candidates.extend({"source_kind": "will_expression", "source_id": str(row["id"]), "state": row["status"],
+            for row in rows:
+                receipt_evidence, event_link = self._will_evidence(row)
+                candidates.append({"source_kind": "will_expression", "source_id": str(row["id"]), "state": row["status"],
                 "evidence": {"will_name": row["will_name"], "capability_key": row["capability_key"],
                 "scope_kind": row["scope_kind"], "relation_id": row["relation_id"], "user_id": row["user_id"],
                 "cycle_id": row["cycle_id"], "delivery_event_id": row["delivery_event_id"],
                 "reason": row["reason"], "receipt_code": row["result_code"],
-                "receipt_evidence": self._will_evidence(row)[0], "event_link": self._will_evidence(row)[1]}} for row in rows)
+                "receipt_evidence": receipt_evidence, "event_link": event_link}})
         return candidates[:limit]
 
     def record(self, *, source_kind, source_id, state, decision, evidence_ref, reviewer_id, note=None):

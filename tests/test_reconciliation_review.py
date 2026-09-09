@@ -49,3 +49,41 @@ def test_candidates_include_uncertain_will_delivery_without_payload(loop_db):
     assert row["evidence"]["event_link"] == "absent"
     assert row["evidence"]["receipt_evidence"] == "empty"
     assert "payload" not in str(row)
+
+
+def _uncertain_expression(loop_db, *, event_id=None):
+    WillExpressionEngine(loop_db)
+    loop_db.conn.execute("""INSERT INTO will_expressions
+        (agent_instance, scope_kind, user_id, cycle_id, will_name, capability_key, gate_level, cost_class,
+         idempotency_key, status, delivery_event_id)
+        VALUES ('test_jung_v0', 'global', 'admin', '2026-09-08', 'relacionar', 'relacionar_proactive_message',
+         'admin_communicate', 'proactive_message', ?, 'delivery_uncertain', ?)""",
+        (f"integrity-{event_id}", event_id))
+    loop_db.conn.commit()
+
+
+def _event_schema(conn):
+    conn.execute("""CREATE TABLE agent_will_pulse_events (
+        id INTEGER PRIMARY KEY, agent_instance TEXT, relation_id TEXT, scope_kind TEXT,
+        user_id TEXT, cycle_id TEXT, winning_will TEXT)""")
+    conn.commit()
+
+
+@pytest.mark.parametrize(("event_id", "event_values", "expected"), [
+    (1, None, "unverifiable_legacy"),
+    (99, "schema", "missing"),
+    (1, "matched", "matched"),
+    (1, "mismatch", "scope_mismatch"),
+])
+def test_will_event_integrity_states(loop_db, event_id, event_values, expected):
+    if event_values == "schema":
+        _event_schema(loop_db.conn)
+    elif event_values in {"matched", "mismatch"}:
+        _event_schema(loop_db.conn)
+        winning_will = "relacionar" if event_values == "matched" else "saber"
+        loop_db.conn.execute("""INSERT INTO agent_will_pulse_events
+            (id, agent_instance, relation_id, scope_kind, user_id, cycle_id, winning_will)
+            VALUES (1, 'test_jung_v0', NULL, 'global', 'admin', '2026-09-08', ?)""", (winning_will,))
+        loop_db.conn.commit()
+    _uncertain_expression(loop_db, event_id=event_id)
+    assert ReconciliationReview(loop_db, "test_jung_v0").candidates()[0]["evidence"]["event_link"] == expected
