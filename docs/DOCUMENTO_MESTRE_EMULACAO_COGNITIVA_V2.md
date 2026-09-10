@@ -1,6 +1,6 @@
 # Documento Mestre: JungAgent - Laboratorio de Emulacao Cognitiva
 
-**Versao 3.24 - C9c3 em andamento: gates de vontade e orcamento aprovados - Setembro 2026**
+**Versao 3.25 - C9c3 em andamento: escopo world-only aceito e validacao operacional pendente - Setembro 2026**
 
 *Arquivo canonico vigente: `docs/DOCUMENTO_MESTRE_EMULACAO_COGNITIVA_V2.md`. O antigo `docs/DOCUMENTO_MESTRE_AGI_COGNITIVA.md` permanece como documento historico/operacional de referencia, mas este arquivo e a fonte de autoridade daqui em diante.*
 
@@ -661,11 +661,16 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 - **Limite explicito**: nenhum valor de ambiente foi alterado e nenhum recurso pago foi reativado. O ritmo de mensagens, profundidade, cooldown relacional e orcamentos por Relation pertencem ao C10; este corte apenas garante que essas regras futuras tenham uma fronteira de autorizacao segura para se apoiar.
 - **Validacao / habilitacao**: testes verificam Relation ausente, consentimento revogado, participante correto, escopo world-only, custo pago desligado, orcamento zero e limite diario atingido. Suite completa: 635 testes aprovados; regressao simulada: 20 cenarios aprovados. Nenhum provedor, Telegram, imagem ou participante foi ativado.
 
+**C9c3 - Decimo segundo bloco: aceite de escopo `world-only` (10/09/2026; decisao do mantenedor).**
+
+- **Politica vigente**: o mantenedor aprovou que apenas `saber -> world` possa, mediante evidencia verificavel, satisfazer antecipadamente uma fase do loop. `expressar -> hobby` permanece inelegivel; hobby executa seu circuito normal ate que exista um adaptador proprio, com evidencia e validacao especificas.
+- **Consequencia**: imagem, mensagem ou sucesso de transporte nunca demonstram por si equivalencia cognitiva de hobby. A politica nao reativa geracao paga, nao cria um novo conector e nao muda os pulsos atuais; ela confirma a fronteira conservadora ja aplicada pelo arbitrador.
+- **Proxima exigencia**: observar a conciliacao e os gates somente depois de publicacao autorizada, sem adicionar supressao de hobby por conveniencia. Um adaptador futuro devera ser desenvolvido e testado como corte separado, sob nova aprovacao.
+
 **Continuacao obrigatoria: restante do C9c3 e fechamento do C9c.**
 
 1. Proxima acao: completar a validacao da superficie administrativa e observar esse deposito somente apos uma publicacao autorizada; nao adicionar comandos operacionais enquanto a evidencia real nao justificar uma politica especifica.
-2. Registrar o aceite do escopo world-only ou implementar e validar um adaptador proprio antes de autorizar supressao de hobby. A ausencia desse adaptador nunca autoriza satisfacao automatica por imagem ou envio; nao exige reativar geracao paga.
-3. Completar regressao ponta a ponta, publicar apenas com autorizacao e validar por probes antes de encerrar C9. Nao iniciar C10 nem convidar participantes como consequencia automatica dos commits locais.
+2. Completar regressao ponta a ponta, publicar apenas com autorizacao e validar por probes antes de encerrar C9. Nao iniciar C10 nem convidar participantes como consequencia automatica dos commits locais.
 
 **C10 - Disponibilidade e periodo refratario (planejado; depende do C9).** Criar estado persistente por instancia e Relation, com janelas de contato, orcamento de turnos/profundidade, recuperacao, cooldown e retomada. Decidir e testar continuidade da pressao na virada de ciclo e consumo de sinais sem aliviar repetidamente pela mesma evidencia. Uma relacao em elaboracao nao bloqueia automaticamente as demais; limites globais de custo ou disponibilidade sao distintos e explicitos. Preservar comandos essenciais e protocolos de seguranca. Aceite: cenarios com tempo simulado, conversas intensas, relacoes concorrentes, reinicio, virada de dia e esgotamento de orcamento, sem chamadas pagas.
 
