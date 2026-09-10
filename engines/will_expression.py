@@ -271,6 +271,15 @@ class WillExpressionEngine:
         expression, created = self._create(resolved_scope, user_id, cycle_id, will_name, capability_key, key, {"will_name": will_name, "capability_key": capability_key, "scope_kind": resolved_scope.get("scope_kind"), **(intent or {})})
         if not created:
             return self._reuse(expression)
+        from engines.will_capability_policy import evaluate
+
+        allowed, reason = evaluate(
+            self.db, capability_key=capability_key, capability=CAPABILITIES[capability_key],
+            scope=resolved_scope, user_id=user_id,
+        )
+        if not allowed:
+            expression = self._finish_preparation(expression["id"], "blocked", reason, reason)
+            return {"status": "blocked", "expression": expression, "action_summary": reason}
         available, reason = self._availability(capability_key, proactive_system)
         if not available:
             expression = self._finish_preparation(expression["id"], "blocked", reason, reason or "capability_unavailable")
