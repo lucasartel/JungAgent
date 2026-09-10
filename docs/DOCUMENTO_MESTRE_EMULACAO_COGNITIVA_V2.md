@@ -1,6 +1,6 @@
 # Documento Mestre: JungAgent - Laboratorio de Emulacao Cognitiva
 
-**Versao 3.23 - C9c3 em andamento: deposito administrativo de conciliacao e gates pendentes - Setembro 2026**
+**Versao 3.24 - C9c3 em andamento: gates de vontade e orcamento aprovados - Setembro 2026**
 
 *Arquivo canonico vigente: `docs/DOCUMENTO_MESTRE_EMULACAO_COGNITIVA_V2.md`. O antigo `docs/DOCUMENTO_MESTRE_AGI_COGNITIVA.md` permanece como documento historico/operacional de referencia, mas este arquivo e a fonte de autoridade daqui em diante.*
 
@@ -654,13 +654,18 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 - **Escopo e seguranca**: como os estados globais ainda nao podem ser atribuidos com seguranca a uma organizacao, administradores de organizacao nao acessam essa tela. A pagina nao exibe payload preparado, mensagem, ids de transporte ou memoria privada; nao possui API publica, `retry`, `reset`, reenvio, alivio de pressao ou acao externa. O inventario de rotas foi atualizado de 120 para 122 rotas intencionais.
 - **Validacao / habilitacao**: testes cobrem bloqueio para admin de organizacao, controles exclusivamente de revisao, listagem de candidatos e inventario de rotas. Suite completa: 631 testes aprovados; regressao simulada: 20 cenarios aprovados. Nenhum provedor, Telegram, imagem ou participante foi ativado. A publicacao continua dependente de autorizacao do mantenedor.
 
+**C9c3 - Decimo primeiro bloco: gates de capacidade, consentimento e orcamento (10/09/2026; checkpoint local; C9c3 ainda em andamento).**
+
+- **Politica aprovada pelo mantenedor**: uma expressao relacional em escopo `Relation` so pode preparar capacidade quando a Relation pertence a instancia, aponta para o mesmo participante, esta `active` e possui consentimento `granted`. O circuito global existente permanece compativel. `saber_world_refresh` fica restrito ao escopo global. A geracao visual paga permanece bloqueada por padrao; exige habilitacao explicita `WILL_PAID_CAPABILITIES_ENABLED=true` e limite diario positivo `WILL_VISUAL_DAILY_LIMIT` antes mesmo de preparar uma entrega.
+- **Implementado**: `WillExpressionEngine.prepare` consulta uma politica unica antes de chamar o preparador. Um bloqueio torna-se expressao auditavel com motivo persistido, mas nao chama capacidade, LLM, transporte ou provedor. O limite conta preparacoes, entregas em curso e conclusoes do dia, evitando que uma tentativa ainda pendente ultrapasse o teto.
+- **Limite explicito**: nenhum valor de ambiente foi alterado e nenhum recurso pago foi reativado. O ritmo de mensagens, profundidade, cooldown relacional e orcamentos por Relation pertencem ao C10; este corte apenas garante que essas regras futuras tenham uma fronteira de autorizacao segura para se apoiar.
+- **Validacao / habilitacao**: testes verificam Relation ausente, consentimento revogado, participante correto, escopo world-only, custo pago desligado, orcamento zero e limite diario atingido. Suite completa: 635 testes aprovados; regressao simulada: 20 cenarios aprovados. Nenhum provedor, Telegram, imagem ou participante foi ativado.
+
 **Continuacao obrigatoria: restante do C9c3 e fechamento do C9c.**
 
 1. Proxima acao: completar a validacao da superficie administrativa e observar esse deposito somente apos uma publicacao autorizada; nao adicionar comandos operacionais enquanto a evidencia real nao justificar uma politica especifica.
-2. Depois, executar os gates restantes de capacidade, consentimento e orcamento, mantendo a ausencia de reset, reenvio ou gasto cego.
-3. Executar os gates restantes de capacidade, consentimento e orcamento. O atalho `WillExpressionEngine.finalize_delivery` foi bloqueado no C9c1; manter o contrato integrado como unico caminho de confirmacao e testar os gates antes de qualquer nova tentativa.
-4. Registrar o aceite do escopo world-only ou implementar e validar um adaptador proprio antes de autorizar supressao de hobby. A ausencia desse adaptador nunca autoriza satisfacao automatica por imagem ou envio; nao exige reativar geracao paga.
-5. Completar regressao ponta a ponta, publicar apenas com autorizacao e validar por probes antes de encerrar C9. Nao iniciar C10 nem convidar participantes como consequencia automatica dos commits locais.
+2. Registrar o aceite do escopo world-only ou implementar e validar um adaptador proprio antes de autorizar supressao de hobby. A ausencia desse adaptador nunca autoriza satisfacao automatica por imagem ou envio; nao exige reativar geracao paga.
+3. Completar regressao ponta a ponta, publicar apenas com autorizacao e validar por probes antes de encerrar C9. Nao iniciar C10 nem convidar participantes como consequencia automatica dos commits locais.
 
 **C10 - Disponibilidade e periodo refratario (planejado; depende do C9).** Criar estado persistente por instancia e Relation, com janelas de contato, orcamento de turnos/profundidade, recuperacao, cooldown e retomada. Decidir e testar continuidade da pressao na virada de ciclo e consumo de sinais sem aliviar repetidamente pela mesma evidencia. Uma relacao em elaboracao nao bloqueia automaticamente as demais; limites globais de custo ou disponibilidade sao distintos e explicitos. Preservar comandos essenciais e protocolos de seguranca. Aceite: cenarios com tempo simulado, conversas intensas, relacoes concorrentes, reinicio, virada de dia e esgotamento de orcamento, sem chamadas pagas.
 
