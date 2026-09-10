@@ -46,6 +46,12 @@ def _ensure_access(admin: Dict, relation: Dict) -> None:
         raise HTTPException(403, "Relation is outside your organization")
 
 
+def _require_reconciliation_admin(admin: Dict) -> None:
+    """Global uncertain states cannot safely be filtered to an organization yet."""
+    if admin.get("role") != "master":
+        raise HTTPException(403, "Reconciliation is restricted to the instance master admin")
+
+
 def _validate_target(db, admin: Dict, user_id: str, requested_org_id: Optional[str]) -> Optional[str]:
     user_id = (user_id or "").strip()
     if not user_id:
@@ -158,6 +164,44 @@ async def relations_dashboard(request: Request, admin: Dict = Depends(require_or
     return templates.TemplateResponse(
         "relations.html", _context(request, admin, get_db(), request.query_params.get("success"))
     )
+
+
+@router.get("/reconciliation", response_class=HTMLResponse)
+async def reconciliation_dashboard(request: Request, admin: Dict = Depends(require_org_admin)):
+    _require_reconciliation_admin(admin)
+    from engines.reconciliation_review import ReconciliationReview
+
+    db = get_db()
+    return templates.TemplateResponse("reconciliation.html", {
+        "request": request, "admin": admin, "active_nav": "relations",
+        "agent_instance": AGENT_INSTANCE,
+        "candidates": ReconciliationReview(db, AGENT_INSTANCE).candidates(),
+        "message": request.query_params.get("success"),
+    })
+
+
+@router.post("/reconciliation")
+async def record_reconciliation_decision(
+    admin: Dict = Depends(require_org_admin),
+    source_kind: str = Form(...),
+    source_id: str = Form(...),
+    state: str = Form(...),
+    decision: str = Form(...),
+    evidence_ref: str = Form(...),
+    note: Optional[str] = Form(None),
+):
+    _require_reconciliation_admin(admin)
+    from engines.reconciliation_review import ReconciliationReview
+
+    try:
+        ReconciliationReview(get_db(), AGENT_INSTANCE).record(
+            source_kind=source_kind, source_id=source_id, state=state, decision=decision,
+            evidence_ref=evidence_ref, reviewer_id=str(admin.get("admin_id") or "master"),
+            note=(note or "").strip()[:500] or None,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return RedirectResponse("/admin/relations/reconciliation?success=Review recorded", status_code=303)
 
 
 @router.post("")

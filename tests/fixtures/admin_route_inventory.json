@@ -644,7 +644,25 @@
     "path": "",
     "full_path": "/admin/relations",
     "endpoint": "relations_dashboard",
-    "line": 157,
+    "line": 163,
+    "migration_bucket": "relations_routes"
+  },
+  {
+    "module": "admin_web/routes/relations_routes.py",
+    "method": "GET",
+    "path": "/reconciliation",
+    "full_path": "/admin/relations/reconciliation",
+    "endpoint": "reconciliation_dashboard",
+    "line": 170,
+    "migration_bucket": "relations_routes"
+  },
+  {
+    "module": "admin_web/routes/relations_routes.py",
+    "method": "POST",
+    "path": "/reconciliation",
+    "full_path": "/admin/relations/reconciliation",
+    "endpoint": "record_reconciliation_decision",
+    "line": 184,
     "migration_bucket": "relations_routes"
   },
   {
@@ -653,7 +671,7 @@
     "path": "",
     "full_path": "/admin/relations",
     "endpoint": "create_or_update_relation",
-    "line": 164,
+    "line": 208,
     "migration_bucket": "relations_routes"
   },
   {
@@ -662,7 +680,7 @@
     "path": "/{relation_id}/state",
     "full_path": "/admin/relations/{relation_id}/state",
     "endpoint": "update_relation_state",
-    "line": 197,
+    "line": 241,
     "migration_bucket": "relations_routes"
   },
   {

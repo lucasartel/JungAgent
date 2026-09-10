@@ -1,0 +1,19 @@
+{% extends "base_v2.html" %}
+{% block title %}Reconciliation - JungAgent Admin{% endblock %}
+{% block content %}
+<section class="page-shell-v2">
+    <header class="page-header-v2"><div>
+        <p class="page-kicker-v2">Instance {{ agent_instance }} · Administrative review</p>
+        <h1 class="page-title-v2">Reconciliation</h1>
+        <p class="page-subtitle-v2">A deposit for interrupted, exhausted, or uncertain states. It records review; it never retries, resets, sends, or changes pressure.</p>
+    </div></header>
+    {% if message %}<section class="notice-v2 notice-v2--success"><strong>Review recorded</strong><p>{{ message }}</p></section>{% endif %}
+    <section class="notice-v2"><strong>Evidence boundary</strong><p>Only operational evidence is shown. Prepared payloads, messages, transport identifiers, and private memory remain outside this page.</p></section>
+    <section class="panel-v2">
+        <div class="panel-header-v2"><div><h2 class="panel-title-v2">Cases awaiting review</h2><p class="panel-subtitle-v2">A decision documents human attention. It does not claim an uncertain delivery happened.</p></div></div>
+        {% if candidates %}<div class="table-shell-v2"><table class="data-table-v2"><thead><tr><th>Source</th><th>State</th><th>Evidence</th><th>Review</th></tr></thead><tbody>
+        {% for candidate in candidates %}<tr><td><div class="stack-compact-v2"><span class="cell-primary-v2">{{ candidate.source_kind|replace('_', ' ')|title }}</span><span class="cell-secondary-v2">{{ candidate.source_id }}</span></div></td><td><span class="table-badge-v2">{{ candidate.state|upper }}</span></td><td><code>{{ candidate.evidence }}</code></td><td><form method="POST" action="/admin/relations/reconciliation" class="stack-compact-v2"><input type="hidden" name="source_kind" value="{{ candidate.source_kind }}"><input type="hidden" name="source_id" value="{{ candidate.source_id }}"><input type="hidden" name="state" value="{{ candidate.state }}"><select name="decision" aria-label="Review decision"><option value="acknowledge">Acknowledge</option><option value="hold">Hold</option></select><input name="evidence_ref" maxlength="180" required placeholder="Evidence reference"><input name="note" maxlength="500" placeholder="Optional note"><button type="submit" class="button-v2 button-v2--small button-v2--ghost">Record</button></form></td></tr>{% endfor %}
+        </tbody></table></div>{% else %}<div class="empty-state-v2"><p class="empty-state-title-v2">No cases awaiting review</p><p class="empty-state-copy-v2">The instance has no terminal or uncertain records in the current review scope.</p></div>{% endif %}
+    </section>
+</section>
+{% endblock %}

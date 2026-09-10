@@ -5,9 +5,9 @@ splitting `admin_web/routes.py` without changing the exposed route surface.
 
 ## Current Inventory
 
-- Total admin routes declared by decorators: 112
+- Total admin routes declared by decorators: 122
 - Legacy monolith file `admin_web/routes.py`: eliminated
-- Already modular routes in `admin_web/routes/`: 112
+- Already modular routes in `admin_web/routes/`: 122
 - Snapshot fixture: `tests/fixtures/admin_route_inventory.json`
 - Guardrail test: `tests/test_admin_route_inventory.py`
 
@@ -38,6 +38,7 @@ package-level compatibility.
 | `unesco_export_routes.py` | 2 |
 | `world_consciousness_routes.py` | 4 |
 | `art_routes.py` | 3 |
+| `relations_routes.py` | 5 |
 
 ## Recommended Cut Order
 

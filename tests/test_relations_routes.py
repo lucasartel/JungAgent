@@ -106,6 +106,13 @@ def test_org_scope_isolated_for_org_admin_and_global_for_master():
     assert exc_info.value.status_code == 403
 
 
+def test_reconciliation_is_reserved_for_instance_master():
+    relations_routes._require_reconciliation_admin({"role": "master"})
+    with pytest.raises(HTTPException) as exc_info:
+        relations_routes._require_reconciliation_admin({"role": "org_admin", "org_id": "org-a"})
+    assert exc_info.value.status_code == 403
+
+
 def test_relation_rows_expose_metadata_but_not_conversation_content():
     rows = relations_routes._relation_rows(FakeDB(), [{
         "relation_id": "rel-a", "agent_instance": "jung_v1", "org_id": "org-a",
@@ -126,3 +133,9 @@ def test_relations_template_contains_empty_state_and_scope_contract():
     assert "No conversation text is loaded here." in template_text
     assert 'name="org_id"' in template_text
     assert 'name="memory_scope"' in template_text
+
+
+def test_reconciliation_template_has_review_only_controls():
+    template = (Path(__file__).resolve().parents[1] / "admin_web" / "templates" / "reconciliation.html").read_text(encoding="utf-8")
+    assert "Acknowledge" in template and "Hold" in template
+    assert "never retries, resets, sends, or changes pressure" in template
