@@ -188,3 +188,25 @@ class AvailabilityDatabaseMixin:
                 )
             self.conn.commit()
             return {"created": created, "state": self.get_availability_state(scope)}
+
+    def recover_availability_if_due(
+        self, scope: Dict[str, Optional[str]], *, now: str
+    ) -> Dict[str, Any]:
+        """Reset configured budgets once recovery is due, preserving manual pause."""
+        key = _scope_key(scope)
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """UPDATE agent_availability_states
+                   SET turns_used = 0, depth_used = 0, recovery_at = NULL,
+                       refractory_until = CASE
+                           WHEN refractory_until IS NOT NULL AND refractory_until <= ? THEN NULL
+                           ELSE refractory_until END,
+                       updated_at = ?
+                   WHERE agent_instance = ? AND scope_key = ?
+                     AND recovery_at IS NOT NULL AND recovery_at <= ?""",
+                (now, now, scope["agent_instance"], key, now),
+            )
+            recovered = cursor.rowcount == 1
+            self.conn.commit()
+            return {"recovered": recovered, "state": self.get_availability_state(scope)}

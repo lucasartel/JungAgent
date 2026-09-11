@@ -125,3 +125,14 @@ class AvailabilityEngine:
             )
             return {"allowed": True, "reason": decision["reason"], "reused": not recorded["created"],
                     "state": recorded["state"]}
+
+    def recover_if_due(
+        self, scope: Dict[str, Optional[str]], *, now: Optional[datetime] = None
+    ) -> Dict[str, Any]:
+        """Apply one explicit recovery boundary without resuming a manual pause."""
+        instant = self._now(now)
+        recover = getattr(self.db, "recover_availability_if_due", None)
+        if not callable(recover):
+            return {"recovered": False, "reason": "availability_storage_unavailable", "state": None}
+        result = recover(scope, now=instant.isoformat())
+        return {**result, "reason": "availability_recovered" if result["recovered"] else "availability_recovery_not_due"}

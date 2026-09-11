@@ -79,3 +79,27 @@ def test_same_evidence_is_idempotent_and_never_spends_budget_twice():
     assert first["reused"] is False
     assert repeated["reused"] is True
     assert state["turns_used"] == 1
+
+
+def test_recovery_resets_usage_once_but_does_not_resume_a_manual_pause():
+    db = AvailabilityDB()
+    engine = AvailabilityEngine(db)
+    now = datetime(2026, 9, 11, 10, 0, 0)
+    db.configure_availability(
+        scope("a"), status="paused", turn_budget=3, depth_budget=4,
+        recovery_at=now.isoformat(), refractory_until=(now - timedelta(minutes=1)).isoformat(),
+    )
+    db.record_availability_consumption(
+        scope("a"), evidence_ref="message:1", turn_cost=2, depth_cost=3,
+        consumed_at=(now - timedelta(minutes=2)).isoformat(),
+    )
+
+    first = engine.recover_if_due(scope("a"), now=now)
+    repeated = engine.recover_if_due(scope("a"), now=now)
+
+    assert first["recovered"] is True
+    assert repeated["recovered"] is False
+    assert first["state"]["turns_used"] == 0
+    assert first["state"]["depth_used"] == 0
+    assert first["state"]["refractory_until"] is None
+    assert engine.evaluate(scope("a"), now=now)["reason"] == "availability_paused"
