@@ -33,6 +33,15 @@ def evaluate(db, *, capability_key, capability, scope, user_id):
             return False, "relation_not_active"
         if relation.get("consent_status") != "granted":
             return False, "relation_consent_required"
+        # Availability is a local cognitive boundary, checked before preparing
+        # a message or invoking a transport. Lightweight legacy DBs remain
+        # compatible until their availability schema is initialized.
+        if callable(getattr(db, "get_availability_state", None)):
+            from engines.availability import AvailabilityEngine
+
+            decision = AvailabilityEngine(db).evaluate(scope)
+            if not decision["allowed"]:
+                return False, decision["reason"]
     if capability.get("cost_class") == "paid_image_generation":
         if not _enabled("WILL_PAID_CAPABILITIES_ENABLED"):
             return False, "paid_capability_not_enabled"

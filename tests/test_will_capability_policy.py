@@ -17,14 +17,22 @@ assert _relations_spec.loader is not None
 _relations_spec.loader.exec_module(_relations_module)
 RelationsDatabaseMixin = _relations_module.RelationsDatabaseMixin
 
+_availability_path = Path(__file__).resolve().parents[1] / "core" / "db" / "availability.py"
+_availability_spec = importlib.util.spec_from_file_location("availability_policy_test", _availability_path)
+_availability_module = importlib.util.module_from_spec(_availability_spec)
+assert _availability_spec.loader is not None
+_availability_spec.loader.exec_module(_availability_module)
+AvailabilityDatabaseMixin = _availability_module.AvailabilityDatabaseMixin
 
-class PolicyDB(RelationsDatabaseMixin, WillExpressionDatabaseMixin):
+
+class PolicyDB(RelationsDatabaseMixin, AvailabilityDatabaseMixin, WillExpressionDatabaseMixin):
     def __init__(self):
         self.conn = sqlite3.connect(":memory:")
         self.conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self.agent_instance = "policy-test"
         self._init_relations_schema()
+        self._init_availability_schema()
         self._init_will_expression_schema()
 
 
@@ -47,6 +55,24 @@ def test_relation_delivery_allows_only_active_granted_participant():
     db.register_agent_relation(agent_instance="policy-test", participant_user_id="participant", status="active", consent_status="revoked")
     assert evaluate(db, capability_key="relacionar_proactive_message", capability=CAPABILITIES["relacionar_proactive_message"],
         scope={"agent_instance": "policy-test", "scope_kind": "relation", "relation_id": relation_id}, user_id="participant") == (False, "relation_consent_required")
+
+
+def test_relation_delivery_checks_availability_before_preparation():
+    db = PolicyDB()
+    relation_id = db.register_agent_relation(
+        agent_instance="policy-test", participant_user_id="participant", status="active", consent_status="granted"
+    )
+    scope = {"agent_instance": "policy-test", "scope_kind": "relation", "relation_id": relation_id}
+    db.configure_availability(scope, status="paused")
+    engine = WillExpressionEngine(db)
+
+    blocked = engine.prepare(
+        user_id="participant", cycle_id="2026-09-11", will_name="relacionar", scope=scope,
+        proactive_system=object(), prepare_capability=lambda _: (_ for _ in ()).throw(AssertionError("must not prepare")),
+    )
+
+    assert blocked["status"] == "blocked"
+    assert blocked["action_summary"] == "availability_paused"
 
 
 def test_world_refresh_stays_global_only():
