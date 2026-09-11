@@ -210,3 +210,16 @@ class AvailabilityDatabaseMixin:
             recovered = cursor.rowcount == 1
             self.conn.commit()
             return {"recovered": recovered, "state": self.get_availability_state(scope)}
+
+    def list_due_availability_recoveries(
+        self, *, agent_instance: str, now: str, limit: int = 100
+    ) -> list[Dict[str, Any]]:
+        """Return only due scope metadata for the local maintenance runner."""
+        rows = self.conn.execute(
+            """SELECT agent_instance, relation_id, scope_kind
+               FROM agent_availability_states
+               WHERE agent_instance = ? AND recovery_at IS NOT NULL AND recovery_at <= ?
+               ORDER BY recovery_at ASC, id ASC LIMIT ?""",
+            (agent_instance, now, max(1, int(limit))),
+        ).fetchall()
+        return [dict(row) for row in rows]

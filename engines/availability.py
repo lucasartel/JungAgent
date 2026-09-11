@@ -136,3 +136,21 @@ class AvailabilityEngine:
             return {"recovered": False, "reason": "availability_storage_unavailable", "state": None}
         result = recover(scope, now=instant.isoformat())
         return {**result, "reason": "availability_recovered" if result["recovered"] else "availability_recovery_not_due"}
+
+    def recover_due_for_instance(
+        self, agent_instance: str, *, now: Optional[datetime] = None, limit: int = 100
+    ) -> Dict[str, Any]:
+        """Run local maintenance per scope, never starting a transport or loop phase."""
+        instant = self._now(now)
+        lister = getattr(self.db, "list_due_availability_recoveries", None)
+        if not callable(lister):
+            return {"recovered": 0, "scopes": [], "reason": "availability_storage_unavailable"}
+        scopes = lister(agent_instance=agent_instance, now=instant.isoformat(), limit=limit)
+        recovered = []
+        for scope in scopes:
+            result = self.recover_if_due(scope, now=instant)
+            if result["recovered"]:
+                recovered.append({
+                    "scope_kind": scope["scope_kind"], "relation_id": scope.get("relation_id"),
+                })
+        return {"recovered": len(recovered), "scopes": recovered, "reason": None}

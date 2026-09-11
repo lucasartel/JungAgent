@@ -103,3 +103,29 @@ def test_recovery_resets_usage_once_but_does_not_resume_a_manual_pause():
     assert first["state"]["depth_used"] == 0
     assert first["state"]["refractory_until"] is None
     assert engine.evaluate(scope("a"), now=now)["reason"] == "availability_paused"
+
+
+def test_instance_recovery_runner_isolated_and_restart_safe(tmp_path):
+    path = tmp_path / "availability.db"
+    now = datetime(2026, 9, 11, 10, 0, 0)
+    first = AvailabilityDB()
+    first.conn.close()
+    first.conn = sqlite3.connect(path)
+    first.conn.row_factory = sqlite3.Row
+    first._init_availability_schema()
+    first.configure_availability(scope("a"), turn_budget=2, recovery_at=now.isoformat())
+    first.configure_availability(scope("b"), turn_budget=2, recovery_at=(now + timedelta(hours=1)).isoformat())
+    first.record_availability_consumption(scope("a"), evidence_ref="a:1", turn_cost=1, depth_cost=0, consumed_at=now.isoformat())
+    first.record_availability_consumption(scope("b"), evidence_ref="b:1", turn_cost=1, depth_cost=0, consumed_at=now.isoformat())
+    first.conn.close()
+
+    restarted = AvailabilityDB()
+    restarted.conn.close()
+    restarted.conn = sqlite3.connect(path)
+    restarted.conn.row_factory = sqlite3.Row
+    restarted._init_availability_schema()
+    result = AvailabilityEngine(restarted).recover_due_for_instance("availability-test", now=now)
+
+    assert result == {"recovered": 1, "scopes": [{"scope_kind": "relation", "relation_id": "a"}], "reason": None}
+    assert restarted.get_availability_state(scope("a"))["turns_used"] == 0
+    assert restarted.get_availability_state(scope("b"))["turns_used"] == 1
