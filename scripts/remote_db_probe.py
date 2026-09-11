@@ -906,6 +906,44 @@ def query_relations(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[st
     }
 
 
+def query_availability(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
+    """Read availability boundaries without exposing conversation or receipt content."""
+    if not table_exists(cursor, "agent_availability_states"):
+        return {
+            "probe": "availability", "available": False,
+            "agent_instance": args.agent_instance, "scope_kind": args.scope_kind,
+            "relation_id": args.relation_id, "state": None,
+        }
+    if args.scope_kind == "relation" and not args.relation_id:
+        return {
+            "probe": "availability", "available": True,
+            "agent_instance": args.agent_instance, "scope_kind": args.scope_kind,
+            "relation_id": None, "state": None, "reason": "relation_id_required_for_relation_scope",
+        }
+    scope_key = f"relation:{args.relation_id}" if args.scope_kind == "relation" else "global"
+    row = cursor.execute(
+        """SELECT agent_instance, relation_id, scope_kind, status,
+                  contact_window_start_at, contact_window_end_at, refractory_until,
+                  recovery_at, turn_budget, turns_used, depth_budget, depth_used,
+                  last_contact_at, created_at, updated_at
+           FROM agent_availability_states WHERE agent_instance = ? AND scope_key = ?""",
+        (args.agent_instance, scope_key),
+    ).fetchone()
+    state = dict(row) if row else None
+    consumption_count = 0
+    if table_exists(cursor, "agent_availability_consumptions"):
+        consumption_count = count_rows(
+            cursor, "agent_availability_consumptions",
+            "agent_instance = ? AND scope_key = ?", (args.agent_instance, scope_key),
+        )
+    return {
+        "probe": "availability", "available": True,
+        "agent_instance": args.agent_instance, "scope_kind": args.scope_kind,
+        "relation_id": args.relation_id if args.scope_kind == "relation" else None,
+        "state": state, "consumption_count": consumption_count,
+    }
+
+
 def query_pressure(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
     state_columns = table_columns(cursor, "agent_will_pressure_state")
     state_scope_select = ", ".join(
@@ -2079,6 +2117,7 @@ def query_tom(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any
 
 
 PROBES: Dict[str, Callable[[sqlite3.Cursor, argparse.Namespace], Dict[str, Any]]] = {
+    "availability": query_availability,
     "audio": query_audio,
     "dreams": query_dreams,
     "expressions": query_expressions,
