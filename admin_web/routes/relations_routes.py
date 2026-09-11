@@ -138,6 +138,13 @@ def _relation_rows(db, relations: List[Dict]) -> List[Dict]:
         view["conversation_count"] = db.count_conversations(
             relation["participant_user_id"], relation_id=relation["relation_id"]
         )
+        availability_reader = getattr(db, "get_availability_state", None)
+        availability = availability_reader({
+            "agent_instance": relation["agent_instance"], "relation_id": relation["relation_id"],
+            "scope_kind": "relation",
+        }) if callable(availability_reader) else None
+        view["availability"] = availability or {}
+        view["availability_status"] = (availability or {}).get("status") or "not_configured"
         rows.append(view)
     return rows
 

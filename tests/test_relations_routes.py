@@ -122,6 +122,7 @@ def test_relation_rows_expose_metadata_but_not_conversation_content():
     }])
     assert rows[0]["participant_name"] == "Alice"
     assert rows[0]["conversation_count"] == 2
+    assert rows[0]["availability_status"] == "not_configured"
     assert "user_input" not in rows[0]
     assert "ai_response" not in rows[0]
 
@@ -131,6 +132,7 @@ def test_relations_template_contains_empty_state_and_scope_contract():
     template_text = template_path.read_text(encoding="utf-8")
     assert "No relations registered" in template_text
     assert "No conversation text is loaded here." in template_text
+    assert "Availability" in template_text
     assert 'name="org_id"' in template_text
     assert 'name="memory_scope"' in template_text
 
