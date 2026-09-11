@@ -338,6 +338,30 @@ def test_relational_confirmation_only_changes_its_own_state(delivery):
     ).fetchone()[0] == 90
 
 
+def test_relational_confirmation_consumes_one_availability_turn_once(delivery):
+    relation_id = delivery.db.register_agent_relation(
+        agent_instance=TEST_INSTANCE, participant_user_id=USER, consent_status="granted",
+    )
+    for table in ("agent_will_pressure_state", "agent_will_pulse_events", "will_expressions"):
+        delivery.db.conn.execute(
+            f"UPDATE {table} SET relation_id = ?, scope_kind = 'relation'", (relation_id,)
+        )
+    scope = {"agent_instance": TEST_INSTANCE, "scope_kind": "relation", "relation_id": relation_id}
+    delivery.db.configure_availability(scope, turn_budget=2, depth_budget=5)
+    delivery.db.conn.commit()
+
+    finish(delivery, relation_id=relation_id)
+    finish(delivery, relation_id=relation_id)
+    state = delivery.db.get_availability_state(scope)
+
+    assert state["turns_used"] == 1
+    assert state["depth_used"] == 0
+    assert delivery.db.conn.execute(
+        "SELECT COUNT(*) FROM agent_availability_consumptions WHERE scope_key = ?",
+        (f"relation:{relation_id}",),
+    ).fetchone()[0] == 1
+
+
 def test_binding_is_idempotent_but_not_replaceable(delivery):
     bind_event(delivery.db, delivery.expression_id, delivery.event_id)
     second = delivery.pressure._register_event(

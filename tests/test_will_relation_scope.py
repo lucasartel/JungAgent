@@ -32,9 +32,12 @@ def _load_module(name: str, relative_path: str):
 RelationsDatabaseMixin = _load_module(
     "relations_scope_test", "core/db/relations.py"
 ).RelationsDatabaseMixin
+AvailabilityDatabaseMixin = _load_module(
+    "availability_scope_test", "core/db/availability.py"
+).AvailabilityDatabaseMixin
 
 
-class ScopedWillDB(RelationsDatabaseMixin, WillScopeDatabaseMixin):
+class ScopedWillDB(RelationsDatabaseMixin, AvailabilityDatabaseMixin, WillScopeDatabaseMixin):
     def __init__(self) -> None:
         self.conn = sqlite3.connect(":memory:")
         self.conn.row_factory = sqlite3.Row
@@ -42,6 +45,7 @@ class ScopedWillDB(RelationsDatabaseMixin, WillScopeDatabaseMixin):
         self.agent_instance = TEST_INSTANCE
         self._create_legacy_will_tables()
         self._init_relations_schema()
+        self._init_availability_schema()
         self._init_will_scope_schema()
 
     def _create_legacy_will_tables(self) -> None:

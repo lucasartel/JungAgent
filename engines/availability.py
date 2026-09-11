@@ -14,6 +14,47 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def record_confirmed_relational_delivery(conn, expression: Dict[str, Any], receipt_id: int, confirmed_at: str) -> bool:
+    """Record one confirmed proactive delivery without changing any transport state.
+
+    This intentionally runs only after a receipt has established delivery. A
+    prepared, failed, or uncertain expression never consumes availability.
+    """
+    if (expression.get("scope_kind") != "relation"
+            or expression.get("capability_key") != "relacionar_proactive_message"
+            or not expression.get("relation_id")):
+        return False
+    tables = {
+        row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    if not {"agent_availability_states", "agent_availability_consumptions"} <= tables:
+        return False
+    scope_key = f"relation:{expression['relation_id']}"
+    conn.execute(
+        """INSERT INTO agent_availability_states
+            (agent_instance, relation_id, scope_kind, scope_key, created_at, updated_at)
+           VALUES (?, ?, 'relation', ?, ?, ?)
+           ON CONFLICT(agent_instance, scope_key) DO NOTHING""",
+        (expression["agent_instance"], expression["relation_id"], scope_key, confirmed_at, confirmed_at),
+    )
+    cursor = conn.execute(
+        """INSERT INTO agent_availability_consumptions
+            (agent_instance, scope_key, evidence_ref, turn_cost, depth_cost, consumed_at)
+           VALUES (?, ?, ?, 1, 0, ?)
+           ON CONFLICT(agent_instance, scope_key, evidence_ref) DO NOTHING""",
+        (expression["agent_instance"], scope_key, f"will_expression_receipt#{receipt_id}", confirmed_at),
+    )
+    if cursor.rowcount != 1:
+        return False
+    conn.execute(
+        """UPDATE agent_availability_states
+           SET turns_used = turns_used + 1, last_contact_at = ?, updated_at = ?
+           WHERE agent_instance = ? AND scope_key = ?""",
+        (confirmed_at, confirmed_at, expression["agent_instance"], scope_key),
+    )
+    return True
+
+
 class AvailabilityEngine:
     """Decides whether one scope may consume relational attention right now."""
 

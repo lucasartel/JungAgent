@@ -140,7 +140,7 @@ def finalize(db, *, expression_id, event_id, expected, outcome, summary, evidenc
                 )
                 return state
             persisted = conn.execute(
-                """SELECT summary, created_at FROM will_expression_receipts
+                """SELECT id, summary, created_at FROM will_expression_receipts
                    WHERE expression_id = ? AND status = ? AND result_code = ? ORDER BY id DESC LIMIT 1""",
                 (expression_id, expression["status"],
                  "delivery_confirmed" if expression["status"] == "completed" else "delivery_failed"),
@@ -158,6 +158,14 @@ def finalize(db, *, expression_id, event_id, expected, outcome, summary, evidenc
             pressures = {name: float(state.get(name + "_pressure") or 0)
                          for name in ("saber", "relacionar", "expressar")}
             if expression["status"] == "completed":
+                from engines.availability import record_confirmed_relational_delivery
+
+                # A confirmed proactive contact consumes one turn, never depth.
+                # It shares this transaction with pressure integration so a
+                # partial post-send write cannot silently spend attention.
+                record_confirmed_relational_delivery(
+                    conn, expression, int(persisted["id"]), confirmed_at.isoformat()
+                )
                 pressures[winner] = 8.0
                 dominant = max(pressures, key=lambda name: (pressures[name], name))
                 conn.execute(
