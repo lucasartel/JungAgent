@@ -1,0 +1,190 @@
+"""Persistent availability boundaries for an agent instance and its Relations."""
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Dict, Optional
+
+from engines.will_scope import GLOBAL_SCOPE, RELATION_SCOPE
+
+
+AVAILABILITY_STATUSES = {"available", "paused"}
+
+
+def _now_iso() -> str:
+    return datetime.utcnow().isoformat(timespec="seconds")
+
+
+def _scope_key(scope: Dict[str, Optional[str]]) -> str:
+    if scope.get("scope_kind") == RELATION_SCOPE:
+        relation_id = (scope.get("relation_id") or "").strip()
+        if not relation_id:
+            raise ValueError("relation_id_required_for_relation_scope")
+        return f"relation:{relation_id}"
+    return GLOBAL_SCOPE
+
+
+def _state_row(row: Any) -> Optional[Dict[str, Any]]:
+    return dict(row) if row else None
+
+
+class AvailabilityDatabaseMixin:
+    """Additive storage for availability; it never contacts a participant."""
+
+    def _init_availability_schema(self) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_availability_states (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_instance TEXT NOT NULL,
+                relation_id TEXT,
+                scope_kind TEXT NOT NULL DEFAULT 'global',
+                scope_key TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'available',
+                contact_window_start_at TEXT,
+                contact_window_end_at TEXT,
+                refractory_until TEXT,
+                recovery_at TEXT,
+                turn_budget INTEGER,
+                turns_used INTEGER NOT NULL DEFAULT 0,
+                depth_budget INTEGER,
+                depth_used INTEGER NOT NULL DEFAULT 0,
+                last_contact_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(agent_instance, scope_key)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_availability_consumptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_instance TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                evidence_ref TEXT NOT NULL,
+                turn_cost INTEGER NOT NULL DEFAULT 0,
+                depth_cost INTEGER NOT NULL DEFAULT 0,
+                consumed_at TEXT NOT NULL,
+                UNIQUE(agent_instance, scope_key, evidence_ref)
+            )
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_availability_scope "
+            "ON agent_availability_states(agent_instance, scope_kind, relation_id)"
+        )
+        self.conn.commit()
+
+    def get_availability_state(self, scope: Dict[str, Optional[str]]) -> Optional[Dict[str, Any]]:
+        cursor = self.conn.cursor()
+        row = cursor.execute(
+            "SELECT * FROM agent_availability_states WHERE agent_instance = ? AND scope_key = ?",
+            (scope["agent_instance"], _scope_key(scope)),
+        ).fetchone()
+        return _state_row(row)
+
+    def configure_availability(
+        self,
+        scope: Dict[str, Optional[str]],
+        *,
+        status: str = "available",
+        contact_window_start_at: Optional[str] = None,
+        contact_window_end_at: Optional[str] = None,
+        refractory_until: Optional[str] = None,
+        recovery_at: Optional[str] = None,
+        turn_budget: Optional[int] = None,
+        depth_budget: Optional[int] = None,
+        reset_usage: bool = False,
+    ) -> Dict[str, Any]:
+        """Set a scope's limits. ``None`` means that budget is not configured."""
+        clean_status = (status or "available").strip().lower()
+        if clean_status not in AVAILABILITY_STATUSES:
+            raise ValueError(f"invalid_availability_status:{status}")
+        for field, value in (("turn_budget", turn_budget), ("depth_budget", depth_budget)):
+            if value is not None and int(value) < 0:
+                raise ValueError(f"{field}_must_be_nonnegative")
+        now = _now_iso()
+        key = _scope_key(scope)
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO agent_availability_states (
+                    agent_instance, relation_id, scope_kind, scope_key, status,
+                    contact_window_start_at, contact_window_end_at, refractory_until,
+                    recovery_at, turn_budget, depth_budget, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(agent_instance, scope_key) DO UPDATE SET
+                    status = excluded.status,
+                    contact_window_start_at = excluded.contact_window_start_at,
+                    contact_window_end_at = excluded.contact_window_end_at,
+                    refractory_until = excluded.refractory_until,
+                    recovery_at = excluded.recovery_at,
+                    turn_budget = excluded.turn_budget,
+                    depth_budget = excluded.depth_budget,
+                    turns_used = CASE WHEN ? THEN 0 ELSE agent_availability_states.turns_used END,
+                    depth_used = CASE WHEN ? THEN 0 ELSE agent_availability_states.depth_used END,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    scope["agent_instance"], scope.get("relation_id"), scope["scope_kind"], key,
+                    clean_status, contact_window_start_at, contact_window_end_at, refractory_until,
+                    recovery_at, turn_budget, depth_budget, now, now, int(reset_usage), int(reset_usage),
+                ),
+            )
+            self.conn.commit()
+            return self.get_availability_state(scope) or {}
+
+    def get_availability_consumption(
+        self, scope: Dict[str, Optional[str]], evidence_ref: str
+    ) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """SELECT * FROM agent_availability_consumptions
+               WHERE agent_instance = ? AND scope_key = ? AND evidence_ref = ?""",
+            (scope["agent_instance"], _scope_key(scope), evidence_ref),
+        ).fetchone()
+        return _state_row(row)
+
+    def record_availability_consumption(
+        self,
+        scope: Dict[str, Optional[str]],
+        *,
+        evidence_ref: str,
+        turn_cost: int,
+        depth_cost: int,
+        consumed_at: str,
+    ) -> Dict[str, Any]:
+        """Atomically count an allowed contact once for its evidence reference."""
+        if not (evidence_ref or "").strip():
+            raise ValueError("availability_evidence_ref_required")
+        if turn_cost < 0 or depth_cost < 0:
+            raise ValueError("availability_cost_must_be_nonnegative")
+        key = _scope_key(scope)
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """INSERT INTO agent_availability_states
+                    (agent_instance, relation_id, scope_kind, scope_key, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(agent_instance, scope_key) DO NOTHING""",
+                (scope["agent_instance"], scope.get("relation_id"), scope["scope_kind"], key,
+                 consumed_at, consumed_at),
+            )
+            cursor.execute(
+                """INSERT INTO agent_availability_consumptions
+                    (agent_instance, scope_key, evidence_ref, turn_cost, depth_cost, consumed_at)
+                   VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(agent_instance, scope_key, evidence_ref) DO NOTHING""",
+                (scope["agent_instance"], key, evidence_ref.strip(), turn_cost, depth_cost, consumed_at),
+            )
+            created = cursor.rowcount == 1
+            if created:
+                cursor.execute(
+                    """UPDATE agent_availability_states
+                       SET turns_used = turns_used + ?, depth_used = depth_used + ?,
+                           last_contact_at = ?, updated_at = ?
+                       WHERE agent_instance = ? AND scope_key = ?""",
+                    (turn_cost, depth_cost, consumed_at, consumed_at, scope["agent_instance"], key),
+                )
+            self.conn.commit()
+            return {"created": created, "state": self.get_availability_state(scope)}

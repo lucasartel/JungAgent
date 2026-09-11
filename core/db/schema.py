@@ -1153,6 +1153,9 @@ class SchemaDatabaseMixin:
         if hasattr(self, "_init_relations_schema"):
             self._init_relations_schema()
 
+        if hasattr(self, "_init_availability_schema"):
+            self._init_availability_schema()
+
         if hasattr(self, "_init_will_scope_schema"):
             self._init_will_scope_schema()
 

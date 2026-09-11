@@ -26,6 +26,7 @@ from core.db.knowledge_gaps import KnowledgeGapDatabaseMixin
 from core.db.psychometrics import PsychometricsDatabaseMixin
 from core.db.relational_state import RelationalStateDatabaseMixin
 from core.db.relations import RelationsDatabaseMixin
+from core.db.availability import AvailabilityDatabaseMixin
 from core.db.schema import SchemaDatabaseMixin
 from engines.will_expression import WillExpressionDatabaseMixin
 from engines.will_phase_arbitration import WillPhaseArbitrationDatabaseMixin
@@ -64,6 +65,7 @@ class HybridDatabaseManager(
     IntegrativeSelfDatabaseMixin,
     RelationalStateDatabaseMixin,
     RelationsDatabaseMixin,
+    AvailabilityDatabaseMixin,
     WillScopeDatabaseMixin,
     WillExpressionDatabaseMixin,
     WillPhaseArbitrationDatabaseMixin,
