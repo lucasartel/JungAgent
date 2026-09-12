@@ -145,6 +145,17 @@ def _relation_rows(db, relations: List[Dict]) -> List[Dict]:
         }) if callable(availability_reader) else None
         view["availability"] = availability or {}
         view["availability_status"] = (availability or {}).get("status") or "not_configured"
+        view["availability_disposition"] = "not_configured"
+        view["availability_effective_reserve"] = None
+        if availability:
+            from engines.availability import AvailabilityEngine
+
+            disposition = AvailabilityEngine(db).conversational_disposition({
+                "agent_instance": relation["agent_instance"], "relation_id": relation["relation_id"],
+                "scope_kind": "relation",
+            })
+            view["availability_disposition"] = disposition["disposition"]
+            view["availability_effective_reserve"] = round(disposition["effective_reserve"], 1)
         rows.append(view)
     return rows
 

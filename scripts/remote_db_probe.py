@@ -925,6 +925,8 @@ def query_availability(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict
         """SELECT agent_instance, relation_id, scope_kind, status,
                   contact_window_start_at, contact_window_end_at, refractory_until,
                   recovery_at, turn_budget, turns_used, depth_budget, depth_used,
+                  relational_reserve, relational_reserve_max, relational_reserve_threshold,
+                  relational_recovery_per_hour, last_relational_exchange_at,
                   last_contact_at, created_at, updated_at
            FROM agent_availability_states WHERE agent_instance = ? AND scope_key = ?""",
         (args.agent_instance, scope_key),

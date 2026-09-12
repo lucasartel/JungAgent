@@ -11,12 +11,15 @@ def test_availability_probe_reports_only_scope_state_and_aggregate_consumption()
         agent_instance TEXT, relation_id TEXT, scope_kind TEXT, scope_key TEXT, status TEXT,
         contact_window_start_at TEXT, contact_window_end_at TEXT, refractory_until TEXT,
         recovery_at TEXT, turn_budget INTEGER, turns_used INTEGER, depth_budget INTEGER,
-        depth_used INTEGER, last_contact_at TEXT, created_at TEXT, updated_at TEXT)""")
+        depth_used INTEGER, relational_reserve REAL, relational_reserve_max REAL,
+        relational_reserve_threshold REAL, relational_recovery_per_hour REAL,
+        last_relational_exchange_at TEXT, last_contact_at TEXT, created_at TEXT, updated_at TEXT)""")
     conn.execute("""CREATE TABLE agent_availability_consumptions (
         agent_instance TEXT, scope_key TEXT, evidence_ref TEXT)""")
     conn.execute("""INSERT INTO agent_availability_states VALUES
         ('jung_a', 'rel_a', 'relation', 'relation:rel_a', 'available', NULL, NULL,
-         '2026-09-11T13:00:00', NULL, 3, 1, 4, 0, '2026-09-11T12:00:00', 'now', 'now')""")
+         '2026-09-11T13:00:00', NULL, 3, 1, 4, 0, 70, 100, 15, 8,
+         '2026-09-11T11:00:00', '2026-09-11T12:00:00', 'now', 'now')""")
     conn.execute("INSERT INTO agent_availability_consumptions VALUES ('jung_a', 'relation:rel_a', 'private:1')")
     conn.commit()
 
@@ -27,6 +30,7 @@ def test_availability_probe_reports_only_scope_state_and_aggregate_consumption()
     assert payload["available"] is True
     assert payload["consumption_count"] == 1
     assert payload["state"]["turns_used"] == 1
+    assert payload["state"]["relational_reserve"] == 70
     assert "evidence_ref" not in str(payload)
 
 
