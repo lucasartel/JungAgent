@@ -78,8 +78,8 @@ def record_confirmed_relational_delivery(conn, expression: Dict[str, Any], recei
     )
     cursor = conn.execute(
         """INSERT INTO agent_availability_consumptions
-            (agent_instance, scope_key, evidence_ref, turn_cost, depth_cost, consumed_at)
-           VALUES (?, ?, ?, 1, 0, ?)
+            (agent_instance, scope_key, evidence_ref, turn_cost, depth_cost, reserve_cost, consumed_at)
+           VALUES (?, ?, ?, 1, 0, 1, ?)
            ON CONFLICT(agent_instance, scope_key, evidence_ref) DO NOTHING""",
         (expression["agent_instance"], scope_key, f"will_expression_receipt#{receipt_id}", confirmed_at),
     )
@@ -87,9 +87,18 @@ def record_confirmed_relational_delivery(conn, expression: Dict[str, Any], recei
         return False
     conn.execute(
         """UPDATE agent_availability_states
-           SET turns_used = turns_used + 1, last_contact_at = ?, updated_at = ?
+           SET turns_used = turns_used + 1,
+               relational_reserve = MAX(0, MIN(
+                   relational_reserve_max,
+                   relational_reserve + CASE
+                       WHEN last_relational_exchange_at IS NULL THEN 0
+                       ELSE MAX(0, (julianday(?) - julianday(last_relational_exchange_at)) * 24)
+                           * relational_recovery_per_hour
+                   END
+               ) - 1),
+               last_relational_exchange_at = ?, last_contact_at = ?, updated_at = ?
            WHERE agent_instance = ? AND scope_key = ?""",
-        (confirmed_at, confirmed_at, expression["agent_instance"], scope_key),
+        (confirmed_at, confirmed_at, confirmed_at, confirmed_at, expression["agent_instance"], scope_key),
     )
     return True
 

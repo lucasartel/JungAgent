@@ -347,7 +347,10 @@ def test_relational_confirmation_consumes_one_availability_turn_once(delivery):
             f"UPDATE {table} SET relation_id = ?, scope_kind = 'relation'", (relation_id,)
         )
     scope = {"agent_instance": TEST_INSTANCE, "scope_kind": "relation", "relation_id": relation_id}
-    delivery.db.configure_availability(scope, turn_budget=2, depth_budget=5)
+    delivery.db.configure_availability(
+        scope, turn_budget=2, depth_budget=5, relational_reserve=20,
+        relational_reserve_max=20, relational_recovery_per_hour=0,
+    )
     delivery.db.conn.commit()
 
     finish(delivery, relation_id=relation_id)
@@ -356,6 +359,8 @@ def test_relational_confirmation_consumes_one_availability_turn_once(delivery):
 
     assert state["turns_used"] == 1
     assert state["depth_used"] == 0
+    assert state["relational_reserve"] == 19
+    assert state["last_relational_exchange_at"] is not None
     assert delivery.db.conn.execute(
         "SELECT COUNT(*) FROM agent_availability_consumptions WHERE scope_key = ?",
         (f"relation:{relation_id}",),
