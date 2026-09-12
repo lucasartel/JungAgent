@@ -53,7 +53,13 @@ def conversational_response_guidance(disposition: str) -> str:
     )
 
 
-def record_confirmed_relational_delivery(conn, expression: Dict[str, Any], receipt_id: int, confirmed_at: str) -> bool:
+def record_confirmed_relational_delivery(
+    conn,
+    expression: Dict[str, Any],
+    receipt_id: int,
+    confirmed_at: str,
+    refractory_until: Optional[str] = None,
+) -> bool:
     """Record one confirmed proactive delivery without changing any transport state.
 
     This intentionally runs only after a receipt has established delivery. A
@@ -96,9 +102,15 @@ def record_confirmed_relational_delivery(conn, expression: Dict[str, Any], recei
                            * relational_recovery_per_hour
                    END
                ) - 1),
+               refractory_until = CASE
+                   WHEN ? IS NULL THEN refractory_until
+                   WHEN refractory_until IS NULL OR refractory_until < ? THEN ?
+                   ELSE refractory_until
+               END,
                last_relational_exchange_at = ?, last_contact_at = ?, updated_at = ?
            WHERE agent_instance = ? AND scope_key = ?""",
-        (confirmed_at, confirmed_at, confirmed_at, confirmed_at, expression["agent_instance"], scope_key),
+        (confirmed_at, refractory_until, refractory_until, refractory_until,
+         confirmed_at, confirmed_at, confirmed_at, expression["agent_instance"], scope_key),
     )
     return True
 

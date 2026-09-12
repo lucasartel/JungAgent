@@ -163,8 +163,9 @@ def finalize(db, *, expression_id, event_id, expected, outcome, summary, evidenc
                 # A confirmed proactive contact consumes one turn, never depth.
                 # It shares this transaction with pressure integration so a
                 # partial post-send write cannot silently spend attention.
+                refractory_until = (confirmed_at + timedelta(hours=refractory_hours)).isoformat()
                 record_confirmed_relational_delivery(
-                    conn, expression, int(persisted["id"]), confirmed_at.isoformat()
+                    conn, expression, int(persisted["id"]), confirmed_at.isoformat(), refractory_until,
                 )
                 pressures[winner] = 8.0
                 dominant = max(pressures, key=lambda name: (pressures[name], name))
@@ -174,7 +175,7 @@ def finalize(db, *, expression_id, event_id, expected, outcome, summary, evidenc
                         last_release_will = ?, last_release_at = ?, last_action_status = 'completed',
                         last_action_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
                     (dominant, int(any(value >= threshold for value in pressures.values())),
-                     (confirmed_at + timedelta(hours=refractory_hours)).isoformat(), winner, confirmed_at.isoformat(),
+                     refractory_until, winner, confirmed_at.isoformat(),
                      summary[:240], state["id"]),
                 )
             else:

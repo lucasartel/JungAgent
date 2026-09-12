@@ -6,6 +6,7 @@ import ast
 import sqlite3
 from argparse import Namespace
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Dict, Optional
@@ -361,10 +362,29 @@ def test_relational_confirmation_consumes_one_availability_turn_once(delivery):
     assert state["depth_used"] == 0
     assert state["relational_reserve"] == 19
     assert state["last_relational_exchange_at"] is not None
+    assert state["refractory_until"] is not None
     assert delivery.db.conn.execute(
         "SELECT COUNT(*) FROM agent_availability_consumptions WHERE scope_key = ?",
         (f"relation:{relation_id}",),
     ).fetchone()[0] == 1
+
+
+def test_relational_confirmation_does_not_shorten_manual_availability_refractory(delivery):
+    relation_id = delivery.db.register_agent_relation(
+        agent_instance=TEST_INSTANCE, participant_user_id=USER, consent_status="granted",
+    )
+    for table in ("agent_will_pressure_state", "agent_will_pulse_events", "will_expressions"):
+        delivery.db.conn.execute(
+            f"UPDATE {table} SET relation_id = ?, scope_kind = 'relation'", (relation_id,)
+        )
+    scope = {"agent_instance": TEST_INSTANCE, "scope_kind": "relation", "relation_id": relation_id}
+    manual_until = (datetime.utcnow() + timedelta(hours=12)).isoformat()
+    delivery.db.configure_availability(scope, refractory_until=manual_until)
+    delivery.db.conn.commit()
+
+    finish(delivery, relation_id=relation_id)
+
+    assert delivery.db.get_availability_state(scope)["refractory_until"] == manual_until
 
 
 def test_binding_is_idempotent_but_not_replaceable(delivery):
