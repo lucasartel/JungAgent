@@ -27,6 +27,15 @@ def _state_row(row: Any) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
+def _elapsed_hours(start: Optional[str], end: str) -> float:
+    if not start:
+        return 0.0
+    try:
+        return max(0.0, (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds() / 3600)
+    except ValueError:
+        return 0.0
+
+
 class AvailabilityDatabaseMixin:
     """Additive storage for availability; it never contacts a participant."""
 
@@ -51,7 +60,8 @@ class AvailabilityDatabaseMixin:
                 depth_used INTEGER NOT NULL DEFAULT 0,
                 relational_reserve REAL NOT NULL DEFAULT 100,
                 relational_reserve_max REAL NOT NULL DEFAULT 100,
-                relational_reserve_threshold REAL NOT NULL DEFAULT 0,
+                relational_reserve_threshold REAL NOT NULL DEFAULT 15,
+                relational_recovery_per_hour REAL NOT NULL DEFAULT 8,
                 last_relational_exchange_at TEXT,
                 last_contact_at TEXT,
                 created_at TEXT NOT NULL,
@@ -85,6 +95,7 @@ class AvailabilityDatabaseMixin:
             ("relational_reserve", "REAL NOT NULL DEFAULT 100"),
             ("relational_reserve_max", "REAL NOT NULL DEFAULT 100"),
             ("relational_reserve_threshold", "REAL NOT NULL DEFAULT 0"),
+            ("relational_recovery_per_hour", "REAL NOT NULL DEFAULT 8"),
             ("last_relational_exchange_at", "TEXT"),
         ):
             if column not in state_columns:
@@ -120,6 +131,7 @@ class AvailabilityDatabaseMixin:
         relational_reserve: Optional[float] = None,
         relational_reserve_max: Optional[float] = None,
         relational_reserve_threshold: Optional[float] = None,
+        relational_recovery_per_hour: Optional[float] = None,
         reset_usage: bool = False,
     ) -> Dict[str, Any]:
         """Set a scope's limits. ``None`` means that budget is not configured."""
@@ -129,7 +141,7 @@ class AvailabilityDatabaseMixin:
         for field, value in (("turn_budget", turn_budget), ("depth_budget", depth_budget)):
             if value is not None and int(value) < 0:
                 raise ValueError(f"{field}_must_be_nonnegative")
-        for field, value in (("relational_reserve", relational_reserve), ("relational_reserve_max", relational_reserve_max), ("relational_reserve_threshold", relational_reserve_threshold)):
+        for field, value in (("relational_reserve", relational_reserve), ("relational_reserve_max", relational_reserve_max), ("relational_reserve_threshold", relational_reserve_threshold), ("relational_recovery_per_hour", relational_recovery_per_hour)):
             if value is not None and float(value) < 0:
                 raise ValueError(f"{field}_must_be_nonnegative")
         if relational_reserve is not None and relational_reserve_max is not None and float(relational_reserve) > float(relational_reserve_max):
@@ -148,7 +160,11 @@ class AvailabilityDatabaseMixin:
             )
             reserve_threshold_value = (
                 relational_reserve_threshold if relational_reserve_threshold is not None
-                else existing.get("relational_reserve_threshold", 0)
+                else existing.get("relational_reserve_threshold", 15)
+            )
+            recovery_rate_value = (
+                relational_recovery_per_hour if relational_recovery_per_hour is not None
+                else existing.get("relational_recovery_per_hour", 8)
             )
             cursor = self.conn.cursor()
             cursor.execute(
@@ -157,8 +173,9 @@ class AvailabilityDatabaseMixin:
                     agent_instance, relation_id, scope_kind, scope_key, status,
                     contact_window_start_at, contact_window_end_at, refractory_until,
                     recovery_at, turn_budget, depth_budget, relational_reserve,
-                    relational_reserve_max, relational_reserve_threshold, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    relational_reserve_max, relational_reserve_threshold, relational_recovery_per_hour,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(agent_instance, scope_key) DO UPDATE SET
                     status = excluded.status,
                     contact_window_start_at = excluded.contact_window_start_at,
@@ -170,6 +187,7 @@ class AvailabilityDatabaseMixin:
                     relational_reserve = COALESCE(excluded.relational_reserve, agent_availability_states.relational_reserve),
                     relational_reserve_max = COALESCE(excluded.relational_reserve_max, agent_availability_states.relational_reserve_max),
                     relational_reserve_threshold = COALESCE(excluded.relational_reserve_threshold, agent_availability_states.relational_reserve_threshold),
+                    relational_recovery_per_hour = COALESCE(excluded.relational_recovery_per_hour, agent_availability_states.relational_recovery_per_hour),
                     turns_used = CASE WHEN ? THEN 0 ELSE agent_availability_states.turns_used END,
                     depth_used = CASE WHEN ? THEN 0 ELSE agent_availability_states.depth_used END,
                     updated_at = excluded.updated_at
@@ -178,7 +196,7 @@ class AvailabilityDatabaseMixin:
                     scope["agent_instance"], scope.get("relation_id"), scope["scope_kind"], key,
                     clean_status, contact_window_start_at, contact_window_end_at, refractory_until,
                     recovery_at, turn_budget, depth_budget, reserve_value, reserve_max_value,
-                    reserve_threshold_value, now, now, int(reset_usage), int(reset_usage),
+                    reserve_threshold_value, recovery_rate_value, now, now, int(reset_usage), int(reset_usage),
                 ),
             )
             self.conn.commit()
@@ -258,11 +276,19 @@ class AvailabilityDatabaseMixin:
                 (scope["agent_instance"], key, evidence_ref.strip(), reserve_cost, reserve_replenishment, occurred_at))
             created = cursor.rowcount == 1
             if created:
+                state = self.get_availability_state(scope) or {}
+                recovered_reserve = min(
+                    float(state.get("relational_reserve_max") or 100),
+                    float(state.get("relational_reserve") or 0)
+                    + _elapsed_hours(state.get("last_relational_exchange_at"), occurred_at)
+                    * float(state.get("relational_recovery_per_hour") or 0),
+                )
                 cursor.execute("""UPDATE agent_availability_states
-                    SET relational_reserve = MIN(relational_reserve_max, MAX(0, relational_reserve - ? + ?)),
+                    SET relational_reserve = MIN(relational_reserve_max, MAX(0, ? - ? + ?)),
                         last_relational_exchange_at = ?, updated_at = ?
                     WHERE agent_instance = ? AND scope_key = ?""",
-                    (reserve_cost, reserve_replenishment, occurred_at, occurred_at, scope["agent_instance"], key))
+                    (recovered_reserve, reserve_cost, reserve_replenishment, occurred_at, occurred_at,
+                     scope["agent_instance"], key))
             self.conn.commit()
             return {"created": created, "state": self.get_availability_state(scope)}
 

@@ -14,6 +14,16 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def _effective_reserve(state: Dict[str, Any], now: datetime) -> float:
+    reserve = float(state.get("relational_reserve") or 0)
+    maximum = float(state.get("relational_reserve_max") or 100)
+    last_exchange = _parse_time(state.get("last_relational_exchange_at"))
+    rate = float(state.get("relational_recovery_per_hour") or 0)
+    if last_exchange and rate > 0:
+        reserve += max(0.0, (now - last_exchange).total_seconds() / 3600) * rate
+    return min(maximum, reserve)
+
+
 def conversational_exchange_dynamics(*, response_chars: int, affective_charge: float,
                                     existential_depth: float) -> Dict[str, float]:
     """Bounded structural cost for a completed turn, without inspecting text."""
@@ -108,16 +118,17 @@ class AvailabilityEngine:
         if state.get("depth_budget") is not None and int(state["depth_used"]) >= int(state["depth_budget"]):
             return {"allowed": False, "reason": "availability_depth_budget_exhausted", "state": state}
         if (float(state.get("relational_reserve_threshold") or 0) > 0
-                and float(state.get("relational_reserve") or 0) <= float(state["relational_reserve_threshold"])):
+                and _effective_reserve(state, instant) <= float(state["relational_reserve_threshold"])):
             return {"allowed": False, "reason": "availability_relational_reserve_depleted", "state": state}
         return {"allowed": True, "reason": None, "state": state}
 
-    def conversational_disposition(self, scope: Dict[str, Optional[str]]) -> Dict[str, Any]:
+    def conversational_disposition(self, scope: Dict[str, Optional[str]], *, now: Optional[datetime] = None) -> Dict[str, Any]:
         """Describe relational tone without blocking a received message."""
         state = self.db.get_availability_state(scope) or {}
         threshold = float(state.get("relational_reserve_threshold") or 0)
-        reserve = float(state.get("relational_reserve") or 0)
-        return {"disposition": "closing" if threshold > 0 and reserve <= threshold else "engaged", "state": state}
+        reserve = _effective_reserve(state, self._now(now))
+        return {"disposition": "closing" if threshold > 0 and reserve <= threshold else "engaged", "state": state,
+                "effective_reserve": reserve}
 
     def register_relational_exchange(self, scope: Dict[str, Optional[str]], *, evidence_ref: str,
                                      reserve_cost: float, reserve_replenishment: float = 0,

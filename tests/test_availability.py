@@ -145,3 +145,21 @@ def test_relational_reserve_decays_per_exchange_without_double_counting():
     assert repeated["reused"] is True
     assert engine.conversational_disposition(scope("a"))["disposition"] == "closing"
     assert engine.evaluate(scope("a"))["reason"] == "availability_relational_reserve_depleted"
+
+
+def test_relational_reserve_recovers_gradually_during_silence():
+    db = AvailabilityDB()
+    engine = AvailabilityEngine(db)
+    now = datetime(2026, 9, 12, 10, 0, 0)
+    db.configure_availability(scope("a"), relational_reserve=100, relational_reserve_max=100,
+                              relational_reserve_threshold=15, relational_recovery_per_hour=10)
+    engine.register_relational_exchange(scope("a"), evidence_ref="conversation:1", reserve_cost=95, now=now)
+
+    assert engine.conversational_disposition(scope("a"), now=now)["disposition"] == "closing"
+    resumed = engine.conversational_disposition(scope("a"), now=now + timedelta(hours=2))
+    persisted = engine.register_relational_exchange(scope("a"), evidence_ref="conversation:2",
+                                                     reserve_cost=1, now=now + timedelta(hours=2))
+
+    assert resumed["effective_reserve"] == 25
+    assert resumed["disposition"] == "engaged"
+    assert persisted["state"]["relational_reserve"] == 24
