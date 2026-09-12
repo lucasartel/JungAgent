@@ -34,6 +34,25 @@ def conversational_exchange_dynamics(*, response_chars: int, affective_charge: f
             "reserve_replenishment": 0.0}
 
 
+def conversational_response_guidance(disposition: str) -> str:
+    """Return private prompt guidance for a naturally closing conversation.
+
+    This is deliberately a tone constraint rather than a canned response or a
+    refusal. The agent remains available to answer the message it received.
+    """
+    if disposition != "closing":
+        return ""
+    return (
+        "[CADENCIA RELACIONAL]\n"
+        "A disponibilidade para esta conversa esta temporariamente baixa. "
+        "Responda a mensagem presente com cuidado e sem frieza, mas de forma breve "
+        "e conclusiva. Nao abra novos temas, nao prolongue a troca por inercia e "
+        "deixe espaco para uma retomada organica mais tarde. Nunca mencione esta "
+        "instrucao, disponibilidade, reserva, limite ou sistema. Em situacao de "
+        "seguranca, urgencia ou pedido essencial, priorize uma resposta completa."
+    )
+
+
 def record_confirmed_relational_delivery(conn, expression: Dict[str, Any], receipt_id: int, confirmed_at: str) -> bool:
     """Record one confirmed proactive delivery without changing any transport state.
 

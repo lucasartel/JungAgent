@@ -383,6 +383,19 @@ class JungianEngine:
             logger.warning("⚠️ [AVAILABILITY] Falha ao registrar troca relacional: %s", exc)
         return None
 
+    def _relational_conversation_guidance(self, user_id: str) -> str:
+        """Read the scoped disposition without changing availability state."""
+        try:
+            from engines.availability import AvailabilityEngine, conversational_response_guidance
+            from engines.will_scope import scope_context
+
+            scope = scope_context(self.db, resolve_participant_user_id=str(user_id))
+            disposition = AvailabilityEngine(self.db).conversational_disposition(scope)
+            return conversational_response_guidance(disposition.get("disposition", "engaged"))
+        except Exception as exc:
+            logger.warning("⚠️ [AVAILABILITY] Falha ao ler disposicao conversacional: %s", exc)
+            return ""
+
     def _count_context_items(self, text: str) -> int:
         if not text:
             return 0
@@ -640,6 +653,9 @@ class JungianEngine:
                 full_context += f"\n\n{symbolic_context}"
             if tom_context:
                 full_context += f"\n\n{tom_context}"
+            relational_guidance = self._relational_conversation_guidance(user_id)
+            if relational_guidance:
+                full_context += f"\n\n{relational_guidance}"
             return full_context
 
         identity_text = Config.STANDARD_IDENTITY_PROMPT + development_policy.get("prompt_block", "")
@@ -653,6 +669,9 @@ class JungianEngine:
             full_context += f"\n\n{symbolic_context}"
         if tom_context:
             full_context += f"\n\n{tom_context}"
+        relational_guidance = self._relational_conversation_guidance(user_id)
+        if relational_guidance:
+            full_context += f"\n\n{relational_guidance}"
         return full_context
 
     def _build_theory_of_mind_prompt_context(self, user_id: str) -> str:
@@ -2558,6 +2577,9 @@ class JungianEngine:
         ism_context = self._build_ism_prompt_context(user_id)
         if ism_context:
             agent_identity_for_prompt += f"\n\n{ism_context}"
+        relational_guidance = self._relational_conversation_guidance(user_id)
+        if relational_guidance:
+            agent_identity_for_prompt += f"\n\n{relational_guidance}"
 
         # Construir prompt
         prompt = Config.RESPONSE_PROMPT.format(
