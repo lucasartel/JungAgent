@@ -159,6 +159,13 @@ class JungianEngine:
             user_input=message,
             ai_response=clean_response,
         )
+        relational_availability = self._persist_relational_availability_exchange(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            response_text=clean_response,
+            affective_charge=affective_charge,
+            existential_depth=existential_depth,
+        )
 
         logger.info("✅ Processamento completo (ID=%s)", conversation_id)
         logger.info("%s\n", "=" * 60)
@@ -173,6 +180,8 @@ class JungianEngine:
             'conversation_id': conversation_id,
             'conflict': None
         }
+        if relational_availability is not None:
+            result["relational_availability"] = relational_availability
         if generation.get("debug_meta"):
             result["debug_meta"] = generation["debug_meta"]
 
@@ -341,6 +350,38 @@ class JungianEngine:
             )
         except Exception as exc:
             logger.warning("⚠️ [WILL] Falha ao persistir micro-sinal da conversa: %s", exc)
+
+    def _persist_relational_availability_exchange(
+        self,
+        *,
+        user_id: str,
+        conversation_id: int,
+        response_text: str,
+        affective_charge: float,
+        existential_depth: float,
+    ) -> Optional[Dict]:
+        """Record a completed exchange after persistence, never before a reply exists."""
+        try:
+            from engines.availability import AvailabilityEngine, conversational_exchange_dynamics
+            from engines.will_scope import scope_context
+
+            scope = scope_context(self.db, resolve_participant_user_id=str(user_id))
+            dynamics = conversational_exchange_dynamics(
+                response_chars=len(response_text or ""), affective_charge=affective_charge,
+                existential_depth=existential_depth,
+            )
+            result = AvailabilityEngine(self.db).register_relational_exchange(
+                scope, evidence_ref=f"conversation:{conversation_id}", **dynamics,
+            )
+            if result.get("recorded"):
+                return {
+                    "scope_kind": scope.get("scope_kind"),
+                    "relation_id": scope.get("relation_id"),
+                    "reserve_cost": dynamics["reserve_cost"],
+                }
+        except Exception as exc:
+            logger.warning("⚠️ [AVAILABILITY] Falha ao registrar troca relacional: %s", exc)
+        return None
 
     def _count_context_items(self, text: str) -> int:
         if not text:

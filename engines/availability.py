@@ -14,6 +14,16 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def conversational_exchange_dynamics(*, response_chars: int, affective_charge: float,
+                                    existential_depth: float) -> Dict[str, float]:
+    """Bounded structural cost for a completed turn, without inspecting text."""
+    length_cost = min(2.0, max(0, int(response_chars)) / 1200.0)
+    depth_cost = min(2.0, max(0.0, float(existential_depth)) / 50.0)
+    affect_cost = min(1.0, max(0.0, float(affective_charge)) / 100.0)
+    return {"reserve_cost": round(1.0 + length_cost + depth_cost + affect_cost, 3),
+            "reserve_replenishment": 0.0}
+
+
 def record_confirmed_relational_delivery(conn, expression: Dict[str, Any], receipt_id: int, confirmed_at: str) -> bool:
     """Record one confirmed proactive delivery without changing any transport state.
 
