@@ -97,7 +97,28 @@ class AvailabilityEngine:
             return {"allowed": False, "reason": "availability_turn_budget_exhausted", "state": state}
         if state.get("depth_budget") is not None and int(state["depth_used"]) >= int(state["depth_budget"]):
             return {"allowed": False, "reason": "availability_depth_budget_exhausted", "state": state}
+        if (float(state.get("relational_reserve_threshold") or 0) > 0
+                and float(state.get("relational_reserve") or 0) <= float(state["relational_reserve_threshold"])):
+            return {"allowed": False, "reason": "availability_relational_reserve_depleted", "state": state}
         return {"allowed": True, "reason": None, "state": state}
+
+    def conversational_disposition(self, scope: Dict[str, Optional[str]]) -> Dict[str, Any]:
+        """Describe relational tone without blocking a received message."""
+        state = self.db.get_availability_state(scope) or {}
+        threshold = float(state.get("relational_reserve_threshold") or 0)
+        reserve = float(state.get("relational_reserve") or 0)
+        return {"disposition": "closing" if threshold > 0 and reserve <= threshold else "engaged", "state": state}
+
+    def register_relational_exchange(self, scope: Dict[str, Optional[str]], *, evidence_ref: str,
+                                     reserve_cost: float, reserve_replenishment: float = 0,
+                                     now: Optional[datetime] = None) -> Dict[str, Any]:
+        """Record caller-classified exchange without inspecting private text."""
+        recorder = getattr(self.db, "record_relational_exchange", None)
+        if not callable(recorder):
+            return {"recorded": False, "reason": "availability_storage_unavailable", "state": None}
+        result = recorder(scope, evidence_ref=evidence_ref, reserve_cost=reserve_cost,
+                          reserve_replenishment=reserve_replenishment, occurred_at=self._now(now).isoformat())
+        return {"recorded": result["created"], "reused": not result["created"], "state": result["state"]}
 
     def consume(
         self,

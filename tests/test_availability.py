@@ -129,3 +129,19 @@ def test_instance_recovery_runner_isolated_and_restart_safe(tmp_path):
     assert result == {"recovered": 1, "scopes": [{"scope_kind": "relation", "relation_id": "a"}], "reason": None}
     assert restarted.get_availability_state(scope("a"))["turns_used"] == 0
     assert restarted.get_availability_state(scope("b"))["turns_used"] == 1
+
+
+def test_relational_reserve_decays_per_exchange_without_double_counting():
+    db = AvailabilityDB()
+    engine = AvailabilityEngine(db)
+    db.configure_availability(scope("a"), relational_reserve=40, relational_reserve_max=100,
+                              relational_reserve_threshold=10)
+    first = engine.register_relational_exchange(scope("a"), evidence_ref="conversation:1",
+                                                reserve_cost=12, reserve_replenishment=2)
+    repeated = engine.register_relational_exchange(scope("a"), evidence_ref="conversation:1",
+                                                   reserve_cost=12, reserve_replenishment=2)
+    engine.register_relational_exchange(scope("a"), evidence_ref="conversation:2", reserve_cost=23)
+    assert first["state"]["relational_reserve"] == 30
+    assert repeated["reused"] is True
+    assert engine.conversational_disposition(scope("a"))["disposition"] == "closing"
+    assert engine.evaluate(scope("a"))["reason"] == "availability_relational_reserve_depleted"

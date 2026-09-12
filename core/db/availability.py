@@ -49,6 +49,10 @@ class AvailabilityDatabaseMixin:
                 turns_used INTEGER NOT NULL DEFAULT 0,
                 depth_budget INTEGER,
                 depth_used INTEGER NOT NULL DEFAULT 0,
+                relational_reserve REAL NOT NULL DEFAULT 100,
+                relational_reserve_max REAL NOT NULL DEFAULT 100,
+                relational_reserve_threshold REAL NOT NULL DEFAULT 0,
+                last_relational_exchange_at TEXT,
                 last_contact_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -65,6 +69,8 @@ class AvailabilityDatabaseMixin:
                 evidence_ref TEXT NOT NULL,
                 turn_cost INTEGER NOT NULL DEFAULT 0,
                 depth_cost INTEGER NOT NULL DEFAULT 0,
+                reserve_cost REAL NOT NULL DEFAULT 0,
+                reserve_replenishment REAL NOT NULL DEFAULT 0,
                 consumed_at TEXT NOT NULL,
                 UNIQUE(agent_instance, scope_key, evidence_ref)
             )
@@ -74,6 +80,22 @@ class AvailabilityDatabaseMixin:
             "CREATE INDEX IF NOT EXISTS idx_availability_scope "
             "ON agent_availability_states(agent_instance, scope_kind, relation_id)"
         )
+        state_columns = {row[1] for row in cursor.execute("PRAGMA table_info(agent_availability_states)")}
+        for column, definition in (
+            ("relational_reserve", "REAL NOT NULL DEFAULT 100"),
+            ("relational_reserve_max", "REAL NOT NULL DEFAULT 100"),
+            ("relational_reserve_threshold", "REAL NOT NULL DEFAULT 0"),
+            ("last_relational_exchange_at", "TEXT"),
+        ):
+            if column not in state_columns:
+                cursor.execute(f"ALTER TABLE agent_availability_states ADD COLUMN {column} {definition}")
+        consumption_columns = {row[1] for row in cursor.execute("PRAGMA table_info(agent_availability_consumptions)")}
+        for column, definition in (
+            ("reserve_cost", "REAL NOT NULL DEFAULT 0"),
+            ("reserve_replenishment", "REAL NOT NULL DEFAULT 0"),
+        ):
+            if column not in consumption_columns:
+                cursor.execute(f"ALTER TABLE agent_availability_consumptions ADD COLUMN {column} {definition}")
         self.conn.commit()
 
     def get_availability_state(self, scope: Dict[str, Optional[str]]) -> Optional[Dict[str, Any]]:
@@ -95,6 +117,9 @@ class AvailabilityDatabaseMixin:
         recovery_at: Optional[str] = None,
         turn_budget: Optional[int] = None,
         depth_budget: Optional[int] = None,
+        relational_reserve: Optional[float] = None,
+        relational_reserve_max: Optional[float] = None,
+        relational_reserve_threshold: Optional[float] = None,
         reset_usage: bool = False,
     ) -> Dict[str, Any]:
         """Set a scope's limits. ``None`` means that budget is not configured."""
@@ -104,17 +129,36 @@ class AvailabilityDatabaseMixin:
         for field, value in (("turn_budget", turn_budget), ("depth_budget", depth_budget)):
             if value is not None and int(value) < 0:
                 raise ValueError(f"{field}_must_be_nonnegative")
+        for field, value in (("relational_reserve", relational_reserve), ("relational_reserve_max", relational_reserve_max), ("relational_reserve_threshold", relational_reserve_threshold)):
+            if value is not None and float(value) < 0:
+                raise ValueError(f"{field}_must_be_nonnegative")
+        if relational_reserve is not None and relational_reserve_max is not None and float(relational_reserve) > float(relational_reserve_max):
+            raise ValueError("relational_reserve_exceeds_max")
         now = _now_iso()
         key = _scope_key(scope)
         with self._lock:
+            existing = self.get_availability_state(scope) or {}
+            reserve_value = (
+                relational_reserve if relational_reserve is not None
+                else existing.get("relational_reserve", 100)
+            )
+            reserve_max_value = (
+                relational_reserve_max if relational_reserve_max is not None
+                else existing.get("relational_reserve_max", 100)
+            )
+            reserve_threshold_value = (
+                relational_reserve_threshold if relational_reserve_threshold is not None
+                else existing.get("relational_reserve_threshold", 0)
+            )
             cursor = self.conn.cursor()
             cursor.execute(
                 """
                 INSERT INTO agent_availability_states (
                     agent_instance, relation_id, scope_kind, scope_key, status,
                     contact_window_start_at, contact_window_end_at, refractory_until,
-                    recovery_at, turn_budget, depth_budget, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    recovery_at, turn_budget, depth_budget, relational_reserve,
+                    relational_reserve_max, relational_reserve_threshold, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(agent_instance, scope_key) DO UPDATE SET
                     status = excluded.status,
                     contact_window_start_at = excluded.contact_window_start_at,
@@ -123,6 +167,9 @@ class AvailabilityDatabaseMixin:
                     recovery_at = excluded.recovery_at,
                     turn_budget = excluded.turn_budget,
                     depth_budget = excluded.depth_budget,
+                    relational_reserve = COALESCE(excluded.relational_reserve, agent_availability_states.relational_reserve),
+                    relational_reserve_max = COALESCE(excluded.relational_reserve_max, agent_availability_states.relational_reserve_max),
+                    relational_reserve_threshold = COALESCE(excluded.relational_reserve_threshold, agent_availability_states.relational_reserve_threshold),
                     turns_used = CASE WHEN ? THEN 0 ELSE agent_availability_states.turns_used END,
                     depth_used = CASE WHEN ? THEN 0 ELSE agent_availability_states.depth_used END,
                     updated_at = excluded.updated_at
@@ -130,7 +177,8 @@ class AvailabilityDatabaseMixin:
                 (
                     scope["agent_instance"], scope.get("relation_id"), scope["scope_kind"], key,
                     clean_status, contact_window_start_at, contact_window_end_at, refractory_until,
-                    recovery_at, turn_budget, depth_budget, now, now, int(reset_usage), int(reset_usage),
+                    recovery_at, turn_budget, depth_budget, reserve_value, reserve_max_value,
+                    reserve_threshold_value, now, now, int(reset_usage), int(reset_usage),
                 ),
             )
             self.conn.commit()
@@ -186,6 +234,35 @@ class AvailabilityDatabaseMixin:
                        WHERE agent_instance = ? AND scope_key = ?""",
                     (turn_cost, depth_cost, consumed_at, consumed_at, scope["agent_instance"], key),
                 )
+            self.conn.commit()
+            return {"created": created, "state": self.get_availability_state(scope)}
+
+    def record_relational_exchange(self, scope: Dict[str, Optional[str]], *, evidence_ref: str,
+                                   reserve_cost: float, reserve_replenishment: float,
+                                   occurred_at: str) -> Dict[str, Any]:
+        """Apply one relational exchange; repeated evidence has no further effect."""
+        if not (evidence_ref or "").strip():
+            raise ValueError("availability_evidence_ref_required")
+        if reserve_cost < 0 or reserve_replenishment < 0:
+            raise ValueError("relational_reserve_delta_must_be_nonnegative")
+        key = _scope_key(scope)
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""INSERT INTO agent_availability_states
+                (agent_instance, relation_id, scope_kind, scope_key, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(agent_instance, scope_key) DO NOTHING""",
+                (scope["agent_instance"], scope.get("relation_id"), scope["scope_kind"], key, occurred_at, occurred_at))
+            cursor.execute("""INSERT INTO agent_availability_consumptions
+                (agent_instance, scope_key, evidence_ref, reserve_cost, reserve_replenishment, consumed_at)
+                VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(agent_instance, scope_key, evidence_ref) DO NOTHING""",
+                (scope["agent_instance"], key, evidence_ref.strip(), reserve_cost, reserve_replenishment, occurred_at))
+            created = cursor.rowcount == 1
+            if created:
+                cursor.execute("""UPDATE agent_availability_states
+                    SET relational_reserve = MIN(relational_reserve_max, MAX(0, relational_reserve - ? + ?)),
+                        last_relational_exchange_at = ?, updated_at = ?
+                    WHERE agent_instance = ? AND scope_key = ?""",
+                    (reserve_cost, reserve_replenishment, occurred_at, occurred_at, scope["agent_instance"], key))
             self.conn.commit()
             return {"created": created, "state": self.get_availability_state(scope)}
 
