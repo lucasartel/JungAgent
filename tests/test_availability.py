@@ -49,6 +49,7 @@ def test_refractory_window_and_essential_command_are_deterministic():
     db.configure_availability(scope("a"), refractory_until=(now + timedelta(hours=2)).isoformat())
 
     assert engine.evaluate(scope("a"), now=now)["reason"] == "availability_refractory"
+    assert engine.conversational_disposition(scope("a"), now=now)["disposition"] == "resting"
     assert engine.evaluate(scope("a"), now=now, essential=True)["reason"] == "essential_bypass"
     assert engine.evaluate(scope("a"), now=now + timedelta(hours=2))["allowed"] is True
 

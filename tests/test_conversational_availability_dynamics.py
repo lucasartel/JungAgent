@@ -23,3 +23,4 @@ def test_closing_disposition_guides_tone_without_becoming_a_canned_reply():
     assert "Nao abra novos temas" in guidance
     assert "seguranca, urgencia ou pedido essencial" in guidance
     assert "resposta completa" in guidance
+    assert conversational_response_guidance("resting")

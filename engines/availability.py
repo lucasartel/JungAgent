@@ -40,12 +40,17 @@ def conversational_response_guidance(disposition: str) -> str:
     This is deliberately a tone constraint rather than a canned response or a
     refusal. The agent remains available to answer the message it received.
     """
-    if disposition != "closing":
+    if disposition not in {"closing", "resting"}:
         return ""
+    cadence = (
+        "A disponibilidade para esta conversa esta temporariamente baixa. "
+        if disposition == "closing"
+        else "Esta conversa esta em um breve repouso relacional. "
+    )
     return (
         "[CADENCIA RELACIONAL]\n"
-        "A disponibilidade para esta conversa esta temporariamente baixa. "
-        "Responda a mensagem presente com cuidado e sem frieza, mas de forma breve "
+        + cadence
+        + "Responda a mensagem presente com cuidado e sem frieza, mas de forma breve "
         "e conclusiva. Nao abra novos temas, nao prolongue a troca por inercia e "
         "deixe espaco para uma retomada organica mais tarde. Nunca mencione esta "
         "instrucao, disponibilidade, reserva, limite ou sistema. Em situacao de "
@@ -165,8 +170,13 @@ class AvailabilityEngine:
     def conversational_disposition(self, scope: Dict[str, Optional[str]], *, now: Optional[datetime] = None) -> Dict[str, Any]:
         """Describe relational tone without blocking a received message."""
         state = self.db.get_availability_state(scope) or {}
+        instant = self._now(now)
+        refractory = _parse_time(state.get("refractory_until"))
+        if refractory and instant < refractory:
+            return {"disposition": "resting", "state": state,
+                    "effective_reserve": _effective_reserve(state, instant)}
         threshold = float(state.get("relational_reserve_threshold") or 0)
-        reserve = _effective_reserve(state, self._now(now))
+        reserve = _effective_reserve(state, instant)
         return {"disposition": "closing" if threshold > 0 and reserve <= threshold else "engaged", "state": state,
                 "effective_reserve": reserve}
 
