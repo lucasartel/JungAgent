@@ -164,3 +164,19 @@ def test_relational_reserve_recovers_gradually_during_silence():
     assert resumed["effective_reserve"] == 25
     assert resumed["disposition"] == "engaged"
     assert persisted["state"]["relational_reserve"] == 24
+
+
+def test_conversational_decision_is_scoped_idempotent_and_text_free():
+    db = AvailabilityDB()
+    engine = AvailabilityEngine(db)
+    db.configure_availability(scope("a"), refractory_until=(datetime.utcnow() + timedelta(hours=1)).isoformat())
+    disposition = engine.conversational_disposition(scope("a"))
+    assert disposition["reason"] == "availability_refractory"
+    assert engine.record_conversational_decision(scope("a"), evidence_ref="conversation:7",
+        disposition=disposition["disposition"], reason=disposition["reason"]) is True
+    assert engine.record_conversational_decision(scope("a"), evidence_ref="conversation:7",
+        disposition=disposition["disposition"], reason=disposition["reason"]) is False
+    row = db.conn.execute("SELECT * FROM agent_availability_decisions").fetchone()
+    assert row["scope_key"] == "relation:a"
+    assert row["disposition"] == "resting"
+    assert row["reason"] == "availability_refractory"

@@ -938,11 +938,13 @@ def query_availability(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict
             cursor, "agent_availability_consumptions",
             "agent_instance = ? AND scope_key = ?", (args.agent_instance, scope_key),
         )
+    decision_counts = grouped_counts(cursor, "agent_availability_decisions", "disposition",
+        where="agent_instance = ? AND scope_key = ?", params=(args.agent_instance, scope_key)) if table_exists(cursor, "agent_availability_decisions") else {}
     return {
         "probe": "availability", "available": True,
         "agent_instance": args.agent_instance, "scope_kind": args.scope_kind,
         "relation_id": args.relation_id if args.scope_kind == "relation" else None,
-        "state": state, "consumption_count": consumption_count,
+        "state": state, "consumption_count": consumption_count, "decision_counts": decision_counts,
     }
 
 

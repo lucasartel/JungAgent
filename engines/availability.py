@@ -174,11 +174,22 @@ class AvailabilityEngine:
         refractory = _parse_time(state.get("refractory_until"))
         if refractory and instant < refractory:
             return {"disposition": "resting", "state": state,
-                    "effective_reserve": _effective_reserve(state, instant)}
+                    "effective_reserve": _effective_reserve(state, instant),
+                    "reason": "availability_refractory"}
         threshold = float(state.get("relational_reserve_threshold") or 0)
         reserve = _effective_reserve(state, instant)
-        return {"disposition": "closing" if threshold > 0 and reserve <= threshold else "engaged", "state": state,
-                "effective_reserve": reserve}
+        closing = threshold > 0 and reserve <= threshold
+        return {"disposition": "closing" if closing else "engaged", "state": state,
+                "effective_reserve": reserve,
+                "reason": "availability_relational_reserve_depleted" if closing else None}
+
+    def record_conversational_decision(self, scope: Dict[str, Optional[str]], *, evidence_ref: str,
+                                       disposition: str, reason: Optional[str], now: Optional[datetime] = None) -> bool:
+        recorder = getattr(self.db, "record_availability_decision", None)
+        if not callable(recorder):
+            return False
+        return bool(recorder(scope, evidence_ref=evidence_ref, channel="received_message", disposition=disposition,
+                             reason=reason, decided_at=self._now(now).isoformat()))
 
     def register_relational_exchange(self, scope: Dict[str, Optional[str]], *, evidence_ref: str,
                                      reserve_cost: float, reserve_replenishment: float = 0,

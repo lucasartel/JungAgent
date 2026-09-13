@@ -90,6 +90,12 @@ class AvailabilityDatabaseMixin:
             "CREATE INDEX IF NOT EXISTS idx_availability_scope "
             "ON agent_availability_states(agent_instance, scope_kind, relation_id)"
         )
+        cursor.execute("""CREATE TABLE IF NOT EXISTS agent_availability_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, agent_instance TEXT NOT NULL,
+            scope_key TEXT NOT NULL, evidence_ref TEXT NOT NULL, channel TEXT NOT NULL,
+            disposition TEXT NOT NULL, reason TEXT, decided_at TEXT NOT NULL,
+            UNIQUE(agent_instance, scope_key, evidence_ref, channel))""")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_availability_decision_scope ON agent_availability_decisions(agent_instance, scope_key, disposition)")
         state_columns = {row[1] for row in cursor.execute("PRAGMA table_info(agent_availability_states)")}
         for column, definition in (
             ("relational_reserve", "REAL NOT NULL DEFAULT 100"),
@@ -291,6 +297,21 @@ class AvailabilityDatabaseMixin:
                      scope["agent_instance"], key))
             self.conn.commit()
             return {"created": created, "state": self.get_availability_state(scope)}
+
+    def record_availability_decision(self, scope: Dict[str, Optional[str]], *, evidence_ref: str,
+                                     channel: str, disposition: str, reason: Optional[str], decided_at: str) -> bool:
+        """Persist a text-free conversational cadence decision once."""
+        if not (evidence_ref or "").strip():
+            raise ValueError("availability_evidence_ref_required")
+        if disposition not in {"engaged", "closing", "resting"}:
+            raise ValueError("invalid_availability_disposition")
+        with self._lock:
+            cursor = self.conn.execute("""INSERT INTO agent_availability_decisions
+                (agent_instance, scope_key, evidence_ref, channel, disposition, reason, decided_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(agent_instance, scope_key, evidence_ref, channel) DO NOTHING""",
+                (scope["agent_instance"], _scope_key(scope), evidence_ref.strip(), channel, disposition, reason, decided_at))
+            self.conn.commit()
+            return cursor.rowcount == 1
 
     def recover_availability_if_due(
         self, scope: Dict[str, Optional[str]], *, now: str

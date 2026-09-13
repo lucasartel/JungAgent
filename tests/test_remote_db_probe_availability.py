@@ -21,6 +21,8 @@ def test_availability_probe_reports_only_scope_state_and_aggregate_consumption()
          '2026-09-11T13:00:00', NULL, 3, 1, 4, 0, 70, 100, 15, 8,
          '2026-09-11T11:00:00', '2026-09-11T12:00:00', 'now', 'now')""")
     conn.execute("INSERT INTO agent_availability_consumptions VALUES ('jung_a', 'relation:rel_a', 'private:1')")
+    conn.execute("CREATE TABLE agent_availability_decisions (agent_instance TEXT, scope_key TEXT, disposition TEXT)")
+    conn.execute("INSERT INTO agent_availability_decisions VALUES ('jung_a', 'relation:rel_a', 'resting')")
     conn.commit()
 
     payload = query_availability(conn.cursor(), Namespace(
@@ -31,6 +33,7 @@ def test_availability_probe_reports_only_scope_state_and_aggregate_consumption()
     assert payload["consumption_count"] == 1
     assert payload["state"]["turns_used"] == 1
     assert payload["state"]["relational_reserve"] == 70
+    assert payload["decision_counts"] == [{"key": "resting", "count": 1}]
     assert "evidence_ref" not in str(payload)
 
 
