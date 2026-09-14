@@ -2989,11 +2989,13 @@ class ConsciousnessLoopManager:
         from engines.will_loop_integration import recover
         from engines.loop_post_commit_integration import recover as recover_post_commit
         from engines.loop_failure_post_commit_integration import recover as recover_failure_post_commit
+        from engines.availability_loop_integration import recover_due as recover_availability
 
         self.reconcile_closed_phase_pulses()
         recover(self)
         recover_post_commit(self)
         recover_failure_post_commit(self)
+        availability_recovery = recover_availability(self)
         window = self._phase_window_for()
         target_phase = window["phase"]
         next_phase = window["next_phase"]
@@ -3058,6 +3060,7 @@ class ConsciousnessLoopManager:
                 "current_phase": target_phase.key,
                 "next_phase": next_phase.key,
                 "phase_result": phase_result,
+                "availability_recovery": availability_recovery,
             }
 
         state = dict(state_row)
@@ -3180,6 +3183,7 @@ class ConsciousnessLoopManager:
             "next_phase": next_phase.key,
             "phase_result": phase_result,
             "diary_result": diary_result,
+            "availability_recovery": availability_recovery,
         }
 
     def execute_current_phase(self, trigger_source: str = "manual_admin_trigger", notify_admin: bool = False) -> Dict:
