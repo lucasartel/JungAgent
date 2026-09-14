@@ -12,6 +12,7 @@ def decision_envelope(*, outcome: str, will_name: Optional[str], scope: Dict[str
     return {
         "outcome": outcome,
         "will_name": will_name,
+        "agent_instance": scope.get("agent_instance"),
         "scope_kind": scope.get("scope_kind"),
         "relation_id": scope.get("relation_id"),
         "reason": reason,

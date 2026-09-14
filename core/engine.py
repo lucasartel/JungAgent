@@ -427,9 +427,16 @@ class JungianEngine:
                 disposition=decision["disposition"], reason=decision.get("reason"),
             )
             if recorded:
+                from engines.will_decision import decision_envelope
+
+                envelope = decision_envelope(
+                    outcome="responded", will_name=None, scope=decision["scope"],
+                    reason=decision.get("reason"), availability=decision,
+                )
                 return {"scope_kind": decision["scope"].get("scope_kind"),
                         "relation_id": decision["scope"].get("relation_id"),
-                        "disposition": decision["disposition"], "reason": decision.get("reason")}
+                        "disposition": decision["disposition"], "reason": decision.get("reason"),
+                        "will_decision": envelope}
         except Exception as exc:
             logger.warning("⚠️ [AVAILABILITY] Falha ao registrar cadencia conversacional: %s", exc)
         return None
