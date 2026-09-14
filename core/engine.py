@@ -102,6 +102,7 @@ class JungianEngine:
         user_name = user['user_name'] if user else "Usuário"
         platform = user['platform'] if user else "telegram"
         complexity = self._determine_complexity(message)
+        relational_cadence_decision = self._relational_conversation_decision(user_id)
 
         if self._active_consciousness_enabled_for_user(user_id):
             logger.info("🎼 [ACTIVE CONSCIOUSNESS] Pipeline canto-contracanto-coro habilitado")
@@ -166,6 +167,9 @@ class JungianEngine:
             affective_charge=affective_charge,
             existential_depth=existential_depth,
         )
+        relational_cadence = self._persist_relational_availability_decision(
+            conversation_id=conversation_id, decision=relational_cadence_decision,
+        )
 
         logger.info("✅ Processamento completo (ID=%s)", conversation_id)
         logger.info("%s\n", "=" * 60)
@@ -182,6 +186,8 @@ class JungianEngine:
         }
         if relational_availability is not None:
             result["relational_availability"] = relational_availability
+        if relational_cadence is not None:
+            result["relational_cadence"] = relational_cadence
         if generation.get("debug_meta"):
             result["debug_meta"] = generation["debug_meta"]
 
@@ -385,16 +391,48 @@ class JungianEngine:
 
     def _relational_conversation_guidance(self, user_id: str) -> str:
         """Read the scoped disposition without changing availability state."""
+        decision = self._relational_conversation_decision(user_id)
+        if not decision:
+            return ""
         try:
-            from engines.availability import AvailabilityEngine, conversational_response_guidance
+            from engines.availability import conversational_response_guidance
+            return conversational_response_guidance(decision["disposition"])
+        except Exception as exc:
+            logger.warning("⚠️ [AVAILABILITY] Falha ao montar cadencia conversacional: %s", exc)
+            return ""
+
+    def _relational_conversation_decision(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Read cadence before a response, without writing state."""
+        try:
+            from engines.availability import AvailabilityEngine
             from engines.will_scope import scope_context
 
             scope = scope_context(self.db, resolve_participant_user_id=str(user_id))
             disposition = AvailabilityEngine(self.db).conversational_disposition(scope)
-            return conversational_response_guidance(disposition.get("disposition", "engaged"))
+            return {"scope": scope, "disposition": disposition.get("disposition", "engaged"),
+                    "reason": disposition.get("reason")}
         except Exception as exc:
             logger.warning("⚠️ [AVAILABILITY] Falha ao ler disposicao conversacional: %s", exc)
-            return ""
+            return None
+
+    def _persist_relational_availability_decision(
+        self, *, conversation_id: int, decision: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        if not decision:
+            return None
+        try:
+            from engines.availability import AvailabilityEngine
+            recorded = AvailabilityEngine(self.db).record_conversational_decision(
+                decision["scope"], evidence_ref=f"conversation:{conversation_id}",
+                disposition=decision["disposition"], reason=decision.get("reason"),
+            )
+            if recorded:
+                return {"scope_kind": decision["scope"].get("scope_kind"),
+                        "relation_id": decision["scope"].get("relation_id"),
+                        "disposition": decision["disposition"], "reason": decision.get("reason")}
+        except Exception as exc:
+            logger.warning("⚠️ [AVAILABILITY] Falha ao registrar cadencia conversacional: %s", exc)
+        return None
 
     def _count_context_items(self, text: str) -> int:
         if not text:
