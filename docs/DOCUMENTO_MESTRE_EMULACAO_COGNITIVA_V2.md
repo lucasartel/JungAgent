@@ -672,7 +672,7 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 1. Proxima acao: completar a validacao da superficie administrativa e observar esse deposito somente apos uma publicacao autorizada; nao adicionar comandos operacionais enquanto a evidencia real nao justificar uma politica especifica.
 2. Completar regressao ponta a ponta, publicar apenas com autorizacao e validar por probes antes de encerrar C9. Nao iniciar C10 nem convidar participantes como consequencia automatica dos commits locais.
 
-**C10 - Disponibilidade e periodo refratario (em andamento; depende do C9).** Criar estado persistente por instancia e Relation, com janelas de contato, orcamento de turnos/profundidade, recuperacao, cooldown e retomada. Decidir e testar continuidade da pressao na virada de ciclo e consumo de sinais sem aliviar repetidamente pela mesma evidencia. Uma relacao em elaboracao nao bloqueia automaticamente as demais; limites globais de custo ou disponibilidade sao distintos e explicitos. Preservar comandos essenciais e protocolos de seguranca. Aceite: cenarios com tempo simulado, conversas intensas, relacoes concorrentes, reinicio, virada de dia e esgotamento de orcamento, sem chamadas pagas.
+**C10 - Disponibilidade e periodo refratario (concluida localmente; observacao operacional pendente de publicacao).** Criar estado persistente por instancia e Relation, com janelas de contato, orcamento de turnos/profundidade, recuperacao, cooldown e retomada. Decidir e testar continuidade da pressao na virada de ciclo e consumo de sinais sem aliviar repetidamente pela mesma evidencia. Uma relacao em elaboracao nao bloqueia automaticamente as demais; limites globais de custo ou disponibilidade sao distintos e explicitos. Preservar comandos essenciais e protocolos de seguranca. Aceite: cenarios com tempo simulado, conversas intensas, relacoes concorrentes, reinicio, virada de dia e esgotamento de orcamento, sem chamadas pagas.
 
 **C10a - Fundacao de disponibilidade escopada (11/09/2026; checkpoint local).**
 
@@ -781,6 +781,12 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 
 - **Implementado**: cada sincronizacao do loop executa manutencao idempotente apenas para escopos que ja tenham `recovery_at` vencido. O resultado fica no retorno interno da sincronizacao para observacao operacional.
 - **Fronteira**: o loop nao cria `recovery_at`, nao redefine relacoes por virada de dia, nao remove pausa manual e nao envia mensagens. Recuperacoes futuras continuam dependendo de politica explicita.
+
+**C10s - Aceite de fechamento (14/09/2026; concluido localmente).**
+
+- **Matriz validada**: disponibilidade global e por Relation isoladas; janelas, orcamentos, pausa e comandos essenciais; idempotencia de consumo e entrega; reserva, entropia, silencio e encerramento; refracao compartilhada entre vontade e disponibilidade; duas Relations concorrentes; reinicio de SQLite; recuperacao vencida por instancia; e sincronizacao segura com o loop.
+- **Evidencia**: suite local com 652 testes aprovados, sem chamadas pagas, envio de mensagens ou alteracao de dados de producao. Cockpit e sonda observam estado e agregados sem expor conversas.
+- **Pendencia operacional, nao de implementacao**: apos publicacao autorizada, observar por probes uma troca real para confirmar a criacao de estado e os contadores de cadencia. Essa observacao nao bloqueia C11, mas bloqueia abrir o piloto C13 sem evidencia real.
 
 **C11 - Expressao conversacional e proatividade unificadas (planejado; depende do C10).** Aplicar a semantica das tres vontades da Secao 10.1.1 a respostas e iniciativas, com politica comum de disponibilidade, consentimento e custo. Oferecer expressao textual independente de geracao de imagens. Distinguir sinais do interlocutor dos produzidos pelo agente, evitando auto-influencia circular. Registrar por que respondeu, iniciou contato, adiou ou retomou; nao acrescentar uma chamada LLM obrigatoria a cada decisao. Aceite: fluxo conversacional integrado, ausencia de respostas/envios duplicados, credito de alivio por acao e vontade comprovado e funcionamento textual com imagens desligadas.
 
