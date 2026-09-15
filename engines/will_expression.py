@@ -101,6 +101,7 @@ class WillExpressionDatabaseMixin:
             ("proactive_record_version", "INTEGER NOT NULL DEFAULT 0"),
             ("proactive_recorded_at", "TEXT"), ("proactive_conversation_id", "INTEGER"),
             ("proactive_approach_id", "INTEGER"),
+            ("consent_status_at_gate", "TEXT"), ("consent_checked_at", "TEXT"),
         ):
             if column not in columns:
                 cursor.execute(f"ALTER TABLE will_expressions ADD COLUMN {column} {definition}")
@@ -176,6 +177,19 @@ class WillExpressionEngine:
         with delivery_connection(self.db) as conn, atomic(conn):
             conn.execute(f"UPDATE will_expressions SET {', '.join(columns)} WHERE id = ?", tuple(values))
             return _row(conn.execute("SELECT * FROM will_expressions WHERE id = ?", (expression_id,)).fetchone()) or {}
+
+    def _record_policy_evidence(self, expression_id: int, decision: Dict[str, Any]) -> Dict[str, Any]:
+        with delivery_connection(self.db) as conn, atomic(conn):
+            conn.execute(
+                """UPDATE will_expressions
+                   SET consent_status_at_gate = ?, consent_checked_at = ?, updated_at = ?
+                   WHERE id = ? AND status = 'preparing'""",
+                (decision.get("consent_status_at_gate"), decision.get("consent_checked_at"),
+                 self._now(), int(expression_id)),
+            )
+            return _row(conn.execute(
+                "SELECT * FROM will_expressions WHERE id = ?", (int(expression_id),),
+            ).fetchone()) or {}
 
     @staticmethod
     def _availability(capability_key: str, proactive_system: Any) -> tuple[bool, Optional[str]]:
@@ -270,6 +284,8 @@ class WillExpressionEngine:
                 outcome="deferred", will_name=expression.get("will_name"),
                 scope=expression, reason=expression.get("reason"),
                 cost_class=expression.get("cost_class"),
+                consent_status_at_gate=expression.get("consent_status_at_gate"),
+                consent_checked_at=expression.get("consent_checked_at"),
             ),
         }
 
@@ -286,12 +302,14 @@ class WillExpressionEngine:
         expression, created = self._create(resolved_scope, user_id, cycle_id, will_name, capability_key, key, {"will_name": will_name, "capability_key": capability_key, "scope_kind": resolved_scope.get("scope_kind"), **(intent or {})})
         if not created:
             return self._reuse(expression)
-        from engines.will_capability_policy import evaluate
+        from engines.will_capability_policy import evaluate_with_evidence
 
-        allowed, reason = evaluate(
+        policy = evaluate_with_evidence(
             self.db, capability_key=capability_key, capability=CAPABILITIES[capability_key],
             scope=resolved_scope, user_id=user_id,
         )
+        expression = self._record_policy_evidence(expression["id"], policy)
+        allowed, reason = policy["allowed"], policy["reason"]
         if not allowed:
             expression = self._finish_preparation(expression["id"], "blocked", reason, reason)
             if expression["status"] != "blocked":

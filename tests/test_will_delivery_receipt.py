@@ -93,6 +93,7 @@ def test_confirmation_applies_once_even_after_pressure_grows(delivery):
         "outcome": "initiated", "will_name": "relacionar", "agent_instance": TEST_INSTANCE,
         "scope_kind": "global", "relation_id": None, "reason": "delivery_confirmed",
         "availability_disposition": None, "cost_class": "proactive_message",
+        "consent_status_at_gate": None, "consent_checked_at": None,
     }
     assert delivery.db.conn.execute(
         "SELECT COUNT(*) FROM will_expression_receipts WHERE status = 'completed'"

@@ -46,6 +46,8 @@ def test_relation_delivery_requires_active_granted_relation_before_prepare():
     assert blocked["action_summary"] == "relation_not_registered"
     assert blocked["will_decision"]["outcome"] == "deferred"
     assert blocked["will_decision"]["reason"] == "relation_not_registered"
+    assert blocked["will_decision"]["consent_status_at_gate"] is None
+    assert blocked["will_decision"]["consent_checked_at"] is not None
 
 
 def test_relation_delivery_allows_only_active_granted_participant():
@@ -80,11 +82,17 @@ def test_relation_delivery_checks_availability_before_preparation():
         "scope_kind": "relation", "relation_id": relation_id,
         "reason": "availability_paused", "availability_disposition": None,
         "cost_class": CAPABILITIES["relacionar_proactive_message"]["cost_class"],
+        "consent_status_at_gate": "granted",
+        "consent_checked_at": blocked["will_decision"]["consent_checked_at"],
     }
     assert blocked["will_decision"] == expected
     # Replaying the same expression reports its original gate decision even if
     # availability changes; it must not prepare or send an old intent again.
     db.configure_availability(scope, status="available")
+    db.register_agent_relation(
+        agent_instance="policy-test", participant_user_id="participant",
+        status="active", consent_status="revoked",
+    )
     repeated = engine.prepare(
         user_id="participant", cycle_id="2026-09-11", will_name="relacionar", scope=scope,
         proactive_system=object(), prepare_capability=lambda _: (_ for _ in ()).throw(AssertionError("must not prepare")),
