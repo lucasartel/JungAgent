@@ -95,6 +95,7 @@ def test_confirmation_applies_once_even_after_pressure_grows(delivery):
         "scope_kind": "global", "relation_id": None, "reason": "delivery_confirmed",
         "availability_disposition": None, "cost_class": "proactive_message",
         "consent_status_at_gate": None, "consent_checked_at": None,
+        "consent_status_before_delivery": None, "consent_checked_at_before_delivery": None,
     }
     assert delivery.db.conn.execute(
         "SELECT COUNT(*) FROM will_expression_receipts WHERE status = 'completed'"
@@ -376,6 +377,43 @@ def test_revoked_pretransport_gate_can_finalize_failure_without_release(delivery
     assert delivery.db.conn.execute(
         "SELECT COUNT(*) FROM will_expression_receipts WHERE status = 'completed'"
     ).fetchone()[0] == 0
+
+
+def test_confirmed_receipt_preserves_pretransport_consent_after_revocation(delivery):
+    relation_id = delivery.db.register_agent_relation(
+        agent_instance=TEST_INSTANCE, participant_user_id=USER, consent_status="granted",
+    )
+    for table in ("agent_will_pressure_state", "agent_will_pulse_events", "will_expressions"):
+        delivery.db.conn.execute(
+            f"UPDATE {table} SET relation_id = ?, scope_kind = 'relation'", (relation_id,)
+        )
+    delivery.db.conn.execute(
+        "UPDATE will_expressions SET consent_status_at_gate = 'granted', consent_checked_at = ? "
+        "WHERE id = ?", (datetime.utcnow().isoformat(), delivery.expression_id),
+    )
+    delivery.db.conn.commit()
+    expression = delivery.engine._fetch(delivery.expression_id)
+    expected = {"agent_instance": TEST_INSTANCE, "scope_kind": "relation",
+                "relation_id": relation_id, "user_id": USER, "will_name": "relacionar"}
+    gate = evaluate_pretransport(
+        delivery.db, expression_id=delivery.expression_id,
+        expected=expected, recipient=expression["prepared_payload"]["platform_id"],
+    )
+    assert gate["allowed"] is True
+    delivery.db.register_agent_relation(
+        agent_instance=TEST_INSTANCE, participant_user_id=USER, consent_status="revoked",
+    )
+    first = finish(delivery, relation_id=relation_id)
+    repeated = finish(delivery, relation_id=relation_id)
+    assert first["relacionar_pressure"] == 8
+    assert first["will_decision"] == repeated["will_decision"]
+    assert first["will_decision"]["outcome"] == "initiated"
+    assert first["will_decision"]["consent_status_before_delivery"] == "granted"
+    assert first["will_decision"]["consent_checked_at_before_delivery"] == gate["consent_checked_at_before_delivery"]
+    assert delivery.db.get_agent_relation(relation_id)["consent_status"] == "revoked"
+    assert delivery.db.conn.execute(
+        "SELECT COUNT(*) FROM will_expression_receipts WHERE status = 'completed'"
+    ).fetchone()[0] == 1
 
 
 def test_relational_confirmation_consumes_one_availability_turn_once(delivery):

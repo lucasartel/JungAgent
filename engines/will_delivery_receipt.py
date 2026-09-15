@@ -112,6 +112,8 @@ def _decision_result(conn, expression, state):
         reason="delivery_confirmed", cost_class=expression.get("cost_class"),
         consent_status_at_gate=expression.get("consent_status_at_gate"),
         consent_checked_at=expression.get("consent_checked_at"),
+        consent_status_before_delivery=expression.get("consent_status_before_delivery"),
+        consent_checked_at_before_delivery=expression.get("consent_checked_at_before_delivery"),
     )}
 
 

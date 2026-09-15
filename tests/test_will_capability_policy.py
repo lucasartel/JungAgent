@@ -85,6 +85,8 @@ def test_relation_delivery_checks_availability_before_preparation():
         "cost_class": CAPABILITIES["relacionar_proactive_message"]["cost_class"],
         "consent_status_at_gate": "granted",
         "consent_checked_at": blocked["will_decision"]["consent_checked_at"],
+        "consent_status_before_delivery": None,
+        "consent_checked_at_before_delivery": None,
     }
     assert blocked["will_decision"] == expected
     # Replaying the same expression reports its original gate decision even if
@@ -124,6 +126,9 @@ def test_pretransport_gate_rechecks_relation_after_preparation():
                                  expected=expected, recipient=42)
     assert gate["allowed"] is True
     assert gate["consent_status_before_delivery"] == "granted"
+    expression = WillExpressionEngine(db)._fetch(prepared["expression"]["id"])
+    assert expression["consent_status_before_delivery"] == "granted"
+    assert expression["consent_checked_at_before_delivery"] == gate["consent_checked_at_before_delivery"]
     assert evaluate_pretransport(db, expression_id=prepared["expression"]["id"],
                                  expected=expected, recipient=99)["reason"] == "will_delivery_recipient_mismatch"
 
@@ -137,7 +142,10 @@ def test_pretransport_gate_rechecks_relation_after_preparation():
     assert blocked["reason"] == "relation_consent_required"
     assert blocked["consent_status_before_delivery"] == "revoked"
     assert blocked["consent_checked_at_before_delivery"]
-    assert WillExpressionEngine(db)._fetch(prepared["expression"]["id"])["status"] == "delivering"
+    expression = WillExpressionEngine(db)._fetch(prepared["expression"]["id"])
+    assert expression["status"] == "delivering"
+    assert expression["consent_status_before_delivery"] == "granted"
+    assert expression["consent_checked_at_before_delivery"] == gate["consent_checked_at_before_delivery"]
 
 
 def test_world_refresh_stays_global_only():

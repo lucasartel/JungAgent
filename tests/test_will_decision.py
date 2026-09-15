@@ -9,7 +9,8 @@ def test_decision_envelope_is_text_free_and_scope_aware():
         availability={"disposition": "resting"})
     assert result == {"outcome": "resting", "will_name": "relacionar", "agent_instance": None, "scope_kind": "relation",
         "relation_id": "r1", "reason": "availability_refractory", "availability_disposition": "resting",
-        "cost_class": None, "consent_status_at_gate": None, "consent_checked_at": None}
+        "cost_class": None, "consent_status_at_gate": None, "consent_checked_at": None,
+        "consent_status_before_delivery": None, "consent_checked_at_before_delivery": None}
     with pytest.raises(ValueError):
         decision_envelope(outcome="send", will_name=None, scope={})
 

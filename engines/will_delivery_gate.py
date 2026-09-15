@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict
 
-from engines.will_delivery_receipt import delivery_connection
+from engines.will_delivery_receipt import atomic, delivery_connection
 
 
 def evaluate_pretransport(db: Any, *, expression_id: int, expected: Dict[str, Any],
@@ -20,7 +20,7 @@ def evaluate_pretransport(db: Any, *, expression_id: int, expected: Dict[str, An
             "consent_checked_at_before_delivery": checked_at,
         }
 
-    with delivery_connection(db) as conn:
+    with delivery_connection(db) as conn, atomic(conn):
         row = conn.execute(
             "SELECT * FROM will_expressions WHERE id = ?", (int(expression_id),),
         ).fetchone()
@@ -53,4 +53,11 @@ def evaluate_pretransport(db: Any, *, expression_id: int, expected: Dict[str, An
             return result(False, "relation_not_active", relation["consent_status"])
         if relation["consent_status"] != "granted":
             return result(False, "relation_consent_required", relation["consent_status"])
+        conn.execute(
+            """UPDATE will_expressions
+               SET consent_status_before_delivery = ?, consent_checked_at_before_delivery = ?,
+                   updated_at = ?
+               WHERE id = ? AND status = 'delivering'""",
+            (relation["consent_status"], checked_at, checked_at, expression["id"]),
+        )
         return result(True, None, relation["consent_status"])

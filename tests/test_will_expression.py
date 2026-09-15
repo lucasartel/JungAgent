@@ -86,6 +86,16 @@ def test_blocked_capability_does_not_prepare_or_discharge() -> None:
     assert tuple(receipt) == ("blocked", "proactive_executor_unavailable")
 
 
+def test_pretransport_consent_columns_migrate_additively() -> None:
+    engine = _engine()
+    for column in ("consent_status_before_delivery", "consent_checked_at_before_delivery"):
+        engine.db.conn.execute(f"ALTER TABLE will_expressions DROP COLUMN {column}")
+    engine.db.conn.commit()
+    WillExpressionEngine(engine.db)
+    columns = {row[1] for row in engine.db.conn.execute("PRAGMA table_info(will_expressions)")}
+    assert {"consent_status_before_delivery", "consent_checked_at_before_delivery"} <= columns
+
+
 @pytest.mark.parametrize("success", [True, False])
 def test_legacy_finalizer_cannot_bypass_scoped_contract(success) -> None:
     engine = _engine()

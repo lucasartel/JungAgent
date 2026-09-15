@@ -102,6 +102,8 @@ class WillExpressionDatabaseMixin:
             ("proactive_recorded_at", "TEXT"), ("proactive_conversation_id", "INTEGER"),
             ("proactive_approach_id", "INTEGER"),
             ("consent_status_at_gate", "TEXT"), ("consent_checked_at", "TEXT"),
+            ("consent_status_before_delivery", "TEXT"),
+            ("consent_checked_at_before_delivery", "TEXT"),
         ):
             if column not in columns:
                 cursor.execute(f"ALTER TABLE will_expressions ADD COLUMN {column} {definition}")
