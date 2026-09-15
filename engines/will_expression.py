@@ -278,17 +278,30 @@ class WillExpressionEngine:
 
     def _blocked_result(self, expression: Dict[str, Any], *, reused: bool = False) -> Dict[str, Any]:
         from engines.will_decision import decision_envelope
+        from engines.will_decision_store import store_decision, structured_reason
+
+        with delivery_connection(self.db) as conn, atomic(conn):
+            persisted = _row(conn.execute(
+                "SELECT * FROM will_expressions WHERE id = ?", (expression["id"],),
+            ).fetchone())
+            if not persisted or persisted["status"] != "blocked":
+                raise ValueError("will_decision_blocked_source_missing")
+            envelope = decision_envelope(
+                outcome="deferred", will_name=persisted.get("will_name"),
+                scope=persisted,
+                reason=structured_reason(persisted.get("reason"), fallback="capability_blocked"),
+                cost_class=persisted.get("cost_class"),
+                consent_status_at_gate=persisted.get("consent_status_at_gate"),
+                consent_checked_at=persisted.get("consent_checked_at"),
+            )
+            recorded = store_decision(
+                conn, source_kind="expression", source_id=persisted["id"], envelope=envelope,
+            )
 
         return {
-            "status": "blocked", "success": False, "expression": expression,
-            "action_summary": expression.get("reason"), "reused": reused,
-            "will_decision": decision_envelope(
-                outcome="deferred", will_name=expression.get("will_name"),
-                scope=expression, reason=expression.get("reason"),
-                cost_class=expression.get("cost_class"),
-                consent_status_at_gate=expression.get("consent_status_at_gate"),
-                consent_checked_at=expression.get("consent_checked_at"),
-            ),
+            "status": "blocked", "success": False, "expression": persisted,
+            "action_summary": persisted.get("reason"), "reused": reused,
+            "will_decision": recorded,
         }
 
     def prepare(self, *, user_id: str, cycle_id: str, will_name: str, scope: Optional[Dict[str, Optional[str]]] = None, intent: Optional[Dict[str, Any]] = None, proactive_system: Any = None, prepare_capability: Callable[[str], Dict[str, Any]]) -> Dict[str, Any]:

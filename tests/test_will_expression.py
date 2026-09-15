@@ -84,6 +84,42 @@ def test_blocked_capability_does_not_prepare_or_discharge() -> None:
         "SELECT status, result_code FROM will_expression_receipts"
     ).fetchone()
     assert tuple(receipt) == ("blocked", "proactive_executor_unavailable")
+    ledger = engine.db.conn.execute(
+        "SELECT envelope_json FROM agent_will_decisions WHERE source_kind = 'expression' "
+        "AND source_id = ?", (expression["id"],),
+    ).fetchall()
+    assert len(ledger) == 1
+    assert "proactive_executor_unavailable" in ledger[0][0]
+
+
+def test_blocked_free_text_reason_is_normalized_and_replay_repairs_ledger() -> None:
+    engine = _engine()
+    result = engine.prepare(
+        user_id="user-a", cycle_id="2026-09-04", will_name="expressar",
+        prepare_capability=lambda _capability: (_ for _ in ()).throw(
+            AssertionError("disabled image must not prepare")
+        ),
+    )
+    expression_id = result["expression"]["id"]
+    engine.db.conn.execute("DELETE FROM agent_will_decisions")
+    engine.db.conn.execute(
+        "UPDATE will_expressions SET reason = ? WHERE id = ?",
+        ("private free text must stay outside ledger", expression_id),
+    )
+    engine.db.conn.commit()
+
+    repeated = engine.prepare(
+        user_id="user-a", cycle_id="2026-09-04", will_name="expressar",
+        prepare_capability=lambda _capability: pytest.fail("replay must not prepare"),
+    )
+    assert repeated["reused"] is True
+    assert repeated["action_summary"] == "private free text must stay outside ledger"
+    assert repeated["will_decision"]["reason"] == "capability_blocked"
+    row = engine.db.conn.execute(
+        "SELECT envelope_json FROM agent_will_decisions WHERE source_id = ?", (expression_id,),
+    ).fetchone()
+    assert row is not None
+    assert "private free text" not in row[0]
 
 
 def test_pretransport_consent_columns_migrate_additively() -> None:

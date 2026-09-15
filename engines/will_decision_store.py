@@ -21,6 +21,13 @@ CODE = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
 IDENTIFIER = re.compile(r"^[A-Za-z0-9_:-]{1,128}$")
 
 
+def structured_reason(value: Any, *, fallback: str) -> str:
+    """Keep a stable code while excluding legacy free-text summaries."""
+    if not CODE.fullmatch(fallback):
+        raise ValueError("will_decision_invalid_fallback")
+    return value if isinstance(value, str) and CODE.fullmatch(value) else fallback
+
+
 def init_schema(conn: Any) -> None:
     conn.execute(
         """CREATE TABLE IF NOT EXISTS agent_will_decisions (

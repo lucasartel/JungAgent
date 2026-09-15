@@ -89,6 +89,10 @@ def test_relation_delivery_checks_availability_before_preparation():
         "consent_checked_at_before_delivery": None,
     }
     assert blocked["will_decision"] == expected
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM agent_will_decisions WHERE source_kind = 'expression' "
+        "AND source_id = ?", (blocked["expression"]["id"],),
+    ).fetchone()[0] == 1
     # Replaying the same expression reports its original gate decision even if
     # availability changes; it must not prepare or send an old intent again.
     db.configure_availability(scope, status="available")
@@ -103,6 +107,10 @@ def test_relation_delivery_checks_availability_before_preparation():
     assert repeated["reused"] is True
     assert repeated["will_decision"] == expected
     assert repeated["expression"]["id"] == blocked["expression"]["id"]
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM agent_will_decisions WHERE source_kind = 'expression' "
+        "AND source_id = ?", (blocked["expression"]["id"],),
+    ).fetchone()[0] == 1
 
 
 def test_pretransport_gate_rechecks_relation_after_preparation():
