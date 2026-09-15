@@ -14,6 +14,7 @@ from typing import Dict, Optional
 import pytest
 
 from engines.will_delivery_receipt import bind_event, finalize
+from engines.will_delivery_gate import evaluate_pretransport
 from engines.will_expression import WillExpressionEngine
 from engines.will_proactive_record import run_pending_effects
 from scripts.remote_db_probe import query_expressions
@@ -346,6 +347,37 @@ def test_relational_confirmation_only_changes_its_own_state(delivery):
     ).fetchone()[0] == 90
 
 
+def test_revoked_pretransport_gate_can_finalize_failure_without_release(delivery):
+    relation_id = delivery.db.register_agent_relation(
+        agent_instance=TEST_INSTANCE, participant_user_id=USER, consent_status="granted",
+    )
+    for table in ("agent_will_pressure_state", "agent_will_pulse_events", "will_expressions"):
+        delivery.db.conn.execute(
+            f"UPDATE {table} SET relation_id = ?, scope_kind = 'relation'", (relation_id,)
+        )
+    delivery.db.conn.execute(
+        "UPDATE will_expressions SET consent_status_at_gate = 'granted', consent_checked_at = ? "
+        "WHERE id = ?", (datetime.utcnow().isoformat(), delivery.expression_id),
+    )
+    delivery.db.conn.commit()
+    expression = delivery.engine._fetch(delivery.expression_id)
+    recipient = expression["prepared_payload"]["platform_id"]
+    expected = {"agent_instance": TEST_INSTANCE, "scope_kind": "relation",
+                "relation_id": relation_id, "user_id": USER, "will_name": "relacionar"}
+    delivery.db.register_agent_relation(
+        agent_instance=TEST_INSTANCE, participant_user_id=USER, consent_status="revoked",
+    )
+    gate = evaluate_pretransport(delivery.db, expression_id=delivery.expression_id,
+                                 expected=expected, recipient=recipient)
+    assert gate["reason"] == "relation_consent_required"
+    finish(delivery, success=False, relation_id=relation_id, delivery_evidence={})
+    assert state(delivery)["relacionar_pressure"] == 70
+    assert state(delivery)["last_release_at"] is None
+    assert delivery.db.conn.execute(
+        "SELECT COUNT(*) FROM will_expression_receipts WHERE status = 'completed'"
+    ).fetchone()[0] == 0
+
+
 def test_relational_confirmation_consumes_one_availability_turn_once(delivery):
     relation_id = delivery.db.register_agent_relation(
         agent_instance=TEST_INSTANCE, participant_user_id=USER, consent_status="granted",
@@ -472,6 +504,7 @@ def test_scheduler_does_not_reclassify_post_send_failure(monkeypatch, failure_at
         "proactive_messages_enabled": lambda: True,
         "_describe_will_delivery": lambda *args: "delivery",
         "_send_will_delivery_via_telegram": send,
+        "evaluate_pretransport": lambda *args, **kwargs: {"allowed": True},
         "telegram_app": SimpleNamespace(bot=object()),
         "get_setting_value": lambda *args: 3,
     }
@@ -480,3 +513,65 @@ def test_scheduler_does_not_reclassify_post_send_failure(monkeypatch, failure_at
         asyncio.run(namespace["will_pulse_scheduler"]())
     assert confirmations == [True]
     assert stages == ["recovery", "pulse"]
+
+
+def test_scheduler_blocks_revoked_delivery_without_transport_or_pressure_relief(monkeypatch):
+    import logging
+    import will_pressure
+
+    path = Path(__file__).resolve().parents[1] / "main.py"
+    tree = ast.parse(path.read_text())
+    function = next(node for node in ast.walk(tree)
+                    if isinstance(node, ast.AsyncFunctionDef) and node.name == "will_pulse_scheduler")
+    stages = []
+    finalized = []
+
+    class Engine:
+        def reconcile_pending_deliveries(self, *args):
+            return {"recovered": 0}
+
+        def run_pulse(self, *args):
+            return {"status": "triggered", "event_id": 1, "winner": "relacionar",
+                    "pending_delivery": {"cycle_id": CYCLE, "will_expression_id": 1,
+                                         "platform_id": 42, "text": "private message",
+                                         "will_scope": {"agent_instance": TEST_INSTANCE,
+                                                        "scope_kind": "relation", "relation_id": "r1"}}}
+
+        def finalize_pending_delivery(self, *args, **kwargs):
+            finalized.append((args[4], args[5], kwargs))
+
+    async def sleep(seconds):
+        if seconds != 120:
+            raise asyncio.CancelledError()
+
+    async def to_thread(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    async def send(*args):
+        pytest.fail("revoked relation must not reach Telegram")
+
+    def gate(*args, **kwargs):
+        stages.append("gate")
+        return {"allowed": False, "reason": "relation_consent_required"}
+
+    monkeypatch.setattr(will_pressure, "WillPressureEngine", lambda db: Engine())
+    namespace = {
+        "asyncio": SimpleNamespace(sleep=sleep, to_thread=to_thread),
+        "logger": logging.getLogger("test-revoked-scheduler"),
+        "bot_state": SimpleNamespace(db=SimpleNamespace(get_user=lambda _: {}),
+                                     proactive=SimpleNamespace(record_pressure_based_message=send)),
+        "proactive_messages_enabled": lambda: True,
+        "_describe_will_delivery": lambda *args: "delivery",
+        "_send_will_delivery_via_telegram": send,
+        "evaluate_pretransport": gate,
+        "telegram_app": SimpleNamespace(bot=object()),
+        "get_setting_value": lambda *args: 3,
+    }
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), namespace)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(namespace["will_pulse_scheduler"]())
+    assert stages == ["gate"]
+    assert finalized == [(False, "relation_consent_required", {
+        "expression_id": 1, "delivery_evidence": {},
+        "agent_instance": TEST_INSTANCE, "scope_kind": "relation", "relation_id": "r1",
+    })]

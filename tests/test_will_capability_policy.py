@@ -7,6 +7,7 @@ import importlib.util
 from pathlib import Path
 
 from engines.will_capability_policy import evaluate
+from engines.will_delivery_gate import evaluate_pretransport
 from engines.will_expression import CAPABILITIES, WillExpressionDatabaseMixin, WillExpressionEngine
 
 
@@ -100,6 +101,43 @@ def test_relation_delivery_checks_availability_before_preparation():
     assert repeated["reused"] is True
     assert repeated["will_decision"] == expected
     assert repeated["expression"]["id"] == blocked["expression"]["id"]
+
+
+def test_pretransport_gate_rechecks_relation_after_preparation():
+    db = PolicyDB()
+    relation_id = db.register_agent_relation(
+        agent_instance="policy-test", participant_user_id="participant",
+        status="active", consent_status="granted",
+    )
+    scope = {"agent_instance": "policy-test", "scope_kind": "relation", "relation_id": relation_id}
+    prepared = WillExpressionEngine(db).prepare(
+        user_id="participant", cycle_id="2026-09-15", will_name="relacionar", scope=scope,
+        proactive_system=object(),
+        prepare_capability=lambda _: {"success": True, "pending_delivery": {
+            "platform_id": 42, "cycle_id": "2026-09-15", "text": "private message",
+        }},
+    )
+    assert prepared["status"] == "prepared"
+    assert prepared["expression"]["consent_status_at_gate"] == "granted"
+    expected = {**scope, "user_id": "participant", "will_name": "relacionar"}
+    gate = evaluate_pretransport(db, expression_id=prepared["expression"]["id"],
+                                 expected=expected, recipient=42)
+    assert gate["allowed"] is True
+    assert gate["consent_status_before_delivery"] == "granted"
+    assert evaluate_pretransport(db, expression_id=prepared["expression"]["id"],
+                                 expected=expected, recipient=99)["reason"] == "will_delivery_recipient_mismatch"
+
+    db.register_agent_relation(
+        agent_instance="policy-test", participant_user_id="participant",
+        status="active", consent_status="revoked",
+    )
+    blocked = evaluate_pretransport(db, expression_id=prepared["expression"]["id"],
+                                    expected=expected, recipient=42)
+    assert blocked["allowed"] is False
+    assert blocked["reason"] == "relation_consent_required"
+    assert blocked["consent_status_before_delivery"] == "revoked"
+    assert blocked["consent_checked_at_before_delivery"]
+    assert WillExpressionEngine(db)._fetch(prepared["expression"]["id"])["status"] == "delivering"
 
 
 def test_world_refresh_stays_global_only():

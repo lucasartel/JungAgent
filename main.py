@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from admin_web.auth.middleware import require_master
 from admin_web.template_compat import patch_jinja2_template_response
 from instance_settings import get_setting_value
+from engines.will_delivery_gate import evaluate_pretransport
 from security_config import proactive_messages_enabled, unsafe_admin_endpoints_enabled
 
 # Desabilitar telemetria do ChromaDB
@@ -293,36 +294,52 @@ async def lifespan(app: FastAPI):
                     delivery_label = _describe_will_delivery(delivery, pulse.get("winner"))
                     evidence = {}
                     scope = delivery.get("will_scope") or {}
-                    try:
-                        await _send_will_delivery_via_telegram(telegram_app.bot, delivery, evidence)
-                    except Exception as send_exc:
-                        failure_summary = f"Entrega de {delivery_label} sem confirmacao integral: {send_exc}"
+                    gate = await asyncio.to_thread(
+                        evaluate_pretransport, bot_state.db,
+                        expression_id=delivery.get("will_expression_id"),
+                        expected={**scope, "user_id": ADMIN_USER_ID, "will_name": pulse.get("winner")},
+                        recipient=delivery.get("platform_id"),
+                    )
+                    if not gate["allowed"]:
                         await asyncio.to_thread(
                             engine.finalize_pending_delivery,
                             pulse["event_id"], ADMIN_USER_ID, delivery.get("cycle_id"),
-                            pulse.get("winner"), False, failure_summary,
+                            pulse.get("winner"), False, gate["reason"],
                             expression_id=delivery.get("will_expression_id"),
-                            delivery_evidence=evidence, delivery_uncertain=True, **scope,
+                            delivery_evidence={}, **scope,
                         )
-                        logger.error("[WILL PULSE] %s; requer reconciliacao, sem reenvio automatico.", failure_summary)
+                        logger.info("[WILL PULSE] Entrega bloqueada antes do transporte: %s", gate["reason"])
                     else:
-                        await asyncio.to_thread(
-                            engine.finalize_pending_delivery,
-                            pulse["event_id"],
-                            ADMIN_USER_ID,
-                            delivery.get("cycle_id"),
-                            pulse.get("winner"),
-                            True,
-                            delivery.get("text"),
-                            expression_id=delivery.get("will_expression_id"),
-                            delivery_evidence=evidence, **scope,
-                        )
-                        if pulse.get("winner") == "relacionar":
+                        try:
+                            await _send_will_delivery_via_telegram(telegram_app.bot, delivery, evidence)
+                        except Exception as send_exc:
+                            failure_summary = f"Entrega de {delivery_label} sem confirmacao integral: {send_exc}"
                             await asyncio.to_thread(
-                                bot_state.proactive.record_pressure_based_message,
-                                ADMIN_USER_ID, user_name, delivery,
+                                engine.finalize_pending_delivery,
+                                pulse["event_id"], ADMIN_USER_ID, delivery.get("cycle_id"),
+                                pulse.get("winner"), False, failure_summary,
+                                expression_id=delivery.get("will_expression_id"),
+                                delivery_evidence=evidence, delivery_uncertain=True, **scope,
                             )
-                        logger.info("✅ [WILL PULSE] %s enviada ao admin.", delivery_label)
+                            logger.error("[WILL PULSE] %s; requer reconciliacao, sem reenvio automatico.", failure_summary)
+                        else:
+                            await asyncio.to_thread(
+                                engine.finalize_pending_delivery,
+                                pulse["event_id"],
+                                ADMIN_USER_ID,
+                                delivery.get("cycle_id"),
+                                pulse.get("winner"),
+                                True,
+                                delivery.get("text"),
+                                expression_id=delivery.get("will_expression_id"),
+                                delivery_evidence=evidence, **scope,
+                            )
+                            if pulse.get("winner") == "relacionar":
+                                await asyncio.to_thread(
+                                    bot_state.proactive.record_pressure_based_message,
+                                    ADMIN_USER_ID, user_name, delivery,
+                                )
+                            logger.info("✅ [WILL PULSE] %s enviada ao admin.", delivery_label)
                 elif pulse.get("winner") == "relacionar" and not proactive_messages_enabled():
                     logger.info("⏸️ [WILL PULSE] Pressão relacional medida, mas envio externo bloqueado por PROACTIVE_ENABLED=false.")
             except Exception as e:
