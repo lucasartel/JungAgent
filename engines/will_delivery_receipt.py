@@ -93,6 +93,26 @@ def _receipt(conn, expression_id, outcome, summary, evidence):
     )
 
 
+def _decision_result(conn, expression, state):
+    """Describe a confirmed initiative without copying transport evidence."""
+    if expression["status"] != "completed":
+        return state
+    receipt = conn.execute(
+        """SELECT id FROM will_expression_receipts
+           WHERE expression_id = ? AND status = 'completed'
+             AND result_code = 'delivery_confirmed' ORDER BY id DESC LIMIT 1""",
+        (expression["id"],),
+    ).fetchone()
+    if receipt is None:
+        raise ValueError("will_delivery_receipt_missing")
+    from engines.will_decision import decision_envelope
+
+    return {**state, "will_decision": decision_envelope(
+        outcome="initiated", will_name=expression["will_name"], scope=expression,
+        reason="delivery_confirmed",
+    )}
+
+
 def finalize(db, *, expression_id, event_id, expected, outcome, summary, evidence,
              threshold, refractory_hours):
     if outcome not in TERMINAL | {"delivery_uncertain"}:
@@ -132,7 +152,7 @@ def finalize(db, *, expression_id, event_id, expected, outcome, summary, evidenc
             expression = _expression(conn, expression_id)
             state = _state(conn, expression)
             if expression["pressure_effect_at"]:
-                return state
+                return _decision_result(conn, expression, state)
             if expression["status"] == "delivery_uncertain":
                 conn.execute(
                     "UPDATE agent_will_pulse_events SET status = 'delivery_uncertain', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -204,4 +224,4 @@ def finalize(db, *, expression_id, event_id, expected, outcome, summary, evidenc
             )
             conn.execute("UPDATE will_expressions SET pressure_effect_at = ? WHERE id = ?",
                          (now.isoformat(), expression_id))
-            return _state(conn, expression)
+            return _decision_result(conn, expression, _state(conn, expression))

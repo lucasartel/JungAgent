@@ -89,6 +89,11 @@ def test_confirmation_applies_once_even_after_pressure_grows(delivery):
     assert repeated["last_release_at"] == first["last_release_at"]
     assert repeated["refractory_until_relacionar"] == first["refractory_until_relacionar"]
     assert repeated["last_action_summary"] == "confirmed"
+    assert first["will_decision"] == repeated["will_decision"] == {
+        "outcome": "initiated", "will_name": "relacionar", "agent_instance": TEST_INSTANCE,
+        "scope_kind": "global", "relation_id": None, "reason": "delivery_confirmed",
+        "availability_disposition": None,
+    }
     assert delivery.db.conn.execute(
         "SELECT COUNT(*) FROM will_expression_receipts WHERE status = 'completed'"
     ).fetchone()[0] == 1
@@ -192,7 +197,8 @@ def test_definite_failure_preserves_pressure_and_records_frustration_once(delive
 
 
 def test_uncertain_delivery_requires_reconciliation_not_resend(delivery):
-    finish(delivery, success=False, delivery_uncertain=True, delivery_evidence={})
+    uncertain = finish(delivery, success=False, delivery_uncertain=True, delivery_evidence={})
+    assert "will_decision" not in uncertain
     assert state(delivery)["relacionar_pressure"] == 70
     assert delivery.engine._fetch(delivery.expression_id)["status"] == "delivery_uncertain"
     reused = delivery.engine.prepare(
