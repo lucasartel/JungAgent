@@ -79,6 +79,7 @@ def test_relation_delivery_checks_availability_before_preparation():
         "outcome": "deferred", "will_name": "relacionar", "agent_instance": "policy-test",
         "scope_kind": "relation", "relation_id": relation_id,
         "reason": "availability_paused", "availability_disposition": None,
+        "cost_class": CAPABILITIES["relacionar_proactive_message"]["cost_class"],
     }
     assert blocked["will_decision"] == expected
     # Replaying the same expression reports its original gate decision even if

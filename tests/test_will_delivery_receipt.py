@@ -92,7 +92,7 @@ def test_confirmation_applies_once_even_after_pressure_grows(delivery):
     assert first["will_decision"] == repeated["will_decision"] == {
         "outcome": "initiated", "will_name": "relacionar", "agent_instance": TEST_INSTANCE,
         "scope_kind": "global", "relation_id": None, "reason": "delivery_confirmed",
-        "availability_disposition": None,
+        "availability_disposition": None, "cost_class": "proactive_message",
     }
     assert delivery.db.conn.execute(
         "SELECT COUNT(*) FROM will_expression_receipts WHERE status = 'completed'"

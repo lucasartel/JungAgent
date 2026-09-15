@@ -8,7 +8,8 @@ def test_decision_envelope_is_text_free_and_scope_aware():
         scope={"scope_kind": "relation", "relation_id": "r1"}, reason="availability_refractory",
         availability={"disposition": "resting"})
     assert result == {"outcome": "resting", "will_name": "relacionar", "agent_instance": None, "scope_kind": "relation",
-        "relation_id": "r1", "reason": "availability_refractory", "availability_disposition": "resting"}
+        "relation_id": "r1", "reason": "availability_refractory", "availability_disposition": "resting",
+        "cost_class": None}
     with pytest.raises(ValueError):
         decision_envelope(outcome="send", will_name=None, scope={})
 
@@ -39,6 +40,7 @@ def test_persisted_reply_returns_common_envelope_once(disposition):
     assert result["will_decision"]["availability_disposition"] == disposition
     assert result["will_decision"]["agent_instance"] == "availability-test"
     assert result["will_decision"]["will_name"] is None
+    assert result["will_decision"]["cost_class"] is None
     assert persist(owner, conversation_id=7, decision=decision) is None
     other = persist(owner, conversation_id=7, decision={**decision, "scope": scope("b")})
     assert other["will_decision"]["relation_id"] == "b"

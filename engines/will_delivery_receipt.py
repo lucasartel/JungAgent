@@ -109,7 +109,7 @@ def _decision_result(conn, expression, state):
 
     return {**state, "will_decision": decision_envelope(
         outcome="initiated", will_name=expression["will_name"], scope=expression,
-        reason="delivery_confirmed",
+        reason="delivery_confirmed", cost_class=expression.get("cost_class"),
     )}
 
 

@@ -269,6 +269,7 @@ class WillExpressionEngine:
             "will_decision": decision_envelope(
                 outcome="deferred", will_name=expression.get("will_name"),
                 scope=expression, reason=expression.get("reason"),
+                cost_class=expression.get("cost_class"),
             ),
         }
 
