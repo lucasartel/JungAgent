@@ -422,20 +422,25 @@ class JungianEngine:
             return None
         try:
             from engines.availability import AvailabilityEngine
+            from engines.will_decision import decision_envelope
+            from engines.will_decision_store import structured_reason
+
+            reason_code = structured_reason(
+                decision.get("reason"), fallback="availability_reason_unavailable",
+            ) if decision.get("reason") is not None else None
+            envelope = decision_envelope(
+                outcome="responded", will_name=None, scope=decision["scope"],
+                reason=reason_code, availability=decision,
+            )
             recorded = AvailabilityEngine(self.db).record_conversational_decision(
                 decision["scope"], evidence_ref=f"conversation:{conversation_id}",
-                disposition=decision["disposition"], reason=decision.get("reason"),
+                disposition=decision["disposition"], reason=reason_code,
+                will_decision=envelope, source_id=conversation_id,
             )
             if recorded:
-                from engines.will_decision import decision_envelope
-
-                envelope = decision_envelope(
-                    outcome="responded", will_name=None, scope=decision["scope"],
-                    reason=decision.get("reason"), availability=decision,
-                )
                 return {"scope_kind": decision["scope"].get("scope_kind"),
                         "relation_id": decision["scope"].get("relation_id"),
-                        "disposition": decision["disposition"], "reason": decision.get("reason"),
+                        "disposition": decision["disposition"], "reason": reason_code,
                         "will_decision": envelope}
         except Exception as exc:
             logger.warning("⚠️ [AVAILABILITY] Falha ao registrar cadencia conversacional: %s", exc)

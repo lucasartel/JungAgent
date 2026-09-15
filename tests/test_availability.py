@@ -7,6 +7,8 @@ import sqlite3
 import threading
 from pathlib import Path
 
+import pytest
+
 from engines.availability import AvailabilityEngine
 
 
@@ -180,3 +182,54 @@ def test_conversational_decision_is_scoped_idempotent_and_text_free():
     assert row["scope_key"] == "relation:a"
     assert row["disposition"] == "resting"
     assert row["reason"] == "availability_refractory"
+
+
+def test_conversation_ledger_replay_repairs_missing_row_without_rewriting_cadence():
+    from engines.will_decision import decision_envelope
+
+    db = AvailabilityDB()
+    relation = scope("a")
+    envelope = decision_envelope(
+        outcome="responded", will_name=None, scope=relation,
+        reason="availability_refractory", availability={"disposition": "resting"},
+    )
+    args = dict(
+        evidence_ref="conversation:9", channel="received_message",
+        disposition="resting", reason="availability_refractory",
+        decided_at="2026-09-15T18:00:00", will_decision=envelope, source_id=9,
+    )
+    assert db.record_availability_decision(relation, **args) is True
+    db.conn.execute("DELETE FROM agent_will_decisions")
+    db.conn.commit()
+    assert db.record_availability_decision(relation, **args) is False
+    assert db.conn.execute("SELECT COUNT(*) FROM agent_availability_decisions").fetchone()[0] == 1
+    assert db.conn.execute("SELECT COUNT(*) FROM agent_will_decisions").fetchone()[0] == 1
+
+
+def test_conversation_ledger_conflict_rolls_back_new_cadence_row():
+    from engines.will_decision import decision_envelope
+    from engines.will_decision_store import store_decision
+    from engines.will_delivery_receipt import atomic
+
+    db = AvailabilityDB()
+    relation = scope("a")
+    wrong = decision_envelope(
+        outcome="responded", will_name=None, scope=relation,
+        reason="different_reason", availability={"disposition": "resting"},
+    )
+    with atomic(db.conn):
+        store_decision(db.conn, source_kind="conversation", source_id=10, envelope=wrong)
+    correct = decision_envelope(
+        outcome="responded", will_name=None, scope=relation,
+        reason="availability_refractory", availability={"disposition": "resting"},
+    )
+    with pytest.raises(ValueError, match="will_decision_conflicting_replay"):
+        db.record_availability_decision(
+            relation, evidence_ref="conversation:10", channel="received_message",
+            disposition="resting", reason="availability_refractory",
+            decided_at="2026-09-15T18:00:00", will_decision=correct, source_id=10,
+        )
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM agent_availability_decisions WHERE evidence_ref = 'conversation:10'"
+    ).fetchone()[0] == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM agent_will_decisions").fetchone()[0] == 1

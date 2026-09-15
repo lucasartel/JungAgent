@@ -299,17 +299,37 @@ class AvailabilityDatabaseMixin:
             return {"created": created, "state": self.get_availability_state(scope)}
 
     def record_availability_decision(self, scope: Dict[str, Optional[str]], *, evidence_ref: str,
-                                     channel: str, disposition: str, reason: Optional[str], decided_at: str) -> bool:
+                                     channel: str, disposition: str, reason: Optional[str], decided_at: str,
+                                     will_decision: Optional[Dict[str, Any]] = None,
+                                     source_id: Optional[int] = None) -> bool:
         """Persist a text-free conversational cadence decision once."""
         if not (evidence_ref or "").strip():
             raise ValueError("availability_evidence_ref_required")
         if disposition not in {"engaged", "closing", "resting"}:
             raise ValueError("invalid_availability_disposition")
+        if (will_decision is None) != (source_id is None):
+            raise ValueError("availability_will_decision_source_required")
         with self._lock:
-            cursor = self.conn.execute("""INSERT INTO agent_availability_decisions
-                (agent_instance, scope_key, evidence_ref, channel, disposition, reason, decided_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(agent_instance, scope_key, evidence_ref, channel) DO NOTHING""",
-                (scope["agent_instance"], _scope_key(scope), evidence_ref.strip(), channel, disposition, reason, decided_at))
+            self.conn.execute("SAVEPOINT availability_will_decision")
+            try:
+                cursor = self.conn.execute("""INSERT INTO agent_availability_decisions
+                    (agent_instance, scope_key, evidence_ref, channel, disposition, reason, decided_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(agent_instance, scope_key, evidence_ref, channel) DO NOTHING""",
+                    (scope["agent_instance"], _scope_key(scope), evidence_ref.strip(),
+                     channel, disposition, reason, decided_at))
+                if will_decision is not None:
+                    from engines.will_decision_store import store_decision
+
+                    store_decision(
+                        self.conn, source_kind="conversation", source_id=source_id,
+                        envelope=will_decision,
+                    )
+                self.conn.execute("RELEASE SAVEPOINT availability_will_decision")
+            except BaseException:
+                self.conn.execute("ROLLBACK TO SAVEPOINT availability_will_decision")
+                self.conn.execute("RELEASE SAVEPOINT availability_will_decision")
+                raise
             self.conn.commit()
             return cursor.rowcount == 1
 

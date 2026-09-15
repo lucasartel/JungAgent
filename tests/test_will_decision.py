@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from engines.will_decision import decision_envelope
@@ -16,7 +18,8 @@ def test_decision_envelope_is_text_free_and_scope_aware():
 
 
 @pytest.mark.parametrize("disposition", ["engaged", "closing", "resting"])
-def test_persisted_reply_returns_common_envelope_once(disposition):
+@pytest.mark.parametrize("reason", [None, "private free text"])
+def test_persisted_reply_returns_common_envelope_once(disposition, reason):
     # Load the real method without initializing paid providers or global memory.
     import ast
     import logging
@@ -34,7 +37,7 @@ def test_persisted_reply_returns_common_envelope_once(disposition):
     persist = namespace[method.name]
     db = AvailabilityDB()
     owner = SimpleNamespace(db=db)
-    decision = {"scope": scope("a"), "disposition": disposition, "reason": None}
+    decision = {"scope": scope("a"), "disposition": disposition, "reason": reason}
     result = persist(owner, conversation_id=7, decision=decision)
 
     assert result["will_decision"]["outcome"] == "responded"
@@ -42,9 +45,22 @@ def test_persisted_reply_returns_common_envelope_once(disposition):
     assert result["will_decision"]["agent_instance"] == "availability-test"
     assert result["will_decision"]["will_name"] is None
     assert result["will_decision"]["cost_class"] is None
+    expected_reason = "availability_reason_unavailable" if reason else None
+    assert result["will_decision"]["reason"] == expected_reason
+    assert result["reason"] == expected_reason
+    ledger = db.conn.execute(
+        "SELECT envelope_json FROM agent_will_decisions WHERE source_kind = 'conversation' "
+        "AND source_id = 7 AND scope_key = 'relation:a'"
+    ).fetchone()[0]
+    assert json.loads(ledger) == result["will_decision"]
+    assert "private free text" not in ledger
     assert persist(owner, conversation_id=7, decision=decision) is None
     other = persist(owner, conversation_id=7, decision={**decision, "scope": scope("b")})
     assert other["will_decision"]["relation_id"] == "b"
     assert db.conn.execute("SELECT COUNT(*) FROM agent_availability_decisions").fetchone()[0] == 2
+    assert db.conn.execute("SELECT COUNT(*) FROM agent_will_decisions").fetchone()[0] == 2
+    assert "private free text" not in str(db.conn.execute(
+        "SELECT reason FROM agent_availability_decisions"
+    ).fetchall())
     assert persist(owner, conversation_id=8, decision=None) is None
     db.conn.close()

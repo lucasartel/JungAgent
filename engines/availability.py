@@ -184,12 +184,20 @@ class AvailabilityEngine:
                 "reason": "availability_relational_reserve_depleted" if closing else None}
 
     def record_conversational_decision(self, scope: Dict[str, Optional[str]], *, evidence_ref: str,
-                                       disposition: str, reason: Optional[str], now: Optional[datetime] = None) -> bool:
+                                       disposition: str, reason: Optional[str], now: Optional[datetime] = None,
+                                       will_decision: Optional[Dict[str, Any]] = None,
+                                       source_id: Optional[int] = None) -> bool:
         recorder = getattr(self.db, "record_availability_decision", None)
         if not callable(recorder):
             return False
-        return bool(recorder(scope, evidence_ref=evidence_ref, channel="received_message", disposition=disposition,
-                             reason=reason, decided_at=self._now(now).isoformat()))
+        kwargs = {
+            "evidence_ref": evidence_ref, "channel": "received_message",
+            "disposition": disposition, "reason": reason,
+            "decided_at": self._now(now).isoformat(),
+        }
+        if will_decision is not None or source_id is not None:
+            kwargs.update(will_decision=will_decision, source_id=source_id)
+        return bool(recorder(scope, **kwargs))
 
     def register_relational_exchange(self, scope: Dict[str, Optional[str]], *, evidence_ref: str,
                                      reserve_cost: float, reserve_replenishment: float = 0,
