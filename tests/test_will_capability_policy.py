@@ -44,6 +44,8 @@ def test_relation_delivery_requires_active_granted_relation_before_prepare():
         proactive_system=object(), prepare_capability=lambda _: (_ for _ in ()).throw(AssertionError("must not prepare")))
     assert blocked["status"] == "blocked"
     assert blocked["action_summary"] == "relation_not_registered"
+    assert blocked["will_decision"]["outcome"] == "deferred"
+    assert blocked["will_decision"]["reason"] == "relation_not_registered"
 
 
 def test_relation_delivery_allows_only_active_granted_participant():
@@ -73,6 +75,22 @@ def test_relation_delivery_checks_availability_before_preparation():
 
     assert blocked["status"] == "blocked"
     assert blocked["action_summary"] == "availability_paused"
+    expected = {
+        "outcome": "deferred", "will_name": "relacionar", "agent_instance": "policy-test",
+        "scope_kind": "relation", "relation_id": relation_id,
+        "reason": "availability_paused", "availability_disposition": None,
+    }
+    assert blocked["will_decision"] == expected
+    # Replaying the same expression reports its original gate decision even if
+    # availability changes; it must not prepare or send an old intent again.
+    db.configure_availability(scope, status="available")
+    repeated = engine.prepare(
+        user_id="participant", cycle_id="2026-09-11", will_name="relacionar", scope=scope,
+        proactive_system=object(), prepare_capability=lambda _: (_ for _ in ()).throw(AssertionError("must not prepare")),
+    )
+    assert repeated["reused"] is True
+    assert repeated["will_decision"] == expected
+    assert repeated["expression"]["id"] == blocked["expression"]["id"]
 
 
 def test_world_refresh_stays_global_only():

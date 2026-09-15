@@ -246,6 +246,8 @@ class WillExpressionEngine:
             return _row(conn.execute("SELECT * FROM will_expressions WHERE id = ?", (expression["id"],)).fetchone())
 
     def _reuse(self, expression: Dict[str, Any]) -> Dict[str, Any]:
+        if expression.get("status") == "blocked":
+            return self._blocked_result(expression, reused=True)
         if expression.get("status") == "prepared":
             claimed = self._claim_delivery(expression)
             if claimed:
@@ -257,6 +259,18 @@ class WillExpressionEngine:
         return {"status": status, "success": False, "expression": expression,
                 "action_summary": expression.get("reason") or "Expressao ja registrada; nenhuma nova tentativa foi iniciada.",
                 "reused": True}
+
+    def _blocked_result(self, expression: Dict[str, Any], *, reused: bool = False) -> Dict[str, Any]:
+        from engines.will_decision import decision_envelope
+
+        return {
+            "status": "blocked", "success": False, "expression": expression,
+            "action_summary": expression.get("reason"), "reused": reused,
+            "will_decision": decision_envelope(
+                outcome="deferred", will_name=expression.get("will_name"),
+                scope=expression, reason=expression.get("reason"),
+            ),
+        }
 
     def prepare(self, *, user_id: str, cycle_id: str, will_name: str, scope: Optional[Dict[str, Optional[str]]] = None, intent: Optional[Dict[str, Any]] = None, proactive_system: Any = None, prepare_capability: Callable[[str], Dict[str, Any]]) -> Dict[str, Any]:
         capability_key = CAPABILITY_BY_WILL.get(will_name)
@@ -279,13 +293,15 @@ class WillExpressionEngine:
         )
         if not allowed:
             expression = self._finish_preparation(expression["id"], "blocked", reason, reason)
-            return {"status": "blocked", "expression": expression, "action_summary": reason}
+            if expression["status"] != "blocked":
+                return self._reuse(expression)
+            return self._blocked_result(expression)
         available, reason = self._availability(capability_key, proactive_system)
         if not available:
             expression = self._finish_preparation(expression["id"], "blocked", reason, reason or "capability_unavailable")
             if expression["status"] != "blocked":
                 return self._reuse(expression)
-            return {"status": "blocked", "expression": expression, "action_summary": reason}
+            return self._blocked_result(expression)
 
         try:
             prepared = prepare_capability(capability_key) or {}
