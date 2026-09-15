@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import json
 import sqlite3
 from argparse import Namespace
 from concurrent.futures import ThreadPoolExecutor
@@ -13,8 +14,10 @@ from typing import Dict, Optional
 
 import pytest
 
-from engines.will_delivery_receipt import bind_event, finalize
+from engines.will_delivery_receipt import atomic, bind_event, finalize
 from engines.will_delivery_gate import evaluate_pretransport
+from engines.will_decision import decision_envelope
+from engines.will_decision_store import store_decision
 from engines.will_expression import WillExpressionEngine
 from engines.will_proactive_record import run_pending_effects
 from scripts.remote_db_probe import query_expressions
@@ -100,6 +103,14 @@ def test_confirmation_applies_once_even_after_pressure_grows(delivery):
     assert delivery.db.conn.execute(
         "SELECT COUNT(*) FROM will_expression_receipts WHERE status = 'completed'"
     ).fetchone()[0] == 1
+    ledger = delivery.db.conn.execute(
+        "SELECT envelope_json FROM agent_will_decisions WHERE source_kind = 'expression' "
+        "AND source_id = ?", (delivery.expression_id,),
+    ).fetchall()
+    assert len(ledger) == 1
+    assert json.loads(ledger[0][0]) == first["will_decision"]
+    assert "private message" not in ledger[0][0]
+    assert "chat_id" not in ledger[0][0]
 
 
 def test_confirmation_records_one_durable_proactive_conversation(delivery):
@@ -202,6 +213,9 @@ def test_definite_failure_preserves_pressure_and_records_frustration_once(delive
 def test_uncertain_delivery_requires_reconciliation_not_resend(delivery):
     uncertain = finish(delivery, success=False, delivery_uncertain=True, delivery_evidence={})
     assert "will_decision" not in uncertain
+    assert delivery.db.conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE name = 'agent_will_decisions'"
+    ).fetchone()[0] == 0
     assert state(delivery)["relacionar_pressure"] == 70
     assert delivery.engine._fetch(delivery.expression_id)["status"] == "delivery_uncertain"
     reused = delivery.engine.prepare(
@@ -239,6 +253,36 @@ def test_pressure_rollback_keeps_receipt_and_can_recover_after_restart(delivery,
     delivery.db.conn.row_factory = sqlite3.Row
     delivery.pressure = WillPressureEngine(delivery.db, threshold=51)
     delivery.pressure._refractory_hours = lambda: 6
+    assert finish(delivery)["relacionar_pressure"] == 8
+    assert delivery.db.conn.execute(
+        "SELECT COUNT(*) FROM will_expression_receipts WHERE status = 'completed'"
+    ).fetchone()[0] == 1
+
+
+def test_conflicting_decision_ledger_rolls_back_pressure_not_transport_receipt(delivery):
+    expression = delivery.engine._fetch(delivery.expression_id)
+    wrong = decision_envelope(
+        outcome="initiated", will_name="relacionar", scope=expression,
+        reason="different_reason", cost_class=expression["cost_class"],
+    )
+    with atomic(delivery.db.conn):
+        store_decision(
+            delivery.db.conn, source_kind="expression",
+            source_id=delivery.expression_id, envelope=wrong,
+        )
+    with pytest.raises(ValueError, match="will_decision_conflicting_replay"):
+        finish(delivery)
+    assert state(delivery)["relacionar_pressure"] == 70
+    assert delivery.engine._fetch(delivery.expression_id)["status"] == "completed"
+    assert delivery.engine._fetch(delivery.expression_id)["pressure_effect_at"] is None
+    assert delivery.db.conn.execute(
+        "SELECT COUNT(*) FROM will_expression_receipts WHERE status = 'completed'"
+    ).fetchone()[0] == 1
+    delivery.db.conn.execute(
+        "DELETE FROM agent_will_decisions WHERE source_kind = 'expression' AND source_id = ?",
+        (delivery.expression_id,),
+    )
+    delivery.db.conn.commit()
     assert finish(delivery)["relacionar_pressure"] == 8
     assert delivery.db.conn.execute(
         "SELECT COUNT(*) FROM will_expression_receipts WHERE status = 'completed'"

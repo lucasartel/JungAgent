@@ -106,14 +106,18 @@ def _decision_result(conn, expression, state):
     if receipt is None:
         raise ValueError("will_delivery_receipt_missing")
     from engines.will_decision import decision_envelope
+    from engines.will_decision_store import store_decision
 
-    return {**state, "will_decision": decision_envelope(
+    envelope = decision_envelope(
         outcome="initiated", will_name=expression["will_name"], scope=expression,
         reason="delivery_confirmed", cost_class=expression.get("cost_class"),
         consent_status_at_gate=expression.get("consent_status_at_gate"),
         consent_checked_at=expression.get("consent_checked_at"),
         consent_status_before_delivery=expression.get("consent_status_before_delivery"),
         consent_checked_at_before_delivery=expression.get("consent_checked_at_before_delivery"),
+    )
+    return {**state, "will_decision": store_decision(
+        conn, source_kind="expression", source_id=expression["id"], envelope=envelope,
     )}
 
 
