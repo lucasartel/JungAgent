@@ -110,13 +110,15 @@ class JungianEngine:
                 user_id=user_id,
                 message=message,
                 chat_history=chat_history,
+                relational_cadence_decision=relational_cadence_decision or {},
             )
         else:
             logger.info("🔍 Construindo contexto semântico...")
             semantic_context, _ = self._build_semantic_context(user_id, message, chat_history)
             logger.info("🤖 Gerando resposta...")
             generation = self._generate_response(
-                user_id, message, semantic_context, chat_history
+                user_id, message, semantic_context, chat_history,
+                relational_cadence_decision=relational_cadence_decision or {},
             )
 
         clean_response = generation["clean_response"]
@@ -389,9 +391,12 @@ class JungianEngine:
             logger.warning("⚠️ [AVAILABILITY] Falha ao registrar troca relacional: %s", exc)
         return None
 
-    def _relational_conversation_guidance(self, user_id: str) -> str:
+    def _relational_conversation_guidance(
+        self, user_id: str, decision: Optional[Dict[str, Any]] = None
+    ) -> str:
         """Read the scoped disposition without changing availability state."""
-        decision = self._relational_conversation_decision(user_id)
+        if decision is None:
+            decision = self._relational_conversation_decision(user_id)
         if not decision:
             return ""
         try:
@@ -644,6 +649,7 @@ class JungianEngine:
         user_id: str,
         user_input: str,
         development_policy: Optional[Dict[str, Any]] = None,
+        relational_cadence_decision: Optional[Dict[str, Any]] = None,
     ) -> str:
         is_admin = str(user_id) == self._get_admin_user_id()
         identity_state_injected = False
@@ -703,7 +709,9 @@ class JungianEngine:
                 full_context += f"\n\n{symbolic_context}"
             if tom_context:
                 full_context += f"\n\n{tom_context}"
-            relational_guidance = self._relational_conversation_guidance(user_id)
+            relational_guidance = self._relational_conversation_guidance(
+                user_id, relational_cadence_decision
+            )
             if relational_guidance:
                 full_context += f"\n\n{relational_guidance}"
             return full_context
@@ -719,7 +727,9 @@ class JungianEngine:
             full_context += f"\n\n{symbolic_context}"
         if tom_context:
             full_context += f"\n\n{tom_context}"
-        relational_guidance = self._relational_conversation_guidance(user_id)
+        relational_guidance = self._relational_conversation_guidance(
+            user_id, relational_cadence_decision
+        )
         if relational_guidance:
             full_context += f"\n\n{relational_guidance}"
         return full_context
@@ -2176,12 +2186,18 @@ class JungianEngine:
         memory_dossier: str,
         chat_history: Optional[List[Dict]],
         debug_meta: Dict[str, Any],
+        relational_cadence_decision: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, str]:
         speech_act = self._infer_active_speech_act(user_input)
         development_policy = self._get_development_policy(user_id, user_input)
         policy_values = development_policy.get("policy") or {}
         agent_identity_text = self._prune_identity_for_active_chorus(
-            self._build_agent_identity_text(user_id, user_input, development_policy=development_policy),
+            self._build_agent_identity_text(
+                user_id,
+                user_input,
+                development_policy=development_policy,
+                relational_cadence_decision=relational_cadence_decision,
+            ),
             speech_act,
         )
         history_text = self._build_history_text(
@@ -2229,6 +2245,7 @@ class JungianEngine:
         user_id: str,
         message: str,
         chat_history: Optional[List[Dict]] = None,
+        relational_cadence_decision: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         total_start = time.perf_counter()
         warnings: List[str] = []
@@ -2263,7 +2280,10 @@ class JungianEngine:
                 chat_history,
                 allow_sqlite_fallback_on_empty=True,
             )
-            fallback_generation = self._generate_response(user_id, message, semantic_context, chat_history)
+            fallback_generation = self._generate_response(
+                user_id, message, semantic_context, chat_history,
+                relational_cadence_decision=relational_cadence_decision,
+            )
             timings_ms["total_ms"] = int((time.perf_counter() - total_start) * 1000)
             fallback_generation["debug_meta"] = {
                 "mode": "active_consciousness_standard_fallback",
@@ -2351,6 +2371,7 @@ class JungianEngine:
                 memory_dossier=dossier["text"],
                 chat_history=chat_history,
                 debug_meta=debug_meta,
+                relational_cadence_decision=relational_cadence_decision,
             )
             timings_ms["synthesis_ms"] = int((time.perf_counter() - synthesis_start) * 1000)
             timings_ms["total_ms"] = int((time.perf_counter() - total_start) * 1000)
@@ -2505,7 +2526,8 @@ class JungianEngine:
         return text
 
     def _generate_response(self, user_id: str, user_input: str,
-                          semantic_context: str, chat_history: List[Dict]) -> Dict[str, str]:
+                          semantic_context: str, chat_history: List[Dict],
+                          relational_cadence_decision: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
         """
         Gera resposta usando prompt unificado (v7.0)
 
@@ -2627,7 +2649,9 @@ class JungianEngine:
         ism_context = self._build_ism_prompt_context(user_id)
         if ism_context:
             agent_identity_for_prompt += f"\n\n{ism_context}"
-        relational_guidance = self._relational_conversation_guidance(user_id)
+        relational_guidance = self._relational_conversation_guidance(
+            user_id, relational_cadence_decision
+        )
         if relational_guidance:
             agent_identity_for_prompt += f"\n\n{relational_guidance}"
 
