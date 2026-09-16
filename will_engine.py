@@ -549,8 +549,7 @@ class WillEngine:
         for row in cursor.fetchall():
             items.append(
                 {
-                    "user_input": self._truncate(row["user_input"], 180),
-                    "ai_response": self._truncate(row["ai_response"], 180),
+                    "participant_input": self._truncate(row["user_input"], 180),
                     "timestamp": row["timestamp"],
                 }
             )
@@ -896,7 +895,7 @@ class WillEngine:
     def _fallback_state(self, payload: Dict[str, Any], source_phase: str) -> Dict[str, Any]:
         texts: List[str] = []
         for conversation in payload.get("recent_conversations", []):
-            texts.extend([conversation.get("user_input", ""), conversation.get("ai_response", "")])
+            texts.append(conversation.get("participant_input", ""))
         dream = payload.get("dream") or {}
         texts.extend([dream.get("symbolic_theme", ""), dream.get("extracted_insight", "")])
         meta = payload.get("meta_consciousness") or {}

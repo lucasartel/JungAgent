@@ -153,3 +153,26 @@ def test_successful_release_still_disables_pressure_and_marks_release():
     assert refreshed["last_release_will"] == "relacionar"
     assert refreshed["last_release_at"]
     assert refreshed["refractory_until_relacionar"]
+
+
+def test_expressar_release_accepts_text_only_without_image_provider(monkeypatch):
+    engine, _ = _make_engine()
+    monkeypatch.setattr(engine, "_build_admin_delivery", lambda **kwargs: kwargs)
+    import hobby_art_engine
+    import will_engine
+    import world_consciousness
+
+    monkeypatch.setattr(will_engine, "load_latest_will_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(world_consciousness.world_consciousness, "get_world_state", lambda **_kwargs: {})
+    monkeypatch.setattr(hobby_art_engine.HobbyArtEngine, "generate_cycle_art", lambda *_args, **_kwargs: {
+        "success": True, "status": "text_only", "artifact_id": None,
+        "title": "Forma textual", "summary": "Uma expressao sem imagem.",
+        "image_url": None, "provider": "text_only",
+    })
+
+    result = engine._execute_expressar_release(USER_ID, CYCLE_ID)
+
+    assert result["success"] is True
+    assert result["pending_delivery"]["image_url"] is None
+    assert "Uma expressao sem imagem" in result["pending_delivery"]["text"]
+    assert result["payload"]["status"] == "text_only"

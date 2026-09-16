@@ -100,16 +100,25 @@ def test_dream_engine_no_pollinations(test_db):
 def test_hobby_art_engine_can_pause_image_generation(test_db, monkeypatch):
     monkeypatch.setattr("hobby_art_engine.IMAGE_GENERATION_ENABLED", False)
     hobby = HobbyArtEngine(test_db)
+    monkeypatch.setattr(hobby, "_build_inspirations", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
         hobby,
-        "_compose_art_payload",
-        lambda *args, **kwargs: pytest.fail("image prompt composition should be skipped"),
+        "_compose_textual_art_payload",
+        lambda *args, **kwargs: {
+            "title": "Forma textual", "summary": "Uma expressao sem imagem.",
+        },
+    )
+    monkeypatch.setattr(
+        hobby, "_compose_art_payload",
+        lambda *_args, **_kwargs: pytest.fail("visual composition must stay disabled"),
     )
 
     result = hobby.generate_cycle_art("user-1", "2026-08-18", {})
 
-    assert result["success"] is False
-    assert result["status"] == "disabled"
+    assert result["success"] is True
+    assert result["status"] == "text_only"
+    assert result["summary"] == "Uma expressao sem imagem."
+    assert result["image_url"] is None
 
 
 def test_dream_engine_can_pause_image_generation(test_db, monkeypatch):

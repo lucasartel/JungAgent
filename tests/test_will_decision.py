@@ -64,3 +64,38 @@ def test_persisted_reply_returns_common_envelope_once(disposition, reason):
     ).fetchall())
     assert persist(owner, conversation_id=8, decision=None) is None
     db.conn.close()
+
+
+def test_persisted_resting_turn_has_structured_reason_and_no_reply_classification():
+    import ast
+    import logging
+    from pathlib import Path
+    from types import SimpleNamespace
+    from typing import Any, Dict, Optional
+    from tests.test_availability import AvailabilityDB, scope
+
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "core/engine.py").read_text())
+    engine = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "JungianEngine")
+    method = next(node for node in engine.body if isinstance(node, ast.FunctionDef)
+                  and node.name == "_persist_relational_availability_decision")
+    namespace = {"Any": Any, "Dict": Dict, "Optional": Optional, "logger": logging.getLogger(__name__)}
+    exec(compile(ast.Module(body=[method], type_ignores=[]), "core/engine.py", "exec"), namespace)
+    db = AvailabilityDB()
+    decision = {
+        "scope": scope("a"), "disposition": "resting",
+        "reason": "availability_refractory",
+    }
+
+    result = namespace[method.name](
+        SimpleNamespace(db=db), conversation_id=9, decision=decision,
+        outcome="resting", rest_reason="closing_acknowledgment",
+    )
+
+    assert result["will_decision"]["outcome"] == "resting"
+    assert result["will_decision"]["reason"] == "closing_acknowledgment"
+    assert result["will_decision"]["availability_disposition"] == "resting"
+    ledger = db.conn.execute(
+        "SELECT envelope_json FROM agent_will_decisions WHERE source_kind = 'conversation' AND source_id = 9"
+    ).fetchone()[0]
+    assert json.loads(ledger)["outcome"] == "resting"
+    db.conn.close()

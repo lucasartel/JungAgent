@@ -103,8 +103,15 @@ class JungianEngine:
         platform = user['platform'] if user else "telegram"
         complexity = self._determine_complexity(message)
         relational_cadence_decision = self._relational_conversation_decision(user_id)
+        from engines.availability import conversational_turn_policy
 
-        if self._active_consciousness_enabled_for_user(user_id):
+        turn_policy = conversational_turn_policy(
+            (relational_cadence_decision or {}).get("disposition", "engaged"), message,
+        )
+
+        if turn_policy["action"] == "rest":
+            generation = {"clean_response": "", "display_response": ""}
+        elif self._active_consciousness_enabled_for_user(user_id):
             logger.info("🎼 [ACTIVE CONSCIOUSNESS] Pipeline canto-contracanto-coro habilitado")
             generation = self.process_message_active_consciousness(
                 user_id=user_id,
@@ -168,9 +175,11 @@ class JungianEngine:
             response_text=clean_response,
             affective_charge=affective_charge,
             existential_depth=existential_depth,
-        )
+        ) if turn_policy["action"] == "respond" else None
         relational_cadence = self._persist_relational_availability_decision(
             conversation_id=conversation_id, decision=relational_cadence_decision,
+            outcome="resting" if turn_policy["action"] == "rest" else "responded",
+            rest_reason=turn_policy["reason"] if turn_policy["action"] == "rest" else None,
         )
 
         logger.info("✅ Processamento completo (ID=%s)", conversation_id)
@@ -186,6 +195,8 @@ class JungianEngine:
             'conversation_id': conversation_id,
             'conflict': None
         }
+        if turn_policy["action"] == "rest":
+            result["response_suppressed"] = True
         if relational_availability is not None:
             result["relational_availability"] = relational_availability
         if relational_cadence is not None:
@@ -421,7 +432,8 @@ class JungianEngine:
             return None
 
     def _persist_relational_availability_decision(
-        self, *, conversation_id: int, decision: Optional[Dict[str, Any]]
+        self, *, conversation_id: int, decision: Optional[Dict[str, Any]],
+        outcome: str = "responded", rest_reason: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         if not decision:
             return None
@@ -431,10 +443,10 @@ class JungianEngine:
             from engines.will_decision_store import structured_reason
 
             reason_code = structured_reason(
-                decision.get("reason"), fallback="availability_reason_unavailable",
-            ) if decision.get("reason") is not None else None
+                rest_reason or decision.get("reason"), fallback="availability_reason_unavailable",
+            ) if rest_reason is not None or decision.get("reason") is not None else None
             envelope = decision_envelope(
-                outcome="responded", will_name=None, scope=decision["scope"],
+                outcome=outcome, will_name=None, scope=decision["scope"],
                 reason=reason_code, availability=decision,
             )
             recorded = AvailabilityEngine(self.db).record_conversational_decision(

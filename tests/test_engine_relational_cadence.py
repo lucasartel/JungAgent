@@ -145,6 +145,47 @@ def test_process_message_uses_one_decision_for_generation_and_persistence(monkey
     assert persisted_decisions == [decision]
 
 
+def test_process_message_resting_acknowledgment_suppresses_generation_and_exchange(monkeypatch):
+    engine = _prompt_engine(monkeypatch)
+    saved = []
+    persisted = []
+    engine.db = types.SimpleNamespace(
+        get_user=lambda _user_id: {"user_name": "Pessoa", "platform": "test"},
+        save_conversation=lambda **kwargs: (saved.append(kwargs) or 43),
+        count_conversations=lambda _user_id: 1,
+    )
+    decision = {
+        "scope": {"agent_instance": "jung", "scope_kind": "relation", "relation_id": "rel-1"},
+        "disposition": "resting", "reason": "availability_refractory",
+    }
+    monkeypatch.setattr(engine, "_relational_conversation_decision", lambda _user_id: decision)
+    monkeypatch.setattr(engine, "_determine_complexity", lambda _message: "low")
+    monkeypatch.setattr(engine, "_active_consciousness_enabled_for_user", lambda _user_id: False)
+    monkeypatch.setattr(engine, "_generate_response", lambda *_args, **_kwargs: pytest.fail("no LLM call"))
+    monkeypatch.setattr(engine, "_build_conversation_signal_profile", lambda *_args: {
+        "affective_charge": 0, "existential_depth": 0, "rumination_signal": 0,
+        "diagnostic_summary": "offline",
+    })
+    monkeypatch.setattr(engine, "_extract_keywords", lambda *_args: [])
+    monkeypatch.setattr(engine, "_persist_conversation_will_signal", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        engine, "_persist_relational_availability_exchange",
+        lambda **_kwargs: pytest.fail("resting must not consume exchange reserve"),
+    )
+    monkeypatch.setattr(engine, "_persist_relational_availability_decision", lambda **kwargs: (
+        persisted.append(kwargs) or {"will_decision": {"outcome": kwargs["outcome"]}}
+    ))
+
+    result = engine.process_message("user-1", "Entendi.", [])
+
+    assert result["response"] == ""
+    assert result["response_suppressed"] is True
+    assert saved[0]["ai_response"] == ""
+    assert persisted[0]["decision"] is decision
+    assert persisted[0]["outcome"] == "resting"
+    assert persisted[0]["rest_reason"] == "closing_acknowledgment"
+
+
 def test_relational_guidance_uses_captured_decision_without_rereading(monkeypatch):
     engine = JungianEngine.__new__(JungianEngine)
     captured = {

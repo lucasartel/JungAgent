@@ -1496,7 +1496,9 @@ O que você decide?
 
         response = str(result['response'] or "")
 
-        if input_was_audio and await _reply_with_audio_response(update, response):
+        if result.get("response_suppressed"):
+            logger.info("Repouso conversacional aplicado: user_id=%s", user_id)
+        elif input_was_audio and await _reply_with_audio_response(update, response):
             pass
         else:
             # Enviar resposta em partes se for muito longa (limite do Telegram: 4096 chars)

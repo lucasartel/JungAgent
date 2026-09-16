@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
+import unicodedata
 from typing import Any, Dict, Optional
 
 
@@ -56,6 +58,28 @@ def conversational_response_guidance(disposition: str) -> str:
         "instrucao, disponibilidade, reserva, limite ou sistema. Em situacao de "
         "seguranca, urgencia ou pedido essencial, priorize uma resposta completa."
     )
+
+
+_CLOSING_ACKNOWLEDGMENTS = {
+    "ok", "okay", "certo", "entendi", "beleza", "blz", "ta bom",
+    "ate mais", "ate logo", "tchau", "obrigado", "obrigada", "valeu",
+}
+
+
+def conversational_turn_policy(disposition: str, user_input: str) -> Dict[str, str]:
+    """Allow silence only for an unmistakable low-content closing acknowledgment."""
+    if disposition != "resting":
+        return {"action": "respond", "reason": "conversation_available"}
+    raw = (user_input or "").strip()
+    if not raw or "?" in raw or not re.fullmatch(r"[\w\s.!,-]+", raw, re.UNICODE):
+        return {"action": "respond", "reason": "received_message_requires_response"}
+    folded = unicodedata.normalize("NFKD", raw.casefold())
+    ascii_text = "".join(char for char in folded if not unicodedata.combining(char))
+    normalized = re.sub(r"[.!,-]", "", ascii_text)
+    normalized = " ".join(normalized.split())
+    if normalized in _CLOSING_ACKNOWLEDGMENTS:
+        return {"action": "rest", "reason": "closing_acknowledgment"}
+    return {"action": "respond", "reason": "received_message_requires_response"}
 
 
 def record_confirmed_relational_delivery(

@@ -237,6 +237,26 @@ Responda APENAS com JSON valido:
             "image_prompt": image_prompt,
         }
 
+    def _compose_textual_art_payload(self, inspirations: Dict[str, Any]) -> Dict[str, str]:
+        prompt = f"""
+Voce e a imaginacao estetica do JungAgent. Componha uma expressao breve e textual
+do ciclo, sem solicitar, descrever ou depender de uma imagem externa.
+
+INSPIRACOES:
+{json.dumps(inspirations, ensure_ascii=False)}
+
+Responda APENAS com JSON valido:
+{{
+  "title": "titulo curto",
+  "summary": "um pequeno gesto poetico autocontido, com duas a quatro frases"
+}}
+"""
+        raw = get_llm_response(prompt, temperature=0.7, max_tokens=320)
+        data = self._extract_json(raw)
+        title = (data.get("title") or "Gesto Textual do Ciclo").strip()
+        summary = (data.get("summary") or "O ciclo pede uma pausa breve para ganhar forma em palavras.").strip()
+        return {"title": title, "summary": summary}
+
     def _extract_response_text(self, content: Any) -> str:
         if isinstance(content, str):
             return content.strip()
@@ -608,12 +628,28 @@ Responda APENAS com JSON valido:
 
     def generate_cycle_art(self, user_id: str, cycle_id: str, world_state: Dict[str, Any]) -> Dict[str, Any]:
         if not IMAGE_GENERATION_ENABLED:
-            logger.info("HobbyArtEngine: geracao de imagem pausada por IMAGE_GENERATION_ENABLED=false")
+            logger.info("HobbyArtEngine: usando expressao textual com imagem pausada")
+            inspirations = self._build_inspirations(user_id, cycle_id, world_state)
+            try:
+                art_payload = self._compose_textual_art_payload(inspirations)
+            except Exception as exc:
+                logger.warning("HobbyArtEngine nao conseguiu compor expressao textual: %s", exc)
+                return {
+                    "success": False,
+                    "status": "text_payload_failed",
+                    "reason": str(exc) or "Hobby/Art nao conseguiu compor a expressao textual.",
+                    "inspirations": inspirations,
+                }
             return {
-                "success": False,
-                "status": "disabled",
-                "reason": "Geracao de imagens pausada por configuracao operacional.",
-                "inspirations": [],
+                "success": True,
+                "status": "text_only",
+                "artifact_id": None,
+                "title": art_payload["title"],
+                "summary": art_payload["summary"],
+                "image_prompt": None,
+                "image_url": None,
+                "inspirations": inspirations,
+                "provider": "text_only",
             }
 
         inspirations = self._build_inspirations(user_id, cycle_id, world_state)

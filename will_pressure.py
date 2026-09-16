@@ -926,7 +926,10 @@ ESTADO QUALITATIVO:
         world_state = world_consciousness.get_world_state(force_refresh=False, will_state=will_state)
         art_engine = HobbyArtEngine(self.db)
         art_result = art_engine.generate_cycle_art(user_id=user_id, cycle_id=cycle_id, world_state=world_state)
-        success = bool(art_result.get("success") and art_result.get("artifact_id"))
+        success = bool(
+            art_result.get("success")
+            and (art_result.get("artifact_id") or art_result.get("status") == "text_only")
+        )
         delivery_text = (
             "Transbordo de expressao.\n\n"
             f"{art_result.get('title') or 'Peca sem titulo'}\n"
