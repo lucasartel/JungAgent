@@ -1,6 +1,6 @@
 # Documento Mestre: JungAgent - Laboratorio de Emulacao Cognitiva
 
-**Versao 3.26 - C11 concluido localmente: expressao conversacional e proatividade unificadas - Setembro 2026**
+**Versao 3.26 - C11 concluido e publicado: expressao conversacional e proatividade unificadas - Setembro 2026**
 
 *Arquivo canonico vigente: `docs/DOCUMENTO_MESTRE_EMULACAO_COGNITIVA_V2.md`. O antigo `docs/DOCUMENTO_MESTRE_AGI_COGNITIVA.md` permanece como documento historico/operacional de referencia, mas este arquivo e a fonte de autoridade daqui em diante.*
 
@@ -237,7 +237,7 @@ Fase 0 - Consolidacao e Instrumentacao        <- CONCLUIDA
 Trilha cognitiva ativa (Secao 10.1.2):
   C9  - Fechamento das expressoes e arbitragem     <- EM ANDAMENTO; C9a/C9b LOCAIS; PROXIMO C9c
   C10 - Disponibilidade e periodo refratario      <- CONCLUIDO; OBSERVACAO OPERACIONAL PENDENTE
-  C11 - Expressao conversacional e proatividade   <- CONCLUIDO LOCALMENTE; PUBLICACAO PENDENTE
+  C11 - Expressao conversacional e proatividade   <- CONCLUIDO E PUBLICADO; OBSERVACAO NATURAL PENDENTE
   C12 - Fechamento cognitivo multi-relacional     <- PLANEJADO; GATE DO PILOTO
   C13 - Piloto convidado observavel               <- BLOQUEADO ATE ACEITE C9-C12
 Trilha comercial apos os gates (Secoes 10.2 e 10.3):
@@ -788,7 +788,7 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 - **Evidencia**: suite local com 652 testes aprovados, sem chamadas pagas, envio de mensagens ou alteracao de dados de producao. Cockpit e sonda observam estado e agregados sem expor conversas.
 - **Pendencia operacional, nao de implementacao**: apos publicacao autorizada, observar por probes uma troca real para confirmar a criacao de estado e os contadores de cadencia. Essa observacao nao bloqueia C11, mas bloqueia abrir o piloto C13 sem evidencia real.
 
-**C11 - Expressao conversacional e proatividade unificadas (concluido localmente em 15/09/2026; depende do C10).** Aplicar a semantica das tres vontades da Secao 10.1.1 a respostas e iniciativas, com politica comum de disponibilidade, consentimento e custo. Oferecer expressao textual independente de geracao de imagens. Distinguir sinais do interlocutor dos produzidos pelo agente, evitando auto-influencia circular. Registrar por que respondeu, iniciou contato, adiou ou retomou; nao acrescentar uma chamada LLM obrigatoria a cada decisao. Aceite: fluxo conversacional integrado, ausencia de respostas/envios duplicados, credito de alivio por acao e vontade comprovado e funcionamento textual com imagens desligadas.
+**C11 - Expressao conversacional e proatividade unificadas (concluido e publicado em 15/09/2026; depende do C10).** Aplicar a semantica das tres vontades da Secao 10.1.1 a respostas e iniciativas, com politica comum de disponibilidade, consentimento e custo. Oferecer expressao textual independente de geracao de imagens. Distinguir sinais do interlocutor dos produzidos pelo agente, evitando auto-influencia circular. Registrar por que respondeu, iniciou contato, adiou ou retomou; nao acrescentar uma chamada LLM obrigatoria a cada decisao. Aceite: fluxo conversacional integrado, ausencia de respostas/envios duplicados, credito de alivio por acao e vontade comprovado e funcionamento textual com imagens desligadas.
 
 **C11a - Envelope comum de decisao (14/09/2026; checkpoint local).**
 
@@ -886,7 +886,8 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 - **Expressao independente de imagem**: com `IMAGE_GENERATION_ENABLED=false`, `expressar` compoe um gesto textual em caminho proprio, sem montar prompt visual nem chamar provedor de imagem. O resultado pode seguir pelo mesmo contrato de entrega e so alivia pressao depois do recibo confirmado; falha, bloqueio ou incerteza preservam a pressao.
 - **Decisao comum e idempotencia**: respostas, repousos, iniciativas confirmadas e adiamentos usam envelopes text-free e ledger escopado. A decisao de cadencia que entra no prompt e a mesma persistida; preparacao, claim, recibo, efeito de pressao e replays continuam protegidos contra duplicacao. Consentimento e disponibilidade sao revalidados antes do transporte relacional, sem reclassificar retroativamente uma entrega comprovada.
 - **Aceite local final**: 705 testes offline e 20 cenarios simulados aprovados; compilacao e `git diff --check` limpos. A matriz cobre as tres vontades, respostas e silencio, duas Relations, concorrencia/replay, falha e entrega incerta, alivio confirmado e expressao `text_only` com imagem desligada. Nenhuma chamada externa, Telegram real, participante, imagem paga, push ou deploy ocorreu neste fechamento.
-- **Estado**: C11 esta implementado e aceito localmente. Depois de publicacao autorizada, falta apenas evidencia operacional por probes de ao menos uma decisao conversacional e do ledger em producao; isso nao reabre a implementacao do C11, mas continua sendo gate para o C13. O proximo corte de desenvolvimento e o C12, sem apagar que o fechamento operacional independente do C9 ainda permanece registrado em sua propria secao.
+- **Publicacao e evidencia operacional**: commits `7c63af6` e `fb75619` publicados em `main`; Railway concluiu o deployment `141fe92d-c7fd-400d-9a0d-03973f0c9d02` com `SUCCESS`, healthcheck `healthy` e bot ativo. As sondas read-only encontraram disponibilidade global ativa, reserva `97.548`, oito decisoes `engaged`, WILL recente e expressao `saber` anterior concluida com recibo confirmado, efeito de pressao e integracao de fase, sem reconciliacao pendente. Como nenhuma nova decisao atravessou o ledger depois deste deploy, sua tabela lazy ainda nao foi materializada; aguardar uma ocorrencia natural, sem mensagem ou acao artificial para fabricar evidencia.
+- **Estado**: C11 esta concluido e publicado. A observacao natural futura do ledger nao reabre sua implementacao, mas continua sendo evidencia necessaria antes do C13. O proximo corte de desenvolvimento e o C12, sem apagar que o fechamento operacional independente do C9 ainda permanece registrado em sua propria secao.
 
 **C12 - Fechamento da interioridade multi-relacional (planejado; depende do C11).** Auditar e completar os caminhos restantes em Working Memory, sonhos, identidade, recuperacao e montagem de contexto. Separar material privado, agregados autorizados e estado proprio global; nao duplicar mecanicamente toda a identidade por pessoa. Definir tratamento da memoria historica do admin sem reimportacao silenciosa para outros escopos. Aceite: pelo menos duas relacoes com fatos, tensoes e mensagens sentinela distintas; nenhum conteudo privado aparece no contexto ou na entrega de outra pessoa; influencias globais possuem origem auditavel sem carregar texto privado. Testar tambem acesso revogado, apagamento e isolamento entre instancias de teste.
 
@@ -1092,7 +1093,7 @@ Em 19/08/2026 foi auditado o caminho completo `scores -> pressao -> pulso -> aca
 | Versao 3.9 - Fechamento Volitivo e Direcao Multi-relacional | 05/09/2026 | Aprova C9-C13, distingue implementacao de validacao, registra lacunas da revisao local, amplia expressao para texto e prioriza multi-instancia, API minima e conector textual apos os gates |
 | Versao 3.10 - C9a: Confirmacao de Entrega e Alivio Idempotente | 05/09/2026 | Registra implementacao local e 497 testes aprovados, sem deploy; mantem C9 aberto com C9b/C9c explicitos |
 | Versao 3.11 - C9b: Evidencia Equivalente e Consumo Transacional | 06/09/2026 | Registra commits locais C9a/C9b, adaptador world, hobby inelegivel sem evidencia propria, 538 testes e 20 cenarios mock aprovados, e proximo C9c sem liberar producao |
-| Versao 3.26 - C11: Expressao Conversacional e Proatividade Unificadas | 15/09/2026 | Fecha localmente proveniencia sem auto-influencia, repouso conversacional conservador, ledger comum, idempotencia e expressao textual com imagens desligadas; 705 testes e 20 cenarios mock aprovados |
+| Versao 3.26 - C11: Expressao Conversacional e Proatividade Unificadas | 15/09/2026 | Fecha e publica proveniencia sem auto-influencia, repouso conversacional conservador, ledger comum, idempotencia e expressao textual com imagens desligadas; 705 testes, 20 cenarios mock e deploy Railway saudavel |
 
 ---
 
