@@ -236,6 +236,49 @@ def test_relation_signals_are_isolated_and_global_summary_has_no_conversation_te
     assert "segredo-da-relacao-b" not in json.dumps(summary, ensure_ascii=False)
 
 
+def test_message_will_signal_is_invariant_to_agent_reply():
+    will = _load_will_engine()
+    engine = will.WillEngine(ScopedWillDB())
+    user_input = "Quero entender esta pergunta e formular uma hipotese."
+
+    without_reply = engine.analyze_message_signal(user_input, "")
+    expressive_reply = engine.analyze_message_signal(
+        user_input, "Vou criar imagem, arte, poema, simbolo e metafora."
+    )
+    relational_reply = engine.analyze_message_signal(
+        user_input, "Quero conversar, me relacionar e estar junto."
+    )
+
+    assert without_reply == expressive_reply == relational_reply
+    assert without_reply["dominant_signal"] == "saber"
+
+
+def test_persisted_message_signal_does_not_feed_agent_reply_back_into_will():
+    will = _load_will_engine()
+    db = ScopedWillDB()
+    _register(db, "participant_a")
+    engine = will.WillEngine(db)
+    first_signal = engine.record_message_signal(
+        user_id="participant_a", conversation_id=101,
+        user_input="Quero entender esta pergunta.",
+        ai_response="Vou criar arte e imagem.", cycle_id="2026-09-16", phase="conversation",
+    )
+    second_signal = engine.record_message_signal(
+        user_id="participant_a", conversation_id=102,
+        user_input="Quero entender esta pergunta.",
+        ai_response="Quero conversar e me relacionar.", cycle_id="2026-09-16", phase="conversation",
+    )
+
+    rows = db.conn.execute(
+        """SELECT saber_delta, relacionar_delta, expressar_delta, dominant_signal
+           FROM agent_will_message_signals WHERE id IN (?, ?) ORDER BY id""",
+        (first_signal, second_signal),
+    ).fetchall()
+    assert len(rows) == 2
+    assert tuple(rows[0]) == tuple(rows[1])
+    assert rows[0]["dominant_signal"] == "saber"
+
+
 def test_relation_will_states_and_pressure_are_separate_from_global_state():
     will = _load_will_engine()
     pressure = _load_module("will_pressure_scope_test", "will_pressure.py")

@@ -977,13 +977,12 @@ class WillEngine:
         return min(1.0, max(0.0, numeric))
 
     def analyze_message_signal(self, user_input: str, ai_response: str) -> Dict[str, Any]:
+        # The reply remains in the caller contract, but cannot create its own will signal.
         aggregate = {key: 0.0 for key in WILL_ORDER}
 
         user_scores = self._keyword_score(user_input or "")
-        ai_scores = self._keyword_score(ai_response or "")
         for will_name in WILL_ORDER:
             aggregate[will_name] += user_scores[will_name] * 1.15
-            aggregate[will_name] += ai_scores[will_name] * 0.95
 
         normalized_input = (user_input or "").lower()
         if "?" in normalized_input:
