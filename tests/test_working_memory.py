@@ -251,3 +251,79 @@ def test_working_memory_broadcast_payload_and_latest_inbox(in_memory_conn):
     assert inbox["to_phase"] == "identity"
     assert "Foco ativo" in inbox["focus_summary"]
     assert "loop#101" in inbox["focus_summary"]
+
+
+def test_working_memory_isolates_global_relation_and_instance_scopes(in_memory_conn):
+    db = _WorkingMemoryDB(in_memory_conn)
+    global_a = db.create_working_memory_item(
+        agent_instance="jung_a", phase="world", title="Global A",
+        summary="Public instance focus", source_refs=["loop#1"],
+    )
+    private_a = db.create_working_memory_item(
+        agent_instance="jung_a", phase="relation", title="Private A",
+        summary="sentinel-private-a", source_refs=["conversation#7"],
+        ownership_class="relation_private", relation_id="rel-a",
+        participant_user_id="user-a", provenance={"source": "conversation#7"},
+    )
+    db.create_working_memory_item(
+        agent_instance="jung_b", phase="world", title="Global B",
+        summary="sentinel-instance-b", source_refs=["loop#2"],
+    )
+
+    global_rows = db.list_working_memory_items(agent_instance="jung_a")
+    relation_rows = db.list_working_memory_items(agent_instance="jung_a", relation_id="rel-a")
+
+    assert [row["id"] for row in global_rows] == [global_a]
+    assert [row["id"] for row in relation_rows] == [private_a]
+    assert relation_rows[0]["provenance"] == {"source": "conversation#7"}
+    assert "sentinel-private-a" not in str(global_rows)
+    assert "sentinel-instance-b" not in str(global_rows + relation_rows)
+
+
+def test_private_working_memory_requires_complete_relation_identity(in_memory_conn):
+    db = _WorkingMemoryDB(in_memory_conn)
+    with pytest.raises(ValueError, match="relation_id_required"):
+        db.create_working_memory_item(
+            agent_instance="jung_a", phase="relation", title="Unsafe",
+            summary="must fail", source_refs=["conversation#1"],
+            ownership_class="relation_private", participant_user_id="user-a",
+        )
+    with pytest.raises(ValueError, match="participant_user_id_required"):
+        db.create_working_memory_item(
+            agent_instance="jung_a", phase="relation", title="Unsafe",
+            summary="must fail", source_refs=["conversation#1"],
+            ownership_class="relation_private", relation_id="rel-a",
+        )
+
+
+def test_legacy_working_memory_is_quarantined_after_additive_migration(in_memory_conn):
+    in_memory_conn.executescript(
+        """
+        CREATE TABLE working_memory_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, agent_instance TEXT NOT NULL,
+            cycle_id TEXT, phase TEXT NOT NULL, item_type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active', title TEXT NOT NULL,
+            summary TEXT NOT NULL, priority REAL NOT NULL DEFAULT 0.5,
+            source_refs_json TEXT NOT NULL, metadata_json TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            expires_at TEXT, resolved_at TEXT
+        );
+        INSERT INTO working_memory_items (
+            agent_instance, phase, item_type, status, title, summary, priority,
+            source_refs_json, created_at, updated_at
+        ) VALUES (
+            'jung_a', 'identity', 'focus', 'active', 'Legacy',
+            'sentinel-legacy-admin', 0.8, '["conversation#1"]', 'now', 'now'
+        );
+        """
+    )
+    db = _WorkingMemoryDB(in_memory_conn)
+
+    assert db.list_working_memory_items(agent_instance="jung_a") == []
+    legacy = db.list_working_memory_items(
+        agent_instance="jung_a",
+        ownership_classes=["legacy_unscoped"],
+        include_legacy=True,
+    )
+    assert len(legacy) == 1
+    assert legacy[0]["ownership_class"] == "legacy_unscoped"

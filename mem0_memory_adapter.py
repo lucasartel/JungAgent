@@ -155,8 +155,16 @@ class Mem0MemoryAdapter:
         if not resolved and self._relation_resolver:
             try:
                 resolved = self._relation_resolver(str(user_id))
-            except Exception:
-                resolved = None
+            except Exception as exc:
+                raise ValueError("relation_scope_resolution_failed") from exc
+        if not resolved and self._relation_resolver:
+            try:
+                from instance_config import ADMIN_USER_ID
+                is_legacy_admin = str(user_id) == str(ADMIN_USER_ID)
+            except ImportError:
+                is_legacy_admin = False
+            if not is_legacy_admin:
+                raise ValueError("relation_scope_required_for_semantic_memory")
         return f"relation:{resolved}" if resolved else str(user_id)
 
     def get_context(self, user_id: str, query: str, limit: int = 10, relation_id=None) -> str:

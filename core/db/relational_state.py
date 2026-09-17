@@ -155,11 +155,14 @@ class RelationalStateDatabaseMixin:
         stance = _normalize_stance(agent_stance)
         refs = _normalize_source_refs(source_refs, required=True)
         resolver = getattr(self, "resolve_relation_id", None)
-        if not relation_id and callable(resolver):
+        if callable(resolver):
             relation_id = resolver(
                 agent_instance=agent_instance,
                 participant_user_id=user_id,
+                relation_id=relation_id,
             )
+            if not relation_id and not self._legacy_admin_relational_scope_allowed(user_id):
+                raise ValueError("relation_scope_required_for_relational_state")
         last_contact_iso: Optional[str] = None
         if last_contact_at is not None:
             if isinstance(last_contact_at, datetime):
@@ -226,8 +229,14 @@ class RelationalStateDatabaseMixin:
         relation_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         resolver = getattr(self, "resolve_relation_id", None)
-        if not relation_id and callable(resolver):
-            relation_id = resolver(agent_instance=agent_instance, participant_user_id=user_id)
+        if callable(resolver):
+            relation_id = resolver(
+                agent_instance=agent_instance,
+                participant_user_id=user_id,
+                relation_id=relation_id,
+            )
+            if not relation_id and not self._legacy_admin_relational_scope_allowed(user_id):
+                return None
         relation_clause = " AND relation_id = ?" if relation_id else ""
         params = [agent_instance, user_id] + ([relation_id] if relation_id else [])
         cursor = self.conn.cursor()
@@ -254,8 +263,14 @@ class RelationalStateDatabaseMixin:
         relation_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         resolver = getattr(self, "resolve_relation_id", None)
-        if not relation_id and callable(resolver):
-            relation_id = resolver(agent_instance=agent_instance, participant_user_id=user_id)
+        if callable(resolver):
+            relation_id = resolver(
+                agent_instance=agent_instance,
+                participant_user_id=user_id,
+                relation_id=relation_id,
+            )
+            if not relation_id and not self._legacy_admin_relational_scope_allowed(user_id):
+                return []
         relation_clause = " AND relation_id = ?" if relation_id else ""
         params = [agent_instance, user_id] + ([relation_id] if relation_id else []) + [int(limit)]
         cursor = self.conn.cursor()
@@ -305,3 +320,10 @@ class RelationalStateDatabaseMixin:
             data.pop("source_refs_json", "[]"), default=[]
         )
         return data
+    @staticmethod
+    def _legacy_admin_relational_scope_allowed(user_id: str) -> bool:
+        try:
+            from instance_config import ADMIN_USER_ID
+            return str(user_id) == str(ADMIN_USER_ID)
+        except ImportError:
+            return False

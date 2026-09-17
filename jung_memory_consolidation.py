@@ -27,7 +27,29 @@ class MemoryConsolidator:
         """
         self.db = db_manager
 
-    def consolidate_user_memories(self, user_id: str, lookback_days: int = 90):
+    @staticmethod
+    def _legacy_admin_scope_allowed(user_id: str) -> bool:
+        try:
+            from instance_config import ADMIN_USER_ID
+            return str(user_id) == str(ADMIN_USER_ID)
+        except ImportError:
+            return False
+
+    def _resolve_relation_scope(self, user_id: str, relation_id=None):
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        if callable(resolver):
+            relation_id = resolver(
+                agent_instance=getattr(self.db, "agent_instance", None),
+                participant_user_id=str(user_id),
+                relation_id=relation_id,
+            )
+            if not relation_id and not self._legacy_admin_scope_allowed(user_id):
+                raise ValueError("relation_scope_required_for_consolidation")
+        return relation_id
+
+    def consolidate_user_memories(
+        self, user_id: str, lookback_days: int = 90, relation_id=None
+    ):
         """
         Consolida memórias de um usuário nos últimos N dias
 
@@ -41,14 +63,27 @@ class MemoryConsolidator:
         start_date = datetime.now() - timedelta(days=lookback_days)
 
         cursor = self.db.conn.cursor()
-        cursor.execute("""
+        relation_id = self._resolve_relation_scope(user_id, relation_id)
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(conversations)")}
+        scope_sql = ""
+        scope_params = []
+        if relation_id and "relation_id" in columns:
+            scope_sql = " AND relation_id = ?"
+            scope_params.append(str(relation_id))
+        elif callable(getattr(self.db, "resolve_relation_id", None)) and "relation_id" in columns:
+            scope_sql = " AND relation_id IS NULL"
+        instance = getattr(self.db, "agent_instance", None)
+        if instance and "agent_instance" in columns:
+            scope_sql += " AND agent_instance = ?"
+            scope_params.append(str(instance))
+        cursor.execute(f"""
             SELECT id, user_input, ai_response, timestamp, keywords,
                    tension_level, affective_charge, existential_depth
             FROM conversations
             WHERE user_id = ?
-            AND timestamp >= ?
+            AND timestamp >= ?{scope_sql}
             ORDER BY timestamp ASC
-        """, (user_id, start_date.isoformat()))
+        """, (user_id, start_date.isoformat(), *scope_params))
 
         memories = [dict(row) for row in cursor.fetchall()]
 
@@ -71,8 +106,17 @@ class MemoryConsolidator:
                     user_id=user_id,
                     topic=topic,
                     memories=cluster_memories,
-                    lookback_days=lookback_days
+                    lookback_days=lookback_days,
+                    relation_id=relation_id,
                 )
+
+        # profile.md ainda e user-keyed; C12g definira seu namespace por instancia.
+        if relation_id:
+            logger.info(
+                "Profile rebuild deferred for Relation-scoped consolidation: relation_id=%s",
+                relation_id,
+            )
+            return
 
         # 4. Reconstruir profile.md com dados atualizados
         try:
@@ -149,8 +193,14 @@ class MemoryConsolidator:
 
         return "geral"
 
-    def _create_consolidated_memory(self, user_id: str, topic: str,
-                                    memories: List[Dict], lookback_days: int):
+    def _create_consolidated_memory(
+        self,
+        user_id: str,
+        topic: str,
+        memories: List[Dict],
+        lookback_days: int,
+        relation_id=None,
+    ):
         """
         Cria memória consolidada e salva no ChromaDB
 
@@ -224,12 +274,26 @@ MÉTRICAS DO PERÍODO:
 
         with self.db._lock:
             cursor = self.db.conn.cursor()
+            pattern_columns = {
+                row[1] for row in cursor.execute("PRAGMA table_info(user_patterns)")
+            }
+            instance = getattr(self.db, "agent_instance", None)
+            scope_sql = ""
+            scope_params = []
+            if relation_id and "relation_id" in pattern_columns:
+                scope_sql = " AND relation_id = ?"
+                scope_params.append(str(relation_id))
+            elif callable(getattr(self.db, "resolve_relation_id", None)) and "relation_id" in pattern_columns:
+                scope_sql = " AND relation_id IS NULL"
+            if instance and "agent_instance" in pattern_columns:
+                scope_sql += " AND agent_instance = ?"
+                scope_params.append(str(instance))
             cursor.execute(
-                """
+                f"""
                 SELECT id FROM user_patterns
-                WHERE user_id = ? AND pattern_name = ?
+                WHERE user_id = ? AND pattern_name = ?{scope_sql}
                 """,
-                (user_id, pattern_name),
+                (user_id, pattern_name, *scope_params),
             )
             existing = cursor.fetchone()
             if existing:
@@ -252,22 +316,37 @@ MÉTRICAS DO PERÍODO:
                     ),
                 )
             else:
+                insert_columns = [
+                    "user_id",
+                    "pattern_type",
+                    "pattern_name",
+                    "pattern_description",
+                    "frequency_count",
+                    "supporting_conversation_ids",
+                    "confidence_score",
+                ]
+                insert_values = [
+                    user_id,
+                    "CONSOLIDATED_MEMORY",
+                    pattern_name,
+                    description,
+                    len(memories),
+                    json.dumps(payload, ensure_ascii=False),
+                    min(1.0, len(memories) * 0.08),
+                ]
+                if "relation_id" in pattern_columns:
+                    insert_columns.append("relation_id")
+                    insert_values.append(str(relation_id) if relation_id else None)
+                if "agent_instance" in pattern_columns:
+                    insert_columns.append("agent_instance")
+                    insert_values.append(str(instance) if instance else None)
+                placeholders = ", ".join("?" for _ in insert_columns)
                 cursor.execute(
-                    """
-                    INSERT INTO user_patterns
-                    (user_id, pattern_type, pattern_name, pattern_description,
-                     frequency_count, supporting_conversation_ids, confidence_score)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    f"""
+                    INSERT INTO user_patterns ({', '.join(insert_columns)})
+                    VALUES ({placeholders})
                     """,
-                    (
-                        user_id,
-                        "CONSOLIDATED_MEMORY",
-                        pattern_name,
-                        description,
-                        len(memories),
-                        json.dumps(payload, ensure_ascii=False),
-                        min(1.0, len(memories) * 0.08),
-                    ),
+                    tuple(insert_values),
                 )
             self.db.conn.commit()
         logger.info("Memoria consolidada salva em SQLite: %s", pattern_name)

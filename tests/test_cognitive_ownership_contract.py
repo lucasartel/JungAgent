@@ -1,17 +1,31 @@
 """C12a acceptance tests for the cognitive ownership map."""
-from cognitive_ownership_contract import (
-    AGGREGATE_ONLY,
-    AUTHORIZED_AGGREGATE,
-    INSTANCE_GLOBAL,
-    LEGACY_UNSCOPED,
-    NEVER,
-    OWNERSHIP_CONTRACTS,
-    READY,
-    RELATION_PRIVATE,
-    SAME_RELATION,
-    render_markdown,
-    validate_ownership_contracts,
-)
+import importlib.util
+import sys
+from pathlib import Path
+
+
+def _load_contract():
+    path = Path(__file__).resolve().parents[1] / "core" / "db" / "cognitive_ownership.py"
+    spec = importlib.util.spec_from_file_location("cognitive_ownership_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_contract = _load_contract()
+AGGREGATE_ONLY = _contract.AGGREGATE_ONLY
+AUTHORIZED_AGGREGATE = _contract.AUTHORIZED_AGGREGATE
+INSTANCE_GLOBAL = _contract.INSTANCE_GLOBAL
+LEGACY_UNSCOPED = _contract.LEGACY_UNSCOPED
+NEVER = _contract.NEVER
+OWNERSHIP_CONTRACTS = _contract.OWNERSHIP_CONTRACTS
+READY = _contract.READY
+RELATION_PRIVATE = _contract.RELATION_PRIVATE
+SAME_RELATION = _contract.SAME_RELATION
+render_markdown = _contract.render_markdown
+validate_ownership_contracts = _contract.validate_ownership_contracts
 
 
 def _by_domain():

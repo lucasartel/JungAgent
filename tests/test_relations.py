@@ -85,6 +85,31 @@ def test_relations_are_isolated_by_agent_and_organization() -> None:
     )["relation_id"]
 
 
+def test_explicit_relation_cannot_be_reused_by_another_instance_or_participant() -> None:
+    db = _RelationsDB()
+    relation_id = db.register_agent_relation(
+        agent_instance="jung_a", participant_user_id="user_a"
+    )
+
+    assert db.resolve_relation_id(
+        agent_instance="jung_a",
+        participant_user_id="user_a",
+        relation_id=relation_id,
+    ) == relation_id
+    with pytest.raises(ValueError, match="relation_agent_instance_mismatch"):
+        db.resolve_relation_id(
+            agent_instance="jung_b",
+            participant_user_id="user_a",
+            relation_id=relation_id,
+        )
+    with pytest.raises(ValueError, match="relation_participant_mismatch"):
+        db.resolve_relation_id(
+            agent_instance="jung_a",
+            participant_user_id="user_b",
+            relation_id=relation_id,
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [

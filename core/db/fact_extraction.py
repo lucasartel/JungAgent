@@ -7,12 +7,35 @@ logger = logging.getLogger(__name__)
 
 
 class FactExtractionDatabaseMixin:
+    @staticmethod
+    def _legacy_admin_fact_write_allowed(user_id: str) -> bool:
+        try:
+            from instance_config import ADMIN_USER_ID
+            return str(user_id) == str(ADMIN_USER_ID)
+        except ImportError:
+            return False
+
     def _table_has_column(self, table: str, column: str) -> bool:
         try:
             rows = self.conn.execute(f"PRAGMA table_info({table})").fetchall()
             return column in {row[1] for row in rows}
         except Exception:
             return False
+
+    def _stamp_fact_scope(self, cursor, table: str, row_id: int, relation_id: Optional[str]) -> None:
+        if not row_id or not self._table_has_column(table, "agent_instance"):
+            return
+        agent_instance = getattr(self, "agent_instance", None)
+        if not agent_instance:
+            try:
+                from instance_config import AGENT_INSTANCE
+                agent_instance = AGENT_INSTANCE
+            except ImportError:
+                return
+        cursor.execute(
+            f"UPDATE {table} SET agent_instance = ?, relation_id = COALESCE(relation_id, ?) WHERE id = ?",
+            (str(agent_instance), relation_id, int(row_id)),
+        )
 
     def _relation_id_for_fact(
         self, user_id: str, relation_id: Optional[str] = None, conversation_id: Optional[int] = None
@@ -31,7 +54,14 @@ class FactExtractionDatabaseMixin:
             pass
         resolver = getattr(self, "resolve_relation_id", None)
         if callable(resolver):
-            return resolver(participant_user_id=user_id)
+            resolved = resolver(
+                agent_instance=getattr(self, "agent_instance", None),
+                participant_user_id=user_id,
+            )
+            if resolved:
+                return resolved
+            if not self._legacy_admin_fact_write_allowed(user_id):
+                raise ValueError("relation_scope_required_for_fact")
         return None
 
     def _relation_scope(self, table: str, relation_id: Optional[str]):
@@ -123,6 +153,7 @@ class FactExtractionDatabaseMixin:
 
         with self._lock:
             cursor = self.conn.cursor()
+            saved_id = None
             cursor.execute(
                 f"""SELECT id, fact_value FROM user_facts
                     WHERE user_id = ? AND fact_category = ? AND fact_key = ?
@@ -131,6 +162,7 @@ class FactExtractionDatabaseMixin:
             )
             existing = cursor.fetchone()
             if existing:
+                saved_id = existing["id"]
                 if existing["fact_value"] != value:
                     cursor.execute("UPDATE user_facts SET is_current = 0 WHERE id = ?", (existing["id"],))
                     columns = "user_id, fact_category, fact_key, fact_value, source_conversation_id, version"
@@ -145,6 +177,7 @@ class FactExtractionDatabaseMixin:
                         f"INSERT INTO user_facts ({columns}) SELECT {values} FROM user_facts WHERE id = ?",
                         (*params, existing["id"]),
                     )
+                    saved_id = cursor.lastrowid
             else:
                 if relation_id and self._table_has_column("user_facts", "relation_id"):
                     cursor.execute(
@@ -156,6 +189,8 @@ class FactExtractionDatabaseMixin:
                         "INSERT INTO user_facts (user_id, fact_category, fact_key, fact_value, source_conversation_id) VALUES (?, ?, ?, ?, ?)",
                         (user_id, category, key, value, conversation_id),
                     )
+                saved_id = cursor.lastrowid
+            self._stamp_fact_scope(cursor, "user_facts", saved_id, relation_id)
             self.conn.commit()
 
     # ========================================
@@ -425,5 +460,6 @@ class FactExtractionDatabaseMixin:
                          confidence, extraction_method, context, source_conversation_id, version, is_current)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)""",
                         (user_id, category, fact_type, attribute, value, confidence, extraction_method, context, conversation_id))
+                new_id = cursor.lastrowid
+            self._stamp_fact_scope(cursor, "user_facts_v2", new_id, relation_id)
             self.conn.commit()
-

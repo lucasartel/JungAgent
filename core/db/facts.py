@@ -6,17 +6,33 @@ logger = logging.getLogger(__name__)
 
 
 class FactLookupDatabaseMixin:
+    @staticmethod
+    def _legacy_admin_fact_scope_allowed(user_id: str) -> bool:
+        try:
+            from instance_config import ADMIN_USER_ID
+            return str(user_id) == str(ADMIN_USER_ID)
+        except ImportError:
+            return False
+
     def _fact_relation_scope(self, table: str, user_id: str, relation_id=None):
-        if not relation_id:
-            resolver = getattr(self, "resolve_relation_id", None)
-            if callable(resolver):
-                relation_id = resolver(participant_user_id=user_id)
+        resolver = getattr(self, "resolve_relation_id", None)
+        if callable(resolver):
+            relation_id = resolver(
+                agent_instance=getattr(self, "agent_instance", None),
+                participant_user_id=user_id,
+                relation_id=relation_id,
+            )
         try:
             columns = {row[1] for row in self.conn.execute(f"PRAGMA table_info({table})")}
-        except Exception:
+        except Exception as exc:
+            logger.warning("Could not inspect fact table %s: %s", table, exc)
             columns = set()
         if relation_id and "relation_id" in columns:
             return " AND relation_id = ?", [str(relation_id)]
+        if callable(resolver) and not self._legacy_admin_fact_scope_allowed(user_id):
+            return " AND 1 = 0", []
+        if callable(resolver) and "relation_id" in columns:
+            return " AND relation_id IS NULL", []
         return "", []
 
     def _is_factual_memory_query(self, text: str) -> bool:

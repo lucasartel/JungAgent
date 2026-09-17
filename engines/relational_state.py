@@ -169,8 +169,19 @@ class RelationalStateEngine:
                 agent_instance=self.agent_instance,
                 participant_user_id=user_id,
             )
+        if callable(resolver) and not resolved_relation and not self._legacy_admin_scope_allowed(user_id):
+            return []
+        columns = {
+            row[1] for row in self.db.conn.execute("PRAGMA table_info(conversations)")
+        }
         relation_clause = " AND relation_id = ?" if resolved_relation else ""
-        params = [user_id] + ([resolved_relation] if resolved_relation else []) + [max(baseline_days, recent_days) * 20]
+        instance_clause = ""
+        if not resolved_relation and "agent_instance" in columns:
+            instance_clause = " AND agent_instance = ?"
+        params = [user_id] + ([resolved_relation] if resolved_relation else [])
+        if instance_clause:
+            params.append(self.agent_instance)
+        params.append(max(baseline_days, recent_days) * 20)
         cursor = self.db.conn.cursor()
         cursor.execute(
             f"""
@@ -179,6 +190,7 @@ class RelationalStateEngine:
             FROM conversations
             WHERE user_id = ?
               {relation_clause}
+              {instance_clause}
               AND timestamp IS NOT NULL
             ORDER BY timestamp DESC
             LIMIT ?
@@ -372,3 +384,10 @@ class RelationalStateEngine:
             user_id=user_id,
             relation_id=relation_id or self.relation_id,
         )
+    @staticmethod
+    def _legacy_admin_scope_allowed(user_id: str) -> bool:
+        try:
+            from instance_config import ADMIN_USER_ID
+            return str(user_id) == str(ADMIN_USER_ID)
+        except ImportError:
+            return False

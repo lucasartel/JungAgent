@@ -16,6 +16,13 @@ class ConversationDatabaseMixin:
     # ========================================
 
     def _resolve_relation_id(self, user_id: str, relation_id: Optional[str]) -> Optional[str]:
+        scope_resolver = getattr(self, "resolve_relation_id", None)
+        if callable(scope_resolver):
+            return scope_resolver(
+                agent_instance=self._conversation_agent_instance(),
+                participant_user_id=str(user_id),
+                relation_id=relation_id,
+            )
         if relation_id:
             return str(relation_id)
         resolver = getattr(self, "get_agent_relation_for_participant", None)
@@ -36,6 +43,16 @@ class ConversationDatabaseMixin:
             return None
         resolved = relation.get("relation_id")
         return str(resolved) if resolved else None
+
+    def _conversation_agent_instance(self) -> Optional[str]:
+        instance = getattr(self, "agent_instance", None)
+        if instance:
+            return str(instance)
+        try:
+            from instance_config import AGENT_INSTANCE
+            return str(AGENT_INSTANCE)
+        except ImportError:
+            return None
 
     def save_conversation(self, user_id: str, user_name: str, user_input: str,
                          ai_response: str, session_id: str = None,
@@ -59,6 +76,7 @@ class ConversationDatabaseMixin:
         """
 
         relation_id = self._resolve_relation_id(user_id, relation_id)
+        agent_instance = self._conversation_agent_instance()
 
         # Log minimal metadata only. Avoid writing user content to application logs.
         logger.info(
@@ -102,6 +120,9 @@ class ConversationDatabaseMixin:
             if relation_id and "relation_id" in conversation_columns:
                 insert_columns.append("relation_id")
                 insert_values.append(relation_id)
+            if agent_instance and "agent_instance" in conversation_columns:
+                insert_columns.append("agent_instance")
+                insert_values.append(agent_instance)
             placeholders = ", ".join("?" for _ in insert_values)
             cursor.execute(
                 f"INSERT INTO conversations ({', '.join(insert_columns)}) VALUES ({placeholders})",
@@ -148,10 +169,14 @@ class ConversationDatabaseMixin:
         logger.info(f"ðŸ” [DEBUG FATOS] Verificando extraÃ§Ã£o... hasattr(extract_and_save_facts_v2)={hasattr(self, 'extract_and_save_facts_v2')}")
         if hasattr(self, 'extract_and_save_facts_v2'):
             logger.info("âœ… Chamando extract_and_save_facts_v2...")
-            self.extract_and_save_facts_v2(user_id, user_input, conversation_id)
+            self.extract_and_save_facts_v2(
+                user_id, user_input, conversation_id, relation_id=relation_id
+            )
         else:
             logger.info("âš ï¸ extract_and_save_facts_v2 nÃ£o encontrado, usando mÃ©todo antigo...")
-            self.extract_and_save_facts(user_id, user_input, conversation_id)
+            self.extract_and_save_facts(
+                user_id, user_input, conversation_id, relation_id=relation_id
+            )
 
         # 7. HOOK: Sistema de Ruminação no escopo do admin ou de uma relação registrada
         try:
@@ -191,7 +216,9 @@ class ConversationDatabaseMixin:
         # 9. Sincronizar com mem0 (extraÃ§Ã£o automÃ¡tica de fatos)
         if self.mem0:
             try:
-                self.mem0.add_exchange(user_id, user_input, ai_response)
+                self.mem0.add_exchange(
+                    user_id, user_input, ai_response, relation_id=relation_id
+                )
             except Exception as e:
                 logger.warning(f"âš ï¸ [MEM0] Erro ao sincronizar conversa: {e}")
 
@@ -220,11 +247,16 @@ class ConversationDatabaseMixin:
         conversation_columns = {
             row[1] for row in cursor.execute("PRAGMA table_info(conversations)").fetchall()
         }
+        relation_id = self._resolve_relation_id(user_id, relation_id)
+        agent_instance = self._conversation_agent_instance()
         clauses = ["user_id = ?"]
         params: List[Any] = [user_id]
         if relation_id and "relation_id" in conversation_columns:
             clauses.append("relation_id = ?")
             params.append(relation_id)
+        elif agent_instance and "agent_instance" in conversation_columns:
+            clauses.append("agent_instance = ?")
+            params.append(agent_instance)
         if not include_proactive:
             clauses.append("(platform IS NULL OR platform NOT IN ('proactive', 'proactive_rumination'))")
         params.append(limit)
@@ -259,9 +291,14 @@ class ConversationDatabaseMixin:
         clauses = ["user_id = ?"]
         params: List[Any] = [user_id]
         columns = {row[1] for row in cursor.execute("PRAGMA table_info(conversations)").fetchall()}
+        relation_id = self._resolve_relation_id(user_id, relation_id)
+        agent_instance = self._conversation_agent_instance()
         if relation_id and "relation_id" in columns:
             clauses.append("relation_id = ?")
             params.append(relation_id)
+        elif agent_instance and "agent_instance" in columns:
+            clauses.append("agent_instance = ?")
+            params.append(agent_instance)
         cursor.execute(
             f"SELECT COUNT(*) AS count FROM conversations WHERE {' AND '.join(clauses)}",
             tuple(params),

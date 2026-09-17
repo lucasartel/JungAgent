@@ -7,7 +7,27 @@ logger = logging.getLogger(__name__)
 
 
 class AnalysisRecordsDatabaseMixin:
-    def detect_and_save_patterns(self, user_id: str):
+    @staticmethod
+    def _legacy_admin_pattern_scope_allowed(user_id: str) -> bool:
+        try:
+            from instance_config import ADMIN_USER_ID
+            return str(user_id) == str(ADMIN_USER_ID)
+        except ImportError:
+            return False
+
+    def _pattern_scope(self, user_id: str, relation_id=None):
+        resolver = getattr(self, "resolve_relation_id", None)
+        if callable(resolver):
+            relation_id = resolver(
+                agent_instance=getattr(self, "agent_instance", None),
+                participant_user_id=str(user_id),
+                relation_id=relation_id,
+            )
+            if not relation_id and not self._legacy_admin_pattern_scope_allowed(user_id):
+                raise ValueError("relation_scope_required_for_pattern")
+        return relation_id
+
+    def detect_and_save_patterns(self, user_id: str, relation_id=None):
         """
         Analisa conversas do usuÃ¡rio e detecta padrÃµes recorrentes
         
@@ -15,12 +35,30 @@ class AnalysisRecordsDatabaseMixin:
         """
         
         cursor = self.conn.cursor()
+        relation_id = self._pattern_scope(user_id, relation_id)
+        instance = getattr(self, "agent_instance", None)
+        conversation_columns = {
+            row[1] for row in cursor.execute("PRAGMA table_info(conversations)")
+        }
+        pattern_columns = {
+            row[1] for row in cursor.execute("PRAGMA table_info(user_patterns)")
+        }
+        conversation_scope = ""
+        conversation_params = []
+        if relation_id and "relation_id" in conversation_columns:
+            conversation_scope = " AND relation_id = ?"
+            conversation_params.append(str(relation_id))
+        elif callable(getattr(self, "resolve_relation_id", None)) and "relation_id" in conversation_columns:
+            conversation_scope = " AND relation_id IS NULL"
+        if instance and "agent_instance" in conversation_columns:
+            conversation_scope += " AND agent_instance = ?"
+            conversation_params.append(str(instance))
         
         # Buscar keywords Ãºnicas do usuÃ¡rio
         cursor.execute("""
             SELECT DISTINCT keywords FROM conversations
-            WHERE user_id = ? AND keywords IS NOT NULL AND keywords != ''
-        """, (user_id,))
+            WHERE user_id = ? AND keywords IS NOT NULL AND keywords != ''{conversation_scope}
+        """.format(conversation_scope=conversation_scope), (user_id, *conversation_params))
         
         all_keywords = set()
         for row in cursor.fetchall():
@@ -32,7 +70,7 @@ class AnalysisRecordsDatabaseMixin:
             if not theme or len(theme) < 6:
                 continue
 
-            related = self.semantic_search(user_id, theme, k=10)
+            related = self.semantic_search(user_id, theme, k=10, relation_id=relation_id)
 
             # Se hÃ¡ mÃºltiplas conversas sobre o tema (padrÃ£o recorrente)
             if len(related) >= 3:
@@ -40,10 +78,22 @@ class AnalysisRecordsDatabaseMixin:
 
                 with self._lock:
                     # Verificar se padrÃ£o jÃ¡ existe
+                    pattern_scope = ""
+                    pattern_params = []
+                    if relation_id and "relation_id" in pattern_columns:
+                        pattern_scope = " AND relation_id = ?"
+                        pattern_params.append(str(relation_id))
+                    elif callable(getattr(self, "resolve_relation_id", None)) and "relation_id" in pattern_columns:
+                        pattern_scope = " AND relation_id IS NULL"
+                    if instance and "agent_instance" in pattern_columns:
+                        pattern_scope += " AND agent_instance = ?"
+                        pattern_params.append(str(instance))
                     cursor.execute("""
                         SELECT id FROM user_patterns
-                        WHERE user_id = ? AND pattern_name = ?
-                    """, (user_id, f"tema_{theme}"))
+                        WHERE user_id = ? AND pattern_name = ?{pattern_scope}
+                    """.format(pattern_scope=pattern_scope), (
+                        user_id, f"tema_{theme}", *pattern_params
+                    ))
 
                     existing = cursor.fetchone()
 
@@ -64,20 +114,31 @@ class AnalysisRecordsDatabaseMixin:
                         ))
                     else:
                         # Criar
-                        cursor.execute("""
-                            INSERT INTO user_patterns
-                            (user_id, pattern_type, pattern_name, pattern_description,
-                             frequency_count, supporting_conversation_ids, confidence_score)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (
+                        insert_columns = [
+                            "user_id", "pattern_type", "pattern_name", "pattern_description",
+                            "frequency_count", "supporting_conversation_ids", "confidence_score",
+                        ]
+                        insert_values = [
                             user_id,
                             'TEMÃTICO',
                             f"tema_{theme}",
                             f"UsuÃ¡rio frequentemente menciona: {theme}",
                             len(related),
                             json.dumps(conv_ids),
-                            min(1.0, len(related) * 0.15)
-                        ))
+                            min(1.0, len(related) * 0.15),
+                        ]
+                        if "relation_id" in pattern_columns:
+                            insert_columns.append("relation_id")
+                            insert_values.append(str(relation_id) if relation_id else None)
+                        if "agent_instance" in pattern_columns:
+                            insert_columns.append("agent_instance")
+                            insert_values.append(str(instance) if instance else None)
+                        placeholders = ", ".join("?" for _ in insert_columns)
+                        cursor.execute(f"""
+                            INSERT INTO user_patterns
+                            ({', '.join(insert_columns)})
+                            VALUES ({placeholders})
+                        """, tuple(insert_values))
 
                     self.conn.commit()
 

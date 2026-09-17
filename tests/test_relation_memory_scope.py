@@ -138,3 +138,15 @@ def test_mem0_uses_relation_namespace():
     assert "relation:relation-42" in context
     assert adapter.mem.searches == [("consulta", "relation:relation-42", 2)]
     assert adapter.mem.adds[0][1] == "relation:relation-42"
+
+
+def test_mem0_denies_non_admin_legacy_namespace_without_relation():
+    adapter = mem0_mod.Mem0MemoryAdapter.__new__(mem0_mod.Mem0MemoryAdapter)
+    adapter.mem = MemoryStub()
+    adapter.set_relation_resolver(lambda user_id: None)
+
+    assert adapter.get_context("unregistered-participant", "consulta", limit=2) == ""
+    adapter.add_exchange("unregistered-participant", "ola", "resposta")
+
+    assert adapter.mem.searches == []
+    assert adapter.mem.adds == []

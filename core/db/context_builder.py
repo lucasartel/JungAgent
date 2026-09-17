@@ -63,15 +63,19 @@ class ContextBuilderDatabaseMixin:
         use_v2 = cursor.fetchone() is not None
 
         relevant_facts = []
-        resolver = getattr(self, "resolve_relation_id", None)
-        if not relation_id and callable(resolver):
-            relation_id = resolver(participant_user_id=user_id)
+        relation_id, context_allowed = self._resolve_context_relation(user_id, relation_id)
         def scope(table):
             try:
                 columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
             except Exception:
                 columns = set()
-            return (" AND relation_id = ?", [relation_id]) if relation_id and "relation_id" in columns else ("", [])
+            if relation_id and "relation_id" in columns:
+                return " AND relation_id = ?", [relation_id]
+            if not context_allowed:
+                return " AND 1 = 0", []
+            if "relation_id" in columns:
+                return " AND relation_id IS NULL", []
+            return "", []
 
         # Buscar fatos sobre pessoas mencionadas
         if mentioned_names:
@@ -155,7 +159,7 @@ class ContextBuilderDatabaseMixin:
 
         return "\n".join(lines)
 
-    def _get_relevant_patterns(self, user_id: str, query: str) -> List[Dict]:
+    def _get_relevant_patterns(self, user_id: str, query: str, relation_id=None) -> List[Dict]:
         """
         Busca padrÃµes relevantes ao input atual (Fase 5)
 
@@ -168,14 +172,24 @@ class ContextBuilderDatabaseMixin:
         """
         cursor = self.conn.cursor()
 
-        # Buscar padrÃµes com alta confianÃ§a
-        cursor.execute("""
+        relation_id, context_allowed = self._resolve_context_relation(user_id, relation_id)
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(user_patterns)")}
+        scope_sql = ""
+        scope_params = []
+        if relation_id and "relation_id" in columns:
+            scope_sql, scope_params = " AND relation_id = ?", [relation_id]
+        elif not context_allowed:
+            scope_sql = " AND 1 = 0"
+        elif "relation_id" in columns:
+            scope_sql = " AND relation_id IS NULL"
+
+        cursor.execute(f"""
             SELECT pattern_name, pattern_description, frequency_count, confidence_score
             FROM user_patterns
-            WHERE user_id = ? AND confidence_score > 0.6
+            WHERE user_id = ? AND confidence_score > 0.6{scope_sql}
             ORDER BY confidence_score DESC, frequency_count DESC
             LIMIT 3
-        """, (user_id,))
+        """, (user_id, *scope_params))
 
         return [dict(row) for row in cursor.fetchall()]
 
@@ -223,6 +237,7 @@ class ContextBuilderDatabaseMixin:
         """
 
         logger.info(f"ðŸ—ï¸ [FASE 5] Construindo contexto hierÃ¡rquico para user_id={user_id}")
+        relation_id, stored_context_allowed = self._resolve_context_relation(user_id, relation_id)
 
         user = self.get_user(user_id)
         name = user['user_name'] if user else "UsuÃ¡rio"
@@ -259,8 +274,10 @@ class ContextBuilderDatabaseMixin:
         # ===== LAYER 3: MEMÃ“RIAS SEMÃ‚NTICAS =====
         if relation_id:
             memories = self.semantic_search(user_id, current_input, k=k_memories, chat_history=chat_history, relation_id=relation_id)
-        else:
+        elif stored_context_allowed:
             memories = self.semantic_search(user_id, current_input, k=k_memories, chat_history=chat_history)
+        else:
+            memories = []
 
         if memories:
             context_parts.append("=== MEMÃ“RIAS RELACIONADAS ===\n")
@@ -300,7 +317,7 @@ class ContextBuilderDatabaseMixin:
                 context_parts.append("")
 
         # ===== LAYER 4: PADRÃ•ES DETECTADOS =====
-        patterns = self._get_relevant_patterns(user_id, current_input)
+        patterns = self._get_relevant_patterns(user_id, current_input, relation_id=relation_id)
 
         if patterns:
             context_parts.append("=== PADRÃ•ES OBSERVADOS ===\n")
@@ -317,3 +334,21 @@ class ContextBuilderDatabaseMixin:
         logger.info(f"âœ… [FASE 5] Contexto construÃ­do: {len(full_context)} caracteres")
 
         return full_context
+    @staticmethod
+    def _legacy_admin_context_allowed(user_id: str) -> bool:
+        try:
+            from instance_config import ADMIN_USER_ID
+            return str(user_id) == str(ADMIN_USER_ID)
+        except ImportError:
+            return False
+
+    def _resolve_context_relation(self, user_id: str, relation_id=None):
+        resolver = getattr(self, "resolve_relation_id", None)
+        if not callable(resolver):
+            return relation_id, True
+        resolved = resolver(
+            agent_instance=getattr(self, "agent_instance", None),
+            participant_user_id=user_id,
+            relation_id=relation_id,
+        )
+        return resolved, bool(resolved or self._legacy_admin_context_allowed(user_id))

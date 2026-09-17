@@ -11,6 +11,16 @@ SOURCE_REF_RE = re.compile(
     r"\b(?:loop|conversation|dream|will|meta|rumination_insight|work_run|work_ticket|work_delivery|hobby_artifact|agent_development|knowledge_gap)#\d+\b"
 )
 ACTIVE_FOCUS_LIMIT = 5
+RELATION_PRIVATE = "relation_private"
+INSTANCE_GLOBAL = "instance_global"
+AUTHORIZED_AGGREGATE = "authorized_aggregate"
+LEGACY_UNSCOPED = "legacy_unscoped"
+OWNERSHIP_CLASSES = {
+    RELATION_PRIVATE,
+    INSTANCE_GLOBAL,
+    AUTHORIZED_AGGREGATE,
+    LEGACY_UNSCOPED,
+}
 
 
 def _now_iso() -> str:
@@ -48,6 +58,10 @@ class WorkingMemoryDatabaseMixin:
                 priority REAL NOT NULL DEFAULT 0.5,
                 source_refs_json TEXT NOT NULL,
                 metadata_json TEXT,
+                ownership_class TEXT NOT NULL DEFAULT 'instance_global',
+                relation_id TEXT,
+                participant_user_id TEXT,
+                provenance_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 expires_at TEXT,
@@ -65,6 +79,7 @@ class WorkingMemoryDatabaseMixin:
                 to_phase TEXT NOT NULL,
                 focus_items_json TEXT NOT NULL,
                 fringe_items_json TEXT NOT NULL,
+                ownership_class TEXT NOT NULL DEFAULT 'instance_global',
                 created_at TEXT NOT NULL
             )
             """
@@ -80,6 +95,10 @@ class WorkingMemoryDatabaseMixin:
                 title TEXT NOT NULL,
                 objective TEXT NOT NULL,
                 source_refs_json TEXT NOT NULL,
+                ownership_class TEXT NOT NULL DEFAULT 'instance_global',
+                relation_id TEXT,
+                participant_user_id TEXT,
+                provenance_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 closed_at TEXT
@@ -117,19 +136,67 @@ class WorkingMemoryDatabaseMixin:
                 source_refs_json TEXT NOT NULL,
                 evidence_json TEXT,
                 metadata_json TEXT,
+                ownership_class TEXT NOT NULL DEFAULT 'instance_global',
+                relation_id TEXT,
+                participant_user_id TEXT,
+                provenance_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 completed_at TEXT
             )
             """
         )
+        for table in ("working_memory_items", "goal_threads", "controlled_action_runs"):
+            columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+            for column, definition in (
+                ("ownership_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+                ("relation_id", "TEXT"),
+                ("participant_user_id", "TEXT"),
+                ("provenance_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ):
+                if column not in columns:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        broadcast_columns = {
+            row[1] for row in cursor.execute("PRAGMA table_info(working_memory_broadcasts)")
+        }
+        if "ownership_class" not in broadcast_columns:
+            cursor.execute(
+                "ALTER TABLE working_memory_broadcasts ADD COLUMN "
+                "ownership_class TEXT NOT NULL DEFAULT 'legacy_unscoped'"
+            )
+
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_wm_items_active ON working_memory_items(agent_instance, status, item_type, priority DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_wm_items_ownership ON working_memory_items(agent_instance, ownership_class, relation_id, status, item_type, priority DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_wm_items_cycle ON working_memory_items(agent_instance, cycle_id, phase, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_wm_broadcasts_cycle ON working_memory_broadcasts(agent_instance, cycle_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_goal_threads_status ON goal_threads(agent_instance, status, updated_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_goal_steps_goal ON goal_steps(goal_id, step_order)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_controlled_actions_agent ON controlled_action_runs(agent_instance, status, updated_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_controlled_actions_goal ON controlled_action_runs(goal_id, step_id)")
+
+    def _normalize_ownership(
+        self,
+        *,
+        ownership_class: str,
+        relation_id: Optional[str] = None,
+        participant_user_id: Optional[str] = None,
+        allow_legacy: bool = False,
+    ) -> tuple[str, Optional[str], Optional[str]]:
+        clean_class = (ownership_class or "").strip().lower()
+        if clean_class not in OWNERSHIP_CLASSES:
+            raise ValueError(f"invalid_ownership_class:{ownership_class}")
+        clean_relation = (relation_id or "").strip() or None
+        clean_participant = (participant_user_id or "").strip() or None
+        if clean_class == LEGACY_UNSCOPED and not allow_legacy:
+            raise ValueError("legacy_unscoped_is_read_only")
+        if clean_class == RELATION_PRIVATE:
+            if not clean_relation:
+                raise ValueError("relation_id_required_for_private_memory")
+            if not clean_participant:
+                raise ValueError("participant_user_id_required_for_private_memory")
+        elif clean_relation or clean_participant:
+            raise ValueError("relation_identity_forbidden_for_global_memory")
+        return clean_class, clean_relation, clean_participant
 
     def _normalize_source_refs(self, source_refs: Sequence[str], *, required: bool = True) -> List[str]:
         refs: List[str] = []
@@ -147,15 +214,26 @@ class WorkingMemoryDatabaseMixin:
             raise ValueError("source_refs_required")
         return refs
 
-    def _active_focus_count(self, agent_instance: str) -> int:
+    def _active_focus_count(
+        self,
+        agent_instance: str,
+        *,
+        ownership_class: str = INSTANCE_GLOBAL,
+        relation_id: Optional[str] = None,
+    ) -> int:
+        ownership_class = (ownership_class or "").strip().lower()
+        if ownership_class not in OWNERSHIP_CLASSES or ownership_class == LEGACY_UNSCOPED:
+            raise ValueError(f"invalid_ownership_class:{ownership_class}")
         cursor = self.conn.cursor()
         cursor.execute(
             """
             SELECT COUNT(*) AS count
             FROM working_memory_items
-            WHERE agent_instance = ? AND status = 'active' AND item_type = 'focus'
+            WHERE agent_instance = ? AND ownership_class = ?
+              AND COALESCE(relation_id, '') = COALESCE(?, '')
+              AND status = 'active' AND item_type = 'focus'
             """,
-            (agent_instance,),
+            (agent_instance, ownership_class, relation_id),
         )
         row = cursor.fetchone()
         return int(row["count"] if row else 0)
@@ -173,6 +251,10 @@ class WorkingMemoryDatabaseMixin:
         priority: float = 0.5,
         status: str = "active",
         metadata: Optional[Dict[str, Any]] = None,
+        ownership_class: str = INSTANCE_GLOBAL,
+        relation_id: Optional[str] = None,
+        participant_user_id: Optional[str] = None,
+        provenance: Optional[Dict[str, Any]] = None,
         expires_at: Optional[str] = None,
         commit: bool = True,
     ) -> int:
@@ -185,8 +267,17 @@ class WorkingMemoryDatabaseMixin:
             raise ValueError(f"invalid_status:{status}")
         if not agent_instance or not phase or not title or not summary:
             raise ValueError("agent_instance_phase_title_summary_required")
+        ownership_class, relation_id, participant_user_id = self._normalize_ownership(
+            ownership_class=ownership_class,
+            relation_id=relation_id,
+            participant_user_id=participant_user_id,
+        )
         with self._lock:
-            if clean_status == "active" and clean_type == "focus" and self._active_focus_count(agent_instance) >= ACTIVE_FOCUS_LIMIT:
+            if clean_status == "active" and clean_type == "focus" and self._active_focus_count(
+                agent_instance,
+                ownership_class=ownership_class,
+                relation_id=relation_id,
+            ) >= ACTIVE_FOCUS_LIMIT:
                 raise ValueError("active_focus_limit_reached")
             now = _now_iso()
             cursor = self.conn.cursor()
@@ -195,8 +286,9 @@ class WorkingMemoryDatabaseMixin:
                 INSERT INTO working_memory_items (
                     agent_instance, cycle_id, phase, item_type, status, title, summary,
                     priority, source_refs_json, metadata_json, created_at, updated_at,
-                    expires_at, resolved_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    expires_at, resolved_at, ownership_class, relation_id,
+                    participant_user_id, provenance_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     agent_instance,
@@ -213,6 +305,10 @@ class WorkingMemoryDatabaseMixin:
                     now,
                     expires_at,
                     now if clean_status in {"resolved", "expired"} else None,
+                    ownership_class,
+                    relation_id,
+                    participant_user_id,
+                    _json_dumps(provenance or {}),
                 ),
             )
             if commit:
@@ -225,6 +321,9 @@ class WorkingMemoryDatabaseMixin:
         agent_instance: str,
         status: Optional[str] = "active",
         item_type: Optional[str] = None,
+        relation_id: Optional[str] = None,
+        ownership_classes: Optional[Sequence[str]] = None,
+        include_legacy: bool = False,
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
         clauses = ["agent_instance = ?"]
@@ -235,6 +334,28 @@ class WorkingMemoryDatabaseMixin:
         if item_type:
             clauses.append("item_type = ?")
             params.append(item_type)
+        if ownership_classes is None:
+            ownership_classes = (
+                (RELATION_PRIVATE,) if relation_id else (INSTANCE_GLOBAL, AUTHORIZED_AGGREGATE)
+            )
+        clean_classes = []
+        for ownership_class in ownership_classes:
+            clean = (ownership_class or "").strip().lower()
+            if clean not in OWNERSHIP_CLASSES:
+                raise ValueError(f"invalid_ownership_class:{ownership_class}")
+            if clean == LEGACY_UNSCOPED and not include_legacy:
+                raise ValueError("legacy_scope_requires_explicit_opt_in")
+            clean_classes.append(clean)
+        if not clean_classes:
+            raise ValueError("ownership_classes_required")
+        placeholders = ", ".join("?" for _ in clean_classes)
+        clauses.append(f"ownership_class IN ({placeholders})")
+        params.extend(clean_classes)
+        if relation_id:
+            clauses.append("relation_id = ?")
+            params.append(str(relation_id))
+        else:
+            clauses.append("relation_id IS NULL")
         params.append(max(1, int(limit)))
         cursor = self.conn.cursor()
         cursor.execute(
@@ -263,6 +384,7 @@ class WorkingMemoryDatabaseMixin:
         item = dict(row)
         item["source_refs"] = _json_loads(item.pop("source_refs_json", None), [])
         item["metadata"] = _json_loads(item.pop("metadata_json", None), {})
+        item["provenance"] = _json_loads(item.pop("provenance_json", None), {})
         return item
 
     def update_working_memory_item_status(self, item_id: int, status: str, *, commit: bool = True) -> bool:
@@ -303,8 +425,8 @@ class WorkingMemoryDatabaseMixin:
                 """
                 INSERT INTO working_memory_broadcasts (
                     agent_instance, cycle_id, from_phase, to_phase,
-                    focus_items_json, fringe_items_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    focus_items_json, fringe_items_json, ownership_class, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     agent_instance,
@@ -313,6 +435,7 @@ class WorkingMemoryDatabaseMixin:
                     to_phase,
                     _json_dumps(list(focus_items or [])),
                     _json_dumps(list(fringe_items or [])),
+                    INSTANCE_GLOBAL,
                     _now_iso(),
                 ),
             )
@@ -338,6 +461,7 @@ class WorkingMemoryDatabaseMixin:
                 SELECT *
                 FROM working_memory_broadcasts
                 WHERE agent_instance = ? AND to_phase = ? AND cycle_id = ?
+                  AND ownership_class = 'instance_global'
                 ORDER BY id DESC
                 LIMIT 1
                 """,
@@ -351,6 +475,7 @@ class WorkingMemoryDatabaseMixin:
                 SELECT *
                 FROM working_memory_broadcasts
                 WHERE agent_instance = ? AND to_phase = ?
+                  AND ownership_class = 'instance_global'
                 ORDER BY id DESC
                 LIMIT 1
                 """,
@@ -375,6 +500,10 @@ class WorkingMemoryDatabaseMixin:
         cycle_id: Optional[str] = None,
         drive: Optional[str] = None,
         status: str = "active",
+        ownership_class: str = INSTANCE_GLOBAL,
+        relation_id: Optional[str] = None,
+        participant_user_id: Optional[str] = None,
+        provenance: Optional[Dict[str, Any]] = None,
     ) -> int:
         refs = self._normalize_source_refs(source_refs)
         clean_status = (status or "").strip().lower()
@@ -382,6 +511,11 @@ class WorkingMemoryDatabaseMixin:
             raise ValueError(f"invalid_goal_status:{status}")
         if not agent_instance or not title or not objective:
             raise ValueError("agent_instance_title_objective_required")
+        ownership_class, relation_id, participant_user_id = self._normalize_ownership(
+            ownership_class=ownership_class,
+            relation_id=relation_id,
+            participant_user_id=participant_user_id,
+        )
 
         with self._lock:
             now = _now_iso()
@@ -390,8 +524,9 @@ class WorkingMemoryDatabaseMixin:
                 """
                 INSERT INTO goal_threads (
                     agent_instance, cycle_id, status, drive, title, objective,
-                    source_refs_json, created_at, updated_at, closed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    source_refs_json, created_at, updated_at, closed_at,
+                    ownership_class, relation_id, participant_user_id, provenance_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     agent_instance,
@@ -404,6 +539,10 @@ class WorkingMemoryDatabaseMixin:
                     now,
                     now,
                     now if clean_status in {"completed", "abandoned"} else None,
+                    ownership_class,
+                    relation_id,
+                    participant_user_id,
+                    _json_dumps(provenance or {}),
                 ),
             )
             self.conn.commit()
@@ -422,6 +561,8 @@ class WorkingMemoryDatabaseMixin:
             SELECT *
             FROM goal_threads
             WHERE agent_instance = ? AND source_refs_json LIKE ?
+              AND ownership_class IN ('instance_global', 'authorized_aggregate')
+              AND relation_id IS NULL
             ORDER BY id DESC
             LIMIT 1
             """,
@@ -495,6 +636,9 @@ class WorkingMemoryDatabaseMixin:
         *,
         agent_instance: str,
         status: Optional[str] = None,
+        relation_id: Optional[str] = None,
+        ownership_classes: Optional[Sequence[str]] = None,
+        include_legacy: bool = False,
         limit: int = 20,
         include_steps: bool = False,
     ) -> List[Dict[str, Any]]:
@@ -503,6 +647,26 @@ class WorkingMemoryDatabaseMixin:
         if status:
             clauses.append("status = ?")
             params.append(status)
+        if ownership_classes is None:
+            ownership_classes = (
+                (RELATION_PRIVATE,) if relation_id else (INSTANCE_GLOBAL, AUTHORIZED_AGGREGATE)
+            )
+        clean_classes = []
+        for ownership_class in ownership_classes:
+            clean = (ownership_class or "").strip().lower()
+            if clean not in OWNERSHIP_CLASSES:
+                raise ValueError(f"invalid_ownership_class:{ownership_class}")
+            if clean == LEGACY_UNSCOPED and not include_legacy:
+                raise ValueError("legacy_scope_requires_explicit_opt_in")
+            clean_classes.append(clean)
+        placeholders = ", ".join("?" for _ in clean_classes)
+        clauses.append(f"ownership_class IN ({placeholders})")
+        params.extend(clean_classes)
+        if relation_id:
+            clauses.append("relation_id = ?")
+            params.append(str(relation_id))
+        else:
+            clauses.append("relation_id IS NULL")
         params.append(max(1, int(limit)))
         cursor = self.conn.cursor()
         cursor.execute(
@@ -604,6 +768,7 @@ class WorkingMemoryDatabaseMixin:
     def _goal_thread_row_to_dict(self, row: Any) -> Dict[str, Any]:
         thread = dict(row)
         thread["source_refs"] = _json_loads(thread.pop("source_refs_json", None), [])
+        thread["provenance"] = _json_loads(thread.pop("provenance_json", None), {})
         return thread
 
     def _goal_step_row_to_dict(self, row: Any) -> Dict[str, Any]:
@@ -624,6 +789,10 @@ class WorkingMemoryDatabaseMixin:
         summary: Optional[str] = None,
         evidence: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        ownership_class: str = INSTANCE_GLOBAL,
+        relation_id: Optional[str] = None,
+        participant_user_id: Optional[str] = None,
+        provenance: Optional[Dict[str, Any]] = None,
     ) -> int:
         refs = self._normalize_source_refs(source_refs)
         clean_status = (status or "").strip().lower()
@@ -632,6 +801,11 @@ class WorkingMemoryDatabaseMixin:
         clean_type = (action_type or "").strip().lower()
         if not agent_instance or not clean_type:
             raise ValueError("agent_instance_action_type_required")
+        ownership_class, relation_id, participant_user_id = self._normalize_ownership(
+            ownership_class=ownership_class,
+            relation_id=relation_id,
+            participant_user_id=participant_user_id,
+        )
 
         with self._lock:
             now = _now_iso()
@@ -641,8 +815,9 @@ class WorkingMemoryDatabaseMixin:
                 INSERT INTO controlled_action_runs (
                     agent_instance, action_type, status, goal_id, step_id, knowledge_gap_id,
                     summary, source_refs_json, evidence_json, metadata_json,
-                    created_at, updated_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at, completed_at, ownership_class,
+                    relation_id, participant_user_id, provenance_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     agent_instance,
@@ -658,6 +833,10 @@ class WorkingMemoryDatabaseMixin:
                     now,
                     now,
                     now if clean_status in {"completed", "failed", "blocked"} else None,
+                    ownership_class,
+                    relation_id,
+                    participant_user_id,
+                    _json_dumps(provenance or {}),
                 ),
             )
             self.conn.commit()
@@ -711,6 +890,9 @@ class WorkingMemoryDatabaseMixin:
         *,
         agent_instance: str,
         status: Optional[str] = None,
+        relation_id: Optional[str] = None,
+        ownership_classes: Optional[Sequence[str]] = None,
+        include_legacy: bool = False,
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
         clauses = ["agent_instance = ?"]
@@ -718,6 +900,26 @@ class WorkingMemoryDatabaseMixin:
         if status:
             clauses.append("status = ?")
             params.append(status)
+        if ownership_classes is None:
+            ownership_classes = (
+                (RELATION_PRIVATE,) if relation_id else (INSTANCE_GLOBAL, AUTHORIZED_AGGREGATE)
+            )
+        clean_classes = []
+        for ownership_class in ownership_classes:
+            clean = (ownership_class or "").strip().lower()
+            if clean not in OWNERSHIP_CLASSES:
+                raise ValueError(f"invalid_ownership_class:{ownership_class}")
+            if clean == LEGACY_UNSCOPED and not include_legacy:
+                raise ValueError("legacy_scope_requires_explicit_opt_in")
+            clean_classes.append(clean)
+        placeholders = ", ".join("?" for _ in clean_classes)
+        clauses.append(f"ownership_class IN ({placeholders})")
+        params.extend(clean_classes)
+        if relation_id:
+            clauses.append("relation_id = ?")
+            params.append(str(relation_id))
+        else:
+            clauses.append("relation_id IS NULL")
         params.append(max(1, int(limit)))
         cursor = self.conn.cursor()
         cursor.execute(
@@ -737,6 +939,7 @@ class WorkingMemoryDatabaseMixin:
         action["source_refs"] = _json_loads(action.pop("source_refs_json", None), [])
         action["evidence"] = _json_loads(action.pop("evidence_json", None), {})
         action["metadata"] = _json_loads(action.pop("metadata_json", None), {})
+        action["provenance"] = _json_loads(action.pop("provenance_json", None), {})
         return action
 
 

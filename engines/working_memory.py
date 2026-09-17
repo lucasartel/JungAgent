@@ -31,6 +31,10 @@ class WorkingMemoryEngine:
         priority: float = 0.5,
         metadata: Optional[Dict[str, Any]] = None,
         expires_at: Optional[str] = None,
+        ownership_class: str = "instance_global",
+        relation_id: Optional[str] = None,
+        participant_user_id: Optional[str] = None,
+        provenance: Optional[Dict[str, Any]] = None,
     ) -> int:
         return self.db.create_working_memory_item(
             agent_instance=self.agent_instance,
@@ -43,6 +47,10 @@ class WorkingMemoryEngine:
             source_refs=source_refs,
             metadata=metadata,
             expires_at=expires_at,
+            ownership_class=ownership_class,
+            relation_id=relation_id,
+            participant_user_id=participant_user_id,
+            provenance=provenance,
         )
 
     def remember_fringe(
@@ -56,6 +64,10 @@ class WorkingMemoryEngine:
         priority: float = 0.25,
         metadata: Optional[Dict[str, Any]] = None,
         expires_at: Optional[str] = None,
+        ownership_class: str = "instance_global",
+        relation_id: Optional[str] = None,
+        participant_user_id: Optional[str] = None,
+        provenance: Optional[Dict[str, Any]] = None,
     ) -> int:
         return self.db.create_working_memory_item(
             agent_instance=self.agent_instance,
@@ -68,6 +80,10 @@ class WorkingMemoryEngine:
             source_refs=source_refs,
             metadata=metadata,
             expires_at=expires_at,
+            ownership_class=ownership_class,
+            relation_id=relation_id,
+            participant_user_id=participant_user_id,
+            provenance=provenance,
         )
 
     def remember_candidate(
@@ -81,6 +97,10 @@ class WorkingMemoryEngine:
         priority: float = 0.35,
         metadata: Optional[Dict[str, Any]] = None,
         expires_at: Optional[str] = None,
+        ownership_class: str = "instance_global",
+        relation_id: Optional[str] = None,
+        participant_user_id: Optional[str] = None,
+        provenance: Optional[Dict[str, Any]] = None,
     ) -> int:
         return self.db.create_working_memory_item(
             agent_instance=self.agent_instance,
@@ -93,6 +113,10 @@ class WorkingMemoryEngine:
             source_refs=source_refs,
             metadata=metadata,
             expires_at=expires_at,
+            ownership_class=ownership_class,
+            relation_id=relation_id,
+            participant_user_id=participant_user_id,
+            provenance=provenance,
         )
 
     def _classification_for_phase_result(

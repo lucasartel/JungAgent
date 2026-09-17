@@ -67,7 +67,8 @@ class _ConversationRelationDB(ConversationDatabaseMixin):
                 keywords TEXT,
                 chroma_id TEXT UNIQUE,
                 platform TEXT DEFAULT 'telegram',
-                relation_id TEXT
+                relation_id TEXT,
+                agent_instance TEXT
             );
             CREATE TABLE archetype_conflicts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,8 +92,10 @@ class _ConversationRelationDB(ConversationDatabaseMixin):
     def _update_agent_development(self, user_id: str):
         self.development_updates.append(user_id)
 
-    def extract_and_save_facts_v2(self, user_id: str, user_input: str, conversation_id: int):
-        self.fact_extractions.append((user_id, user_input, conversation_id))
+    def extract_and_save_facts_v2(
+        self, user_id: str, user_input: str, conversation_id: int, relation_id=None
+    ):
+        self.fact_extractions.append((user_id, user_input, conversation_id, relation_id))
 
 
 def test_save_binds_existing_relation_and_read_can_filter_it():
@@ -100,9 +103,16 @@ def test_save_binds_existing_relation_and_read_can_filter_it():
     related_id = db.save_conversation("user_a", "A", "related", "ok")
     unbound_id = db.save_conversation("user_b", "B", "unbound", "ok")
 
-    related = db.conn.execute("SELECT relation_id FROM conversations WHERE id = ?", (related_id,)).fetchone()
-    unbound = db.conn.execute("SELECT relation_id FROM conversations WHERE id = ?", (unbound_id,)).fetchone()
+    related = db.conn.execute(
+        "SELECT relation_id, agent_instance FROM conversations WHERE id = ?", (related_id,)
+    ).fetchone()
+    unbound = db.conn.execute(
+        "SELECT relation_id, agent_instance FROM conversations WHERE id = ?", (unbound_id,)
+    ).fetchone()
     assert related["relation_id"] == "rel-a"
+    assert related["agent_instance"] == "jung_a"
     assert unbound["relation_id"] is None
+    assert unbound["agent_instance"] == "jung_a"
     assert [row["id"] for row in db.get_user_conversations("user_a", relation_id="rel-a")] == [related_id]
     assert db.count_conversations("user_a", relation_id="rel-a") == 1
+    assert db.fact_extractions[0][-1] == "rel-a"

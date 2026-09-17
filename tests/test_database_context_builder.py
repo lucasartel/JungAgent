@@ -31,13 +31,18 @@ class _ContextEngine(ContextBuilderDatabaseMixin):
     def _detect_topics_in_text(self, text: str) -> list[str]:
         return self.topics
 
-    def _get_priority_facts_for_query(self, user_id: str, query: str, limit: int = 8) -> list[dict]:
+    def _get_priority_facts_for_query(
+        self, user_id: str, query: str, limit: int = 8, relation_id=None
+    ) -> list[dict]:
         return self.priority_facts[:limit]
 
     def get_user(self, user_id: str):
         return {"user_name": "User One"}
 
-    def semantic_search(self, user_id: str, query: str, k: int | None = None, chat_history=None):
+    def semantic_search(
+        self, user_id: str, query: str, k: int | None = None,
+        chat_history=None, relation_id=None,
+    ):
         return self.memories
 
 
@@ -158,3 +163,52 @@ def test_context_builder_builds_layered_rich_context(in_memory_conn):
     assert "Tenho pensado sobre chamado" in context
     assert "MEM" in context
     assert "Busca de sentido" in context
+
+
+def test_context_builder_keeps_relation_sentinels_isolated(in_memory_conn):
+    _create_context_schema(in_memory_conn)
+    in_memory_conn.execute("ALTER TABLE user_facts ADD COLUMN relation_id TEXT")
+    in_memory_conn.execute("ALTER TABLE user_patterns ADD COLUMN relation_id TEXT")
+    in_memory_conn.executemany(
+        """INSERT INTO user_facts
+           (user_id, fact_category, fact_key, fact_value, is_current, relation_id)
+           VALUES ('same-user', 'RELACIONAMENTO', 'pessoa', ?, 1, ?)""",
+        [("sentinel-r1", "r1"), ("sentinel-r2", "r2")],
+    )
+    in_memory_conn.executemany(
+        """INSERT INTO user_patterns
+           (user_id, pattern_name, pattern_description, frequency_count,
+            confidence_score, relation_id)
+           VALUES ('same-user', ?, ?, 2, 0.9, ?)""",
+        [("pattern-r1", "only-r1", "r1"), ("pattern-r2", "only-r2", "r2")],
+    )
+    in_memory_conn.commit()
+    engine = _ContextEngine(in_memory_conn)
+    engine.names = ["sentinel"]
+    engine.resolve_relation_id = lambda **kwargs: kwargs.get("relation_id")
+
+    facts = engine._search_relevant_facts("same-user", "sentinel", relation_id="r1")
+    patterns = engine._get_relevant_patterns("same-user", "sentinel", relation_id="r1")
+
+    assert [row["fact_value"] for row in facts] == ["sentinel-r1"]
+    assert [row["pattern_name"] for row in patterns] == ["pattern-r1"]
+
+
+def test_context_builder_denies_stored_context_without_relation(in_memory_conn):
+    _create_context_schema(in_memory_conn)
+    in_memory_conn.execute("ALTER TABLE user_facts ADD COLUMN relation_id TEXT")
+    in_memory_conn.execute("ALTER TABLE user_patterns ADD COLUMN relation_id TEXT")
+    in_memory_conn.execute(
+        """INSERT INTO user_patterns
+           (user_id, pattern_name, pattern_description, frequency_count, confidence_score)
+           VALUES ('outsider', 'legacy-secret', 'must not surface', 2, 0.9)"""
+    )
+    in_memory_conn.commit()
+    engine = _ContextEngine(in_memory_conn)
+    engine.resolve_relation_id = lambda **kwargs: None
+    engine.memories = [{"user_input": "semantic-secret", "metadata": {}}]
+
+    context = engine.build_rich_context("outsider", "hello")
+
+    assert "legacy-secret" not in context
+    assert "semantic-secret" not in context

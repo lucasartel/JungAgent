@@ -52,13 +52,15 @@ class _ConversationEngine(ConversationDatabaseMixin):
         self._lock = threading.RLock()
         self.mem0 = None
         self.development_updates: list[str] = []
-        self.fact_extractions: list[tuple[str, str, int]] = []
+        self.fact_extractions: list[tuple[str, str, int, str | None]] = []
 
     def _update_agent_development(self, user_id: str):
         self.development_updates.append(user_id)
 
-    def extract_and_save_facts_v2(self, user_id: str, user_input: str, conversation_id: int):
-        self.fact_extractions.append((user_id, user_input, conversation_id))
+    def extract_and_save_facts_v2(
+        self, user_id: str, user_input: str, conversation_id: int, relation_id=None
+    ):
+        self.fact_extractions.append((user_id, user_input, conversation_id, relation_id))
         return []
 
 
@@ -124,7 +126,7 @@ def test_conversation_mixin_saves_conversation_and_triggers_internal_hooks(in_me
     assert row["chroma_id"] == f"conv_{conversation_id}"
     assert row["platform"] == "telegram"
     assert engine.development_updates == ["123"]
-    assert engine.fact_extractions == [("123", "hello", conversation_id)]
+    assert engine.fact_extractions == [("123", "hello", conversation_id, None)]
 
 
 def test_conversation_mixin_filters_proactive_conversations_by_default(in_memory_conn):

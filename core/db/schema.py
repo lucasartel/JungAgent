@@ -69,6 +69,15 @@ class SchemaDatabaseMixin:
         except sqlite3.OperationalError as exc:
             if "duplicate column name" not in str(exc).lower():
                 logger.warning("Could not add conversations.relation_id: %s", exc)
+        try:
+            cursor.execute("ALTER TABLE conversations ADD COLUMN agent_instance TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                logger.warning("Could not add conversations.agent_instance: %s", exc)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_conversations_cognitive_scope "
+            "ON conversations(agent_instance, relation_id, user_id, timestamp DESC)"
+        )
 
         # ========== FATOS ESTRUTURADOS ==========
         cursor.execute("""
@@ -1165,18 +1174,49 @@ class SchemaDatabaseMixin:
         if hasattr(self, "_init_will_phase_arbitration_schema"):
             self._init_will_phase_arbitration_schema()
 
-        # Relation scope is additive for both generations of structured facts.
-        for table in ("user_facts", "user_facts_v2"):
+        cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agent_relations'"
+        )
+        relations_available = cursor.fetchone() is not None
+        if relations_available:
+            cursor.execute(
+                """UPDATE conversations
+                   SET agent_instance = (
+                       SELECT agent_instance FROM agent_relations
+                       WHERE agent_relations.relation_id = conversations.relation_id
+                   )
+                   WHERE agent_instance IS NULL AND relation_id IS NOT NULL"""
+            )
+
+        # Cognitive ownership is additive; old rows remain explicitly unbound
+        # until one Relation claims the singleton-era participant history.
+        for table in (
+            "user_facts",
+            "user_facts_v2",
+            "user_patterns",
+            "user_milestones",
+        ):
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
             if cursor.fetchone():
-                try:
-                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN relation_id TEXT")
-                except sqlite3.OperationalError as exc:
-                    if "duplicate column name" not in str(exc).lower():
-                        logger.warning("Could not add %s.relation_id: %s", table, exc)
+                for column in ("relation_id", "agent_instance"):
+                    try:
+                        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+                    except sqlite3.OperationalError as exc:
+                        if "duplicate column name" not in str(exc).lower():
+                            logger.warning("Could not add %s.%s: %s", table, column, exc)
                 cursor.execute(
-                    f"CREATE INDEX IF NOT EXISTS idx_{table}_relation ON {table}(relation_id, user_id)"
+                    f"CREATE INDEX IF NOT EXISTS idx_{table}_cognitive_scope "
+                    f"ON {table}(agent_instance, relation_id, user_id)"
                 )
+                if relations_available:
+                    cursor.execute(
+                        f"""UPDATE {table}
+                            SET agent_instance = (
+                                SELECT agent_instance FROM agent_relations
+                                WHERE agent_relations.relation_id = {table}.relation_id
+                            )
+                            WHERE agent_instance IS NULL AND relation_id IS NOT NULL"""
+                    )
 
         # Relation scope is additive for rumination, whose tables are also
         # created lazily by RuminationEngine in older databases.

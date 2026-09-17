@@ -7,6 +7,14 @@ logger = logging.getLogger(__name__)
 
 
 class SemanticMemoryDatabaseMixin:
+    @staticmethod
+    def _legacy_admin_semantic_scope_allowed(user_id: str) -> bool:
+        try:
+            from instance_config import ADMIN_USER_ID
+            return str(user_id) == str(ADMIN_USER_ID)
+        except ImportError:
+            return False
+
     def _build_enriched_query(self, user_id: str, user_input: str, chat_history: List[Dict] = None) -> str:
         """
         ConstrÃ³i query enriquecida com mÃºltiplas fontes (Fase 2 - Query Enrichment)
@@ -288,10 +296,19 @@ class SemanticMemoryDatabaseMixin:
         if not user_id_str:
             logger.error("user_id vazio na busca semantica")
             return []
-        if not relation_id:
-            resolver = getattr(self, "resolve_relation_id", None)
-            if callable(resolver):
-                relation_id = resolver(participant_user_id=user_id_str)
+        resolver = getattr(self, "resolve_relation_id", None)
+        if callable(resolver):
+            relation_id = resolver(
+                agent_instance=getattr(self, "agent_instance", None),
+                participant_user_id=user_id_str,
+                relation_id=relation_id,
+            )
+            if not relation_id and not self._legacy_admin_semantic_scope_allowed(user_id_str):
+                logger.warning(
+                    "Semantic memory denied because participant has no Relation: user_id=%s",
+                    user_id_str,
+                )
+                return []
 
         if self.mem0:
             try:
@@ -335,11 +352,20 @@ class SemanticMemoryDatabaseMixin:
         search_term = f"%{query}%"
         columns = {row[1] for row in cursor.execute("PRAGMA table_info(conversations)")}
         relation_clause = " AND relation_id = ?" if relation_id and "relation_id" in columns else ""
-        params = [user_id, search_term, search_term] + ([relation_id] if relation_clause else []) + [k]
+        instance = getattr(self, "agent_instance", None)
+        instance_clause = ""
+        if not relation_clause and instance and "agent_instance" in columns:
+            instance_clause = " AND agent_instance = ?"
+        params = [user_id, search_term, search_term]
+        if relation_clause:
+            params.append(relation_id)
+        if instance_clause:
+            params.append(str(instance))
+        params.append(k)
         cursor.execute(f"""
             SELECT * FROM conversations
             WHERE user_id = ?
-            AND (user_input LIKE ? OR ai_response LIKE ?){relation_clause}
+            AND (user_input LIKE ? OR ai_response LIKE ?){relation_clause}{instance_clause}
             ORDER BY timestamp DESC
             LIMIT ?
         """, tuple(params))
