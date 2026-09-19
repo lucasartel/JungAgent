@@ -494,23 +494,73 @@ class JungianEngine:
             lines.append(f"{role}: {content}")
         return "\n".join(lines)
 
-    def _fetch_recent_rumination_insights(self, user_id: str, limit: int = 2) -> List[str]:
+    def _rumination_context_scope(
+        self, table: str, user_id: str, relation_id: Optional[str] = None
+    ) -> tuple[List[str], List[Any], bool]:
+        available = set(self._safe_table_columns(table))
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        resolved = None
+        if callable(resolver):
+            try:
+                resolved = resolver(
+                    agent_instance=str(Config.AGENT_INSTANCE),
+                    participant_user_id=str(user_id),
+                    relation_id=str(relation_id) if relation_id else None,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Rumination context denied for invalid Relation user_id=%s: %s",
+                    user_id,
+                    exc,
+                )
+                return ["1 = 0"], [], False
+        elif relation_id:
+            resolved = str(relation_id)
+
+        clauses, params = [], []
+        if resolved and "relation_id" in available:
+            clauses.append("relation_id = ?")
+            params.append(str(resolved))
+        elif callable(resolver) and str(user_id) == self._get_admin_user_id() and "relation_id" in available:
+            clauses.append("relation_id IS NULL")
+        elif callable(resolver):
+            return ["1 = 0"], [], False
+
+        if "agent_instance" in available:
+            if resolved:
+                clauses.append("agent_instance = ?")
+                params.append(str(Config.AGENT_INSTANCE))
+            elif callable(resolver) and str(user_id) == self._get_admin_user_id():
+                clauses.append("(agent_instance = ? OR agent_instance IS NULL)")
+                params.append(str(Config.AGENT_INSTANCE))
+
+        return clauses, params, True
+
+    def _fetch_recent_rumination_insights(
+        self, user_id: str, limit: int = 2, relation_id: Optional[str] = None
+    ) -> List[str]:
         cursor = self.db.conn.cursor()
+        clauses, scope_params, allowed = self._rumination_context_scope(
+            "rumination_insights", user_id, relation_id
+        )
+        if not allowed:
+            return []
+        scope_sql = "".join(f" AND {clause}" for clause in clauses)
         cursor.execute(
-            """
+            f"""
             SELECT full_message, symbol_content
             FROM rumination_insights
-            WHERE user_id = ?
+            WHERE user_id = ?{scope_sql}
             ORDER BY crystallized_at DESC
             LIMIT ?
             """,
-            (user_id, limit),
+            (user_id, *scope_params, limit),
         )
         items = []
         for row in cursor.fetchall():
-            text = (row[0] or row[1] or "").strip()
-            if text:
-                items.append(text)
+            insight_text = (row[0] or row[1] or "").strip()
+            if insight_text:
+                items.append(insight_text)
         return items
 
     def _fetch_recent_external_research(self, user_id: str, limit: int = 2) -> List[Dict[str, Any]]:
@@ -1488,6 +1538,15 @@ class JungianEngine:
             elif "agent_instance" in available:
                 clauses.append("agent_instance = ?")
                 params.append(Config.AGENT_INSTANCE)
+
+            if item["scope"] == "rumination":
+                rumination_clauses, rumination_params, allowed = self._rumination_context_scope(
+                    table, user_id
+                )
+                if not allowed:
+                    continue
+                clauses.extend(rumination_clauses)
+                params.extend(rumination_params)
 
             term_clauses = []
             for term in terms:

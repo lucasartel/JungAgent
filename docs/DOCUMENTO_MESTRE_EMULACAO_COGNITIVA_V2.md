@@ -238,7 +238,7 @@ Trilha cognitiva ativa (Secao 10.1.2):
   C9  - Fechamento das expressoes e arbitragem     <- EM ANDAMENTO; C9a/C9b LOCAIS; PROXIMO C9c
   C10 - Disponibilidade e periodo refratario      <- CONCLUIDO; OBSERVACAO OPERACIONAL PENDENTE
   C11 - Expressao conversacional e proatividade   <- CONCLUIDO E PUBLICADO; OBSERVACAO NATURAL PENDENTE
-  C12 - Fechamento cognitivo multi-relacional     <- EM ANDAMENTO; C12a CONCLUIDO LOCALMENTE
+  C12 - Fechamento cognitivo multi-relacional     <- EM ANDAMENTO; C12a-C12c CONCLUIDOS LOCALMENTE
   C13 - Piloto convidado observavel               <- BLOQUEADO ATE ACEITE C9-C12
 Trilha comercial apos os gates (Secoes 10.2 e 10.3):
   multiplas instancias isoladas -> API minima -> um conector textual -> piloto comercial
@@ -908,6 +908,15 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 - **Consolidacao segura**: detectores e consolidadores gravam padroes na mesma Relation e instancia das conversas de origem. A reconstrucao de profile.md para Relations foi adiada de forma explicita ate C12g, pois o caminho de arquivo ainda e indexado apenas por user_id.
 - **Aceite local**: 722 testes offline aprovados, incluindo sentinelas de duas Relations, duas instancias, participante sem cadastro, conflito de Relation, memoria semantica, fatos, padroes, consolidacao, estado relacional, Working Memory privada/global e quarentena legada. Sintaxe e git diff --check limpos. Nenhum scheduler, Telegram, imagem, provedor, banco de producao ou custo foi acionado.
 - **Pendencias preservadas**: inventario e apagamento de vetores historicos seguem no C12g; milestones e psicometria seguem no C12e; perfis, arquivos, revogacao e delecao integral seguem no C12g. O proximo corte e C12c, para fechar ruminacao e impedir que fragmentos, tensoes ou insights privados atravessem Relations.
+
+**C12c - Ruminacao privada por Relation e instancia (19/09/2026; concluido localmente).**
+
+- **Metabolismo ruminal fechado**: fragmentos, tensoes, insights e logs carregam agent_instance + relation_id desde a ingestao ate deteccao, digestao, conexao, sintese, novidade, entrega e estatisticas. Relation explicita e validada contra participante e instancia; participante sem Relation falha fechado.
+- **Leitura e atualizacao isoladas**: a busca de evidencias, a fila de sintese, o cooldown de entrega e as atualizacoes derivadas operam apenas no mesmo escopo. O leitor de insights do prompt e a recordacao dirigida do core/engine aplicam a mesma fronteira, impedindo que texto ruminal de outra Relation ou instancia entre na resposta.
+- **Legado e migracao**: colunas e indices sao aditivos. Linhas com Relation recebem agent_instance por backfill deterministico; o registro explicito de uma Relation pode vincular o legado daquele participante. Linhas nulas do admin permanecem em quarentena e nao sao absorvidas por consultas relacionais.
+- **Loop proprio**: fragmentos produzidos por falhas do ciclo e a coleta de insights do loop agora recebem e consultam a propriedade da instancia e da Relation do admin quando ela existe, preservando compatibilidade com schemas antigos.
+- **Aceite local**: 730 testes offline aprovados. Os sentinelas cobrem duas Relations, duas instancias, Relation cruzada invalida, participante sem cadastro, quarentena do admin, logs com propriedade, metabolismo seletivo e leitores de prompt/recordacao dirigida. Sintaxe e git diff --check limpos; nenhuma formula de maturidade ou prompt de julgamento foi alterado.
+- **Estado de habilitacao**: nenhuma chamada LLM, Telegram, scheduler, imagem, banco de producao ou custo foi acionado. Produtores ruminais vindos de sonhos, identidade, trabalho e demais subsistemas continuam sob os cortes que possuem suas fontes: C12d, C12e e C12f. O proximo corte e C12d, sonhos e conhecimento global.
 
 **C13 - Piloto convidado observavel (bloqueado ate aceite C9-C12 e aprovacao do mantenedor).** Comecar com poucas pessoas explicitamente convidadas, Relation ativa, consentimento e regras de uso, privacidade e apagamento definidos. Usar limites de custo e contato, revogacao de acesso e mecanismo de pausa. Cockpit e probes devem mostrar disponibilidade, motivo de bloqueio/adiamento, retomadas, recibos, escopo e custo sem expor conversas privadas. Definir antes de abrir a janela, metricas, criterios de interrupcao e aceite; nao encerrar apenas pelo numero de dias. Observar continuidade da memoria, pertinencia das iniciativas, respeito ao descanso, isolamento e custo por relacao. Este e um piloto relacional da instancia existente, nao uma liberacao comercial multi-instancia.
 

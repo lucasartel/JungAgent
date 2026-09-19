@@ -123,3 +123,47 @@ def test_relation_state_validation(field: str, value: str, message: str) -> None
         db.register_agent_relation(
             agent_instance="jung_a", participant_user_id="user_a", **{field: value}
         )
+
+
+def test_register_relation_binds_legacy_rumination_rows() -> None:
+    db = _RelationsDB()
+    for table in (
+        "rumination_fragments",
+        "rumination_tensions",
+        "rumination_insights",
+        "rumination_log",
+    ):
+        db.conn.execute(
+            f"""
+            CREATE TABLE {table} (
+                id INTEGER PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                agent_instance TEXT,
+                relation_id TEXT
+            )
+            """
+        )
+        db.conn.execute(
+            f"INSERT INTO {table} (id, user_id) VALUES (1, 'user_a')"
+        )
+    db.conn.commit()
+
+    relation_id = db.register_agent_relation(
+        agent_instance="jung_a",
+        participant_user_id="user_a",
+        consent_status="granted",
+    )
+
+    for table in (
+        "rumination_fragments",
+        "rumination_tensions",
+        "rumination_insights",
+        "rumination_log",
+    ):
+        row = db.conn.execute(
+            f"SELECT agent_instance, relation_id FROM {table} WHERE id = 1"
+        ).fetchone()
+        assert dict(row) == {
+            "agent_instance": "jung_a",
+            "relation_id": relation_id,
+        }

@@ -58,6 +58,7 @@ class RuminationEngine:
             CREATE TABLE IF NOT EXISTS rumination_fragments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
+                agent_instance TEXT,
                 relation_id TEXT,
                 fragment_type TEXT NOT NULL,
                 content TEXT NOT NULL,
@@ -81,6 +82,7 @@ class RuminationEngine:
             CREATE TABLE IF NOT EXISTS rumination_tensions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
+                agent_instance TEXT,
                 relation_id TEXT,
                 tension_type TEXT NOT NULL,
                 pole_a_content TEXT NOT NULL,
@@ -112,6 +114,7 @@ class RuminationEngine:
             CREATE TABLE IF NOT EXISTS rumination_insights (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
+                agent_instance TEXT,
                 relation_id TEXT,
                 source_tension_id INTEGER,
                 connected_tension_ids TEXT,
@@ -137,6 +140,7 @@ class RuminationEngine:
             CREATE TABLE IF NOT EXISTS rumination_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
+                agent_instance TEXT,
                 relation_id TEXT,
                 phase TEXT NOT NULL,
                 operation TEXT,
@@ -150,20 +154,34 @@ class RuminationEngine:
             )
         """)
 
-        # Relation scope is additive so existing rumination rows remain readable.
-        for table in ("rumination_fragments", "rumination_tensions", "rumination_insights", "rumination_log"):
-            try:
-                cursor.execute(f"ALTER TABLE {table} ADD COLUMN relation_id TEXT")
-            except sqlite3.OperationalError:
-                pass
+        # Ownership scope is additive so singleton-era rows remain recoverable.
+        tables = (
+            "rumination_fragments",
+            "rumination_tensions",
+            "rumination_insights",
+            "rumination_log",
+        )
+        for table in tables:
+            for column in ("agent_instance", "relation_id"):
+                try:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).lower():
+                        logger.warning(
+                            "Could not add rumination ownership column %s.%s: %s",
+                            table,
+                            column,
+                            exc,
+                        )
 
-        # Índices para performance
+        # Índices para performance and ownership isolation.
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_fragments_user ON rumination_fragments(user_id, processed)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tensions_user_status ON rumination_tensions(user_id, status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_user_status ON rumination_insights(user_id, status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_rumination_fragments_relation ON rumination_fragments(relation_id, user_id, processed)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_rumination_tensions_relation ON rumination_tensions(relation_id, user_id, status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_rumination_insights_relation ON rumination_insights(relation_id, user_id, status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_rumination_fragments_scope ON rumination_fragments(agent_instance, relation_id, user_id, processed)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_rumination_tensions_scope ON rumination_tensions(agent_instance, relation_id, user_id, status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_rumination_insights_scope ON rumination_insights(agent_instance, relation_id, user_id, status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_rumination_log_scope ON rumination_log(agent_instance, relation_id, user_id, timestamp)")
 
         try:
             cursor.execute("ALTER TABLE rumination_fragments ADD COLUMN detection_attempts INTEGER DEFAULT 0")
@@ -194,46 +212,78 @@ class RuminationEngine:
         self.db.conn.commit()
         logger.info("✅ Tabelas de ruminação criadas/verificadas")
 
+    def _agent_instance(self) -> Optional[str]:
+        instance = getattr(self.db, "agent_instance", None)
+        if instance:
+            return str(instance)
+        try:
+            from instance_config import AGENT_INSTANCE
+            return str(AGENT_INSTANCE)
+        except ImportError:
+            return None
+
     def _resolve_relation_id(self, user_id: str, relation_id: Optional[str] = None) -> Optional[str]:
-        if relation_id:
-            return str(relation_id)
         resolver = getattr(self.db, "resolve_relation_id", None)
         if callable(resolver):
-            try:
-                return resolver(participant_user_id=str(user_id))
-            except Exception:
-                return None
-        return None
+            return resolver(
+                agent_instance=self._agent_instance(),
+                participant_user_id=str(user_id),
+                relation_id=str(relation_id) if relation_id else None,
+            )
+        return str(relation_id) if relation_id else None
 
     def _relation_scope(self, table: str, user_id: str, relation_id: Optional[str] = None):
         resolved = self._resolve_relation_id(user_id, relation_id)
         try:
             columns = {row[1] for row in self.db.conn.execute(f"PRAGMA table_info({table})")}
-        except Exception:
+        except Exception as exc:
+            logger.warning("Could not inspect rumination table %s: %s", table, exc)
             columns = set()
+
+        resolver_available = callable(getattr(self.db, "resolve_relation_id", None))
+        clauses, params = [], []
         if resolved and "relation_id" in columns:
-            return resolved, " AND relation_id = ?", [resolved]
-        return resolved, "", []
+            clauses.append("relation_id = ?")
+            params.append(str(resolved))
+        elif resolver_available and str(user_id) == str(self.admin_user_id) and "relation_id" in columns:
+            clauses.append("relation_id IS NULL")
+        elif resolver_available:
+            clauses.append("1 = 0")
+
+        instance = self._agent_instance()
+        if resolver_available and instance and "agent_instance" in columns:
+            if resolved:
+                clauses.append("agent_instance = ?")
+                params.append(instance)
+            elif str(user_id) == str(self.admin_user_id):
+                clauses.append("(agent_instance = ? OR agent_instance IS NULL)")
+                params.append(instance)
+
+        suffix = "".join(f" AND {clause}" for clause in clauses)
+        return resolved, suffix, params
 
     def _relation_allowed(self, user_id: str, relation_id: Optional[str]) -> bool:
-        # Keep legacy admin rumination available while requiring an explicit
-        # registered relation for non-admin participants.
-        if user_id == self.admin_user_id:
-            return True
+        # Legacy admin rows remain readable only through the null-relation quarantine.
         if not relation_id:
-            return False
+            return (
+                str(user_id) == str(self.admin_user_id)
+                or not callable(getattr(self.db, "resolve_relation_id", None))
+            )
 
         relation_reader = getattr(self.db, "get_agent_relation", None)
         if not callable(relation_reader):
             return True
         try:
             relation = relation_reader(str(relation_id))
-            return bool(
-                relation
-                and str(relation.get("participant_user_id")) == str(user_id)
-            )
-        except Exception:
+        except Exception as exc:
+            logger.warning("Could not validate rumination Relation %s: %s", relation_id, exc)
             return False
+        if not relation:
+            return False
+        if str(relation.get("participant_user_id")) != str(user_id):
+            return False
+        instance = self._agent_instance()
+        return not instance or str(relation.get("agent_instance")) == instance
 
     # ========================================
     # FASE 1: INGESTÃO
@@ -312,13 +362,14 @@ class RuminationEngine:
 
                 cursor.execute("""
                     INSERT INTO rumination_fragments (
-                        user_id, relation_id, fragment_type, content, context,
+                        user_id, agent_instance, relation_id, fragment_type, content, context,
                         source_conversation_id, source_quote,
                         source_kind, source_table, source_id, source_metadata_json,
                         emotional_weight, tension_level
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     user_id,
+                    self._agent_instance(),
                     relation_id,
                     frag['type'],
                     frag['content'],
@@ -455,14 +506,15 @@ class RuminationEngine:
 
                 cursor.execute("""
                     INSERT INTO rumination_tensions (
-                        user_id, relation_id, tension_type,
+                        user_id, agent_instance, relation_id, tension_type,
                         pole_a_content, pole_a_fragment_ids,
                         pole_b_content, pole_b_fragment_ids,
                         tension_description, intensity,
                         evidence_count, last_evidence_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     user_id,
+                    self._agent_instance(),
                     relation_id,
                     tens['type'],
                     tens['pole_a']['content'],
@@ -506,6 +558,7 @@ class RuminationEngine:
             self._log_operation(
                 "detecção",
                 user_id,
+                relation_id=relation_id,
                 input_summary=f"{len(recent_fragments)} fragmentos",
                 output_summary=f"{len(tension_ids)} tensões",
                 affected_tension_ids=tension_ids
@@ -717,32 +770,29 @@ class RuminationEngine:
         cursor = self.db.conn.cursor()
         resolved = self._resolve_relation_id(user_id, relation_id)
         columns = {row[1] for row in cursor.execute("PRAGMA table_info(rumination_log)")}
+        names = [
+            "user_id", "phase", "operation", "input_summary", "output_summary",
+            "affected_fragment_ids", "affected_tension_ids", "affected_insight_ids",
+        ]
+        values = [
+            user_id, phase, kwargs.get("operation", ""),
+            kwargs.get("input_summary", ""), kwargs.get("output_summary", ""),
+            json.dumps(kwargs.get("affected_fragment_ids", [])),
+            json.dumps(kwargs.get("affected_tension_ids", [])),
+            json.dumps(kwargs.get("affected_insight_ids", [])),
+        ]
+        if "agent_instance" in columns:
+            names.insert(1, "agent_instance")
+            values.insert(1, self._agent_instance())
         if "relation_id" in columns:
-            cursor.execute("""
-                INSERT INTO rumination_log (
-                    user_id, relation_id, phase, operation, input_summary, output_summary,
-                    affected_fragment_ids, affected_tension_ids, affected_insight_ids
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                user_id, resolved, phase, kwargs.get("operation", ""),
-                kwargs.get("input_summary", ""), kwargs.get("output_summary", ""),
-                json.dumps(kwargs.get("affected_fragment_ids", [])),
-                json.dumps(kwargs.get("affected_tension_ids", [])),
-                json.dumps(kwargs.get("affected_insight_ids", [])),
-            ))
-        else:
-            cursor.execute("""
-                INSERT INTO rumination_log (
-                    user_id, phase, operation, input_summary, output_summary,
-                    affected_fragment_ids, affected_tension_ids, affected_insight_ids
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                user_id, phase, kwargs.get("operation", ""),
-                kwargs.get("input_summary", ""), kwargs.get("output_summary", ""),
-                json.dumps(kwargs.get("affected_fragment_ids", [])),
-                json.dumps(kwargs.get("affected_tension_ids", [])),
-                json.dumps(kwargs.get("affected_insight_ids", [])),
-            ))
+            relation_index = 2 if "agent_instance" in columns else 1
+            names.insert(relation_index, "relation_id")
+            values.insert(relation_index, resolved)
+        cursor.execute(
+            f"INSERT INTO rumination_log ({', '.join(names)}) "
+            f"VALUES ({', '.join('?' for _ in names)})",
+            tuple(values),
+        )
         self.db.conn.commit()
 
     # ========================================
@@ -1384,13 +1434,14 @@ class RuminationEngine:
             cursor = self.db.conn.cursor()
             cursor.execute("""
                 INSERT INTO rumination_insights (
-                    user_id, relation_id, source_tension_id,
+                    user_id, agent_instance, relation_id, source_tension_id,
                     symbol_content, question_content, full_message,
                     depth_score, novelty_score, maturation_days,
                     status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready')
             """, (
                 user_id,
+                self._agent_instance(),
                 relation_id,
                 tension['id'],
                 result.get('core_image', ''),
@@ -1743,6 +1794,8 @@ class RuminationEngine:
         if user_id is None:
             user_id = self.admin_user_id
         relation_id = self._resolve_relation_id(user_id, relation_id)
+        if not self._relation_allowed(user_id, relation_id):
+            return {}
         stats = {}
         conn = self.db.conn
         for table, key in (("rumination_fragments", "fragments"), ("rumination_tensions", "tensions"), ("rumination_insights", "insights")):

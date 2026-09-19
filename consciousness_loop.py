@@ -102,6 +102,36 @@ class ConsciousnessLoopManager:
         ensure_schema(self.db)
         ensure_failure_schema(self.db)
 
+    def _rumination_ownership_scope(self, cursor, table: str):
+        columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+        relation_id = None
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        if callable(resolver):
+            try:
+                relation_id = resolver(
+                    agent_instance=self.agent_instance,
+                    participant_user_id=str(self.admin_user_id),
+                )
+            except Exception as exc:
+                logger.warning("LOOP could not resolve admin rumination Relation: %s", exc)
+
+        clauses, params = [], []
+        if "relation_id" in columns:
+            if relation_id:
+                clauses.append("relation_id = ?")
+                params.append(str(relation_id))
+            else:
+                clauses.append("relation_id IS NULL")
+        if "agent_instance" in columns:
+            if relation_id:
+                clauses.append("agent_instance = ?")
+                params.append(str(self.agent_instance))
+            else:
+                clauses.append("(agent_instance = ? OR agent_instance IS NULL)")
+                params.append(str(self.agent_instance))
+        suffix = "".join(f" AND {clause}" for clause in clauses)
+        return relation_id, columns, suffix, params
+
     def _now(self) -> datetime:
         return datetime.now(LOOP_TIMEZONE)
 
@@ -1370,14 +1400,24 @@ class ConsciousnessLoopManager:
                 return None
 
             source_id = str(phase_result_id)
+            relation_id, fragment_columns, ownership_sql, ownership_params = (
+                self._rumination_ownership_scope(cursor, "rumination_fragments")
+            )
             cursor.execute(
-                """
+                f"""
                 SELECT id
                 FROM rumination_fragments
                 WHERE user_id = ? AND source_kind = ? AND source_table = ? AND source_id = ?
+                    {ownership_sql}
                 LIMIT 1
                 """,
-                (self.admin_user_id, "loop_failure", "consciousness_loop_phase_results", source_id),
+                (
+                    self.admin_user_id,
+                    "loop_failure",
+                    "consciousness_loop_phase_results",
+                    source_id,
+                    *ownership_params,
+                ),
             )
             if cursor.fetchone():
                 return None
@@ -1393,37 +1433,45 @@ class ConsciousnessLoopManager:
                 f"Loop failure in cycle {result.get('cycle_id')} / phase {phase.key}. "
                 f"Latest error: {error_text[:500]}"
             )
-            cursor.execute(
-                """
-                INSERT INTO rumination_fragments (
-                    user_id, fragment_type, content, context,
-                    source_conversation_id, source_quote,
-                    source_kind, source_table, source_id, source_metadata_json,
-                    emotional_weight, tension_level
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    self.admin_user_id,
-                    "contradicao",
-                    content,
-                    context,
-                    None,
-                    error_text[:500],
-                    "loop_failure",
-                    "consciousness_loop_phase_results",
-                    source_id,
-                    json.dumps(
-                        {
-                            "phase": phase.key,
-                            "phase_label": phase.label,
-                            "consecutive_failures": consecutive_failures,
-                            "failure_policy": failure_policy,
-                        },
-                        ensure_ascii=False,
-                    ),
-                    0.72,
-                    0.82,
+            names = [
+                "user_id", "fragment_type", "content", "context",
+                "source_conversation_id", "source_quote", "source_kind",
+                "source_table", "source_id", "source_metadata_json",
+                "emotional_weight", "tension_level",
+            ]
+            values = [
+                self.admin_user_id,
+                "contradicao",
+                content,
+                context,
+                None,
+                error_text[:500],
+                "loop_failure",
+                "consciousness_loop_phase_results",
+                source_id,
+                json.dumps(
+                    {
+                        "phase": phase.key,
+                        "phase_label": phase.label,
+                        "consecutive_failures": consecutive_failures,
+                        "failure_policy": failure_policy,
+                    },
+                    ensure_ascii=False,
                 ),
+                0.72,
+                0.82,
+            ]
+            if "agent_instance" in fragment_columns:
+                names.insert(1, "agent_instance")
+                values.insert(1, self.agent_instance)
+            if "relation_id" in fragment_columns:
+                relation_index = 2 if "agent_instance" in fragment_columns else 1
+                names.insert(relation_index, "relation_id")
+                values.insert(relation_index, relation_id)
+            cursor.execute(
+                f"INSERT INTO rumination_fragments ({', '.join(names)}) "
+                f"VALUES ({', '.join('?' for _ in names)})",
+                tuple(values),
             )
             if commit:
                 connection.commit()
@@ -2407,15 +2455,18 @@ class ConsciousnessLoopManager:
             return
 
         cursor = self.db.conn.cursor()
+        _relation_id, _columns, ownership_sql, ownership_params = (
+            self._rumination_ownership_scope(cursor, "rumination_insights")
+        )
         cursor.execute(
-            """
+            f"""
             SELECT id, full_message, status
             FROM rumination_insights
-            WHERE user_id = ?
+            WHERE user_id = ?{ownership_sql}
             ORDER BY id DESC
             LIMIT ?
             """,
-            (self.admin_user_id, limit),
+            (self.admin_user_id, *ownership_params, limit),
         )
         for row in cursor.fetchall():
             summary = (row["full_message"] or "").strip()

@@ -86,3 +86,44 @@ def test_failure_without_lazy_rumination_table_still_records_memory_and_audit(lo
     integrate(manager, result_id)
     assert [db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in (
         "working_memory_items", "working_memory_broadcasts", "consciousness_loop_events")] == [1, 1, 1]
+
+
+def test_loop_failure_fragment_stamps_rumination_ownership(loop_db):
+    db = _LoopWorkingMemoryDB(loop_db.conn)
+    db.conn.execute(
+        """CREATE TABLE rumination_fragments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            agent_instance TEXT,
+            relation_id TEXT,
+            fragment_type TEXT,
+            content TEXT,
+            context TEXT,
+            source_conversation_id TEXT,
+            source_quote TEXT,
+            source_kind TEXT,
+            source_table TEXT,
+            source_id TEXT,
+            source_metadata_json TEXT,
+            emotional_weight REAL,
+            tension_level REAL
+        )"""
+    )
+    db.conn.commit()
+    db.resolve_relation_id = lambda **_kwargs: "admin-relation"
+    manager = ConsciousnessLoopManager(db)
+    result_id = _pending_failure(manager)
+
+    integrate(manager, result_id)
+
+    row = db.conn.execute(
+        """
+        SELECT agent_instance, relation_id
+        FROM rumination_fragments
+        WHERE source_kind = 'loop_failure'
+        """
+    ).fetchone()
+    assert dict(row) == {
+        "agent_instance": manager.agent_instance,
+        "relation_id": "admin-relation",
+    }

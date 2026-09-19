@@ -240,6 +240,10 @@ class RelationsDatabaseMixin:
             "user_patterns",
             "user_milestones",
             "relational_state",
+            "rumination_fragments",
+            "rumination_tensions",
+            "rumination_insights",
+            "rumination_log",
         ):
             columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
             if "relation_id" not in columns or "user_id" not in columns:

@@ -131,3 +131,131 @@ def test_non_admin_cannot_use_another_participants_relation(rumination_db):
             "existential_depth": 0.9,
         }
     ) == []
+
+
+def _enable_relation_registry(db, relations):
+    db.agent_instance = "instance-a"
+
+    def get_relation(relation_id):
+        return relations.get(str(relation_id))
+
+    def resolve_relation_id(*, agent_instance=None, participant_user_id=None, relation_id=None):
+        if relation_id:
+            relation = get_relation(relation_id)
+            if not relation:
+                return None
+            if agent_instance and relation["agent_instance"] != str(agent_instance):
+                raise ValueError("relation_agent_instance_mismatch")
+            if participant_user_id and relation["participant_user_id"] != str(participant_user_id):
+                raise ValueError("relation_participant_mismatch")
+            return str(relation_id)
+        for candidate_id, relation in relations.items():
+            if (
+                relation["agent_instance"] == str(agent_instance)
+                and relation["participant_user_id"] == str(participant_user_id)
+            ):
+                return candidate_id
+        return None
+
+    db.get_agent_relation = get_relation
+    db.resolve_relation_id = resolve_relation_id
+
+
+def test_stats_isolate_relation_and_agent_instance(rumination_db):
+    relations = {
+        "relation-a": {
+            "agent_instance": "instance-a",
+            "participant_user_id": "participant",
+        },
+        "relation-b": {
+            "agent_instance": "instance-b",
+            "participant_user_id": "participant",
+        },
+    }
+    _enable_relation_registry(rumination_db, relations)
+    engine = RuminationEngine(rumination_db)
+    conn = rumination_db.conn
+    conn.executemany(
+        """
+        INSERT INTO rumination_insights (
+            user_id, agent_instance, relation_id, full_message, status
+        ) VALUES (?, ?, ?, ?, 'ready')
+        """,
+        [
+            ("participant", "instance-a", "relation-a", "sentinel-a"),
+            ("participant", "instance-b", "relation-b", "sentinel-b"),
+        ],
+    )
+    conn.commit()
+
+    stats = engine.get_stats("participant", relation_id="relation-a")
+
+    assert stats["insights_total"] == 1
+    try:
+        engine.get_stats("participant", relation_id="relation-b")
+    except ValueError as exc:
+        assert str(exc) == "relation_agent_instance_mismatch"
+    else:
+        raise AssertionError("cross-instance Relation must fail closed")
+
+
+def test_legacy_admin_scope_does_not_absorb_relation_rows(rumination_db):
+    _enable_relation_registry(
+        rumination_db,
+        {
+            "participant-relation": {
+                "agent_instance": "instance-a",
+                "participant_user_id": "participant",
+            }
+        },
+    )
+    engine = RuminationEngine(rumination_db)
+    conn = rumination_db.conn
+    conn.executemany(
+        """
+        INSERT INTO rumination_fragments (
+            user_id, agent_instance, relation_id, fragment_type, content, processed
+        ) VALUES (?, ?, ?, 'thought', ?, 0)
+        """,
+        [
+            (engine.admin_user_id, None, None, "legacy-admin"),
+            (engine.admin_user_id, "instance-a", "participant-relation", "private-relation"),
+        ],
+    )
+    conn.commit()
+
+    stats = engine.get_stats(engine.admin_user_id)
+
+    assert stats["fragments_total"] == 1
+
+
+def test_rumination_log_stamps_relation_and_instance(rumination_db):
+    relations = {
+        "relation-a": {
+            "agent_instance": "instance-a",
+            "participant_user_id": "participant",
+        }
+    }
+    _enable_relation_registry(rumination_db, relations)
+    engine = RuminationEngine(rumination_db)
+
+    engine._log_operation(
+        "digest",
+        "participant",
+        relation_id="relation-a",
+        output_summary="sentinel",
+    )
+
+    row = rumination_db.conn.execute(
+        """
+        SELECT agent_instance, relation_id, user_id
+        FROM rumination_log
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    assert dict(row) == {
+        "agent_instance": "instance-a",
+        "relation_id": "relation-a",
+        "user_id": "participant",
+    }
