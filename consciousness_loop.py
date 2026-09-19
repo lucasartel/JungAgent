@@ -2504,6 +2504,7 @@ class ConsciousnessLoopManager:
             bridge = IdentityRuminationBridge(self.db)
             bridge_metrics["contradictions_to_rumination"] = bridge.feed_contradictions_to_rumination()
 
+        detection_stats = ruminator.drain_detection_backlog(self.admin_user_id)
         digest_stats = ruminator.digest(self.admin_user_id)
         after_digest_stats = ruminator.get_stats(self.admin_user_id)
 
@@ -2549,6 +2550,7 @@ class ConsciousnessLoopManager:
             "after_stats": after_stats,
             "bridge_metrics": bridge_metrics,
             "injected_materials": injected_materials,
+            "detection_stats": detection_stats,
             "delivery_suppressed": phase_mode != "extro",
             "delivered_insight_id": delivered_insight_id,
             "delivery_relief_state": delivery_relief_state,
@@ -2568,6 +2570,9 @@ class ConsciousnessLoopManager:
                 "insights_delivered_delta": delivered_delta,
                 "delivered_insight_id": delivered_insight_id or 0,
                 "tensions_processed": digest_stats.get("tensions_processed", 0),
+                "detection_batches_processed": detection_stats.get("batches_processed", 0),
+                "detected_tensions_created": detection_stats.get("tensions_created", 0),
+                "pending_detection_fragments": detection_stats.get("pending_fragments", 0),
                 "injected_material_count": injected_materials["material_count"],
                 "injected_fragment_count": injected_materials["fragment_count"],
                 "bridge_tensions_synced": bridge_metrics["tensions_to_contradictions"],

@@ -16,12 +16,14 @@ MAX_FRAGMENTS_PER_CONVERSATION = 5  # Evitar extracao excessiva
 MIN_TENSION_LEVEL = 0.5  # Compatibilidade com sinais antigos de tensao
 MIN_RUMINATION_ACTIVATION_SCORE = 0.35  # Score combinado minimo para ruminar
 MAX_DETECTION_ATTEMPTS_WITHOUT_TENSION = 3  # Nao queimar fragmentos cedo demais
+MAX_TENSION_DETECTION_BATCHES_PER_PHASE = 3  # Drena backlog sem monopolizar o loop
 
 # ============================================================
 # FASE 2: DETECCAO DE TENSOES
 # ============================================================
 MIN_INTENSITY_FOR_TENSION = 0.4  # Tensoes fracas sao ignoradas
 MAX_OPEN_TENSIONS_PER_USER = 10  # Evitar acumulo excessivo
+MAX_IDENTITY_CONTRADICTIONS_PER_BRIDGE_RUN = 8  # Evita inundar a ruminacao
 
 # Tipos de tensao a detectar
 TENSION_TYPES = {

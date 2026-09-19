@@ -259,3 +259,62 @@ def test_rumination_log_stamps_relation_and_instance(rumination_db):
         "relation_id": "relation-a",
         "user_id": "participant",
     }
+
+
+def test_drain_detection_backlog_retries_bounded_batches(rumination_db, monkeypatch):
+    engine = RuminationEngine(rumination_db)
+    conn = rumination_db.conn
+    user_id = engine.admin_user_id
+    conn.executemany(
+        """
+        INSERT INTO rumination_fragments (
+            user_id, fragment_type, content, processed, detection_attempts
+        ) VALUES (?, 'thought', ?, 0, 0)
+        """,
+        [(user_id, f"fragment-{index}") for index in range(24)],
+    )
+    conn.commit()
+
+    calls = []
+
+    def fake_detect_tensions(selected_user_id, relation_id=None):
+        rows = conn.execute(
+            """
+            SELECT id, detection_attempts
+            FROM rumination_fragments
+            WHERE user_id = ? AND processed = 0
+            ORDER BY detection_attempts ASC, id DESC
+            LIMIT 12
+            """,
+            (selected_user_id,),
+        ).fetchall()
+        calls.append([row["id"] for row in rows])
+        for row in rows:
+            next_attempt = int(row["detection_attempts"] or 0) + 1
+            conn.execute(
+                """
+                UPDATE rumination_fragments
+                SET detection_attempts = ?,
+                    processed = CASE WHEN ? >= 3 THEN 1 ELSE 0 END
+                WHERE id = ?
+                """,
+                (next_attempt, next_attempt, row["id"]),
+            )
+        conn.commit()
+        return []
+
+    monkeypatch.setattr(engine, "detect_tensions", fake_detect_tensions)
+
+    stats = engine.drain_detection_backlog(user_id, max_batches=3)
+
+    assert len(calls) == 3
+    assert calls[0] != calls[1]
+    assert calls[0] == calls[2]
+    assert stats == {
+        "batches_processed": 3,
+        "tensions_created": 0,
+        "pending_fragments": 24,
+    }
+    assert conn.execute(
+        "SELECT MIN(detection_attempts) FROM rumination_fragments"
+    ).fetchone()[0] == 1

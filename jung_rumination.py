@@ -444,7 +444,7 @@ class RuminationEngine:
             WHERE user_id = ?{relation_clause}
               AND processed = 0
               AND COALESCE(detection_attempts, 0) < ?
-            ORDER BY created_at DESC
+            ORDER BY COALESCE(detection_attempts, 0) ASC, created_at DESC
             LIMIT 12
         """, (user_id, *relation_params, MAX_DETECTION_ATTEMPTS_WITHOUT_TENSION))
 
@@ -569,6 +569,70 @@ class RuminationEngine:
         except Exception as e:
             logger.error(f"❌ Erro na detecção: {e}")
             return []
+
+    def drain_detection_backlog(
+        self,
+        user_id: str = None,
+        relation_id: Optional[str] = None,
+        max_batches: int = MAX_TENSION_DETECTION_BATCHES_PER_PHASE,
+    ) -> Dict[str, int]:
+        """Revisita fragmentos pendentes em lotes limitados antes da digestao.
+
+        A ingestao tenta detectar tensoes imediatamente, mas materiais inseridos por
+        outros subsistemas ou deixados por uma tentativa anterior precisam de um
+        caminho periodico de retomada. O limite preserva o tempo do loop.
+        """
+        user_id = user_id or self.admin_user_id
+        relation_id = self._resolve_relation_id(user_id, relation_id)
+        if not self._relation_allowed(user_id, relation_id):
+            return {"batches_processed": 0, "tensions_created": 0, "pending_fragments": 0}
+
+        cursor = self.db.conn.cursor()
+        _resolved, relation_clause, relation_params = self._relation_scope(
+            "rumination_fragments", user_id, relation_id
+        )
+
+        def pending_state() -> Tuple[int, int]:
+            cursor.execute(
+                f"""
+                SELECT COUNT(*), COALESCE(SUM(detection_attempts), 0)
+                FROM rumination_fragments
+                WHERE user_id = ?{relation_clause}
+                  AND processed = 0
+                  AND COALESCE(detection_attempts, 0) < ?
+                """,
+                (user_id, *relation_params, MAX_DETECTION_ATTEMPTS_WITHOUT_TENSION),
+            )
+            row = cursor.fetchone()
+            return int(row[0]), int(row[1])
+
+        batches_processed = 0
+        tensions_created = 0
+        previous_pending, previous_attempts = pending_state()
+        while previous_pending >= 2 and batches_processed < max(0, int(max_batches)):
+            created = self.detect_tensions(user_id, relation_id=relation_id)
+            batches_processed += 1
+            tensions_created += len(created)
+            current_pending, current_attempts = pending_state()
+            if (
+                current_pending >= previous_pending
+                and current_attempts <= previous_attempts
+            ):
+                logger.warning(
+                    "Rumination backlog made no progress for %s after batch %s",
+                    user_id,
+                    batches_processed,
+                )
+                previous_pending = current_pending
+                break
+            previous_pending = current_pending
+            previous_attempts = current_attempts
+
+        return {
+            "batches_processed": batches_processed,
+            "tensions_created": tensions_created,
+            "pending_fragments": previous_pending,
+        }
 
     # ========================================
     # HELPERS INTERNOS

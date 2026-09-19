@@ -19,6 +19,10 @@ from typing import Dict, List, Optional
 
 from instance_config import AGENT_INSTANCE, ADMIN_USER_ID
 from identity_config import MIN_CERTAINTY_FOR_NUCLEAR
+from rumination_config import (
+    MAX_IDENTITY_CONTRADICTIONS_PER_BRIDGE_RUN,
+    MAX_OPEN_TENSIONS_PER_USER,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -344,15 +348,22 @@ class IdentityRuminationBridge:
                 logger.warning("⚠️ Tabela rumination_tensions não existe - pulando feedback")
                 return 0
 
-            # Buscar contradições de alta tensão não resolvidas
+            # Buscar um lote priorizado. Contradicoes antigas continuam elegiveis:
+            # idade reduz prioridade, mas nao pode torna-las invisiveis para sempre.
             cursor.execute("""
                 SELECT id, pole_a, pole_b, contradiction_type, tension_level
                 FROM agent_identity_contradictions
-                WHERE status IN ('unresolved', 'integrating')
+                WHERE agent_instance = ?
+                  AND status IN ('unresolved', 'integrating')
                   AND tension_level > 0.55
-                  AND last_activated_at > datetime('now', '-14 days')
                   AND (fed_to_rumination = 0 OR fed_to_rumination IS NULL)
-            """)
+                ORDER BY
+                    CASE WHEN last_activated_at > datetime('now', '-14 days') THEN 0 ELSE 1 END,
+                    tension_level DESC,
+                    COALESCE(last_activated_at, first_detected_at) DESC,
+                    id DESC
+                LIMIT ?
+            """, (AGENT_INSTANCE, MAX_IDENTITY_CONTRADICTIONS_PER_BRIDGE_RUN))
 
             contradictions = cursor.fetchall()
 
@@ -361,26 +372,50 @@ class IdentityRuminationBridge:
 
             logger.info(f"   🔄 Alimentando {len(contradictions)} contradições → ruminação")
 
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM rumination_tensions
+                WHERE user_id = ?
+                  AND (agent_instance = ? OR agent_instance IS NULL)
+                  AND relation_id IS NULL
+                  AND status IN ('open', 'maturing', 'ready_for_synthesis')
+            """, (ADMIN_USER_ID, AGENT_INSTANCE))
+            active_tension_count = int(cursor.fetchone()[0])
+
             fed_count = 0
             for row in contradictions:
                 contradiction_id, pole_a, pole_b, contra_type, tension = row
 
-                # Verificar idempotência: tensão equivalente já existe?
+                # Verificar idempotência em todo o historico. Uma tensao ja
+                # sintetizada ou arquivada tambem representa esta contradicao.
                 cursor.execute("""
                     SELECT id FROM rumination_tensions
-                    WHERE pole_a_content = ? AND pole_b_content = ?
-                      AND status IN ('open', 'maturing', 'ready_for_synthesis')
-                """, (pole_a, pole_b))
+                    WHERE user_id = ?
+                      AND (agent_instance = ? OR agent_instance IS NULL)
+                      AND relation_id IS NULL
+                      AND pole_a_content = ? AND pole_b_content = ?
+                    LIMIT 1
+                """, (ADMIN_USER_ID, AGENT_INSTANCE, pole_a, pole_b))
                 if cursor.fetchone():
+                    cursor.execute("""
+                        UPDATE agent_identity_contradictions
+                        SET fed_to_rumination = 1
+                        WHERE id = ?
+                    """, (contradiction_id,))
+                    fed_count += 1
+                    continue
+
+                if active_tension_count >= MAX_OPEN_TENSIONS_PER_USER:
                     continue
 
                 # Criar nova tensão de ruminação (schema real: pole_a_content, user_id obrigatório)
                 cursor.execute("""
                     INSERT INTO rumination_tensions (
-                        user_id, pole_a_content, pole_b_content, tension_type,
+                        user_id, agent_instance, relation_id,
+                        pole_a_content, pole_b_content, tension_type,
                         intensity, status, maturity_score
-                    ) VALUES (?, ?, ?, ?, ?, 'open', 0.0)
-                """, (ADMIN_USER_ID, pole_a, pole_b, contra_type, tension))
+                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, 'open', 0.0)
+                """, (ADMIN_USER_ID, AGENT_INSTANCE, pole_a, pole_b, contra_type, tension))
 
                 # Marcar contradição como alimentada
                 cursor.execute("""
@@ -390,6 +425,7 @@ class IdentityRuminationBridge:
                 """, (contradiction_id,))
 
                 fed_count += 1
+                active_tension_count += 1
 
             self.db.conn.commit()
             logger.info(f"   ✅ {fed_count} contradições alimentadas")
