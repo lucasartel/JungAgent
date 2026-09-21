@@ -120,3 +120,36 @@ def test_reading_package_blocks_when_exact_source_is_missing():
     assert package["generation_mode"] == "reading_blocked"
     assert package["body"] == ""
     assert package["reading_assimilation"]["verified"] is False
+
+
+def test_reading_package_retries_an_invalid_model_response(monkeypatch):
+    payload = {
+        "summary": (
+            "Uma sintese suficientemente longa para representar com fidelidade "
+            "o intervalo real que foi lido e permitir sua incorporacao cognitiva."
+        ),
+        "key_ideas": [
+            {
+                "idea": "A leitura exige continuidade.",
+                "pages": [1],
+                "significance": "Sustenta a elaboracao.",
+            }
+        ],
+        "tensions": [],
+        "open_questions": [],
+        "concepts": ["continuidade"],
+    }
+    responses = iter(["resposta fora do contrato", json.dumps(payload)])
+    calls = []
+
+    def fake_response(*args, **kwargs):
+        calls.append((args, kwargs))
+        return next(responses)
+
+    monkeypatch.setattr("work.package_builder.get_llm_response", fake_response)
+    package = _ReadingEngine()._build_work_package({
+        "project_id": 10,
+        "action_type": "reading",
+        "objective": "Ler paginas 1 a 2",
+        "extracted_json": json.dumps({"reading_plan": {"start_page": 1, "end_page": 2}}),
+    })

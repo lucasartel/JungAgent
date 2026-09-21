@@ -66,6 +66,8 @@ treinamento para completar lacunas, nao invente citacoes e parafraseie.
 Livro: {project.get('name')}
 Arquivo: {source.get('filename')}
 Paginas verificadas: {source.get('start_page')}-{source.get('end_page')}
+Produza uma sintese de 120 a 220 palavras, de 3 a 6 ideias-chave, no maximo
+4 tensoes, no maximo 4 perguntas e no maximo 8 conceitos.
 Responda APENAS em JSON valido:
 {{
   "summary": "sintese fiel e substancial",
@@ -79,19 +81,43 @@ SOURCE START
 SOURCE END
 """
         try:
-            parsed = _json_loads_maybe(get_llm_response(prompt, temperature=0.25, max_tokens=2600))
+            raw_response = get_llm_response(prompt, temperature=0.2, max_tokens=2200)
         except Exception as exc:
             logger.error("reading_assimilation: LLM failed: %s", exc)
             source.update({"verified": False, "reason": f"reading_assimilation_llm_error:{type(exc).__name__}"})
             return self._blocked_reading_package(brief, project, source)
 
-        summary = str(parsed.get("summary") or "").strip()
-        key_ideas = [item for item in (parsed.get("key_ideas") or []) if isinstance(item, dict) and str(item.get("idea") or "").strip()]
-        tensions = [item for item in (parsed.get("tensions") or []) if isinstance(item, dict) and item.get("pole_a") and item.get("pole_b")]
-        questions = [item for item in (parsed.get("open_questions") or []) if isinstance(item, dict) and item.get("question")]
-        concepts = [str(item).strip() for item in (parsed.get("concepts") or []) if str(item).strip()]
+        def parsed_fields(raw: str):
+            parsed = _json_loads_maybe(raw)
+            summary = str(parsed.get("summary") or "").strip()
+            key_ideas = [item for item in (parsed.get("key_ideas") or []) if isinstance(item, dict) and str(item.get("idea") or "").strip()]
+            tensions = [item for item in (parsed.get("tensions") or []) if isinstance(item, dict) and item.get("pole_a") and item.get("pole_b")]
+            questions = [item for item in (parsed.get("open_questions") or []) if isinstance(item, dict) and item.get("question")]
+            concepts = [str(item).strip() for item in (parsed.get("concepts") or []) if str(item).strip()]
+            return summary, key_ideas, tensions, questions, concepts
+
+        summary, key_ideas, tensions, questions, concepts = parsed_fields(raw_response)
         if len(summary) < 80 or not key_ideas:
-            source.update({"verified": False, "reason": "reading_assimilation_invalid_output"})
+            retry_prompt = f"""
+A resposta anterior nao cumpriu o contrato. Releia a fonte e devolva somente
+um objeto JSON compacto, sem markdown nem comentario. Use as chaves summary,
+key_ideas, tensions, open_questions e concepts. Summary deve ter ao menos 120
+palavras e key_ideas deve conter de 3 a 6 objetos com idea, pages e significance.
+Toda pagina citada deve estar entre {source.get('start_page')} e {source.get('end_page')}.
+SOURCE START
+{source.get('text')}
+SOURCE END
+"""
+            try:
+                retry_response = get_llm_response(retry_prompt, temperature=0.1, max_tokens=2200)
+                summary, key_ideas, tensions, questions, concepts = parsed_fields(retry_response)
+            except Exception as exc:
+                logger.error("reading_assimilation: retry failed: %s", exc)
+                source.update({"verified": False, "reason": f"reading_assimilation_retry_error:{type(exc).__name__}"})
+                return self._blocked_reading_package(brief, project, source)
+
+        if len(summary) < 80 or not key_ideas:
+            source.update({"verified": False, "reason": "reading_assimilation_invalid_output", "attempts": 2})
             return self._blocked_reading_package(brief, project, source)
 
         start_page, end_page = int(source["start_page"]), int(source["end_page"])
