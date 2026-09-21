@@ -128,8 +128,8 @@ class JungianEngine:
                 relational_cadence_decision=relational_cadence_decision or {},
             )
 
-        clean_response = generation["clean_response"]
-        display_response = generation["display_response"]
+        clean_response = str(generation.get("clean_response") or "")
+        display_response = str(generation.get("display_response") or clean_response)
 
         signal_profile = self._build_conversation_signal_profile(message, clean_response)
         affective_charge = signal_profile["affective_charge"]
@@ -1082,23 +1082,72 @@ class JungianEngine:
                 "prompt_block": "",
             }
 
+    @staticmethod
+    def _validate_llm_text(
+        value: Any,
+        *,
+        provider: str,
+        finish_reason: Any = None,
+    ) -> str:
+        if isinstance(value, str) and value.strip():
+            return value
+        raise ValueError(
+            "conversation_llm_empty_response:"
+            f"provider={provider}:finish_reason={finish_reason or 'unknown'}"
+        )
+
     def _call_conversation_llm(self, prompt: str, max_tokens: int = 2000, temperature: float = 0.7) -> str:
         if self.openrouter_client:
-            response = self.openrouter_client.chat.completions.create(
-                model=Config.CONVERSATION_MODEL,
+            for attempt in range(1, 3):
+                response = None
+                try:
+                    response = self.openrouter_client.chat.completions.create(
+                        model=Config.CONVERSATION_MODEL,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    choice = response.choices[0]
+                    return self._validate_llm_text(
+                        choice.message.content,
+                        provider=f"openrouter:{Config.CONVERSATION_MODEL}",
+                        finish_reason=getattr(choice, "finish_reason", None),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Conversation LLM primary attempt failed model=%s attempt=%s/2 "
+                        "response_id=%s error=%s",
+                        Config.CONVERSATION_MODEL,
+                        attempt,
+                        getattr(response, "id", None),
+                        exc,
+                    )
+
+            logger.warning(
+                "Conversation LLM switching to alternate model=%s after primary failures",
+                Config.INTERNAL_MODEL,
+            )
+
+        try:
+            message = self.anthropic_client.messages.create(
+                model=Config.INTERNAL_MODEL,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 messages=[{"role": "user", "content": prompt}],
             )
-            return response.choices[0].message.content
-
-        message = self.anthropic_client.messages.create(
-            model=Config.INTERNAL_MODEL,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return message.content[0].text
+            content = message.content[0]
+            return self._validate_llm_text(
+                getattr(content, "text", None),
+                provider=f"alternate:{Config.INTERNAL_MODEL}",
+                finish_reason=getattr(message, "stop_reason", None),
+            )
+        except Exception as exc:
+            logger.error(
+                "Conversation LLM alternate failed model=%s error=%s",
+                Config.INTERNAL_MODEL,
+                exc,
+            )
+            raise ValueError("conversation_llm_unavailable_after_fallback") from exc
 
     def _compress_prompt_context(self, text: str, max_tokens: int = 1600) -> str:
         if not text:
@@ -2585,10 +2634,10 @@ class JungianEngine:
         thought_block = f"🧠 **[SISTEMA: AMOSTRAGEM DE PENSAMENTO LLM]**\n\n```text\n{thought_payload}\n```"
         return separator + thought_block
 
-    def _strip_admin_thought_block(self, text: str) -> str:
+    def _strip_admin_thought_block(self, text: Optional[str]) -> str:
         """Remove o bloco de amostragem caso ele esteja anexado à resposta."""
         if not text:
-            return text
+            return ""
 
         marker = "\n\n----------------------------------------\n🧠 **[SISTEMA: AMOSTRAGEM DE PENSAMENTO LLM]**"
         if marker in text:
@@ -2742,26 +2791,11 @@ class JungianEngine:
         )
 
         try:
-            # Usar Mistral via OpenRouter para conversação (se disponível)
-            if self.openrouter_client:
-                logger.info(f"🤖 Usando OpenRouter/Mistral ({Config.CONVERSATION_MODEL}) para conversação")
-                response = self.openrouter_client.chat.completions.create(
-                    model=Config.CONVERSATION_MODEL,
-                    max_tokens=int(policy_values.get("max_tokens") or 2000),
-                    temperature=float(policy_values.get("temperature") or 0.7),
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                final_response = response.choices[0].message.content
-            else:
-                # Fallback: Claude (quando OPENROUTER_API_KEY não está configurada)
-                logger.info("🤖 Fallback para Claude (OPENROUTER_API_KEY não configurada)")
-                message = self.anthropic_client.messages.create(
-                    model=Config.INTERNAL_MODEL,
-                    max_tokens=int(policy_values.get("max_tokens") or 2000),
-                    temperature=float(policy_values.get("temperature") or 0.7),
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                final_response = message.content[0].text
+            final_response = self._call_conversation_llm(
+                prompt,
+                max_tokens=int(policy_values.get("max_tokens") or 2000),
+                temperature=float(policy_values.get("temperature") or 0.7),
+            )
 
             clean_response = self._strip_admin_thought_block(final_response)
             display_response = clean_response
