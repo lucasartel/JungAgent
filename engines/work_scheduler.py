@@ -149,40 +149,50 @@ class WorkScheduler:
             # Build brief objective text.
             if unit == "pages" and target > 0:
                 start_page = int(progress) + 1
-                end_page = int(progress + per_pulse)
+                end_page = min(int(target), max(start_page, int(progress + per_pulse)))
+                planned_effort = end_page - start_page + 1
                 objective = (
                     f"Ler paginas {start_page} a {end_page} de '{project['name']}'"
                     f" (total {int(target)} {unit}, ja lidas {int(progress)})"
                 )
             else:
+                start_page = 0
+                end_page = 0
+                planned_effort = per_pulse
                 objective = (
                     f"Trabalhar em '{project['name']}': {per_pulse:.1f} {unit or 'unidades'}"
                     f" (progresso atual: {progress})"
                 )
 
-            # Resolve destination for this project.
             dest_id = project.get("default_destination_id")
-
             brief = engine.create_brief(
                 origin="scheduled_reading",
                 trigger_source=f"work_scheduler:{cycle_id}",
-                destination_id=int(dest_id) if dest_id else 1,
+                destination_id=int(dest_id) if dest_id else None,
                 objective=objective,
                 voice_mode="endojung",
-                delivery_mode="draft",
+                delivery_mode="internal",
                 content_type="reading_note",
                 priority=int(project.get("priority") or 50),
                 title_hint=f"Leitura: {project['name']}",
                 project_id=project["id"],
                 action_type="reading",
                 notes=f"auto-scheduled pulse {next_pulse}/{pulse_count}",
+                extracted={
+                    "reading_plan": {
+                        "start_page": start_page,
+                        "end_page": end_page,
+                        "planned_effort": planned_effort,
+                        "effort_unit": unit,
+                    }
+                },
             )
             created_briefs.append({
                 "brief_id": brief.get("id"),
                 "project_id": project["id"],
                 "project_name": project.get("name"),
                 "objective": objective,
-                "planned_effort": round(per_pulse, 1),
+                "planned_effort": planned_effort,
                 "effort_unit": unit,
                 "pulse_index": next_pulse,
             })
@@ -310,6 +320,50 @@ class WorkScheduler:
             elif p.get("deadline_at"):
                 line += f" — prazo {str(p['deadline_at'])[:10]}"
             lines.append(line)
+        lines.append("")
+        return "\n".join(lines)
+
+
+    def get_assimilated_reading_context(self, limit: int = 3) -> str:
+        """Return recent source-grounded knowledge for the agent's live context."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT a.provider_payload_json, p.name AS project_name
+            FROM work_artifacts a
+            LEFT JOIN work_projects p ON p.id = a.project_id
+            WHERE a.status = 'assimilated' AND a.content_type = 'reading_note'
+            ORDER BY a.updated_at DESC, a.id DESC
+            LIMIT ?
+            """,
+            (max(1, min(int(limit), 6)),),
+        )
+        readings: List[Dict[str, Any]] = []
+        import json
+        for row in cursor.fetchall():
+            payload = json.loads(row[0] or "{}")
+            reading = ((payload.get("package") or {}).get("reading_assimilation") or {})
+            if reading.get("verified"):
+                readings.append({"project_name": row[1], **reading})
+        if not readings:
+            return ""
+
+        lines = [
+            "### Conhecimento recentemente assimilado",
+            "- Estas ideias vieram de leituras reais e possuem proveniencia por pagina. "
+            "Use-as como conhecimento em elaboracao, nao como opiniao definitiva.",
+        ]
+        for reading in readings:
+            lines.append(
+                f"- {reading.get('project_name') or reading.get('filename')}: "
+                f"paginas {reading.get('start_page')}-{reading.get('end_page')}. "
+                f"{reading.get('summary')}"
+            )
+            for idea in (reading.get("key_ideas") or [])[:3]:
+                pages = ", ".join(str(page) for page in (idea.get("pages") or []))
+                lines.append(f"  - {idea.get('idea')} (p. {pages})")
+            for question in (reading.get("open_questions") or [])[:2]:
+                lines.append(f"  - Pergunta viva: {question.get('question')}")
         lines.append("")
         return "\n".join(lines)
 

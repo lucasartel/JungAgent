@@ -388,7 +388,7 @@ Responda APENAS em JSON com:
         self,
         origin: str,
         trigger_source: str,
-        destination_id: int,
+        destination_id: Optional[int],
         objective: str,
         voice_mode: str,
         delivery_mode: str,

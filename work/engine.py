@@ -128,6 +128,10 @@ class WorkEngine(
             "artifact_composed": "work_expression",
             "work_research": "work_responsibility",
             "brief_created": "work_responsibility",
+            "reading_assimilated": "knowledge_assimilation",
+            "reading_idea": "knowledge_fragment",
+            "reading_tension": "knowledge_tension",
+            "reading_question": "knowledge_question",
             "project_created": "work_project_identity",
             "project_updated": "work_project_identity",
             "project_deleted": "work_project_identity",
@@ -185,13 +189,14 @@ class WorkEngine(
                 cursor.execute(
                     """
                     INSERT INTO rumination_fragments (
-                        user_id, fragment_type, content, context, source_conversation_id,
-                        source_quote, emotional_weight, tension_level, source_kind,
-                        source_table, source_id, source_metadata_json
-                    ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+                        user_id, agent_instance, relation_id, fragment_type, content, context,
+                        source_conversation_id, source_quote, emotional_weight, tension_level,
+                        source_kind, source_table, source_id, source_metadata_json
+                    ) VALUES (?, ?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         self.admin_user_id,
+                        getattr(self.db, "agent_instance", None),
                         self._fragment_type_for_work_event(event_type),
                         summary,
                         f"Experiencia de trabalho: {event_type}",

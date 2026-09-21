@@ -378,6 +378,11 @@ Regras:
                 )
                 continue
 
+            # Scheduled reading is internal metabolism, not an autonomous
+            # publication project. Its briefs are created by WorkScheduler.
+            if project.get("effort_unit") == "pages" and project.get("deadline_at"):
+                continue
+
             destination_id = project.get("default_destination_id")
             if not destination_id:
                 self.record_work_experience(
@@ -614,10 +619,12 @@ Regras:
             )
             processed_results.append(
                 {
-                    "status": "awaiting_approval",
+                    "status": package_result.get("status") or "awaiting_approval",
                     "brief_id": brief["id"],
                     "artifact_id": package_result["artifact_id"],
-                    "ticket_id": package_result["ticket_id"],
+                    "ticket_id": package_result.get("ticket_id"),
+                    "pages_read": package_result.get("pages_read", 0),
+                    "success": package_result.get("success", True),
                     "output_summary": package_result["output_summary"],
                 }
             )
@@ -639,18 +646,25 @@ Regras:
 
         ticket_ids = [item["ticket_id"] for item in processed_results if item.get("ticket_id")]
         new_ticket_ids = [item["ticket_id"] for item in processed_results if item.get("ticket_id") and not item.get("existing_ticket")]
+        readings = [item for item in processed_results if item.get("status") == "completed" and item.get("pages_read")]
+        blocked_readings = [item for item in processed_results if item.get("status") == "blocked"]
         if self._work_notify_admin_on_tickets() and new_ticket_ids:
             self.notify_admin_new_tickets(new_ticket_ids)
 
-        if new_ticket_ids:
+        if readings:
+            pages = sum(int(item.get("pages_read") or 0) for item in readings)
+            output_summary = f"Work assimilou {len(readings)} leitura(s), totalizando {pages} pagina(s) verificadas."
+        elif blocked_readings:
+            output_summary = "Work bloqueou a leitura porque nao conseguiu verificar e assimilar a fonte."
+        elif new_ticket_ids:
             output_summary = f"Work criou {len(new_ticket_ids)} novo(s) ticket(s) de aprovacao."
         else:
             output_summary = "Work encontrou ticket(s) ja pendente(s) e aguardou revisao."
-        if APP_BASE_URL:
+        if APP_BASE_URL and ticket_ids:
             output_summary += f" Revisao: {APP_BASE_URL}/admin/work/dashboard"
         return {
-            "success": True,
-            "status": "awaiting_approval",
+            "success": not blocked_readings,
+            "status": "completed" if readings else ("blocked" if blocked_readings else "awaiting_approval"),
             "output_summary": output_summary,
             "metrics": {
                 "autonomous_briefs_created": autonomous_briefs_created,
@@ -659,8 +673,10 @@ Regras:
                 "ticket_ids": ticket_ids,
                 "new_ticket_ids": new_ticket_ids,
                 "pending_tickets": self._pending_ticket_count(),
+                "readings_assimilated": len(readings),
+                "reading_pages_assimilated": sum(int(item.get("pages_read") or 0) for item in readings),
             },
-            "warnings": skipped_warnings,
+            "warnings": skipped_warnings + [warning for item in blocked_readings for warning in (item.get("warnings") or [])],
             "errors": [],
             "artifacts": self._artifacts_for_processed_results(processed_results),
         }

@@ -66,7 +66,14 @@ def _create_schema(conn: sqlite3.Connection) -> None:
         """
         CREATE TABLE work_projects (
             id INTEGER PRIMARY KEY,
-            name TEXT
+            name TEXT,
+            progress_value REAL DEFAULT 0,
+            effort_target REAL,
+            effort_unit TEXT,
+            progress_unit TEXT,
+            status TEXT DEFAULT 'active',
+            last_progress_at TEXT,
+            updated_at TEXT
         );
 
         CREATE TABLE work_destinations (
@@ -260,3 +267,62 @@ def test_ticket_run_and_event_listings_join_project_and_destination(in_memory_co
     assert run["destination_label"] == "Site"
     assert delivery["project_name"] == "Projeto"
     assert experience["project_name"] == "Projeto"
+
+def test_reading_assimilation_advances_only_verified_pages_without_ticket(in_memory_conn):
+    _create_schema(in_memory_conn)
+    _seed_brief(in_memory_conn)
+    in_memory_conn.execute(
+        """
+        UPDATE work_projects
+        SET progress_value = 0, effort_target = 100, effort_unit = 'pages', status = 'active'
+        WHERE id = 10
+        """
+    )
+    in_memory_conn.execute(
+        "UPDATE work_briefs SET action_type = 'reading', content_type = 'reading_note', destination_id = NULL WHERE id = 1"
+    )
+    in_memory_conn.commit()
+    engine = _FakePersistenceEngine(in_memory_conn)
+    engine._build_work_package = lambda brief: {
+        "title": "Leitura: Projeto (p. 1-5)",
+        "excerpt": "Sintese",
+        "body": "Nota de leitura",
+        "slug": "leitura-projeto",
+        "tags": ["conceito"],
+        "categories": [],
+        "cta": "",
+        "editorial_note": "verificada",
+        "generation_mode": "reading_assimilation",
+        "action_type": "reading",
+        "content_type": "reading_note",
+        "reading_assimilation": {
+            "verified": True,
+            "attachment_id": 8,
+            "filename": "book.pdf",
+            "source_mode": "stored_pdf",
+            "source_hash": "hash",
+            "start_page": 1,
+            "end_page": 5,
+            "pages_read": 5,
+            "summary": "O intervalo apresenta uma ideia verificavel.",
+            "key_ideas": [{"idea": "Ideia verificavel", "pages": [2]}],
+            "tensions": [{"pole_a": "forma", "pole_b": "fluxo", "pages": [3]}],
+            "open_questions": [{"question": "Como integrar?", "pages": [5]}],
+        },
+    }
+
+    result = engine.create_artifact_for_brief(1, trigger_source="test", cycle_id="c-reading")
+
+    assert result["success"] is True
+    assert result["ticket_id"] is None
+    assert result["pages_read"] == 5
+    assert in_memory_conn.execute("SELECT COUNT(*) FROM work_approval_tickets").fetchone()[0] == 0
+    artifact = in_memory_conn.execute("SELECT status FROM work_artifacts WHERE id = ?", (result["artifact_id"],)).fetchone()
+    project = in_memory_conn.execute("SELECT progress_value FROM work_projects WHERE id = 10").fetchone()
+    brief = in_memory_conn.execute("SELECT status FROM work_briefs WHERE id = 1").fetchone()
+    assert artifact["status"] == "assimilated"
+    assert project["progress_value"] == 5
+    assert brief["status"] == "completed"
+    assert [item["event_type"] for item in engine.experiences] == [
+        "reading_assimilated", "reading_idea", "reading_tension", "reading_question"
+    ]

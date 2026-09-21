@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from llm_providers import get_llm_response
@@ -17,6 +18,123 @@ logger = logging.getLogger(__name__)
 
 
 class WorkPackageBuilderMixin:
+    def _reading_plan(self, brief: Dict[str, Any], project: Dict[str, Any]) -> Dict[str, int]:
+        extracted = brief.get("extracted") or _json_loads_maybe(brief.get("extracted_json") or "{}")
+        plan = extracted.get("reading_plan") or {}
+        start_page = int(plan.get("start_page") or 0)
+        end_page = int(plan.get("end_page") or 0)
+        if start_page <= 0 or end_page < start_page:
+            match = re.search(r"paginas?\s+(\d+)\s+a\s+(\d+)", brief.get("objective") or "", re.IGNORECASE)
+            if match:
+                start_page, end_page = int(match.group(1)), int(match.group(2))
+        if start_page <= 0:
+            start_page = int(float(project.get("progress_value") or 0)) + 1
+        if end_page < start_page:
+            end_page = start_page
+        return {"start_page": start_page, "end_page": end_page}
+
+    def _blocked_reading_package(self, brief: Dict[str, Any], project: Dict[str, Any], source: Dict[str, Any]) -> Dict[str, Any]:
+        reason = source.get("reason") or "reading_source_unavailable"
+        title = _truncate(f"Leitura bloqueada: {project.get('name') or 'material'}", 100)
+        return {
+            "title": title, "excerpt": "A fonte nao permitiu uma leitura verificavel nesta rodada.",
+            "body": "", "slug": _slugify(title), "tags": ["leitura", "bloqueada"],
+            "categories": [], "cta": "", "editorial_note": reason,
+            "generation_mode": "reading_blocked", "review_flags": [reason],
+            "daily_intent": {}, "provider_key": None, "action_type": "reading",
+            "content_type": "reading_note",
+            "firecrawl_research": {"used": False, "destination_used": False, "world_used": False, "urls": [], "errors": []},
+            "reading_assimilation": {key: value for key, value in source.items() if key != "text"},
+        }
+
+    def _build_reading_package(self, brief: Dict[str, Any]) -> Dict[str, Any]:
+        project = self.get_project(int(brief.get("project_id") or 0))
+        if not project:
+            return self._blocked_reading_package(brief, {}, {"verified": False, "reason": "reading_project_not_found"})
+        plan = self._reading_plan(brief, project)
+        try:
+            source = self.read_project_pages(int(project["id"]), start_page=plan["start_page"], end_page=plan["end_page"])
+        except Exception as exc:
+            logger.warning("reading_assimilation: source read failed: %s", exc)
+            source = {"verified": False, "reason": f"reading_source_error:{type(exc).__name__}"}
+        if not source.get("verified"):
+            return self._blocked_reading_package(brief, project, source)
+
+        prompt = f"""
+Leia somente o texto entre SOURCE START e SOURCE END. Nao use memoria de
+treinamento para completar lacunas, nao invente citacoes e parafraseie.
+Livro: {project.get('name')}
+Arquivo: {source.get('filename')}
+Paginas verificadas: {source.get('start_page')}-{source.get('end_page')}
+Responda APENAS em JSON valido:
+{{
+  "summary": "sintese fiel e substancial",
+  "key_ideas": [{{"idea": "ideia em suas palavras", "pages": [1], "significance": "por que importa"}}],
+  "tensions": [{{"pole_a": "polo", "pole_b": "contrapolo", "pages": [1]}}],
+  "open_questions": [{{"question": "pergunta viva", "pages": [1]}}],
+  "concepts": ["conceito"]
+}}
+SOURCE START
+{source.get('text')}
+SOURCE END
+"""
+        try:
+            parsed = _json_loads_maybe(get_llm_response(prompt, temperature=0.25, max_tokens=2600))
+        except Exception as exc:
+            logger.error("reading_assimilation: LLM failed: %s", exc)
+            source.update({"verified": False, "reason": f"reading_assimilation_llm_error:{type(exc).__name__}"})
+            return self._blocked_reading_package(brief, project, source)
+
+        summary = str(parsed.get("summary") or "").strip()
+        key_ideas = [item for item in (parsed.get("key_ideas") or []) if isinstance(item, dict) and str(item.get("idea") or "").strip()]
+        tensions = [item for item in (parsed.get("tensions") or []) if isinstance(item, dict) and item.get("pole_a") and item.get("pole_b")]
+        questions = [item for item in (parsed.get("open_questions") or []) if isinstance(item, dict) and item.get("question")]
+        concepts = [str(item).strip() for item in (parsed.get("concepts") or []) if str(item).strip()]
+        if len(summary) < 80 or not key_ideas:
+            source.update({"verified": False, "reason": "reading_assimilation_invalid_output"})
+            return self._blocked_reading_package(brief, project, source)
+
+        start_page, end_page = int(source["start_page"]), int(source["end_page"])
+        def page_refs(item: Dict[str, Any]) -> List[int]:
+            refs = []
+            for value in item.get("pages") or []:
+                try:
+                    page = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if start_page <= page <= end_page and page not in refs:
+                    refs.append(page)
+            return refs or sorted({start_page, end_page})
+
+        for collection in (key_ideas, tensions, questions):
+            for item in collection:
+                item["pages"] = page_refs(item)
+
+        body_lines = [f"# Leitura de {project.get('name')}", "", f"Fonte: {source.get('filename')} | paginas {start_page}-{end_page}", "", "## Sintese", summary, "", "## Ideias incorporadas"]
+        for item in key_ideas:
+            refs = ", ".join(str(page) for page in item["pages"])
+            body_lines.append(f"- {item['idea']} (p. {refs})" + (f" - {item['significance']}" if item.get("significance") else ""))
+        if tensions:
+            body_lines.extend(["", "## Tensoes abertas"])
+            for item in tensions:
+                body_lines.append(f"- {item['pole_a']} / {item['pole_b']} (p. {', '.join(str(page) for page in item['pages'])})")
+        if questions:
+            body_lines.extend(["", "## Perguntas que permanecem"])
+            for item in questions:
+                body_lines.append(f"- {item['question']} (p. {', '.join(str(page) for page in item['pages'])})")
+
+        reading = {key: value for key, value in source.items() if key != "text"}
+        reading.update({"summary": summary, "key_ideas": key_ideas[:8], "tensions": tensions[:5], "open_questions": questions[:6], "concepts": concepts[:12]})
+        title = _truncate(f"Leitura: {project.get('name')} (p. {start_page}-{end_page})", 120)
+        return {
+            "title": title, "excerpt": _truncate(summary, 280), "body": "\n".join(body_lines),
+            "slug": _slugify(title), "tags": concepts[:8], "categories": [], "cta": "",
+            "editorial_note": "Conhecimento extraido do PDF com proveniencia por pagina.",
+            "generation_mode": "reading_assimilation", "review_flags": [], "daily_intent": {},
+            "provider_key": None, "action_type": "reading", "content_type": "reading_note",
+            "firecrawl_research": {"used": False, "destination_used": False, "world_used": False, "urls": [], "errors": []},
+            "reading_assimilation": reading,
+        }
     def _degraded_work_package(
         self,
         brief: Dict[str, Any],
@@ -56,6 +174,9 @@ class WorkPackageBuilderMixin:
         }
 
     def _build_work_package(self, brief: Dict[str, Any]) -> Dict[str, Any]:
+        if brief.get("action_type") == "reading":
+            return self._build_reading_package(brief)
+
         world_summary = ""
         world_state: Dict[str, Any] = {}
         try:

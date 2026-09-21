@@ -2353,23 +2353,11 @@ class ConsciousnessLoopManager:
             cycle_id=cycle_id,
         )
 
-        # Record schedule completion after work runs.
-        schedule_entries = schedule_plan.get("planned", [])
-        completed = 0
-        for entry in schedule_entries:
-            project_id = entry.get("project_id")
-            if project_id is None:
-                continue
-            try:
-                scheduler.record_pulse_completion(
-                    project_id=int(project_id),
-                    actual_effort=entry.get("planned_effort"),
-                    actual_effort_unit=entry.get("unit"),
-                )
-                completed += 1
-            except Exception as exc:
-                logger.warning("LOOP WORK schedule completion failed for project %s: %s", project_id, exc)
-        result["metrics"]["work_schedule_completed"] = completed
+        # Progress is committed by the reading transaction only after verified
+        # source extraction and successful assimilation.
+        result["metrics"]["work_schedule_completed"] = int(
+            (work_result.get("metrics") or {}).get("readings_assimilated") or 0
+        )
 
         result["status"] = "success" if work_result.get("success") else "partial_success"
         result["warnings"].extend(work_result.get("warnings") or [])

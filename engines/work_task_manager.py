@@ -65,7 +65,8 @@ def extract_pdf_text(file_path: str, max_pages: int = 500) -> Dict[str, Any]:
                 text_parts.append(page_text)
             except Exception:
                 continue
-        full_text = "\n\n".join(text_parts)
+        # Preserve page boundaries for exact downstream provenance.
+        full_text = "\f".join(text_parts)
         word_count = len(full_text.split())
         return {
             "text": full_text,

@@ -72,6 +72,169 @@ class WorkPersistenceMixin:
         )
         self.db.conn.commit()
 
+    def _persist_reading_package(
+        self,
+        brief: Dict[str, Any],
+        run_id: int,
+        package: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        reading = package.get("reading_assimilation") or {}
+        verified = (
+            package.get("generation_mode") == "reading_assimilation"
+            and bool(reading.get("verified"))
+        )
+        artifact_status = "assimilated" if verified else "blocked"
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO work_artifacts (
+                brief_id, run_id, destination_id, project_id, status, title, excerpt, body, slug,
+                tags_json, categories_json, cta, editorial_note, voice_mode, content_type,
+                provider_payload_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                brief["id"], run_id, brief.get("destination_id"), brief.get("project_id"),
+                artifact_status, package["title"], package["excerpt"], package["body"],
+                package["slug"], json.dumps(package["tags"], ensure_ascii=False),
+                json.dumps(package["categories"], ensure_ascii=False), package["cta"],
+                package["editorial_note"], brief["voice_mode"], brief["content_type"],
+                json.dumps({"provider_key": None, "action_type": "reading", "package": package}, ensure_ascii=False),
+                _now_iso(), _now_iso(),
+            ),
+        )
+        artifact_id = int(cursor.lastrowid)
+        brief_status = "completed" if verified else "blocked"
+        cursor.execute(
+            "UPDATE work_briefs SET status = ?, updated_at = ? WHERE id = ?",
+            (brief_status, _now_iso(), brief["id"]),
+        )
+
+        if verified and brief.get("project_id"):
+            cursor.execute(
+                "SELECT progress_value, effort_target, status FROM work_projects WHERE id = ?",
+                (brief["project_id"],),
+            )
+            row = cursor.fetchone()
+            if row:
+                current = float(row[0] or 0)
+                target = float(row[1] or 0)
+                new_progress = max(current, float(reading["end_page"]))
+                new_status = "completed" if target > 0 and new_progress >= target else row[2]
+                cursor.execute(
+                    """
+                    UPDATE work_projects
+                    SET progress_value = ?, progress_unit = 'pages', last_progress_at = ?,
+                        status = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (new_progress, _now_iso(), new_status, _now_iso(), brief["project_id"]),
+                )
+        self.db.conn.commit()
+
+        if not verified:
+            reason = reading.get("reason") or "reading_assimilation_blocked"
+            self.record_work_experience(
+                event_type="reading_blocked",
+                summary=f"Leitura bloqueada para '{brief.get('project_name') or 'projeto'}': {reason}",
+                project_id=brief.get("project_id"),
+                source_table="work_artifacts",
+                source_id=artifact_id,
+                source_kind="work_reading",
+                metadata={"brief_id": brief["id"], "artifact_id": artifact_id, "reason": reason},
+                emotional_weight=0.35,
+                tension_level=0.3,
+            )
+            output = f"Leitura bloqueada sem avancar progresso: {reason}."
+            self._update_run(run_id, "blocked", output, metrics={"artifact_id": artifact_id, "pages_read": 0}, errors=[reason])
+            return {
+                "success": False, "status": "blocked", "run_id": run_id,
+                "brief_id": brief["id"], "artifact_id": artifact_id,
+                "ticket_id": None, "pages_read": 0, "output_summary": output,
+                "warnings": [reason],
+            }
+
+        provenance = {
+            "brief_id": brief["id"],
+            "artifact_id": artifact_id,
+            "attachment_id": reading.get("attachment_id"),
+            "filename": reading.get("filename"),
+            "page_start": reading.get("start_page"),
+            "page_end": reading.get("end_page"),
+            "source_hash": reading.get("source_hash"),
+            "source_mode": reading.get("source_mode"),
+        }
+        self.record_work_experience(
+            event_type="reading_assimilated",
+            summary=(
+                f"Leitura assimilada de '{brief.get('project_name') or 'livro'}', "
+                f"paginas {reading.get('start_page')}-{reading.get('end_page')}: "
+                f"{_truncate(reading.get('summary') or '', 420)}"
+            ),
+            project_id=brief.get("project_id"),
+            source_table="work_artifacts",
+            source_id=artifact_id,
+            source_kind="work_reading",
+            metadata=provenance,
+            emotional_weight=0.68,
+            tension_level=0.45,
+        )
+        for index, idea in enumerate((reading.get("key_ideas") or [])[:8], start=1):
+            self.record_work_experience(
+                event_type="reading_idea",
+                summary=str(idea.get("idea") or ""),
+                project_id=brief.get("project_id"),
+                source_table="work_artifacts",
+                source_id=f"{artifact_id}:idea:{index}",
+                source_kind="work_reading",
+                metadata={**provenance, "pages": idea.get("pages"), "significance": idea.get("significance")},
+                emotional_weight=0.62,
+                tension_level=0.4,
+            )
+        for index, tension in enumerate((reading.get("tensions") or [])[:5], start=1):
+            self.record_work_experience(
+                event_type="reading_tension",
+                summary=f"{tension.get('pole_a')} / {tension.get('pole_b')}",
+                project_id=brief.get("project_id"),
+                source_table="work_artifacts",
+                source_id=f"{artifact_id}:tension:{index}",
+                source_kind="work_reading",
+                metadata={**provenance, "pages": tension.get("pages")},
+                emotional_weight=0.72,
+                tension_level=0.7,
+            )
+        for index, question in enumerate((reading.get("open_questions") or [])[:6], start=1):
+            self.record_work_experience(
+                event_type="reading_question",
+                summary=str(question.get("question") or ""),
+                project_id=brief.get("project_id"),
+                source_table="work_artifacts",
+                source_id=f"{artifact_id}:question:{index}",
+                source_kind="work_reading",
+                metadata={**provenance, "pages": question.get("pages")},
+                emotional_weight=0.6,
+                tension_level=0.58,
+            )
+
+        pages_read = int(reading.get("pages_read") or 0)
+        output = (
+            f"Work assimilou {pages_read} pagina(s) de "
+            f"'{brief.get('project_name') or 'leitura'}' com proveniencia verificavel."
+        )
+        self._update_run(
+            run_id, "completed", output,
+            metrics={
+                "artifact_id": artifact_id, "pages_read": pages_read,
+                "page_start": reading.get("start_page"), "page_end": reading.get("end_page"),
+                "source_hash": reading.get("source_hash"),
+            },
+        )
+        return {
+            "success": True, "status": "completed", "run_id": run_id,
+            "brief_id": brief["id"], "artifact_id": artifact_id,
+            "ticket_id": None, "pages_read": pages_read,
+            "output_summary": output, "warnings": [],
+        }
     def create_artifact_for_brief(
         self,
         brief_id: int,
@@ -84,6 +247,9 @@ class WorkPersistenceMixin:
 
         run_id = self._create_run(brief, trigger_source, cycle_id)
         package = self._build_work_package(brief)
+        if brief.get("action_type") == "reading":
+            return self._persist_reading_package(brief, run_id, package)
+
         cursor = self.db.conn.cursor()
         cursor.execute(
             """

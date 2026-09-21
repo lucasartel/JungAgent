@@ -2357,18 +2357,20 @@ class AgentIdentityContextBuilder:
             # Best-effort enrichment; never break the prompt on relational/pipeline gaps.
             pass
 
-        # Reading task awareness (Corte W5): show what the agent is currently
-        # reading so it can reference naturalmente during conversation.
+        # Reading awareness includes both the current commitment and knowledge
+        # already assimilated from verified source pages.
         try:
             cursor = self.db.conn.cursor()
-            today = date.today().isoformat()
-            if self._identity_table_exists(cursor, "work_task_schedule"):
+            if self._identity_table_exists(cursor, "work_projects"):
                 from engines.work_scheduler import WorkScheduler
 
                 scheduler = WorkScheduler(self.db)
-                reading_ctx = scheduler.get_reading_context(cycle_id=today)
+                reading_ctx = scheduler.get_reading_context(cycle_id=date.today().isoformat())
+                assimilated_ctx = scheduler.get_assimilated_reading_context()
                 if reading_ctx:
                     lines.append(reading_ctx)
+                if assimilated_ctx:
+                    lines.append(assimilated_ctx)
         except Exception:
             pass
 

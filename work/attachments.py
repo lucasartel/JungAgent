@@ -5,6 +5,7 @@ work_projects. Replaces the parallel work_task_attachments system.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -159,3 +160,114 @@ class WorkAttachmentMixin:
                         return text[:limit_chars] + "..."
                     return text
         return ""
+
+    def read_project_pages(
+        self,
+        project_id: int,
+        *,
+        start_page: int,
+        end_page: int,
+        max_chars: int = 60_000,
+    ) -> Dict[str, Any]:
+        """Read an exact, bounded page range from a project's PDF.
+
+        The stored PDF is authoritative. Page-delimited extracted text is only
+        a fallback for newer attachments; legacy concatenated text is rejected
+        because proportional slicing cannot support page-level provenance.
+        """
+        requested_start = max(1, int(start_page))
+        requested_end = max(requested_start, int(end_page))
+        char_budget = max(4_000, int(max_chars))
+
+        attachments = self.list_project_attachments(int(project_id))
+        candidates = [
+            item for item in attachments
+            if item.get("mime_type") == "application/pdf"
+            and item.get("extraction_status") == "extracted"
+        ]
+        if not candidates:
+            return {
+                "verified": False,
+                "reason": "reading_pdf_not_extracted",
+                "requested_start_page": requested_start,
+                "requested_end_page": requested_end,
+            }
+
+        attachment = candidates[0]
+        raw = self.get_project_attachment(int(attachment["id"])) or attachment
+        pages: List[str] = []
+        source_mode = "stored_pdf"
+        total_pages = int(raw.get("page_count") or 0)
+        stored_path = Path(str(raw.get("stored_path") or ""))
+
+        if stored_path.is_file():
+            try:
+                from PyPDF2 import PdfReader
+
+                reader = PdfReader(str(stored_path))
+                total_pages = len(reader.pages)
+                upper = min(requested_end, total_pages)
+                for page_number in range(requested_start, upper + 1):
+                    pages.append(reader.pages[page_number - 1].extract_text() or "")
+            except Exception as exc:
+                logger.warning("reading_pages: stored PDF could not be read: %s", exc)
+                pages = []
+
+        if not pages:
+            extracted_text = str(raw.get("extracted_text") or "")
+            delimited_pages = extracted_text.split("\f") if "\f" in extracted_text else []
+            if not delimited_pages:
+                return {
+                    "verified": False,
+                    "reason": "reading_exact_pages_unavailable",
+                    "attachment_id": attachment.get("id"),
+                    "filename": attachment.get("filename"),
+                    "requested_start_page": requested_start,
+                    "requested_end_page": requested_end,
+                }
+            source_mode = "page_delimited_extraction"
+            total_pages = len(delimited_pages)
+            pages = delimited_pages[requested_start - 1:min(requested_end, total_pages)]
+
+        accepted: List[Dict[str, Any]] = []
+        used_chars = 0
+        for offset, page_text in enumerate(pages):
+            page_number = requested_start + offset
+            clean_text = str(page_text or "").strip()
+            rendered = f"[PAGE {page_number}]\n{clean_text}\n"
+            if accepted and used_chars + len(rendered) > char_budget:
+                break
+            accepted.append({"page": page_number, "text": clean_text})
+            used_chars += len(rendered)
+
+        meaningful_chars = sum(len(item["text"]) for item in accepted)
+        if not accepted or meaningful_chars < 120:
+            return {
+                "verified": False,
+                "reason": "reading_pages_have_insufficient_text",
+                "attachment_id": attachment.get("id"),
+                "filename": attachment.get("filename"),
+                "requested_start_page": requested_start,
+                "requested_end_page": requested_end,
+            }
+
+        source_text = "\n".join(
+            f"[PAGE {item['page']}]\n{item['text']}" for item in accepted
+        )
+        actual_end = int(accepted[-1]["page"])
+        return {
+            "verified": True,
+            "attachment_id": int(attachment["id"]),
+            "filename": attachment.get("filename"),
+            "source_mode": source_mode,
+            "source_hash": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
+            "requested_start_page": requested_start,
+            "requested_end_page": requested_end,
+            "start_page": requested_start,
+            "end_page": actual_end,
+            "pages_read": actual_end - requested_start + 1,
+            "total_pages": total_pages,
+            "char_count": len(source_text),
+            "truncated_by_budget": actual_end < min(requested_end, total_pages),
+            "text": source_text,
+        }
