@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, List, Optional
 
 from work.common import (
@@ -11,6 +12,8 @@ from work.common import (
     _slugify,
     _truncate,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class WorkPersistenceMixin:
@@ -216,6 +219,24 @@ class WorkPersistenceMixin:
                 tension_level=0.58,
             )
 
+        rumination_tensions_promoted = 0
+        rumination_warnings: List[str] = []
+        try:
+            from jung_rumination import RuminationEngine
+
+            rumination_tensions_promoted = RuminationEngine(
+                self.db
+            ).promote_pending_knowledge_tensions(
+                self.admin_user_id,
+                limit=4,
+            )
+        except Exception as exc:
+            logger.warning(
+                "reading_assimilation: immediate rumination promotion failed: %s",
+                exc,
+            )
+            rumination_warnings.append("reading_rumination_promotion_failed")
+
         pages_read = int(reading.get("pages_read") or 0)
         output = (
             f"Work assimilou {pages_read} pagina(s) de "
@@ -227,13 +248,16 @@ class WorkPersistenceMixin:
                 "artifact_id": artifact_id, "pages_read": pages_read,
                 "page_start": reading.get("start_page"), "page_end": reading.get("end_page"),
                 "source_hash": reading.get("source_hash"),
+                "assimilation_mode": reading.get("assimilation_mode"),
+                "rumination_tensions_promoted": rumination_tensions_promoted,
             },
         )
         return {
             "success": True, "status": "completed", "run_id": run_id,
             "brief_id": brief["id"], "artifact_id": artifact_id,
             "ticket_id": None, "pages_read": pages_read,
-            "output_summary": output, "warnings": [],
+            "output_summary": output, "warnings": rumination_warnings,
+            "rumination_tensions_promoted": rumination_tensions_promoted,
         }
     def create_artifact_for_brief(
         self,

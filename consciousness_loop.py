@@ -2560,6 +2560,7 @@ class ConsciousnessLoopManager:
                 "tensions_processed": digest_stats.get("tensions_processed", 0),
                 "detection_batches_processed": detection_stats.get("batches_processed", 0),
                 "detected_tensions_created": detection_stats.get("tensions_created", 0),
+                "knowledge_tensions_promoted": detection_stats.get("knowledge_tensions_promoted", 0),
                 "pending_detection_fragments": detection_stats.get("pending_fragments", 0),
                 "injected_material_count": injected_materials["material_count"],
                 "injected_fragment_count": injected_materials["fragment_count"],

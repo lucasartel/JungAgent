@@ -283,7 +283,7 @@ def test_drain_detection_backlog_retries_bounded_batches(rumination_db, monkeypa
             SELECT id, detection_attempts
             FROM rumination_fragments
             WHERE user_id = ? AND processed = 0
-            ORDER BY detection_attempts ASC, id DESC
+            ORDER BY id DESC, detection_attempts ASC
             LIMIT 12
             """,
             (selected_user_id,),
@@ -308,13 +308,59 @@ def test_drain_detection_backlog_retries_bounded_batches(rumination_db, monkeypa
     stats = engine.drain_detection_backlog(user_id, max_batches=3)
 
     assert len(calls) == 3
-    assert calls[0] != calls[1]
-    assert calls[0] == calls[2]
+    assert calls[0] == calls[1] == calls[2]
     assert stats == {
         "batches_processed": 3,
         "tensions_created": 0,
-        "pending_fragments": 24,
+        "knowledge_tensions_promoted": 0,
+        "pending_fragments": 12,
     }
     assert conn.execute(
         "SELECT MIN(detection_attempts) FROM rumination_fragments"
+    ).fetchone()[0] == 0
+
+
+def test_promote_pending_knowledge_tension_preserves_fragment_provenance(rumination_db):
+    engine = RuminationEngine(rumination_db)
+    conn = rumination_db.conn
+    user_id = engine.admin_user_id
+    cursor = conn.execute(
+        """
+        INSERT INTO rumination_fragments (
+            user_id, fragment_type, content, processed, detection_attempts,
+            source_kind, source_table, source_id, source_metadata_json,
+            tension_level
+        ) VALUES (?, 'knowledge_tension', ?, 0, 0, 'work_reading',
+                  'work_artifacts', '77:tension:1', ?, 0.72)
+        """,
+        (
+            user_id,
+            "tempo mensuravel / duracao vivida",
+            '{"filename":"bergson.pdf","pages":[12,13]}',
+        ),
+    )
+    fragment_id = int(cursor.lastrowid)
+    conn.commit()
+
+    promoted = engine.promote_pending_knowledge_tensions(user_id, limit=4)
+
+    assert promoted == 1
+    tension = conn.execute(
+        """
+        SELECT tension_type, pole_a_content, pole_b_content,
+               pole_a_fragment_ids, pole_b_fragment_ids, tension_description
+        FROM rumination_tensions
+        WHERE tension_type = 'epistemic_reading'
+        ORDER BY id DESC LIMIT 1
+        """
+    ).fetchone()
+    assert tension["pole_a_content"] == "tempo mensuravel"
+    assert tension["pole_b_content"] == "duracao vivida"
+    assert json.loads(tension["pole_a_fragment_ids"]) == [fragment_id]
+    assert json.loads(tension["pole_b_fragment_ids"]) == [fragment_id]
+    assert "bergson.pdf" in tension["tension_description"]
+    assert conn.execute(
+        "SELECT processed FROM rumination_fragments WHERE id = ?",
+        (fragment_id,),
     ).fetchone()[0] == 1
+    assert engine.promote_pending_knowledge_tensions(user_id, limit=4) == 0

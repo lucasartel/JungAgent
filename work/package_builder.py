@@ -18,6 +18,58 @@ logger = logging.getLogger(__name__)
 
 
 class WorkPackageBuilderMixin:
+    def _extractive_reading_fields(
+        self,
+        source_text: str,
+        start_page: int,
+        end_page: int,
+    ):
+        """Build a source-only fallback when the model cannot honor the JSON contract."""
+        page_pattern = re.compile(
+            r"\[PAGE\s+(\d+)\]\s*(.*?)(?=\n\[PAGE\s+\d+\]|\Z)",
+            re.DOTALL,
+        )
+        page_passages = []
+        for page_raw, page_text in page_pattern.findall(source_text or ""):
+            page = int(page_raw)
+            if not start_page <= page <= end_page:
+                continue
+            normalized = re.sub(r"\s+", " ", page_text).strip()
+            if len(normalized) < 40:
+                continue
+            sentences = [
+                item.strip()
+                for item in re.split(r"(?<=[.!?])\s+", normalized)
+                if len(item.strip()) >= 40
+            ]
+            passage = sentences[0] if sentences else normalized
+            page_passages.append((page, passage))
+
+        if not page_passages:
+            return "", [], [], [], []
+
+        summary_words = []
+        for _page, passage in page_passages:
+            remaining = 220 - len(summary_words)
+            if remaining <= 0:
+                break
+            summary_words.extend(passage.split()[:remaining])
+        summary = " ".join(summary_words).strip()
+
+        key_ideas = []
+        for page, passage in page_passages[:6]:
+            idea = " ".join(passage.split()[:70]).strip()
+            if idea:
+                key_ideas.append({
+                    "idea": idea,
+                    "pages": [page],
+                    "significance": "Passagem preservada diretamente da fonte para elaboracao posterior.",
+                })
+
+        if len(summary) < 80 or not key_ideas:
+            return "", [], [], [], []
+        return summary, key_ideas, [], [], []
+
     def _reading_plan(self, brief: Dict[str, Any], project: Dict[str, Any]) -> Dict[str, int]:
         extracted = brief.get("extracted") or _json_loads_maybe(brief.get("extracted_json") or "{}")
         plan = extracted.get("reading_plan") or {}
@@ -96,8 +148,10 @@ SOURCE END
             concepts = [str(item).strip() for item in (parsed.get("concepts") or []) if str(item).strip()]
             return summary, key_ideas, tensions, questions, concepts
 
+        llm_attempts = 1
         summary, key_ideas, tensions, questions, concepts = parsed_fields(raw_response)
         if len(summary) < 80 or not key_ideas:
+            llm_attempts = 2
             retry_prompt = f"""
 A resposta anterior nao cumpriu o contrato. Releia a fonte e devolva somente
 um objeto JSON compacto, sem markdown nem comentario. Use as chaves summary,
@@ -116,11 +170,23 @@ SOURCE END
                 source.update({"verified": False, "reason": f"reading_assimilation_retry_error:{type(exc).__name__}"})
                 return self._blocked_reading_package(brief, project, source)
 
-        if len(summary) < 80 or not key_ideas:
-            source.update({"verified": False, "reason": "reading_assimilation_invalid_output", "attempts": 2})
-            return self._blocked_reading_package(brief, project, source)
-
         start_page, end_page = int(source["start_page"]), int(source["end_page"])
+        extractive_fallback = False
+        if len(summary) < 80 or not key_ideas:
+            summary, key_ideas, tensions, questions, concepts = self._extractive_reading_fields(
+                str(source.get("text") or ""), start_page, end_page
+            )
+            extractive_fallback = bool(summary and key_ideas)
+            if not extractive_fallback:
+                source.update({"verified": False, "reason": "reading_assimilation_invalid_output", "attempts": 2})
+                return self._blocked_reading_package(brief, project, source)
+            logger.warning(
+                "reading_assimilation: using source-only extractive fallback project_id=%s pages=%s-%s",
+                project.get("id"),
+                start_page,
+                end_page,
+            )
+
         def page_refs(item: Dict[str, Any]) -> List[int]:
             refs = []
             for value in item.get("pages") or []:
@@ -150,13 +216,27 @@ SOURCE END
                 body_lines.append(f"- {item['question']} (p. {', '.join(str(page) for page in item['pages'])})")
 
         reading = {key: value for key, value in source.items() if key != "text"}
-        reading.update({"summary": summary, "key_ideas": key_ideas[:8], "tensions": tensions[:5], "open_questions": questions[:6], "concepts": concepts[:12]})
+        reading.update({
+            "summary": summary,
+            "key_ideas": key_ideas[:8],
+            "tensions": tensions[:5],
+            "open_questions": questions[:6],
+            "concepts": concepts[:12],
+            "assimilation_mode": "extractive_fallback" if extractive_fallback else "llm_structured",
+            "llm_attempts": llm_attempts,
+        })
         title = _truncate(f"Leitura: {project.get('name')} (p. {start_page}-{end_page})", 120)
         return {
             "title": title, "excerpt": _truncate(summary, 280), "body": "\n".join(body_lines),
             "slug": _slugify(title), "tags": concepts[:8], "categories": [], "cta": "",
-            "editorial_note": "Conhecimento extraido do PDF com proveniencia por pagina.",
-            "generation_mode": "reading_assimilation", "review_flags": [], "daily_intent": {},
+            "editorial_note": (
+                "Conhecimento extraido diretamente do PDF apos falha da sintese estruturada."
+                if extractive_fallback
+                else "Conhecimento extraido do PDF com proveniencia por pagina."
+            ),
+            "generation_mode": "reading_assimilation",
+            "review_flags": ["reading_extractive_fallback"] if extractive_fallback else [],
+            "daily_intent": {},
             "provider_key": None, "action_type": "reading", "content_type": "reading_note",
             "firecrawl_research": {"used": False, "destination_used": False, "world_used": False, "urls": [], "errors": []},
             "reading_assimilation": reading,

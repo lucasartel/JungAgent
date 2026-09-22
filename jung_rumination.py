@@ -444,7 +444,17 @@ class RuminationEngine:
             WHERE user_id = ?{relation_clause}
               AND processed = 0
               AND COALESCE(detection_attempts, 0) < ?
-            ORDER BY COALESCE(detection_attempts, 0) ASC, created_at DESC
+            ORDER BY
+                CASE
+                    WHEN fragment_type IN (
+                        'knowledge_tension', 'knowledge_question',
+                        'knowledge_assimilation', 'knowledge_fragment'
+                    ) THEN 0
+                    ELSE 1
+                END,
+                created_at DESC,
+                id DESC,
+                COALESCE(detection_attempts, 0) ASC
             LIMIT 12
         """, (user_id, *relation_params, MAX_DETECTION_ATTEMPTS_WITHOUT_TENSION))
 
@@ -570,6 +580,114 @@ class RuminationEngine:
             logger.error(f"❌ Erro na detecção: {e}")
             return []
 
+    def promote_pending_knowledge_tensions(
+        self,
+        user_id: str = None,
+        relation_id: Optional[str] = None,
+        limit: int = 4,
+    ) -> int:
+        """Promote explicit reading tensions without asking an LLM to rediscover them."""
+        user_id = user_id or self.admin_user_id
+        relation_id = self._resolve_relation_id(user_id, relation_id)
+        if not self._relation_allowed(user_id, relation_id):
+            return 0
+
+        cursor = self.db.conn.cursor()
+        resolved_relation, relation_clause, relation_params = self._relation_scope(
+            "rumination_fragments", user_id, relation_id
+        )
+        cursor.execute(
+            f"""
+            SELECT id, content, tension_level, source_metadata_json
+            FROM rumination_fragments
+            WHERE user_id = ?{relation_clause}
+              AND fragment_type = 'knowledge_tension'
+              AND processed = 0
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (user_id, *relation_params, max(0, int(limit))),
+        )
+        fragments = cursor.fetchall()
+        promoted = 0
+        now = datetime.now().isoformat()
+
+        for fragment in fragments:
+            content = str(fragment[1] or "").strip()
+            if " / " not in content:
+                continue
+            pole_a, pole_b = (part.strip() for part in content.split(" / ", 1))
+            if not pole_a or not pole_b:
+                continue
+
+            cursor.execute(
+                """
+                SELECT id
+                FROM rumination_tensions
+                WHERE user_id = ?
+                  AND COALESCE(relation_id, '') = COALESCE(?, '')
+                  AND tension_type = 'epistemic_reading'
+                  AND pole_a_content = ?
+                  AND pole_b_content = ?
+                LIMIT 1
+                """,
+                (user_id, resolved_relation, pole_a, pole_b),
+            )
+            existing = cursor.fetchone()
+            if not existing:
+                metadata = {}
+                try:
+                    metadata = json.loads(fragment[3] or "{}")
+                except Exception:
+                    metadata = {}
+                pages = metadata.get("pages") or []
+                source_label = metadata.get("filename") or "fonte de leitura"
+                description = f"Tensao extraida de {source_label}"
+                if pages:
+                    description += f" nas paginas {', '.join(str(page) for page in pages)}"
+                cursor.execute(
+                    """
+                    INSERT INTO rumination_tensions (
+                        user_id, agent_instance, relation_id, tension_type,
+                        pole_a_content, pole_a_type, pole_a_fragment_ids,
+                        pole_b_content, pole_b_type, pole_b_fragment_ids,
+                        tension_description, intensity, maturity_score,
+                        evidence_count, last_evidence_at
+                    ) VALUES (?, ?, ?, 'epistemic_reading', ?, 'knowledge', ?,
+                              ?, 'knowledge', ?, ?, ?, 0.0, 1, ?)
+                    """,
+                    (
+                        user_id,
+                        self._agent_instance(),
+                        resolved_relation,
+                        pole_a,
+                        json.dumps([int(fragment[0])]),
+                        pole_b,
+                        json.dumps([int(fragment[0])]),
+                        description,
+                        max(0.55, float(fragment[2] or 0.0)),
+                        now,
+                    ),
+                )
+                promoted += 1
+
+            self._register_detection_attempts(
+                cursor,
+                [int(fragment[0])],
+                mark_processed=True,
+            )
+
+        self.db.conn.commit()
+        if promoted:
+            self._log_operation(
+                "detecção",
+                user_id,
+                relation_id=resolved_relation,
+                input_summary=f"{len(fragments)} tensoes estruturadas de leitura",
+                output_summary=f"{promoted} tensoes epistemicas promovidas",
+            )
+        return promoted
+
     def drain_detection_backlog(
         self,
         user_id: str = None,
@@ -606,8 +724,12 @@ class RuminationEngine:
             row = cursor.fetchone()
             return int(row[0]), int(row[1])
 
+        promoted_knowledge_tensions = self.promote_pending_knowledge_tensions(
+            user_id,
+            relation_id=relation_id,
+        )
         batches_processed = 0
-        tensions_created = 0
+        tensions_created = promoted_knowledge_tensions
         previous_pending, previous_attempts = pending_state()
         while previous_pending >= 2 and batches_processed < max(0, int(max_batches)):
             created = self.detect_tensions(user_id, relation_id=relation_id)
@@ -631,6 +753,7 @@ class RuminationEngine:
         return {
             "batches_processed": batches_processed,
             "tensions_created": tensions_created,
+            "knowledge_tensions_promoted": promoted_knowledge_tensions,
             "pending_fragments": previous_pending,
         }
 

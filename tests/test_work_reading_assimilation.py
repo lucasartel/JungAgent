@@ -153,3 +153,55 @@ def test_reading_package_retries_an_invalid_model_response(monkeypatch):
         "objective": "Ler paginas 1 a 2",
         "extracted_json": json.dumps({"reading_plan": {"start_page": 1, "end_page": 2}}),
     })
+
+    assert len(calls) == 2
+    assert package["generation_mode"] == "reading_assimilation"
+    assert package["reading_assimilation"]["assimilation_mode"] == "llm_structured"
+    assert package["reading_assimilation"]["summary"] == payload["summary"]
+
+
+def test_reading_package_uses_source_only_fallback_after_two_invalid_responses(monkeypatch):
+    engine = _ReadingEngine()
+    page_one = " ".join(
+        ["A experiencia do tempo exige atencao ao movimento vivido e nao apenas a medidas externas."] * 5
+    )
+    page_two = " ".join(
+        ["A intuicao acompanha a duracao sem substituir o texto por uma explicacao pronta."] * 5
+    )
+    engine.read_project_pages = lambda *args, **kwargs: {
+        "verified": True,
+        "attachment_id": 4,
+        "filename": "livro.pdf",
+        "source_mode": "stored_pdf",
+        "source_hash": "source-hash",
+        "start_page": 1,
+        "end_page": 2,
+        "pages_read": 2,
+        "total_pages": 20,
+        "char_count": len(page_one) + len(page_two),
+        "truncated_by_budget": False,
+        "text": f"[PAGE 1]\n{page_one}\n[PAGE 2]\n{page_two}",
+    }
+    calls = []
+
+    def invalid_response(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "resposta fora do contrato"
+
+    monkeypatch.setattr("work.package_builder.get_llm_response", invalid_response)
+
+    package = engine._build_work_package({
+        "project_id": 10,
+        "action_type": "reading",
+        "objective": "Ler paginas 1 a 2",
+        "extracted_json": json.dumps({"reading_plan": {"start_page": 1, "end_page": 2}}),
+    })
+
+    assert len(calls) == 2
+    assert package["generation_mode"] == "reading_assimilation"
+    assert package["review_flags"] == ["reading_extractive_fallback"]
+    reading = package["reading_assimilation"]
+    assert reading["assimilation_mode"] == "extractive_fallback"
+    assert reading["pages_read"] == 2
+    assert reading["key_ideas"][0]["pages"] == [1]
+    assert "experiencia do tempo" in reading["summary"].lower()
