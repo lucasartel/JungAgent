@@ -1,10 +1,29 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import json
+import importlib.util
 import logging
 import sqlite3
 import time
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
 
+try:
+    from core.db import cognitive_provenance as _provenance
+except ImportError:  # Direct-file tests deliberately avoid importing core.__init__.
+    _path = Path(__file__).with_name("cognitive_provenance.py")
+    _spec = importlib.util.spec_from_file_location("cognitive_provenance_for_dreams", _path)
+    _provenance = importlib.util.module_from_spec(_spec)
+    assert _spec.loader is not None
+    _spec.loader.exec_module(_provenance)
+
+AUTHORIZED_AGGREGATE = _provenance.AUTHORIZED_AGGREGATE
+INSTANCE_GLOBAL = _provenance.INSTANCE_GLOBAL
+cognitive_agent_instance = _provenance.cognitive_agent_instance
+cognitive_provenance = _provenance.cognitive_provenance
+json_payload = _provenance.json_payload
+normalize_source_refs = _provenance.normalize_source_refs
+resolve_cognitive_origin = _provenance.resolve_cognitive_origin
 from payload_storage import persistable_image_url, sanitize_json_text
 
 logger = logging.getLogger(__name__)
@@ -19,14 +38,40 @@ class DreamDatabaseMixin:
         regulatory_function: str = "",
         compensated_attitude: str = "",
         dream_mood: str = "",
+        *,
+        relation_id: Optional[str] = None,
+        origin_class: Optional[str] = None,
+        agent_instance: Optional[str] = None,
+        source_refs: Optional[Iterable[str]] = None,
+        provenance: Optional[Dict[str, Any]] = None,
     ) -> Optional[int]:
-        """Salva um novo sonho gerado pelo Motor OnÃ­rico"""
+        """Salva um sonho global preservando a origem privada ou agregada."""
         with self._lock:
             try:
+                instance, resolved_origin, resolved_relation, participant = resolve_cognitive_origin(
+                    self,
+                    participant_user_id=user_id,
+                    relation_id=relation_id,
+                    origin_class=origin_class,
+                    agent_instance=agent_instance,
+                )
+                provenance_payload = cognitive_provenance(
+                    origin_class=resolved_origin,
+                    relation_id=resolved_relation,
+                    participant_user_id=participant,
+                    extra=provenance,
+                )
                 cursor = self.conn.cursor()
                 cursor.execute("""
                     INSERT INTO agent_dreams (
                         user_id,
+                        agent_instance,
+                        ownership_class,
+                        origin_class,
+                        origin_relation_id,
+                        origin_participant_user_id,
+                        source_refs_json,
+                        provenance_json,
                         dream_content,
                         symbolic_theme,
                         regulatory_function,
@@ -34,9 +79,16 @@ class DreamDatabaseMixin:
                         dream_mood,
                         status
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, 'pending')
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 """, (
                     user_id,
+                    instance,
+                    INSTANCE_GLOBAL,
+                    resolved_origin,
+                    resolved_relation,
+                    participant,
+                    json_payload(normalize_source_refs(source_refs), []),
+                    json_payload(provenance_payload, {}),
                     dream_content,
                     symbolic_theme,
                     regulatory_function,
@@ -118,50 +170,122 @@ class DreamDatabaseMixin:
                     logger.error(f"âŒ Erro ao atualizar imagem do sonho: {e}")
                     return False
 
-    def get_latest_dream_insight(self, user_id: str) -> Optional[Dict]:
-        """Busca o insight onÃ­rico mais recente, independente de status"""
+    def _dream_read_scope(
+        self,
+        *,
+        user_id: str,
+        relation_id: Optional[str],
+        agent_instance: Optional[str],
+    ) -> tuple[str, list[Any]]:
+        instance = cognitive_agent_instance(self, agent_instance)
+        resolved_relation = None
+        resolver = getattr(self, "resolve_relation_id", None)
+        if callable(resolver):
+            resolved_relation = resolver(
+                agent_instance=instance,
+                participant_user_id=user_id,
+                relation_id=relation_id,
+            )
+        elif relation_id:
+            resolved_relation = relation_id
+        if resolved_relation:
+            return (
+                "agent_instance = ? AND (origin_relation_id = ? OR origin_class IN (?, ?))",
+                [instance, resolved_relation, INSTANCE_GLOBAL, AUTHORIZED_AGGREGATE],
+            )
+        if callable(resolver):
+            from instance_config import ADMIN_USER_ID
+
+            if str(user_id) != str(ADMIN_USER_ID):
+                return "1 = 0", []
+        return (
+            "(agent_instance = ? OR agent_instance IS NULL) AND user_id = ? "
+            "AND origin_relation_id IS NULL",
+            [instance, user_id],
+        )
+
+    def get_latest_dream_insight(
+        self,
+        user_id: str,
+        *,
+        relation_id: Optional[str] = None,
+        agent_instance: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """Busca residuo visivel no escopo sem atravessar outra Relation."""
         with self._lock:
             cursor = self.conn.cursor()
-            cursor.execute("""
+            scope_sql, scope_params = self._dream_read_scope(
+                user_id=user_id,
+                relation_id=relation_id,
+                agent_instance=agent_instance,
+            )
+            cursor.execute(f"""
                 UPDATE agent_dreams
                 SET status = 'faded'
-                WHERE user_id = ?
+                WHERE {scope_sql}
                   AND COALESCE(status, 'pending') = 'pending'
                   AND extracted_insight IS NOT NULL
                   AND created_at < datetime('now', '-24 hours')
-            """, (user_id,))
-            cursor.execute("""
-                SELECT id, dream_content, extracted_insight, symbolic_theme 
+            """, scope_params)
+            cursor.execute(f"""
+                SELECT id, dream_content, extracted_insight, symbolic_theme,
+                       ownership_class, origin_class, origin_relation_id,
+                       source_refs_json, provenance_json
                 FROM agent_dreams
-                WHERE user_id = ?
+                WHERE {scope_sql}
                   AND extracted_insight IS NOT NULL
                   AND COALESCE(status, 'pending') = 'pending'
                   AND created_at >= datetime('now', '-24 hours')
                 ORDER BY created_at DESC
                 LIMIT 1
-            """, (user_id,))
+            """, scope_params)
             
             row = cursor.fetchone()
             if row:
-                return dict(row)
+                item = dict(row)
+                item["source_refs"] = json.loads(item.pop("source_refs_json") or "[]")
+                item["provenance"] = json.loads(item.pop("provenance_json") or "{}")
+                return item
             return None
 
-    def get_pending_unprocessed_dreams(self, user_id: str = None) -> List[Dict]:
+    def get_pending_unprocessed_dreams(
+        self,
+        user_id: Optional[str] = None,
+        *,
+        relation_id: Optional[str] = None,
+        agent_instance: Optional[str] = None,
+    ) -> List[Dict]:
         """Busca sonhos que ainda nÃ£o passaram pela ruminaÃ§Ã£o"""
         with self._lock:
             cursor = self.conn.cursor()
             query = """
-                SELECT id, user_id, dream_content, symbolic_theme 
+                SELECT id, user_id, dream_content, symbolic_theme,
+                       ownership_class, origin_class, origin_relation_id,
+                       source_refs_json, provenance_json
                 FROM agent_dreams
                 WHERE status = 'pending' AND extracted_insight IS NULL
             """
-            params = ()
+            params: list[Any] = []
             if user_id:
-                query += " AND user_id = ?"
-                params = (user_id,)
+                scope_sql, scope_params = self._dream_read_scope(
+                    user_id=user_id,
+                    relation_id=relation_id,
+                    agent_instance=agent_instance,
+                )
+                query += f" AND {scope_sql}"
+                params.extend(scope_params)
+            else:
+                query += " AND agent_instance = ? AND origin_relation_id IS NULL"
+                params.append(cognitive_agent_instance(self, agent_instance))
                 
             cursor.execute(query, params)
-            return [dict(row) for row in cursor.fetchall()]
+            dreams = []
+            for row in cursor.fetchall():
+                item = dict(row)
+                item["source_refs"] = json.loads(item.pop("source_refs_json") or "[]")
+                item["provenance"] = json.loads(item.pop("provenance_json") or "{}")
+                dreams.append(item)
+            return dreams
 
     def mark_dream_delivered(self, dream_id: int) -> bool:
         """Sinaliza que o insight onÃ­rico foi usado na conversa"""

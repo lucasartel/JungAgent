@@ -35,6 +35,15 @@ class TheoryOfMindEngine:
         """Builds a longitudinal Theory of Mind snapshot for the user."""
         target_date = snapshot_date or datetime.now(timezone.utc).date().isoformat()
         evidence_refs: List[str] = []
+        relation_id = None
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        if callable(resolver):
+            relation_id = resolver(
+                agent_instance=self.agent_instance,
+                participant_user_id=user_id,
+            )
+            if not relation_id and str(user_id) != str(ADMIN_USER_ID):
+                raise ValueError("relation_required_for_theory_of_mind")
 
         # 1. Obter relational_state
         rel_state = {}
@@ -59,6 +68,7 @@ class TheoryOfMindEngine:
             try:
                 q_triples = self.db.list_symbolic_triples(
                     agent_instance=self.agent_instance,
+                    relation_id=relation_id,
                     predicate="questiona",
                     limit=5,
                 )
@@ -103,6 +113,7 @@ class TheoryOfMindEngine:
                     affective_trajectory=affective_trajectory,
                     relational_needs=relational_needs,
                     evidence_refs=clean_refs,
+                    relation_id=relation_id,
                 )
             except Exception as exc:
                 logger.warning("ToM: upsert error: %s", exc)
@@ -111,6 +122,7 @@ class TheoryOfMindEngine:
             "snapshot_id": snapshot_id,
             "user_id": user_id,
             "snapshot_date": target_date,
+            "relation_id": relation_id,
             "epistemic_state": epistemic_state,
             "affective_trajectory": affective_trajectory,
             "relational_needs": relational_needs,

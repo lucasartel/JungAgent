@@ -127,6 +127,10 @@ def test_causal_neighborhood_recursive_traversal(test_db):
 
 
 def test_symbolic_graph_extractor(test_db):
+    relation_id = test_db.register_agent_relation(
+        agent_instance="test_jung",
+        participant_user_id="u_test",
+    )
     cursor = test_db.conn.cursor()
     cursor.execute(
         """
@@ -144,6 +148,8 @@ def test_symbolic_graph_extractor(test_db):
         CREATE TABLE IF NOT EXISTS rumination_insights (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT,
+            agent_instance TEXT,
+            relation_id TEXT,
             insight_type TEXT,
             symbol_content TEXT,
             question_content TEXT,
@@ -169,6 +175,14 @@ def test_symbolic_graph_extractor(test_db):
         VALUES ('u_test', 'simbolo', 'Uma vela acesa', 'Quem sustenta o fogo?')
         """
     )
+    cursor.execute(
+        "UPDATE user_facts SET agent_instance = ?, relation_id = ? WHERE user_id = ?",
+        ("test_jung", relation_id, "u_test"),
+    )
+    cursor.execute(
+        "UPDATE rumination_insights SET agent_instance = ?, relation_id = ? WHERE user_id = ?",
+        ("test_jung", relation_id, "u_test"),
+    )
     test_db.conn.commit()
 
     extractor = SymbolicGraphExtractor(test_db, agent_instance="test_jung")
@@ -177,7 +191,9 @@ def test_symbolic_graph_extractor(test_db):
     assert stats["total_candidates"] >= 3
     assert stats["persisted"] >= 3
 
-    triples = test_db.list_symbolic_triples(agent_instance="test_jung")
+    triples = test_db.list_symbolic_triples(
+        agent_instance="test_jung", relation_id=relation_id
+    )
     assert len(triples) >= 3
 
 

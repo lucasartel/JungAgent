@@ -38,9 +38,30 @@ class SymbolicGraphExtractor:
         self.db = db_manager
         self.agent_instance = agent_instance or getattr(db_manager, "agent_instance", AGENT_INSTANCE)
 
+    def _relation_id(self, user_id: str) -> Optional[str]:
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        if not callable(resolver):
+            return None
+        relation_id = resolver(
+            agent_instance=self.agent_instance,
+            participant_user_id=user_id,
+        )
+        if not relation_id and str(user_id) != str(ADMIN_USER_ID):
+            raise ValueError("relation_required_for_symbolic_extraction")
+        return relation_id
+
     def extract_from_user_facts(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Extracts candidate triples from user_facts_v2 or user_facts."""
         triples: List[Dict[str, Any]] = []
+        relation_id = self._relation_id(user_id)
+        scope_sql = ""
+        scope_params: List[Any] = []
+        if relation_id:
+            scope_sql = " AND agent_instance = ? AND relation_id = ?"
+            scope_params = [self.agent_instance, relation_id]
+        elif hasattr(self.db, "resolve_relation_id"):
+            scope_sql = " AND (agent_instance = ? OR agent_instance IS NULL) AND relation_id IS NULL"
+            scope_params = [self.agent_instance]
         try:
             cursor = self.db.conn.cursor()
             try:
@@ -49,10 +70,10 @@ class SymbolicGraphExtractor:
                     SELECT id, fact_category, fact_type, fact_attribute, fact_value,
                            confidence, source_conversation_id
                     FROM user_facts_v2
-                    WHERE user_id = ? AND is_current = 1
+                    WHERE user_id = ? AND is_current = 1 {scope_sql}
                     ORDER BY id DESC LIMIT ?
-                    """,
-                    (user_id, limit),
+                    """.format(scope_sql=scope_sql),
+                    (user_id, *scope_params, limit),
                 )
                 rows = cursor.fetchall()
                 for r in rows:
@@ -77,6 +98,8 @@ class SymbolicGraphExtractor:
                             "object_type": category.lower(),
                             "confidence": float(r["confidence"] or 1.0),
                             "source_ref": source_ref,
+                            "origin_relation_id": relation_id,
+                            "origin_participant_user_id": user_id,
                         }
                     )
             except Exception:
@@ -85,10 +108,10 @@ class SymbolicGraphExtractor:
                     SELECT id, fact_category, fact_key, fact_value,
                            confidence, source_conversation_id
                     FROM user_facts
-                    WHERE user_id = ? AND is_current = 1
+                    WHERE user_id = ? AND is_current = 1 {scope_sql}
                     ORDER BY id DESC LIMIT ?
-                    """,
-                    (user_id, limit),
+                    """.format(scope_sql=scope_sql),
+                    (user_id, *scope_params, limit),
                 )
                 rows = cursor.fetchall()
                 for r in rows:
@@ -113,6 +136,8 @@ class SymbolicGraphExtractor:
                             "object_type": category.lower(),
                             "confidence": float(r["confidence"] or 1.0),
                             "source_ref": source_ref,
+                            "origin_relation_id": relation_id,
+                            "origin_participant_user_id": user_id,
                         }
                     )
         except Exception as exc:
@@ -120,19 +145,44 @@ class SymbolicGraphExtractor:
 
         return triples
 
-    def extract_from_identity_contradictions(self, limit: int = 50) -> List[Dict[str, Any]]:
+    def extract_from_identity_contradictions(
+        self,
+        limit: int = 50,
+        *,
+        relation_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """Extracts candidate dialectic triples from agent_identity_contradictions."""
         triples: List[Dict[str, Any]] = []
         try:
             cursor = self.db.conn.cursor()
-            cursor.execute(
-                """
-                SELECT id, pole_a, pole_b, contradiction_type, created_at
-                FROM agent_identity_contradictions
-                ORDER BY id DESC LIMIT ?
-                """,
-                (limit,),
-            )
+            columns = {
+                row[1]
+                for row in cursor.execute("PRAGMA table_info(agent_identity_contradictions)")
+            }
+            if "origin_relation_id" in columns and "origin_class" in columns:
+                cursor.execute(
+                    """
+                    SELECT id, pole_a, pole_b, contradiction_type, created_at,
+                           origin_relation_id, origin_participant_user_id, origin_class
+                    FROM agent_identity_contradictions
+                    WHERE agent_instance = ?
+                      AND (
+                        origin_relation_id = ?
+                        OR (origin_relation_id IS NULL AND origin_class IN ('instance_global', 'authorized_aggregate'))
+                      )
+                    ORDER BY id DESC LIMIT ?
+                    """,
+                    (self.agent_instance, relation_id, limit),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, pole_a, pole_b, contradiction_type, created_at
+                    FROM agent_identity_contradictions
+                    ORDER BY id DESC LIMIT ?
+                    """,
+                    (limit,),
+                )
             rows = cursor.fetchall()
             for r in rows:
                 pole_a = str(r["pole_a"] or "").strip()
@@ -149,6 +199,14 @@ class SymbolicGraphExtractor:
                             "object_type": "dialectic_pole",
                             "confidence": 0.90,
                             "source_ref": source_ref,
+                            "origin_relation_id": (
+                                r["origin_relation_id"] if "origin_relation_id" in r.keys() else None
+                            ),
+                            "origin_participant_user_id": (
+                                r["origin_participant_user_id"]
+                                if "origin_participant_user_id" in r.keys()
+                                else None
+                            ),
                         }
                     )
         except Exception as exc:
@@ -159,16 +217,25 @@ class SymbolicGraphExtractor:
     def extract_from_rumination_insights(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Extracts candidate symbolic triples from rumination_insights."""
         triples: List[Dict[str, Any]] = []
+        relation_id = self._relation_id(user_id)
+        scope_sql = ""
+        scope_params: List[Any] = []
+        if relation_id:
+            scope_sql = " AND agent_instance = ? AND relation_id = ?"
+            scope_params = [self.agent_instance, relation_id]
+        elif hasattr(self.db, "resolve_relation_id"):
+            scope_sql = " AND (agent_instance = ? OR agent_instance IS NULL) AND relation_id IS NULL"
+            scope_params = [self.agent_instance]
         try:
             cursor = self.db.conn.cursor()
             cursor.execute(
                 """
                 SELECT id, insight_type, symbol_content, question_content, full_message
                 FROM rumination_insights
-                WHERE user_id = ?
+                WHERE user_id = ? {scope_sql}
                 ORDER BY id DESC LIMIT ?
-                """,
-                (user_id, limit),
+                """.format(scope_sql=scope_sql),
+                (user_id, *scope_params, limit),
             )
             rows = cursor.fetchall()
             for r in rows:
@@ -186,6 +253,8 @@ class SymbolicGraphExtractor:
                             "object_type": "symbol",
                             "confidence": 0.85,
                             "source_ref": source_ref,
+                            "origin_relation_id": relation_id,
+                            "origin_participant_user_id": user_id,
                         }
                     )
                 if symbol and question:
@@ -198,6 +267,8 @@ class SymbolicGraphExtractor:
                             "object_type": "question",
                             "confidence": 0.80,
                             "source_ref": source_ref,
+                            "origin_relation_id": relation_id,
+                            "origin_participant_user_id": user_id,
                         }
                     )
         except Exception as exc:
@@ -213,9 +284,13 @@ class SymbolicGraphExtractor:
     ) -> Dict[str, Any]:
         """Extracts triples from all evidence sources and persists them into the graph."""
         target_user = user_id or os.getenv("ADMIN_USER_ID") or ADMIN_USER_ID
+        relation_id = self._relation_id(target_user)
 
         fact_triples = self.extract_from_user_facts(target_user, limit=limit_per_source)
-        contra_triples = self.extract_from_identity_contradictions(limit=limit_per_source)
+        contra_triples = self.extract_from_identity_contradictions(
+            limit=limit_per_source,
+            relation_id=relation_id,
+        )
         insight_triples = self.extract_from_rumination_insights(target_user, limit=limit_per_source)
 
         all_candidates = fact_triples + contra_triples + insight_triples
@@ -234,6 +309,8 @@ class SymbolicGraphExtractor:
                         status="candidate",
                         subject_type=t.get("subject_type", "concept"),
                         object_type=t.get("object_type", "concept"),
+                        origin_relation_id=t.get("origin_relation_id"),
+                        origin_participant_user_id=t.get("origin_participant_user_id"),
                     )
                     persisted_count += 1
                 except Exception as exc:

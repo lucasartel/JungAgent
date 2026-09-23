@@ -34,6 +34,8 @@
 
 Uma **emulacao cognitiva persistente** sobre LLM: memoria autobiografica com ancoras de evidencia, loop diario de 8 fases (sonho -> identidade -> ruminacao -> mundo -> trabalho -> arte -> ruminacao -> vontade), tres drives volitivos (saber/relacionar/expressar) e desenvolvimento narrativo avaliado qualitativamente (fases 0-5). Roda no Railway, conversa por Telegram, expoe a vida interior num dashboard e num blog publico.
 
+**Direcao de plataforma aprovada em 19/09/2026**: companion digital de vida longa e a aplicacao original e permanente. PETs roboticos e NPCs autonomos sao prioridades de expansao, nao limites da plataforma nem substitutos do companion. Outras aplicacoes poderao utilizar o mesmo nucleo cognitivo mediante contratos e governanca proprios. Ver Secao 10.2.
+
 O projeto e um **experimento transversal** com tres perguntas de pesquisa:
 
 | Eixo | Pergunta |
@@ -125,7 +127,7 @@ Fluxo padrao historico: **mantenedor escolhe a tarefa -> executor implementa em 
 
 **Concluido e em producao**: Fase I do roadmap antigo (circuitos da ruminacao corrigidos, sonhos alimentam ruminacao, failure policy no loop, entrega de insights) e Fase II substancial (diario autobiografico evidence-first, perfil injetado no prompt, avaliacao narrativa de fases com politica executiva, Chroma removido). O agente ja possui circuito de self-work via GitHub/Railway, mantido sob revisao do mantenedor.
 
-**Estado operacional atual**: o `main` remoto esta no commit `d650f6f`, com CI verde, incluindo suite, sintaxe e regressao cognitiva mock. O Railway permanece online no deploy `7340eded-561e-4918-8738-8855a0da1f4c`, apos o commit `d650f6f`; o volume de producao esta em aproximadamente 173 MB de 500 MB. O CI esta verde e os healthchecks/probes read-only continuam funcionais.
+**Estado do bloco C12 (23/09/2026)**: C12a-C12f foram reconciliados sobre as correcoes de leitura e conversa ja publicadas em `fe4c4d2` e integram esta entrega ao `main`. A suite canonica `tests/` passa com 764 testes e o runner mock com 20 cenarios. O deploy e as sondas de producao sao evidencias separadas; C12g e C12h continuam abertos.
 
 **Fase 0 concluida como etapa bloqueante**:
 
@@ -238,10 +240,10 @@ Trilha cognitiva ativa (Secao 10.1.2):
   C9  - Fechamento das expressoes e arbitragem     <- EM ANDAMENTO; C9a/C9b LOCAIS; PROXIMO C9c
   C10 - Disponibilidade e periodo refratario      <- CONCLUIDO; OBSERVACAO OPERACIONAL PENDENTE
   C11 - Expressao conversacional e proatividade   <- CONCLUIDO E PUBLICADO; OBSERVACAO NATURAL PENDENTE
-  C12 - Fechamento cognitivo multi-relacional     <- EM ANDAMENTO; C12a-C12c CONCLUIDOS LOCALMENTE
+  C12 - Fechamento cognitivo multi-relacional     <- EM ANDAMENTO; C12a-C12f INTEGRADOS; PROXIMO C12g
   C13 - Piloto convidado observavel               <- BLOQUEADO ATE ACEITE C9-C12
 Trilha comercial apos os gates (Secoes 10.2 e 10.3):
-  multiplas instancias isoladas -> API minima -> um conector textual -> piloto comercial
+  multiplas instancias isoladas -> contrato/API comum -> companion + simulacoes PET/NPC -> piloto delimitado
 ```
 
 Transversais a todas as fases: suite de regressao verde a cada merge, probes read-only de producao apos deploy relevante, relatorios de pesquisa em `docs/research/` quando houver frente empirica, e manutencao do principio da evidencia. A avaliacao cega deixou de ser criterio bloqueante, mas permanece protocolo de pesquisa preservado.
@@ -918,13 +920,42 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 - **Aceite local**: 730 testes offline aprovados. Os sentinelas cobrem duas Relations, duas instancias, Relation cruzada invalida, participante sem cadastro, quarentena do admin, logs com propriedade, metabolismo seletivo e leitores de prompt/recordacao dirigida. Sintaxe e git diff --check limpos; nenhuma formula de maturidade ou prompt de julgamento foi alterado.
 - **Estado de habilitacao**: nenhuma chamada LLM, Telegram, scheduler, imagem, banco de producao ou custo foi acionado. Produtores ruminais vindos de sonhos, identidade, trabalho e demais subsistemas continuam sob os cortes que possuem suas fontes: C12d, C12e e C12f. O proximo corte e C12d, sonhos e conhecimento global.
 
-**Fechamento corretivo de Work - leitura como incorporacao de conhecimento (21/09/2026; publicado separadamente, nao encerra C12).**
+**C12d - Sonhos e conhecimento global com proveniencia (20/09/2026; concluido localmente).**
 
-- **Fonte verificavel**: briefs de leitura passam a ler o PDF armazenado por intervalo exato, com arquivo, paginas, modo de extracao e hash. Fonte ausente, PDF sem texto ou resposta invalida bloqueiam a rodada.
-- **Sem falso progresso**: pagina planejada nao equivale mais a pagina lida. O progresso so avanca ate a ultima pagina efetivamente entregue e sintetizada; falha mantem o valor anterior.
-- **Interioridade, nao publicacao**: leitura interna nao exige destino, nao consulta Firecrawl e nao abre ticket editorial. Sintese, conceitos, ideias, tensoes e perguntas sao persistidos com proveniencia e entram no contexto vivo como conhecimento em elaboracao.
-- **Fronteira preservada**: livros enviados ao Work sao conhecimento global da instancia, sem Relation privada. A politica unificada de contexto continua pertencendo ao C12f; revogacao e descarte de anexos permanecem no C12g.
-- **Aceite**: paginas exatas, hash, bloqueio sem fonte, ausencia de pesquisa externa, assimilacao sem ticket, progresso condicionado e regressao completa devem permanecer verdes.
+- **Sonho global sem mistura relacional**: `agent_dreams` passa a registrar instancia, classe de propriedade, classe e Relation de origem, participante, referencias e proveniencia. O Dream Engine consome apenas fragmentos da Relation correta, grava as fontes `rumination_fragment#id` e devolve o material onirico para a ruminacao no mesmo escopo. Leitores aceitam residuo da mesma Relation e influencia global autorizada, mas recusam outra Relation; o legado nulo permanece acessivel apenas ao admin original.
+- **Conhecimento com projecao explicita**: lacunas, pesquisas e execucoes Scholar recebem o mesmo envelope de propriedade. `private_trigger_json` fica separado de `public_question`/`public_finding`; pesquisa derivada de conversa nasce `relation_private` ou `quarantined`, nunca publica por inferencia. Consultas relacionais podem ler sua propria sintese e achados globais aprovados, sem carregar o gatilho privado de outra pessoa.
+- **Mundo por instancia**: cache e historico agora usam `world_state_cache.<instance>.json` e `world_state_history.<instance>.jsonl`. A instancia original pode importar os arquivos singleton antigos uma vez, marcados como `legacy_unscoped`; lacuna, diario e objeto epistemico legados sao removidos do seed de refresh. Novos estados sao `instance_global`, derivados de agregado autorizado e declaram que nao usaram texto relacional bruto. Cockpit e probe procuram primeiro o arquivo escopado.
+- **Persistencia compativel**: as colunas e os indices sao aditivos. Registros historicos nao sao reclassificados silenciosamente; continuam em quarentena ate revisao ou apagamento no C12g. O mapa canonico marca `dreams` e `knowledge_and_world` como prontos, preservando identidade, ISM, Theory of Mind, grafo e autobiografia para C12e.
+- **Aceite local**: 740 testes offline aprovados. Sentinelas cobrem duas Relations, Relation cruzada invalida, lacuna privada versus global, duas instancias de mundo, importacao legada restrita, exclusao do conteudo epistemico privado no refresh e persistencia agregada sem texto relacional. Sintaxe e `git diff --check` limpos.
+- **Estado de habilitacao**: nenhuma chamada LLM, web, Telegram, scheduler, imagem, banco de producao, push ou custo foi acionado. O proximo corte e C12e, para fechar identidade global, facetas relacionais, ISM, Theory of Mind, grafo simbolico, psicometria/milestones e autobiografia com proveniencia.
+
+**C12e - Identidade, modelos internos e autobiografia com proveniencia (20/09/2026; concluido localmente).**
+
+- **Identidade global e facetas relacionais**: crencas, contradicoes, selves possiveis, capitulos, meta-conhecimento e memoria de agencia continuam pertencendo a instancia, mas registram classe, Relation e participante de origem, referencias e proveniencia. `agent_relational_identity` permanece privada da Relation. O extrator e a ponte ruminacao-identidade nao consolidam evidencias de Relations diferentes na mesma linha; os leitores de contexto aceitam somente origem global autorizada ou a Relation atual.
+- **ISM e Theory of Mind**: snapshots do self integrativo permanecem globais, passivos e `read_only`, agora com origem relacional auditavel e componentes filtrados antes da sintese. Theory of Mind e inbox de maturacao passam a exigir Relation para participantes registrados; texto e inferencias de um interlocutor so podem ser lidos no mesmo vinculo. Schemas historicos continuam legiveis sem transformar ausencia de coluna em consentimento global.
+- **Grafo simbolico**: triplas carregam propriedade, classe de origem, Relation, participante, referencias e proveniencia. Extracao de fatos, ruminacao e contradicoes respeita a fronteira relacional; vizinhanca causal e listagens retornam apenas material global autorizado e, quando solicitada, a Relation corrente. Legado exige inclusao explicita.
+- **Psicometria, milestones e autobiografia**: psicometria e milestones recebem instancia, Relation, propriedade e proveniencia aditivas; versoes psicometricas sao calculadas dentro da Relation. Avaliacoes metacognitivas e ensaios registram origem e ocultam texto privado derivado de outras Relations. Linhas historicas nulas permanecem em quarentena para C12g.
+- **Aceite local**: 745 testes offline aprovados. O teste integrado cobre duas Relations na mesma instancia e uma segunda instancia, com sentinelas independentes em identidade, ISM, Theory of Mind, grafo e psicometria, alem dos carimbos do extrator e da ponte ruminacao-identidade. Sintaxe e `git diff --check` limpos.
+- **Estado de habilitacao**: nenhuma chamada LLM, web, Telegram, scheduler, imagem, banco de producao, push, deploy ou custo foi acionado. O proximo corte e C12f, para montar o contexto cognitivo final sob uma unica politica de visibilidade e proveniencia; revogacao, apagamento, perfis e artefatos continuam no C12g.
+
+**Fechamento corretivo de Work - leitura como incorporacao de conhecimento (21-22/09/2026; publicado, nao encerra C12).**
+
+- **Fonte verificavel**: briefs de leitura passam a ler o PDF armazenado por intervalo exato, com arquivo, paginas, modo de extracao e hash. O fluxo aproximado por proporcao de caracteres deixa de orientar a execucao. Fonte ausente, PDF sem texto ou resposta invalida bloqueiam a rodada.
+- **Sem falso progresso**: pagina planejada nao equivale mais a pagina lida. O progresso so avanca, dentro da persistencia da assimilacao, ate a ultima pagina efetivamente entregue e sintetizada; falha mantem o valor anterior.
+- **Interioridade, nao publicacao**: leitura interna nao exige destino, nao consulta Firecrawl e nao abre ticket editorial. Ela persiste nota cognitiva assimilada, sintese, conceitos, ideias, tensoes e perguntas com proveniencia. Esses elementos geram fragmentos semanticos de Work; tensoes explicitas de leitura sao promovidas imediatamente para a fila epistemica da ruminacao, enquanto os demais fragmentos recentes recebem prioridade sobre o backlog antigo.
+- **Resiliencia estrutural**: depois de duas respostas LLM estruturadas invalidas, um fallback extrativo restrito as paginas de origem preserva arquivo, intervalo e hash, sem inventar tensoes ou perguntas. O utilitario `scripts/retry_work_brief.py` permite repetir apenas briefs explicitamente escolhidos.
+- **Fronteira preservada**: livros enviados ao Work sao conhecimento global da instancia, sem Relation privada. O C12f agora bloqueia a injecao direta de tabelas Work ainda nao escopadas; tenancy, revogacao e descarte de anexos permanecem no C12g.
+- **Publicacao e evidencia**: commit `fe4c4d2` publicado e confirmado no Railway. Os briefs 223 e 224 foram reprocessados com sucesso, totalizando 52 paginas assimiladas e oito tensoes `epistemic_reading` abertas com proveniencia. O bloco local posterior passa com 764 testes offline.
+
+**C12f - Politica unica de montagem do contexto cognitivo (22/09/2026; concluido localmente).**
+
+- **Escopo canonico**: `core/cognitive_context.py` resolve uma unica fronteira `agent_instance + participant_user_id + relation_id` e aplica o contrato de propriedade do C12a a toda contribuicao destinada ao prompt. Participante registrado sem Relation falha fechado; adaptadores antigos sem API de Relations recebem apenas um identificador efemero por participante, nunca um escopo global persistido.
+- **Admissao por propriedade e proveniencia**: o montador recusa outra instancia, outra Relation, legado fora do admin isolado, global derivado de texto privado sem projecao publica, agregado sem garantia text-free, dominio desconhecido e dominio `never_in_prompt`. Cada montagem produz auditoria com dominios e referencias aceitos e motivos de rejeicao.
+- **Um caminho de conversa**: o fluxo comum deixou de duplicar a montagem antiga e passou a usar o mesmo builder da consciencia ativa. Identidade, autobiografia, mundo, sonhos, ISM, grafo, Theory of Mind, postura relacional e politica de desenvolvimento atravessam o mesmo montador. Memoria semantica, fatos, mem0, ruminação, WILL e recordacao dirigida recebem a mesma Relation; a recordacao dirigida nao consulta mais Work bruto.
+- **Quarentena operacional**: Work, propostas de acao e hobby/artes ainda sem namespace de instancia deixam de entrar indiretamente pelo bloco de identidade. O mapa move a remediacao de armazenamento e artefatos para C12g; isso nao apaga os dados nem interrompe Work, apenas impede exposicao prematura no prompt.
+- **Aceite local**: 764 testes offline e 20 cenarios de regressao mock aprovados. Os testes C12f cobrem duas Relations, instancia divergente, legado, global privado sem mediacao, agregado text-free, dominio proibido, propagacao da Relation a fatos/mem0 e montagem unica dos dois fluxos. Nenhuma chamada LLM, web, Telegram, scheduler, imagem, banco de producao, push, deploy ou custo foi acionado neste corte.
+- **Proximo corte**: C12g, para revogacao e delecao verificavel, inventario/apagamento de vetores historicos, namespace de perfis e arquivos, tenancy de Work e ciclo de vida de artefatos. C12h permanece como aceite integrado entre duas Relations e duas instancias.
+
 
 **C13 - Piloto convidado observavel (bloqueado ate aceite C9-C12 e aprovacao do mantenedor).** Comecar com poucas pessoas explicitamente convidadas, Relation ativa, consentimento e regras de uso, privacidade e apagamento definidos. Usar limites de custo e contato, revogacao de acesso e mecanismo de pausa. Cockpit e probes devem mostrar disponibilidade, motivo de bloqueio/adiamento, retomadas, recibos, escopo e custo sem expor conversas privadas. Definir antes de abrir a janela, metricas, criterios de interrupcao e aceite; nao encerrar apenas pelo numero de dias. Observar continuidade da memoria, pertinencia das iniciativas, respeito ao descanso, isolamento e custo por relacao. Este e um piloto relacional da instancia existente, nao uma liberacao comercial multi-instancia.
 
@@ -938,16 +969,16 @@ A trilha comercial sera construida sobre expressoes de vontade, e nao sobre aces
 
 A primeira entrega comercial deve definir o `Will Expression Contract v1`, com vontade dominante, conflito, objetivo, acao proposta, confianca, evidencias, risco, custo, validade, idempotencia, politica de aprovacao e resultado esperado. Depois, um conector generico em modo dry-run/webhook podera validar o fluxo sem efeitos externos.
 
-A estrategia inicial recomendada e validar agentes de software e companions B2B, por exigirem menos infraestrutura que Unity, Unreal ou robotica e por aproveitarem o que ja existe no Telegram e no cockpit. Games e robotica permanecem como verticais posteriores da mesma API.
+**Direcao comercial aprovada em 19/09/2026**: uma plataforma comum com aplicacoes nao exaustivas. O companion digital de vida longa, aplicacao original, continua como frente permanente de interlocucao, memoria e trajetoria entre encontros. PETs roboticos e NPCs autonomos orientam prioritariamente a expansao e a validacao de portabilidade. Nao representam exclusividade de mercado, bifurcacao do nucleo nem obrigacao de lancamento simultaneo. O horizonte existencial e relacional nao se reduz a produtividade, retencao ou quantidade de iniciativas.
 
-**Direcao aprovada em 05/09/2026**: demonstrar primeiro continuidade autobiografica, processamento entre encontros e iniciativa verificavel em uma aplicacao de software. Depois do piloto relacional e dos gates cognitivos, seguir esta ordem:
+**Sequenciamento atualizado em 19/09/2026**: preserva os gates da direcao de 05/09/2026, mas substitui a restricao de games e robotica a verticais posteriores. Especificacao e simulacao podem ocorrer em paralelo ao fechamento cognitivo; pilotos reais continuam sujeitos aos gates. A sequencia de produto e:
 
 1. **Multiplas instancias isoladas**: fechar os requisitos e testes da Secao 10.3, aproveitando a administracao multi-tenant existente sem confundi-la com isolamento cognitivo.
 2. **API minima de eventos, intencoes e resultados**: receber eventos escopados, expor apenas intencoes autorizadas e aceitar recibos autenticados e idempotentes. Consultas de estado devem ser minimas e autorizadas; o catalogo da Secao 10.4 nao vira automaticamente superficie publica.
-3. **Um conector textual governado**: validar primeiro em simulacao/dry-run e depois com aprovacao, limites de custo e observabilidade. MCP e um meio de conexao; decisao, permissoes, privacidade, orcamento e confirmacao permanecem sob responsabilidade da plataforma.
-4. **Um piloto comercial delimitado**: escolher uma aplicacao e parceiro apos evidencias dos passos anteriores, medir utilidade e custo antes de ampliar canais, SDKs ou escala.
+3. **Companion e dois ambientes simulados**: preservar o canal textual governado e demonstrar o mesmo ciclo cognitivo em um PET virtual e um NPC simples, sem hardware ou dados privados reais obrigatorios. MCP e um meio, nao dependencia do contrato. Validar longitudinalmente evento -> intencao permitida -> consequencia -> escolha posterior, incluindo recusa, falha, reinicio e isolamento.
+4. **Um piloto comercial delimitado**: escolher companion, PET ou NPC conforme prontidao e parceiro, com aprovacao, limites de custo e observabilidade. Avaliar continuidade, pertinencia, respeito a limites e custos, nao apenas fluencia ou engajamento. Nao exigir lancamento simultaneo nem todos os SDKs antes dessa evidencia.
 
-O plano `docs/plano_desenvolvimento_inner_life_engine.md` permanece como visao de possibilidades. Suas prioridades antigas de games, datas e amplitude de SDKs nao sobrepoem esta sequencia vigente. Marketplace de conectores, integracoes de games e robotica sao expansoes posteriores, nao compromissos da proxima entrega. Esta decisao nao autoriza efeitos externos ou reativacao de funcionalidades gateadas.
+O plano `docs/plano_desenvolvimento_inner_life_engine.md` permanece como visao de possibilidades; datas e amplitude de SDKs anteriores nao sobrepoem esta sequencia. Prioridade comercial nao significa implementacao confirmada, fechamento dos cortes cognitivos ou autorizacao de efeitos externos. Endpoints, schemas e adaptadores deverao ser definidos em especificacao complementar antes da implementacao; este mestre fixa direcao, fronteiras e aceite. Nao reabrir cortes concluidos automaticamente nem reativar funcionalidades gateadas.
 
 ### 10.2.1 Catalogo de conectores orientado pela vontade
 
@@ -973,6 +1004,47 @@ O fluxo devera manter quatro camadas distintas:
 Nenhuma pontuacao de vontade devera, sozinha, disparar uma acao externa. A escolha do conector devera ser explicita, rastreavel e compativel com a politica da organizacao, da instancia e da relacao. O conector nao tera acesso direto ao banco, aos prompts ou aos estados internos; recebera apenas o contrato minimo autorizado e devolvera um resultado que possa alimentar a memoria, a identidade, a ruminacao e os proximos ciclos como evidencia.
 
 **Demanda futura de produto**: construir o registro persistente de conectores, a descoberta por vontade, os adaptadores MCP e nao-MCP, a tela de governanca no cockpit, o dry-run, os gates de consentimento/aprovacao, o controle de custos e os probes de execucao. Essa frente devera ser desenvolvida depois que a multiplicidade relacional e a arquitetura multi-instancia estiverem suficientemente validadas, pois cada conector precisara ser escopado por organizacao, instancia, participante e finalidade.
+
+**Adaptadores de corpo e mundo**: distintos de conectores de ferramentas/canais. Traduzem sensores ou eventos em percepcoes escopadas, apresentam capacidades e encaminham intencoes ao controlador externo. Motores, navegacao, fisica e regras do jogo permanecem no parceiro; nao recebem comandos livres diretamente do LLM.
+
+### 10.2.2 Aplicacao PET robotico
+
+Parceiro-alvo: fabricante de robos que necessita de memoria persistente, individualidade progressiva e iniciativa configuravel. O JungAgent fornece metabolismo emulado e intencoes; o parceiro fornece corpo, percepcao, controle fisico e seguranca local independente de conexao. Interioridade nao constitui promessa de consciencia ou afeto genuino.
+
+- **Saber**: investigar objetos e rotinas autorizados, pedir esclarecimentos e aprender brincadeiras; curiosidade nao autoriza vigilancia ou identificacao sem permissao.
+- **Relacionar**: reconhecer reencontros, convidar para interacao e recuar diante de indisponibilidade; silencio nao autoriza escalada de pedidos ou culpa afetiva.
+- **Expressar**: fala, sons e gestos do repertorio seguro, com preferencias historicamente reconheciveis.
+- **Limites**: obstaculos, bateria, temperatura, parada de emergencia e perda de conexao sao tratados localmente; necessidades operacionais nao sao sofrimento subjetivo.
+- **Aceite**: simular recusa/interrupcao de movimento, indisponibilidade humana, reconexao sem duplicacao de atos e continuidade de memoria. Piloto fisico exige validacao de seguranca e aprovacao especificas do parceiro e mantenedor.
+
+### 10.2.3 Aplicacao NPC autonomo
+
+Parceiro-alvo: estudio de games que necessita de personagens com memoria situada, disposicoes persistentes e iniciativa. O JungAgent propoe intencoes; o motor do jogo valida e executa navegacao, dialogo e alteracoes autorizadas.
+
+- **Saber**: investigar lugares, objetos e acontecimentos acessiveis; separar conhecimento do motor e conhecimento percebido pelo NPC.
+- **Relacionar**: cooperar, negociar, reparar vinculos, afastar-se ou sustentar rivalidades nas regras narrativas.
+- **Expressar**: falas, gestos, criacoes e intervencoes permitidas no mundo, nao apenas estilo de dialogo.
+- **Limites**: configurar invariantes narrativas, recursos, geografia e liberdade emergente; proteger missoes contra intencoes nao autorizadas.
+- **Aceite**: simular informacao inacessivel, rejeicao, pausa/aceleracao do tempo, restauracao de partida, ramificacao e morte/reinicio. Persistencia entre partidas e escolha explicita do design, nunca mistura acidental de memorias.
+
+### 10.2.4 Nucleo volitivo configuravel e aplicacoes abertas
+
+Companion digital, PET e NPC compartilham vontades e contrato. Nao esgotam a plataforma. Nao criar uma engine cognitiva independente por vertical nem impor corpo robotico, partida ou missao a uma instancia digital.
+
+Cada vontade devera representar intensidade, urgencia, objeto, motivos/evidencias, incerteza, alternativas e compromissos persistentes. Estados propostos: formacao, atividade, adiamento, bloqueio, satisfacao, transformacao e abandono. Concluir uma acao nao exige encerrar um interesse; persistir nao exige pressao permanentemente alta. Estes sao requisitos futuros, nao declaracao de implementacao atual.
+
+Separar configuracao de (a) mundo/produto e capacidades, (b) disposicoes e trajetoria individual e (c) relacao/situacao. Preferencias podem evoluir dentro de limites; nenhuma vontade amplia suas permissoes. Uma acao pode atender varias vontades sem satisfacao duplicada ou automatica.
+
+Circuito comum: `percepcao -> atualizacao volitiva -> intencao -> arbitragem -> autorizacao -> execucao externa -> consequencias`. Separar execucao confirmada, alcance do objetivo e mudanca volitiva. Registrar recusa, adiamento, falha, incerteza e interrupcao sem inventar sucesso ou repetir efeitos. Intencoes em andamento atravessam pulsos sem redisparo automatico.
+
+### 10.2.5 Aplicacao original: companion digital de vida longa
+
+Aplicacao original e permanente, sem necessidade de corpo ou mundo de jogo. Sustenta memoria e compromissos entre encontros, investiga fontes autorizadas, dialoga e cria com iniciativa limitada por disponibilidade e consentimento. PET/NPC nao condicionam a continuidade desta frente, e futuras aplicacoes nao precisam enquadrar-se nestes tres perfis.
+
+- **Saber**: aprofundar perguntas e interesses persistentes em fontes autorizadas, sem depender de uma solicitacao nova a cada encontro.
+- **Relacionar**: sustentar e transformar vinculos com memoria, consentimento e respeito a silencio, recusa e encerramento.
+- **Expressar**: produzir conversas, textos e criacoes permitidas como desdobramentos da trajetoria, sem obrigacao de publicar ou cobrar atencao.
+- **Aceite**: encontros deixam consequencias verificaveis nas escolhas posteriores; interesses podem persistir e ser revistos; memoria nao inventa passado e respeita isolamento/apagamento. Avaliar abertura de possibilidades humanas fora da interface, nao dependencia emocional. Trata-se de direcao de produto, nao promessa de desenvolvimento ja demonstrado.
 
 ### 10.3 Arquitetura multi-instancia
 
@@ -1008,6 +1080,8 @@ Uma empresa pode contratar um JungAgent corporativo que se desenvolve por meio d
 - aplicar RBAC por organizacao, instancia e papel, com master no control plane e org_admin limitado aos recursos de sua organizacao;
 - registrar canais e identificadores externos separadamente da identidade cognitiva, permitindo Telegram, API, Unity, Unreal, ROS2 ou dispositivos roboticos;
 - manter auditoria, consentimento, apagamento, limites de custo, idempotencia e ciclo de vida de cada instancia.
+- separar individuo, corpo/canal e mundo: NPCs possuem escopo de mundo/partida/ramificacao; PETs associam um corpo sem confundir dispositivo com pessoa; companions digitais dispensam ambos;
+- explicitar relogio real ou simulado, pausa, restauracao e continuidade; impedir mistura de historia entre ramos e exigir politica autorizada para qualquer transferencia.
 
 **Migracao do agente atual**: a instalacao existente sera tratada como `default-org` com a instancia `jung_v1`. O admin atual sera preservado como operador e primeiro participante relacional, sem permanecer como sujeito obrigatorio de todos os processos internos.
 
@@ -1024,6 +1098,10 @@ Uma empresa pode contratar um JungAgent corporativo que se desenvolve por meio d
 **Regra de sequenciamento comercial**: especificacao e simulacao podem comecar agora; novas integracoes comerciais reais, SDKs de producao e pilotos comerciais com dados de terceiros ficam bloqueados ate o aceite da multiplicidade relacional e da arquitetura multi-instancia. O piloto relacional C13 na instancia existente tem seus proprios gates e aprovacao; nao exige antecipar toda a plataforma comercial nem libera esses recursos por extensao.
 
 ### 10.4 Catalogo futuro de informacao da API
+
+**Contrato minimo compartilhado**: criar/configurar instancias; registrar capacidades tipadas e versionadas; receber eventos e falas com origem, confianca, tempo e escopo; disponibilizar intencoes autorizadas por consulta/notificacao; receber resultados autenticados; consultar estado minimo autorizado e pausar iniciativas. Endpoints e schemas serao definidos em especificacao complementar, sem acesso direto ao banco ou prompts.
+
+Intencoes incluem objetivo, parametros, evidencias, custo, risco, validade e condicoes de execucao/interrupcao. O parceiro aceita, adia ou rejeita e informa consequencias. Exigir identificadores idempotentes, ordenacao/versao de estado e reconciliacao de resultados incertos sem reexecucao cega. Revalidar permissoes ao executar; revogacao invalida autorizacoes pendentes. O contrato nao controla motores nem substitui a autoridade do jogo. A escolha de LLM por funcao e detalhe interno configuravel, nao dependencia da API.
 
 A API devera poder fornecer, em principio e sem antecipar ainda as restricoes de exposicao, as seguintes familias de informacao:
 
@@ -1100,12 +1178,18 @@ Em 19/08/2026 foi auditado o caminho completo `scores -> pressao -> pulso -> aca
 | Custo invisivel | Limites executaveis no WILL e custo por relacao/instancia como gate dos novos pilotos; imagens pagas permanecem desligadas; nao expandir escopo para faturamento completo agora |
 | Seguranca de execucao (Fase VII) | Gate rigido; self-work via PR humano como caminho preferencial |
 | Descolamento do usuario | Principio do Encontro; metrica de ressonancia; blog compreensivel |
+| Vertical limitar a plataforma | Companion original permanente; PET/NPC nao exclusivos; nucleo comum e perfis opcionais |
+| Risco corporal e privacidade domestica | Controle local independente, parada de emergencia, capacidades restritas e consentimento para sensores/memoria |
+| Dependencia relacional induzida | Respeitar silencio, recusa e encerramento; nao usar culpa, sofrimento alegado ou intimidade para retencao |
+| Onisciencia e mistura de partidas | Conhecimento situado, invariantes do jogo e isolamento de mundo/partida/ramificacao |
+| Custo e escala de individuos | Orcamentos por instancia/organizacao, filas limitadas e medicao de latencia/custo antes de ampliar pilotos |
 
 ## 12. Genealogia
 
 | Documento | Data | Contribuicao |
 |---|---|---|
 | 5 documentos-fonte (A-E) | ate Mai/2026 | fases, dialetica, working memory, metricas |
+| Direcao comercial aberta: companion, PET e NPC | 19/09/2026 | Preserva companion original; prioriza PET/NPC sem limitar a plataforma; registra nucleo volitivo, API comum, simulacoes e gates |
 | Versao 1 ("Roadmap AGI") | Mai/2026 | 7 fases bloqueantes, Principio Aureo, criterios binarios, riscos |
 | Avaliacao externa (Claude, consultor) | 10/06/2026 | Reposicionamento como emulacao cognitiva; Fase 0; avaliacao cega; WM antecipada; portao do SKG |
 | Versao 2.1 - Edicao de Execucao Delegada | 10/06/2026 | Governanca em tres papeis; contrato do executor; backlog como especificacoes; estado e avisos operacionais atualizados |
@@ -1129,6 +1213,7 @@ Em 19/08/2026 foi auditado o caminho completo `scores -> pressao -> pulso -> aca
 | Versao 3.10 - C9a: Confirmacao de Entrega e Alivio Idempotente | 05/09/2026 | Registra implementacao local e 497 testes aprovados, sem deploy; mantem C9 aberto com C9b/C9c explicitos |
 | Versao 3.11 - C9b: Evidencia Equivalente e Consumo Transacional | 06/09/2026 | Registra commits locais C9a/C9b, adaptador world, hobby inelegivel sem evidencia propria, 538 testes e 20 cenarios mock aprovados, e proximo C9c sem liberar producao |
 | Versao 3.26 - C11: Expressao Conversacional e Proatividade Unificadas | 15/09/2026 | Fecha e publica proveniencia sem auto-influencia, repouso conversacional conservador, ledger comum, idempotencia e expressao textual com imagens desligadas; 705 testes, 20 cenarios mock e deploy Railway saudavel |
+| Versao 3.27 - C12a-C12f: Interioridade Multi-relacional e Contexto Unificado | 22/09/2026 | Registra propriedade cognitiva, isolamento de memoria/ruminacao/sonhos/identidade e uma politica unica de visibilidade e proveniencia para o prompt; C12g-C12h permanecem abertos |
 
 ---
 

@@ -15,7 +15,7 @@ from llm_providers import get_llm_response
 logger = logging.getLogger(__name__)
 
 EPISTEMIC_SABER_PRESSURE_THRESHOLD = 55.0
-WORLD_STATE_VERSION = 8
+WORLD_STATE_VERSION = 9
 FIRECRAWL_MIN_SIGNAL_STRENGTH = 0.58
 
 
@@ -300,11 +300,19 @@ class WorldConsciousnessFetcher:
     observability and downstream loop seeds.
     """
 
-    def __init__(self, cache_dir: Optional[str] = None):
+    def __init__(self, cache_dir: Optional[str] = None, agent_instance: Optional[str] = None):
+        if not agent_instance:
+            from instance_config import AGENT_INSTANCE
+
+            agent_instance = AGENT_INSTANCE
+        self.agent_instance = str(agent_instance).strip()
+        self.instance_slug = re.sub(r"[^a-zA-Z0-9_.-]+", "_", self.agent_instance).strip("._") or "instance"
         self.cache_dir = cache_dir or self._resolve_cache_dir()
         os.makedirs(self.cache_dir, exist_ok=True)
-        self.cache_file = os.path.join(self.cache_dir, "world_state_cache.json")
-        self.history_file = os.path.join(self.cache_dir, "world_state_history.jsonl")
+        self.cache_file = os.path.join(self.cache_dir, f"world_state_cache.{self.instance_slug}.json")
+        self.history_file = os.path.join(self.cache_dir, f"world_state_history.{self.instance_slug}.jsonl")
+        self.legacy_cache_file = os.path.join(self.cache_dir, "world_state_cache.json")
+        self.legacy_history_file = os.path.join(self.cache_dir, "world_state_history.jsonl")
         self.cache_duration_hours = 4
         self.max_history_entries = 72
 
@@ -367,15 +375,23 @@ class WorldConsciousnessFetcher:
         try:
             with self._connect_world_db() as connection:
                 cursor = connection.cursor()
+                will_id = will_state.get("id")
+                source_refs = [f"will#{will_id}"] if str(will_id or "").isdigit() else []
+                provenance = {
+                    "producer": "world_consciousness",
+                    "private_derived": False,
+                    "raw_relational_text_used": False,
+                }
                 cursor.execute(
                     """
                     SELECT id
                     FROM knowledge_gaps
-                    WHERE user_id = ? AND the_gap = ? AND status = 'open'
+                    WHERE agent_instance = ? AND the_gap = ? AND status = 'open'
+                      AND origin_class = 'authorized_aggregate'
                     ORDER BY id DESC
                     LIMIT 1
                     """,
-                    (user_id, gap_question),
+                    (self.agent_instance, gap_question),
                 )
                 row = cursor.fetchone()
                 values = (
@@ -400,21 +416,29 @@ class WorldConsciousnessFetcher:
                             target_area = ?,
                             target_scope = ?,
                             focus_terms_json = ?,
-                            source_reason = ?
+                            source_reason = ?,
+                            public_question = ?,
+                            source_refs_json = ?,
+                            provenance_json = ?
                         WHERE id = ?
                         """,
-                        (*values, gap_id),
+                        (*values, gap_question, json.dumps(source_refs), json.dumps(provenance), gap_id),
                     )
                 else:
                     cursor.execute(
                         """
                         INSERT INTO knowledge_gaps (
-                            user_id, topic, the_gap, importance_score,
+                            user_id, agent_instance, ownership_class, origin_class,
+                            origin_participant_user_id, topic, the_gap, importance_score,
                             source_origin, knowledge_kind, target_area, target_scope,
-                            focus_terms_json, source_reason, status
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+                            focus_terms_json, source_reason, public_question,
+                            source_refs_json, provenance_json, status
+                        ) VALUES (?, ?, 'instance_global', 'authorized_aggregate', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
                         """,
-                        (user_id, topic, gap_question, *values[1:]),
+                        (
+                            user_id, self.agent_instance, user_id, topic, gap_question,
+                            *values[1:], gap_question, json.dumps(source_refs), json.dumps(provenance),
+                        ),
                     )
                     gap_id = int(cursor.lastrowid)
                 connection.commit()
@@ -514,7 +538,7 @@ class WorldConsciousnessFetcher:
                         closure_source_id = ?,
                         closure_evidence_json = ?,
                         resolved_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
+                    WHERE id = ? AND agent_instance = ?
                     """,
                     (
                         knowledge_summary,
@@ -523,6 +547,7 @@ class WorldConsciousnessFetcher:
                         source_id,
                         json.dumps(evidence, ensure_ascii=False, sort_keys=True),
                         int(gap_id),
+                        self.agent_instance,
                     ),
                 )
                 connection.commit()
@@ -831,8 +856,10 @@ class WorldConsciousnessFetcher:
         cached_data: Optional[Dict[str, Any]],
         epistemic_trigger: Optional[str] = None,
     ) -> Dict[str, Any]:
-        user_id = self._admin_user_id()
-        epistemic_inputs = self._load_epistemic_inputs(user_id)
+        # The world state is instance-global. Raw conversations and relational
+        # rumination are intentionally excluded; they require a mediated,
+        # Relation-scoped research path instead of implicit globalization.
+        epistemic_inputs: Dict[str, Any] = {}
         fallback = self._fallback_knowledge_gap(epistemic_inputs, will_state, cached_data)
 
         payload = {
@@ -1298,19 +1325,45 @@ Contexto:
             "signal_strength": signal_strength,
         }
 
+    def _can_import_legacy_world_files(self) -> bool:
+        from instance_config import AGENT_INSTANCE
+
+        return self.agent_instance == AGENT_INSTANCE
+
     def _load_recent_history(self) -> List[Dict]:
-        if not os.path.exists(self.history_file):
+        history_path = self.history_file
+        legacy_import = False
+        if not os.path.exists(history_path) and self._can_import_legacy_world_files():
+            history_path = self.legacy_history_file
+            legacy_import = os.path.exists(history_path)
+        if not os.path.exists(history_path):
             return []
 
         items: List[Dict] = []
         try:
-            with open(self.history_file, "r", encoding="utf-8") as handle:
+            with open(history_path, "r", encoding="utf-8") as handle:
                 for line in handle:
                     line = line.strip()
                     if not line:
                         continue
                     try:
-                        items.append(json.loads(line))
+                        item = json.loads(line)
+                        item_instance = item.get("agent_instance")
+                        if item_instance and item_instance != self.agent_instance:
+                            continue
+                        if legacy_import and not item_instance:
+                            item["agent_instance"] = self.agent_instance
+                            item["ownership_class"] = "legacy_unscoped"
+                            item["provenance"] = {"legacy_world_file": True}
+                            for private_key in (
+                                "knowledge_resolution_summary",
+                                "knowledge_journal_entry",
+                                "knowledge_gap_closure",
+                                "epistemic_object",
+                                "epistemic_receipts",
+                            ):
+                                item.pop(private_key, None)
+                        items.append(item)
                     except json.JSONDecodeError:
                         continue
         except Exception as exc:
@@ -1323,6 +1376,10 @@ Contexto:
         history = self._load_recent_history()
         history.append(
             {
+                "agent_instance": self.agent_instance,
+                "ownership_class": "instance_global",
+                "source_refs": snapshot.get("source_refs", []),
+                "provenance": snapshot.get("provenance", {}),
                 "cache_timestamp": snapshot.get("cache_timestamp"),
                 "current_time": snapshot.get("current_time"),
                 "atmosphere": snapshot.get("atmosphere"),
@@ -1882,7 +1939,7 @@ Contexto:
             return knowledge_gap, knowledge_probe
 
         fallback_gap = knowledge_gap or self._fallback_knowledge_gap(
-            self._load_epistemic_inputs(self._admin_user_id()),
+            {},
             will_state,
             cached_data,
         )
@@ -2458,8 +2515,25 @@ Estado estruturado:
             if art_seed:
                 world_seeds["hobby"] = [self._knowledge_seed_for_hobby(art_seed), *world_seeds["hobby"]][:6]
 
+        source_refs = []
+        will_id = resolved_will_state.get("id")
+        if str(will_id or "").isdigit():
+            source_refs.append(f"will#{will_id}")
+        gap_id = knowledge_gap.get("knowledge_gap_id")
+        if str(gap_id or "").isdigit():
+            source_refs.append(f"knowledge_gap#{gap_id}")
+
         world_state = {
             "state_version": WORLD_STATE_VERSION,
+            "agent_instance": self.agent_instance,
+            "ownership_class": "instance_global",
+            "origin_class": "authorized_aggregate",
+            "source_refs": source_refs,
+            "provenance": {
+                "producer": "world_consciousness",
+                "private_derived": False,
+                "raw_relational_text_used": False,
+            },
             "cache_timestamp": now.isoformat(),
             "current_time": now.strftime("%Y-%m-%d %H:%M:%S"),
             "weather": weather_text,
@@ -2530,21 +2604,61 @@ Estado estruturado:
 
     def _save_cache(self, world_state: Dict) -> None:
         try:
+            world_state["agent_instance"] = self.agent_instance
+            world_state.setdefault("ownership_class", "instance_global")
             with open(self.cache_file, "w", encoding="utf-8") as handle:
                 json.dump(world_state, handle, ensure_ascii=False, indent=2)
         except Exception as exc:
             logger.warning("World Consciousness: erro ao salvar cache: %s", exc)
 
     def _load_cache(self) -> Dict:
-        if not os.path.exists(self.cache_file):
+        cache_path = self.cache_file
+        legacy_import = False
+        if not os.path.exists(cache_path) and self._can_import_legacy_world_files():
+            cache_path = self.legacy_cache_file
+            legacy_import = os.path.exists(cache_path)
+        if not os.path.exists(cache_path):
             return {}
-
         try:
-            with open(self.cache_file, "r", encoding="utf-8") as handle:
-                return json.load(handle)
+            with open(cache_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            payload_instance = payload.get("agent_instance")
+            if payload_instance and payload_instance != self.agent_instance:
+                logger.warning(
+                    "World Consciousness: cache de outra instancia ignorado (%s)",
+                    payload_instance,
+                )
+                return {}
+            if legacy_import and not payload_instance:
+                payload["agent_instance"] = self.agent_instance
+                payload["ownership_class"] = "legacy_unscoped"
+                payload["origin_class"] = "legacy_unscoped"
+                payload["provenance"] = {"legacy_world_file": True, "private_derived": True}
+            return payload
         except Exception as exc:
             logger.warning("World Consciousness: falha ao ler cache: %s", exc)
             return {}
+
+    def _cache_refresh_seed(self, cached_data: Dict[str, Any]) -> Dict[str, Any]:
+        if (cached_data or {}).get("ownership_class") != "legacy_unscoped":
+            return cached_data or {}
+        public_keys = {
+            "raw_area_digest",
+            "area_panels",
+            "signals",
+            "headlines",
+            "atmosphere",
+            "dominant_tensions",
+            "confidence_overall",
+            "continuity",
+            "continuity_note",
+            "world_lucidity_summary",
+        }
+        return {
+            key: value
+            for key, value in (cached_data or {}).items()
+            if key in public_keys
+        }
 
     def get_history(self, limit: int = 12) -> List[Dict]:
         history = self._load_recent_history()
@@ -2577,7 +2691,7 @@ Estado estruturado:
         logger.info("World Consciousness: buscando novo estado do mundo nas redes externas...")
         world_state = self._build_world_state(
             locale=locale,
-            cached_data=cached_data,
+            cached_data=self._cache_refresh_seed(cached_data),
             will_state=resolved_will_state,
             epistemic_trigger=epistemic_trigger,
         )

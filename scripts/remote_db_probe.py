@@ -24,12 +24,20 @@ def resolve_default_db_path() -> str:
 
 def resolve_default_world_cache_path() -> str:
     candidates = []
+    agent_instance = os.getenv("AGENT_INSTANCE") or os.getenv("INSTANCE_ID") or DEFAULT_AGENT_INSTANCE
+    instance_slug = "".join(
+        character if character.isalnum() or character in "_.-" else "_"
+        for character in agent_instance
+    ).strip("._") or "instance"
     volume_dir = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
     if volume_dir:
+        candidates.append(os.path.join(volume_dir, f"world_state_cache.{instance_slug}.json"))
         candidates.append(os.path.join(volume_dir, "world_state_cache.json"))
     candidates.extend(
         [
+            f"/data/world_state_cache.{instance_slug}.json",
             "/data/world_state_cache.json",
+            f"./data/world_state_cache.{instance_slug}.json",
             "./data/world_state_cache.json",
         ]
     )

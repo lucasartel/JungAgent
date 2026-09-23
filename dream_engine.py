@@ -326,17 +326,43 @@ Responda APENAS com um objeto JSON valido:
 }}
 """
 
-    def _get_recent_fragments(self, user_id: str, hours: int = 24) -> str:
-        """Puxa os fragmentos recentes do usuario para material onirico."""
+    def _get_recent_fragment_material(
+        self,
+        user_id: str,
+        *,
+        relation_id: Optional[str] = None,
+        hours: int = 24,
+    ) -> tuple[str, list[str], Optional[str]]:
+        """Puxa apenas fragmentos pertencentes ao escopo relacional de origem."""
         try:
+            agent_instance = getattr(self.db, "agent_instance", None)
+            if not agent_instance:
+                from instance_config import AGENT_INSTANCE
+
+                agent_instance = AGENT_INSTANCE
+            resolver = getattr(self.db, "resolve_relation_id", None)
+            resolved_relation = relation_id
+            if callable(resolver):
+                resolved_relation = resolver(
+                    agent_instance=agent_instance,
+                    participant_user_id=user_id,
+                    relation_id=relation_id,
+                )
+            if resolved_relation:
+                scope_sql = "agent_instance = ? AND relation_id = ?"
+                scope_params = [agent_instance, resolved_relation]
+            else:
+                scope_sql = "(agent_instance = ? OR agent_instance IS NULL) AND relation_id IS NULL"
+                scope_params = [agent_instance]
             cursor = self.db.conn.cursor()
             cursor.execute(
                 f"""
-                SELECT content, tension_level, emotional_weight
+                SELECT id, content, tension_level, emotional_weight
                 FROM rumination_fragments
-                WHERE user_id = ? AND created_at >= datetime('now', '-{hours} hours')
+                WHERE user_id = ? AND {scope_sql}
+                  AND created_at >= datetime('now', '-{hours} hours')
                 """,
-                (user_id,),
+                [user_id, *scope_params],
             )
 
             fragments = cursor.fetchall()
@@ -345,26 +371,37 @@ Responda APENAS com um objeto JSON valido:
                 logger.info("   Sem fragmentos nas ultimas 24h. Buscando material antigo...")
                 cursor.execute(
                     """
-                    SELECT content, tension_level, emotional_weight
+                    SELECT id, content, tension_level, emotional_weight
                     FROM rumination_fragments
-                    WHERE user_id = ?
+                    WHERE user_id = ? AND {scope_sql}
                     ORDER BY created_at DESC
                     LIMIT 5
-                    """,
-                    (user_id,),
+                    """.format(scope_sql=scope_sql),
+                    [user_id, *scope_params],
                 )
                 fragments = cursor.fetchall()
 
             if not fragments:
-                return "Nenhum fragmento encontrado."
+                return "Nenhum fragmento encontrado.", [], resolved_relation
 
             text = "=== FRAGMENTOS HUMANOS ===\n"
             for fr in fragments:
                 text += f"- {fr['content']} (Tensao: {fr['tension_level']}, Peso: {fr['emotional_weight']})\n"
-            return text
+            source_refs = [f"rumination_fragment#{fr['id']}" for fr in fragments]
+            return text, source_refs, resolved_relation
         except Exception as e:
             logger.error(f"Erro ao buscar fragmentos para sonho: {e}")
-            return "Erro ao acessar fragmentos."
+            return "Erro ao acessar fragmentos.", [], relation_id
+
+    def _get_recent_fragments(
+        self, user_id: str, hours: int = 24, relation_id: Optional[str] = None
+    ) -> str:
+        text, _, _ = self._get_recent_fragment_material(
+            user_id,
+            relation_id=relation_id,
+            hours=hours,
+        )
+        return text
 
     def _get_agent_identity(self, user_id: str) -> str:
         """Puxa a identidade atual do agente para colorir o sonho."""
@@ -396,14 +433,17 @@ Responda APENAS com um objeto JSON valido:
             logger.error(f"Erro ao buscar residuo de vontade para sonho: {e}")
             return "Erro ao acessar residuo de vontade."
 
-    def generate_dream(self, user_id: str) -> bool:
+    def generate_dream(self, user_id: str, relation_id: Optional[str] = None) -> bool:
         """Processo principal: analisa fatos, gera sonho e extrai insight onirico."""
         if not self.llm:
             return False
 
         logger.info(f"Iniciando Dream Engine para o usuario: {user_id}")
 
-        fragments_text = self._get_recent_fragments(user_id)
+        fragments_text, source_refs, resolved_relation = self._get_recent_fragment_material(
+            user_id,
+            relation_id=relation_id,
+        )
         if "Nenhum fragmento" in fragments_text:
             logger.info("   Material insuficiente para gerar sonho esta noite.")
             return False
@@ -449,6 +489,9 @@ Responda APENAS com um objeto JSON valido:
                 regulatory_function=regulatory_function,
                 compensated_attitude=compensated_attitude,
                 dream_mood=dream_mood,
+                relation_id=resolved_relation,
+                source_refs=source_refs,
+                provenance={"material_count": len(source_refs), "generator": "dream_engine"},
             )
             if dream_id:
                 logger.info(f"Sonho salvo com sucesso (ID: {dream_id}, Tema: {symbolic_theme})")
@@ -463,6 +506,7 @@ Responda APENAS com um objeto JSON valido:
                     regulatory_function=regulatory_function,
                     compensated_attitude=compensated_attitude,
                     dream_mood=dream_mood,
+                    relation_id=resolved_relation,
                 )
 
                 return True
@@ -807,6 +851,7 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
         regulatory_function: str = "",
         compensated_attitude: str = "",
         dream_mood: str = "",
+        relation_id: Optional[str] = None,
     ) -> list[int]:
         """Dispara o sonho de volta para o modulo de ruminacao como material continuo."""
         try:
@@ -829,6 +874,7 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
                 "source_kind": "dream",
                 "source_table": "agent_dreams",
                 "source_id": dream_id,
+                "relation_id": relation_id,
                 "source_metadata": {
                     "symbolic_theme": symbolic_theme,
                     "regulatory_function": regulatory_function,
@@ -855,6 +901,7 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
                 regulatory_function=regulatory_function,
                 compensated_attitude=compensated_attitude,
                 dream_mood=dream_mood,
+                relation_id=relation_id,
             )
             return [fallback_id] if fallback_id else []
 
@@ -871,6 +918,7 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
         regulatory_function: str = "",
         compensated_attitude: str = "",
         dream_mood: str = "",
+        relation_id: Optional[str] = None,
     ) -> Optional[int]:
         """Garante que cada sonho persistido deixe ao menos um fragmento rastreavel."""
         try:
@@ -881,9 +929,10 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
                 SELECT id
                 FROM rumination_fragments
                 WHERE user_id = ? AND source_kind = ? AND source_table = ? AND source_id = ?
+                  AND COALESCE(relation_id, '') = COALESCE(?, '')
                 LIMIT 1
                 """,
-                (user_id, "dream", "agent_dreams", source_id),
+                (user_id, "dream", "agent_dreams", source_id, relation_id),
             )
             existing = cursor.fetchone()
             if existing:
@@ -898,14 +947,16 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
             cursor.execute(
                 """
                 INSERT INTO rumination_fragments (
-                    user_id, fragment_type, content, context,
+                    user_id, agent_instance, relation_id, fragment_type, content, context,
                     source_conversation_id, source_quote,
                     source_kind, source_table, source_id, source_metadata_json,
                     emotional_weight, tension_level
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user_id,
+                    getattr(self.db, "agent_instance", None),
+                    relation_id,
                     "tensao",
                     content,
                     context,

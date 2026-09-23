@@ -201,3 +201,88 @@ def test_extract_and_save_facts_v2_falls_back_to_regex_extractor(in_memory_conn)
         "fact_key": "profissao",
         "fact_value": "professor",
     }
+
+
+def test_multi_entity_facts_retains_multiple_children(in_memory_conn):
+    _create_v2_facts_schema(in_memory_conn)
+    engine = _FactEngine(in_memory_conn)
+
+    engine._save_fact_v2("u1", "RELACIONAMENTO", "filho", "nome", "Vitor", conversation_id=1)
+    engine._save_fact_v2("u1", "RELACIONAMENTO", "filho", "nome", "Davi", conversation_id=2)
+
+    current_facts = engine._get_current_facts_any("u1")
+    values = [f["fact_value"] for f in current_facts if f["fact_type"] == "filho"]
+    assert "Vitor" in values
+    assert "Davi" in values
+    assert len(values) == 2
+
+    priority_facts = engine._get_priority_facts_for_query("u1", "quais sao os nomes dos meus filhos?")
+    priority_values = [f["fact_value"] for f in priority_facts]
+    assert "Vitor" in priority_values
+    assert "Davi" in priority_values
+
+
+def test_apply_correction_deactivates_old_fact(in_memory_conn):
+    _create_v2_facts_schema(in_memory_conn)
+    engine = _FactEngine(in_memory_conn)
+
+    class CorrectionStub:
+        category = "RELACIONAMENTO"
+        fact_type = "pai"
+        attribute = "nome"
+        old_value = "Ronald"
+        new_value = "Ronald"
+        confidence = 0.95
+        context = "Meu nome é Lucas. O nome do meu pai é Ronald."
+
+    class UserCorrectionStub:
+        category = "RELACIONAMENTO"
+        fact_type = "usuario"
+        attribute = "nome"
+        old_value = "Ronald"
+        new_value = "Lucas"
+        confidence = 0.95
+        context = "Meu nome é Lucas."
+
+    # Initial state with incorrect user name set to Ronald
+    engine._save_fact_v2("u1", "RELACIONAMENTO", "usuario", "nome", "Ronald", conversation_id=1)
+
+    # Correction applied: user is Lucas, father is Ronald
+    engine._apply_correction("u1", UserCorrectionStub(), conversation_id=2)
+    engine._apply_correction("u1", CorrectionStub(), conversation_id=2)
+
+    current_facts = engine._get_current_facts_any("u1")
+    current_map = {(f["fact_type"], f["attribute"]): f["fact_value"] for f in current_facts}
+
+    assert current_map.get(("usuario", "nome")) == "Lucas"
+    assert current_map.get(("pai", "nome")) == "Ronald"
+
+
+if __name__ == "__main__":
+    def _get_conn():
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    print("Running test_priority_fact_lookup_prefers_specific_v2_fact...")
+    test_priority_fact_lookup_prefers_specific_v2_fact(_get_conn())
+
+    print("Running test_fact_lookup_falls_back_to_legacy_table...")
+    test_fact_lookup_falls_back_to_legacy_table(_get_conn())
+
+    print("Running test_save_or_update_fact_versions_legacy_fact...")
+    test_save_or_update_fact_versions_legacy_fact(_get_conn())
+
+    print("Running test_save_fact_v2_versions_and_links_replacement...")
+    test_save_fact_v2_versions_and_links_replacement(_get_conn())
+
+    print("Running test_extract_and_save_facts_v2_falls_back_to_regex_extractor...")
+    test_extract_and_save_facts_v2_falls_back_to_regex_extractor(_get_conn())
+
+    print("Running test_multi_entity_facts_retains_multiple_children...")
+    test_multi_entity_facts_retains_multiple_children(_get_conn())
+
+    print("Running test_apply_correction_deactivates_old_fact...")
+    test_apply_correction_deactivates_old_fact(_get_conn())
+
+    print("All fact database tests passed successfully!")

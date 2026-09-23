@@ -80,6 +80,7 @@ class _FixtureIntegrativeSelfDB:
         *,
         agent_instance: str,
         user_id: str,
+        relation_id: str | None = None,
     ) -> dict[str, Any] | None:
         if (
             self.snapshot.get("agent_instance") != agent_instance

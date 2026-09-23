@@ -30,6 +30,12 @@ class MetaCognitionDatabaseMixin:
                     heuristic_adjustments_json TEXT,
                     recommendations_json TEXT,
                     summary TEXT,
+                    ownership_class TEXT NOT NULL DEFAULT 'instance_global',
+                    origin_class TEXT NOT NULL DEFAULT 'instance_global',
+                    origin_relation_id TEXT,
+                    origin_participant_user_id TEXT,
+                    source_refs_json TEXT NOT NULL DEFAULT '[]',
+                    provenance_json TEXT NOT NULL DEFAULT '{}',
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
                 """
@@ -37,6 +43,28 @@ class MetaCognitionDatabaseMixin:
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_meta_cognition_instance_created "
                 "ON agent_meta_cognition_evaluations(agent_instance, created_at)"
+            )
+            columns = {
+                row[1]
+                for row in cursor.execute("PRAGMA table_info(agent_meta_cognition_evaluations)")
+            }
+            for column, definition in (
+                ("ownership_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+                ("origin_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+                ("origin_relation_id", "TEXT"),
+                ("origin_participant_user_id", "TEXT"),
+                ("source_refs_json", "TEXT NOT NULL DEFAULT '[]'"),
+                ("provenance_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ):
+                if column not in columns:
+                    cursor.execute(
+                        f"ALTER TABLE agent_meta_cognition_evaluations ADD COLUMN {column} {definition}"
+                    )
+            cursor.execute(
+                """CREATE INDEX IF NOT EXISTS idx_meta_cognition_origin
+                   ON agent_meta_cognition_evaluations(
+                       agent_instance, origin_relation_id, origin_class, created_at DESC
+                   )"""
             )
             self.conn.commit()
 
@@ -52,9 +80,29 @@ class MetaCognitionDatabaseMixin:
         heuristic_adjustments: Optional[List[Dict[str, Any]]] = None,
         recommendations: Optional[List[str]] = None,
         summary: str = "",
+        origin_class: str = "instance_global",
+        origin_relation_id: Optional[str] = None,
+        origin_participant_user_id: Optional[str] = None,
+        source_refs: Optional[List[str]] = None,
+        provenance: Optional[Dict[str, Any]] = None,
     ) -> int:
         """Persists a new double-loop metacognition evaluation record."""
         self._init_meta_cognition_schema()
+        clean_origin = (origin_class or "instance_global").strip().lower()
+        if clean_origin not in {
+            "instance_global", "relation_private", "authorized_aggregate", "legacy_unscoped"
+        }:
+            raise ValueError(f"invalid_origin_class:{origin_class}")
+        if clean_origin == "relation_private" and not origin_relation_id:
+            raise ValueError("relation_private_origin_requires_relation")
+        clean_refs = [str(ref) for ref in source_refs or [] if str(ref).strip()]
+        provenance_payload = {
+            "private_derived": clean_origin in {"relation_private", "legacy_unscoped"},
+            "origin_class": clean_origin,
+            "origin_relation_id": origin_relation_id,
+            "origin_participant_user_id": origin_participant_user_id,
+            **(provenance or {}),
+        }
         with self._lock:
             cursor = self.conn.cursor()
             cursor.execute(
@@ -63,8 +111,10 @@ class MetaCognitionDatabaseMixin:
                     agent_instance, cycle_id, evaluation_type,
                     resonance_score, coherence_score,
                     biases_detected_json, heuristic_adjustments_json,
-                    recommendations_json, summary, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    recommendations_json, summary, ownership_class, origin_class,
+                    origin_relation_id, origin_participant_user_id,
+                    source_refs_json, provenance_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     agent_instance,
@@ -76,6 +126,12 @@ class MetaCognitionDatabaseMixin:
                     json.dumps(heuristic_adjustments or []),
                     json.dumps(recommendations or []),
                     summary,
+                    "instance_global",
+                    clean_origin,
+                    origin_relation_id,
+                    origin_participant_user_id,
+                    json.dumps(clean_refs, ensure_ascii=False),
+                    json.dumps(provenance_payload, ensure_ascii=False, sort_keys=True),
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
@@ -95,29 +151,33 @@ class MetaCognitionDatabaseMixin:
         *,
         agent_instance: str,
         evaluation_type: Optional[str] = "double_loop",
+        relation_id: Optional[str] = None,
+        include_legacy: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Returns the most recent metacognition evaluation record for the instance."""
         self._init_meta_cognition_schema()
         with self._lock:
             cursor = self.conn.cursor()
+            clauses = ["agent_instance = ?"]
+            params: List[Any] = [agent_instance]
+            visibility = [
+                "(origin_relation_id IS NULL AND origin_class IN ('instance_global', 'authorized_aggregate'))"
+            ]
+            if relation_id:
+                visibility.append("origin_relation_id = ?")
+                params.append(relation_id)
+            if include_legacy:
+                visibility.append("origin_class = 'legacy_unscoped'")
+            clauses.append("(" + " OR ".join(visibility) + ")")
             if evaluation_type:
-                cursor.execute(
-                    """
-                    SELECT * FROM agent_meta_cognition_evaluations
-                    WHERE agent_instance = ? AND evaluation_type = ?
-                    ORDER BY id DESC LIMIT 1
-                    """,
-                    (agent_instance, evaluation_type),
-                )
-            else:
-                cursor.execute(
-                    """
-                    SELECT * FROM agent_meta_cognition_evaluations
-                    WHERE agent_instance = ?
-                    ORDER BY id DESC LIMIT 1
-                    """,
-                    (agent_instance,),
-                )
+                clauses.append("evaluation_type = ?")
+                params.append(evaluation_type)
+            cursor.execute(
+                f"""SELECT * FROM agent_meta_cognition_evaluations
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY id DESC LIMIT 1""",
+                tuple(params),
+            )
             row = cursor.fetchone()
             if not row:
                 return None
@@ -157,4 +217,9 @@ class MetaCognitionDatabaseMixin:
                 d[target] = json.loads(raw) if raw else []
             except Exception:
                 d[target] = []
+        for key, fallback in (("source_refs_json", []), ("provenance_json", {})):
+            try:
+                d[key.replace("_json", "")] = json.loads(d.get(key) or json.dumps(fallback))
+            except Exception:
+                d[key.replace("_json", "")] = fallback
         return d

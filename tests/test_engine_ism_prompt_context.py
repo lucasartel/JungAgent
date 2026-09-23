@@ -81,7 +81,9 @@ def test_ism_prompt_context_enabled_injects_flagged_safe_block(monkeypatch):
 
     context = engine._build_ism_prompt_context("u-regression")
 
-    assert db.calls == [{"agent_instance": "jung_v1", "user_id": "u-regression"}]
+    assert db.calls == [
+        {"agent_instance": "jung_v1", "user_id": "u-regression", "relation_id": None}
+    ]
     assert "ISM PROMPT CONTEXT ENABLED BY FEATURE FLAG" in context
     assert "ISM PROMPT CONTEXT (FEATURE FLAG EXPERIMENTAL)" in context
     assert "NAO INJETADO" not in context

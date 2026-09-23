@@ -5,6 +5,8 @@ import re
 from datetime import date
 from typing import Any, Dict, List, Optional
 
+from instance_config import ADMIN_USER_ID
+
 READ_ONLY_INFLUENCE_MODE = "read_only"
 CONTEXT_PREVIEW_MODE = "preview_only"
 SOURCE_REF_RE = re.compile(
@@ -43,6 +45,26 @@ class IntegrativeSelfModel:
             (table_name,),
         ).fetchone()
         return row is not None
+
+    def _table_columns(self, table_name: str) -> set[str]:
+        if not self._table_exists(table_name):
+            return set()
+        return {
+            str(row[1])
+            for row in self.db.conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+
+    def _relation_id(self, user_id: str) -> Optional[str]:
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        if not callable(resolver):
+            return None
+        relation_id = resolver(
+            agent_instance=self.agent_instance,
+            participant_user_id=user_id,
+        )
+        if not relation_id and str(user_id) != str(ADMIN_USER_ID):
+            raise ValueError("relation_required_for_integrative_self")
+        return relation_id
 
     def _json_loads(self, raw: Any, fallback: Any) -> Any:
         try:
@@ -143,7 +165,13 @@ class IntegrativeSelfModel:
             },
         )
 
-    def _latest_components(self, *, user_id: str, cycle_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def _latest_components(
+        self,
+        *,
+        user_id: str,
+        relation_id: Optional[str],
+        cycle_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         components: List[Dict[str, Any]] = []
         cursor = self.db.conn.cursor()
 
@@ -174,16 +202,30 @@ class IntegrativeSelfModel:
             components.append(pulse_component)
 
         if self._table_exists("agent_dreams"):
-            row = cursor.execute(
+            dream_columns = self._table_columns("agent_dreams")
+            if {"agent_instance", "origin_relation_id", "origin_class"}.issubset(dream_columns):
+                row = cursor.execute(
                 """
                 SELECT id, symbolic_theme, extracted_insight, dream_mood, created_at
                 FROM agent_dreams
-                WHERE user_id = ?
+                WHERE agent_instance = ? AND user_id = ?
+                  AND (
+                    origin_relation_id = ?
+                    OR (origin_relation_id IS NULL AND origin_class IN ('instance_global', 'authorized_aggregate'))
+                    OR (? IS NULL AND origin_relation_id IS NULL AND origin_class = 'legacy_unscoped')
+                  )
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
-                (user_id,),
-            ).fetchone()
+                (self.agent_instance, user_id, relation_id, relation_id),
+                ).fetchone()
+            else:
+                row = cursor.execute(
+                    """SELECT id, symbolic_theme, extracted_insight, dream_mood, created_at
+                       FROM agent_dreams WHERE user_id = ?
+                       ORDER BY created_at DESC, id DESC LIMIT 1""",
+                    (user_id,),
+                ).fetchone()
             if row:
                 components.append(
                     self._component(
@@ -196,18 +238,32 @@ class IntegrativeSelfModel:
                 )
 
         if self._table_exists("agent_will_states"):
-            row = cursor.execute(
+            will_columns = self._table_columns("agent_will_states")
+            if {"agent_instance", "relation_id", "scope_kind"}.issubset(will_columns):
+                row = cursor.execute(
                 """
                 SELECT id, cycle_id, dominant_will, secondary_will,
                        constrained_will, will_conflict, attention_bias_note,
                        created_at
                 FROM agent_will_states
-                WHERE user_id = ?
+                WHERE agent_instance = ? AND user_id = ?
+                  AND (
+                    (scope_kind = 'relation' AND relation_id = ?)
+                    OR (scope_kind = 'global' AND relation_id IS NULL)
+                  )
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
-                (user_id,),
-            ).fetchone()
+                (self.agent_instance, user_id, relation_id),
+                ).fetchone()
+            else:
+                row = cursor.execute(
+                    """SELECT id, cycle_id, dominant_will, secondary_will,
+                              constrained_will, will_conflict, attention_bias_note, created_at
+                       FROM agent_will_states WHERE user_id = ?
+                       ORDER BY created_at DESC, id DESC LIMIT 1""",
+                    (user_id,),
+                ).fetchone()
             if row:
                 summary = (
                     f"dominante={row['dominant_will'] or 'indefinida'}; "
@@ -226,17 +282,28 @@ class IntegrativeSelfModel:
                 )
 
         if self._table_exists("rumination_insights"):
-            row = cursor.execute(
+            rumination_columns = self._table_columns("rumination_insights")
+            if {"agent_instance", "relation_id"}.issubset(rumination_columns):
+                row = cursor.execute(
                 """
                 SELECT id, insight_type, symbol_content, question_content,
                        full_message, crystallized_at
                 FROM rumination_insights
-                WHERE user_id = ?
+                WHERE agent_instance = ? AND user_id = ?
+                  AND COALESCE(relation_id, '') = COALESCE(?, '')
                 ORDER BY crystallized_at DESC, id DESC
                 LIMIT 1
                 """,
-                (user_id,),
-            ).fetchone()
+                (self.agent_instance, user_id, relation_id),
+                ).fetchone()
+            else:
+                row = cursor.execute(
+                    """SELECT id, insight_type, symbol_content, question_content,
+                              full_message, crystallized_at
+                       FROM rumination_insights WHERE user_id = ?
+                       ORDER BY crystallized_at DESC, id DESC LIMIT 1""",
+                    (user_id,),
+                ).fetchone()
             if row:
                 components.append(
                     self._component(
@@ -249,16 +316,31 @@ class IntegrativeSelfModel:
                 )
 
         if self._table_exists("working_memory_items"):
-            row = cursor.execute(
+            memory_columns = self._table_columns("working_memory_items")
+            if {"ownership_class", "relation_id"}.issubset(memory_columns):
+                row = cursor.execute(
                 """
                 SELECT id, title, summary, source_refs_json, priority, created_at
                 FROM working_memory_items
                 WHERE agent_instance = ? AND status = 'active'
+                  AND (
+                    (ownership_class IN ('instance_global', 'authorized_aggregate') AND relation_id IS NULL)
+                    OR (ownership_class = 'relation_private' AND relation_id = ?)
+                  )
                 ORDER BY item_type = 'focus' DESC, priority DESC, updated_at DESC, id DESC
                 LIMIT 1
                 """,
-                (self.agent_instance,),
-            ).fetchone()
+                (self.agent_instance, relation_id),
+                ).fetchone()
+            else:
+                row = cursor.execute(
+                    """SELECT id, title, summary, source_refs_json, priority, created_at
+                       FROM working_memory_items
+                       WHERE agent_instance = ? AND status = 'active'
+                       ORDER BY item_type = 'focus' DESC, priority DESC, updated_at DESC, id DESC
+                       LIMIT 1""",
+                    (self.agent_instance,),
+                ).fetchone()
             if row:
                 source_ref = ""
                 for ref in self._json_loads(row["source_refs_json"], []):
@@ -276,17 +358,32 @@ class IntegrativeSelfModel:
                 )
 
         if self._table_exists("knowledge_gaps"):
-            row = cursor.execute(
+            gap_columns = self._table_columns("knowledge_gaps")
+            if {"agent_instance", "origin_relation_id", "origin_class"}.issubset(gap_columns):
+                row = cursor.execute(
                 """
                 SELECT id, topic, the_gap, status, closure_summary,
                        closure_source_type, resolved_at
                 FROM knowledge_gaps
-                WHERE user_id = ? AND status = 'resolved'
+                WHERE agent_instance = ? AND user_id = ? AND status = 'resolved'
+                  AND (
+                    origin_relation_id = ?
+                    OR (origin_relation_id IS NULL AND origin_class IN ('instance_global', 'authorized_aggregate'))
+                    OR (? IS NULL AND origin_relation_id IS NULL AND origin_class = 'legacy_unscoped')
+                  )
                 ORDER BY resolved_at DESC, id DESC
                 LIMIT 1
                 """,
-                (user_id,),
-            ).fetchone()
+                (self.agent_instance, user_id, relation_id, relation_id),
+                ).fetchone()
+            else:
+                row = cursor.execute(
+                    """SELECT id, topic, the_gap, status, closure_summary,
+                              closure_source_type, resolved_at
+                       FROM knowledge_gaps WHERE user_id = ? AND status = 'resolved'
+                       ORDER BY resolved_at DESC, id DESC LIMIT 1""",
+                    (user_id,),
+                ).fetchone()
             if row:
                 components.append(
                     self._component(
@@ -310,12 +407,18 @@ class IntegrativeSelfModel:
         if not user_id:
             raise ValueError("user_id_required")
 
+        relation_id = self._relation_id(user_id)
+
         loop_state = self._latest_loop_state() or {}
         effective_cycle = cycle_id or loop_state.get("cycle_id")
         day = snapshot_date or (
             effective_cycle if re.match(r"^\d{4}-\d{2}-\d{2}$", str(effective_cycle or "")) else date.today().isoformat()
         )
-        components = self._latest_components(user_id=user_id, cycle_id=effective_cycle)
+        components = self._latest_components(
+            user_id=user_id,
+            relation_id=relation_id,
+            cycle_id=effective_cycle,
+        )
         source_refs = []
         for component in components:
             ref = component.get("source_ref")
@@ -349,6 +452,7 @@ class IntegrativeSelfModel:
         return {
             "agent_instance": self.agent_instance,
             "user_id": user_id,
+            "relation_id": relation_id,
             "cycle_id": effective_cycle,
             "snapshot_date": day,
             "status": "generated" if source_refs else "partial",
@@ -402,6 +506,7 @@ class IntegrativeSelfModel:
             source_refs=snapshot["source_refs"],
             limits=snapshot["limits"],
             metadata=snapshot["metadata"],
+            relation_id=snapshot.get("relation_id"),
         )
         snapshot["id"] = snapshot_id
         snapshot["persisted"] = True
@@ -422,6 +527,7 @@ class IntegrativeSelfModel:
         snapshot = self.db.get_latest_integrative_self_snapshot(
             agent_instance=self.agent_instance,
             user_id=user_id,
+            relation_id=self._relation_id(user_id),
         )
         if not snapshot:
             return {

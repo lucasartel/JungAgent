@@ -61,6 +61,35 @@ class AgentIdentityContextBuilder:
         )
         return cursor.fetchone() is not None
 
+    def _resolve_identity_relation(self, user_id: Optional[str]) -> Optional[str]:
+        if not user_id:
+            return None
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        if not callable(resolver):
+            return None
+        relation_id = resolver(
+            agent_instance=self.agent_instance,
+            participant_user_id=str(user_id),
+        )
+        if not relation_id and str(user_id) != str(ADMIN_USER_ID):
+            raise ValueError("relation_required_for_identity_context")
+        return relation_id
+
+    def _identity_visibility(self, cursor, table: str, relation_id: Optional[str]):
+        columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+        if "origin_relation_id" not in columns or "origin_class" not in columns:
+            return "1 = 1", []
+        clauses = [
+            "(origin_relation_id IS NULL AND origin_class IN ('instance_global', 'authorized_aggregate'))"
+        ]
+        params = []
+        if relation_id:
+            clauses.append("origin_relation_id = ?")
+            params.append(relation_id)
+        else:
+            clauses.append("(origin_relation_id IS NULL AND origin_class = 'legacy_unscoped')")
+        return "(" + " OR ".join(clauses) + ")", params
+
     def _append_architectural_evidence(
         self,
         evidence: List[Dict[str, str]],
@@ -167,15 +196,16 @@ class AgentIdentityContextBuilder:
                     )
 
             if user_id and self._identity_table_exists(cursor, "agent_dreams"):
+                dream_scope, dream_params = self._dream_visibility_scope(cursor, user_id)
                 cursor.execute(
-                    """
+                    f"""
                     SELECT id, symbolic_theme, extracted_insight, dream_mood, created_at
                     FROM agent_dreams
-                    WHERE user_id = ?
+                    WHERE user_id = ? AND {dream_scope}
                     ORDER BY created_at DESC, id DESC
                     LIMIT 1
                     """,
-                    (user_id,),
+                    (user_id, *dream_params),
                 )
                 row = cursor.fetchone()
                 if row:
@@ -341,18 +371,20 @@ class AgentIdentityContextBuilder:
         cursor = self.db.conn.cursor()
 
         try:
+            relation_id = self._resolve_identity_relation(user_id)
+            context["relation_id"] = relation_id
             if include_nuclear:
-                context["nuclear_beliefs"] = self._get_nuclear_beliefs(cursor, max_items_per_category)
+                context["nuclear_beliefs"] = self._get_nuclear_beliefs(cursor, max_items_per_category, relation_id)
             if include_contradictions:
-                context["active_contradictions"] = self._get_active_contradictions(cursor, max_items_per_category)
+                context["active_contradictions"] = self._get_active_contradictions(cursor, max_items_per_category, relation_id)
             if include_narrative:
-                context["current_narrative_chapter"] = self._get_current_narrative_chapter(cursor)
+                context["current_narrative_chapter"] = self._get_current_narrative_chapter(cursor, relation_id)
             if include_possible_selves:
-                context["possible_selves"] = self._get_possible_selves(cursor, max_items_per_category)
+                context["possible_selves"] = self._get_possible_selves(cursor, max_items_per_category, relation_id)
             if include_relational and user_id:
-                context["relational_identity"] = self._get_relational_identity(cursor, user_id, max_items_per_category)
+                context["relational_identity"] = self._get_relational_identity(cursor, user_id, max_items_per_category, relation_id)
             if include_meta_knowledge:
-                context["meta_knowledge"] = self._get_meta_knowledge(cursor, max_items_per_category)
+                context["meta_knowledge"] = self._get_meta_knowledge(cursor, max_items_per_category, relation_id)
             if user_id:
                 context["knowledge_gaps"] = self.db.get_active_knowledge_gaps(user_id, limit=2)
 
@@ -361,9 +393,10 @@ class AgentIdentityContextBuilder:
             logger.error(f"Erro ao construir contexto de identidade: {exc}")
             return {"error": str(exc)}
 
-    def _get_nuclear_beliefs(self, cursor, limit: int) -> List[Dict]:
+    def _get_nuclear_beliefs(self, cursor, limit: int, relation_id: Optional[str] = None) -> List[Dict]:
+        visibility, visibility_params = self._identity_visibility(cursor, "agent_identity_core", relation_id)
         cursor.execute(
-            """
+            f"""
             SELECT
                 attribute_type,
                 content,
@@ -378,10 +411,11 @@ class AgentIdentityContextBuilder:
             FROM agent_identity_core
             WHERE agent_instance = ?
               AND is_current = 1
+              AND {visibility}
             ORDER BY certainty DESC, last_reaffirmed_at DESC
             LIMIT ?
             """,
-            (self.agent_instance, limit),
+            (self.agent_instance, *visibility_params, limit),
         )
 
         return [
@@ -400,9 +434,10 @@ class AgentIdentityContextBuilder:
             for row in cursor.fetchall()
         ]
 
-    def _get_active_contradictions(self, cursor, limit: int) -> List[Dict]:
+    def _get_active_contradictions(self, cursor, limit: int, relation_id: Optional[str] = None) -> List[Dict]:
+        visibility, visibility_params = self._identity_visibility(cursor, "agent_identity_contradictions", relation_id)
         cursor.execute(
-            """
+            f"""
             SELECT
                 pole_a,
                 pole_b,
@@ -416,10 +451,11 @@ class AgentIdentityContextBuilder:
             FROM agent_identity_contradictions
             WHERE agent_instance = ?
               AND status IN ('unresolved', 'integrating')
+              AND {visibility}
             ORDER BY salience DESC, tension_level DESC
             LIMIT ?
             """,
-            (self.agent_instance, limit),
+            (self.agent_instance, *visibility_params, limit),
         )
 
         return [
@@ -437,9 +473,10 @@ class AgentIdentityContextBuilder:
             for row in cursor.fetchall()
         ]
 
-    def _get_current_narrative_chapter(self, cursor) -> Optional[Dict]:
+    def _get_current_narrative_chapter(self, cursor, relation_id: Optional[str] = None) -> Optional[Dict]:
+        visibility, visibility_params = self._identity_visibility(cursor, "agent_narrative_chapters", relation_id)
         cursor.execute(
-            """
+            f"""
             SELECT
                 chapter_name,
                 chapter_order,
@@ -452,10 +489,11 @@ class AgentIdentityContextBuilder:
             FROM agent_narrative_chapters
             WHERE agent_instance = ?
               AND period_end IS NULL
+              AND {visibility}
             ORDER BY chapter_order DESC
             LIMIT 1
             """,
-            (self.agent_instance,),
+            (self.agent_instance, *visibility_params),
         )
 
         row = cursor.fetchone()
@@ -513,9 +551,10 @@ class AgentIdentityContextBuilder:
             "created_at": row[8],
         }
 
-    def _get_possible_selves(self, cursor, limit: int) -> List[Dict]:
+    def _get_possible_selves(self, cursor, limit: int, relation_id: Optional[str] = None) -> List[Dict]:
+        visibility, visibility_params = self._identity_visibility(cursor, "agent_possible_selves", relation_id)
         cursor.execute(
-            """
+            f"""
             SELECT
                 self_type,
                 description,
@@ -530,10 +569,11 @@ class AgentIdentityContextBuilder:
             FROM agent_possible_selves
             WHERE agent_instance = ?
               AND status = 'active'
+              AND {visibility}
             ORDER BY vividness DESC, likelihood DESC
             LIMIT ?
             """,
-            (self.agent_instance, limit),
+            (self.agent_instance, *visibility_params, limit),
         )
 
         return [
@@ -552,9 +592,12 @@ class AgentIdentityContextBuilder:
             for row in cursor.fetchall()
         ]
 
-    def _get_relational_identity(self, cursor, user_id: str, limit: int) -> List[Dict]:
+    def _get_relational_identity(
+        self, cursor, user_id: str, limit: int, relation_id: Optional[str] = None
+    ) -> List[Dict]:
+        visibility, visibility_params = self._identity_visibility(cursor, "agent_relational_identity", relation_id)
         cursor.execute(
-            """
+            f"""
             SELECT
                 relation_type,
                 target,
@@ -567,11 +610,12 @@ class AgentIdentityContextBuilder:
             FROM agent_relational_identity
             WHERE agent_instance = ?
               AND is_current = 1
+              AND {visibility}
               AND (target = ? OR target LIKE '%geral%' OR target LIKE '%todos%')
             ORDER BY salience DESC
             LIMIT ?
             """,
-            (self.agent_instance, user_id, limit),
+            (self.agent_instance, *visibility_params, user_id, limit),
         )
 
         return [
@@ -588,9 +632,10 @@ class AgentIdentityContextBuilder:
             for row in cursor.fetchall()
         ]
 
-    def _get_meta_knowledge(self, cursor, limit: int) -> List[Dict]:
+    def _get_meta_knowledge(self, cursor, limit: int, relation_id: Optional[str] = None) -> List[Dict]:
+        visibility, visibility_params = self._identity_visibility(cursor, "agent_self_knowledge_meta", relation_id)
         cursor.execute(
-            """
+            f"""
             SELECT
                 topic,
                 knowledge_type,
@@ -601,10 +646,11 @@ class AgentIdentityContextBuilder:
                 last_updated_at
             FROM agent_self_knowledge_meta
             WHERE agent_instance = ?
+              AND {visibility}
             ORDER BY confidence DESC, first_recognized_at DESC
             LIMIT ?
             """,
-            (self.agent_instance, limit),
+            (self.agent_instance, *visibility_params, limit),
         )
 
         return [
@@ -620,9 +666,12 @@ class AgentIdentityContextBuilder:
             for row in cursor.fetchall()
         ]
 
-    def _get_recent_agency_events(self, cursor, limit: int) -> List[Dict]:
+    def _get_recent_agency_events(
+        self, cursor, limit: int, relation_id: Optional[str] = None
+    ) -> List[Dict]:
+        visibility, visibility_params = self._identity_visibility(cursor, "agent_agency_memory", relation_id)
         cursor.execute(
-            """
+            f"""
             SELECT
                 event_description,
                 agency_type,
@@ -632,10 +681,11 @@ class AgentIdentityContextBuilder:
                 event_date
             FROM agent_agency_memory
             WHERE agent_instance = ?
+              AND {visibility}
             ORDER BY event_date DESC
             LIMIT ?
             """,
-            (self.agent_instance, limit),
+            (self.agent_instance, *visibility_params, limit),
         )
 
         return [
@@ -1178,19 +1228,43 @@ class AgentIdentityContextBuilder:
 
         return "; ".join(instructions[:4]) + "."
 
+    def _dream_visibility_scope(self, cursor, user_id: str) -> tuple[str, list]:
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(agent_dreams)")}
+        if "agent_instance" not in columns or "origin_relation_id" not in columns:
+            return "1 = 1", []
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        resolved_relation = None
+        if callable(resolver):
+            resolved_relation = resolver(
+                agent_instance=self.agent_instance,
+                participant_user_id=user_id,
+            )
+        if resolved_relation:
+            return (
+                "agent_instance = ? AND (origin_relation_id = ? OR origin_class IN ('instance_global', 'authorized_aggregate'))",
+                [self.agent_instance, resolved_relation],
+            )
+        if callable(resolver) and str(user_id) != str(ADMIN_USER_ID):
+            return "1 = 0", []
+        return (
+            "(agent_instance = ? OR agent_instance IS NULL) AND origin_relation_id IS NULL",
+            [self.agent_instance],
+        )
+
     def _get_latest_dream_residue(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
         if not user_id:
             return None
 
+        dream_scope, dream_params = self._dream_visibility_scope(cursor, user_id)
         cursor.execute(
-            """
+            f"""
             SELECT id, symbolic_theme, extracted_insight, created_at
             FROM agent_dreams
-            WHERE user_id = ? AND extracted_insight IS NOT NULL
+            WHERE user_id = ? AND extracted_insight IS NOT NULL AND {dream_scope}
             ORDER BY created_at DESC
             LIMIT 1
             """,
-            (user_id,),
+            (user_id, *dream_params),
         )
         row = cursor.fetchone()
         if not row:
@@ -1545,9 +1619,27 @@ class AgentIdentityContextBuilder:
             return None
 
         from will_engine import _aggregate_message_signals, _blend_state_with_message_signals
+        from engines.will_scope import GLOBAL_SCOPE, RELATION_SCOPE
+
+        relation_id = self._resolve_identity_relation(user_id)
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(agent_will_states)")}
+        clauses = ["user_id = ?"]
+        params: List[Any] = [user_id]
+        if "agent_instance" in columns:
+            clauses.append("agent_instance = ?")
+            params.append(self.agent_instance)
+        if {"scope_kind", "relation_id"}.issubset(columns):
+            if relation_id:
+                clauses.append(
+                    "((scope_kind = 'relation' AND relation_id = ?) "
+                    "OR (scope_kind = 'global' AND relation_id IS NULL))"
+                )
+                params.append(relation_id)
+            else:
+                clauses.append("scope_kind = 'global' AND relation_id IS NULL")
 
         cursor.execute(
-            """
+            f"""
             SELECT
                 id,
                 cycle_id,
@@ -1565,11 +1657,11 @@ class AgentIdentityContextBuilder:
                 source_summary_json,
                 created_at
             FROM agent_will_states
-            WHERE user_id = ?
+            WHERE {' AND '.join(clauses)}
             ORDER BY created_at DESC, id DESC
             LIMIT 1
             """,
-            (user_id,),
+            tuple(params),
         )
         row = cursor.fetchone()
         if not row:
@@ -1592,7 +1684,17 @@ class AgentIdentityContextBuilder:
             "source_summary": json.loads(row[13]) if row[13] else {},
             "created_at": row[14],
         }
-        message_summary = _aggregate_message_signals(cursor, user_id=user_id, cycle_id=base_state.get("cycle_id") if base_state else None, limit=10)
+        message_summary = _aggregate_message_signals(
+            cursor,
+            user_id=user_id,
+            cycle_id=base_state.get("cycle_id") if base_state else None,
+            limit=10,
+            scope={
+                "agent_instance": self.agent_instance,
+                "relation_id": relation_id,
+                "scope_kind": RELATION_SCOPE if relation_id else GLOBAL_SCOPE,
+            },
+        )
         return _blend_state_with_message_signals(base_state, message_summary)
 
     def _clip_identity_sentence(self, text: Optional[str], limit: int = 220) -> str:
@@ -1748,6 +1850,7 @@ class AgentIdentityContextBuilder:
         user_id: Optional[str] = None,
         style: str = "concise",
         current_user_message: Optional[str] = None,
+        include_unscoped_operational_context: bool = True,
     ) -> Dict:
         context = self.build_identity_context(
             user_id=user_id,
@@ -1772,21 +1875,26 @@ class AgentIdentityContextBuilder:
         meta_knowledge = context.get("meta_knowledge", [])
 
         cursor = self.db.conn.cursor()
-        agency_events = self._get_recent_agency_events(cursor, 3)
+        agency_events = self._get_recent_agency_events(cursor, 3, context.get("relation_id"))
         dream_signal = self._get_latest_dream_residue(cursor, user_id)
         will_signal = self._get_latest_will_signal(cursor, user_id)
         meta_consciousness = self._get_latest_meta_consciousness(cursor, user_id)
         world_knowledge_signal = self._get_latest_world_knowledge_signal()
-        work_signal = self._get_latest_work_identity_signal(cursor, user_id)
-        work_autobiography = (
-            self._get_work_autobiography(cursor)
-            if user_id and str(user_id) == str(ADMIN_USER_ID)
+        work_signal = (
+            self._get_latest_work_identity_signal(cursor, user_id)
+            if include_unscoped_operational_context
             else None
         )
-        recent_hobby_art = self._get_recent_hobby_art_memory(
-            cursor,
-            user_id,
-            limit=7,
+        work_autobiography = (
+            self._get_work_autobiography(cursor)
+            if include_unscoped_operational_context
+            and user_id and str(user_id) == str(ADMIN_USER_ID)
+            else None
+        )
+        recent_hobby_art = (
+            self._get_recent_hobby_art_memory(cursor, user_id, limit=7)
+            if include_unscoped_operational_context
+            else None
         )
         architectural_self_awareness = self.build_architectural_self_awareness_context(
             user_id=user_id,
@@ -1965,7 +2073,7 @@ class AgentIdentityContextBuilder:
         meta_knowledge = context.get("meta_knowledge", [])
 
         cursor = self.db.conn.cursor()
-        agency_events = self._get_recent_agency_events(cursor, 3)
+        agency_events = self._get_recent_agency_events(cursor, 3, context.get("relation_id"))
 
         self_kernel = self._pick_top_beliefs(
             beliefs, current_user_message, limit=2 if style == "concise" else 3
@@ -2148,11 +2256,13 @@ class AgentIdentityContextBuilder:
         user_id: Optional[str] = None,
         style: str = "concise",
         current_user_message: Optional[str] = None,
+        include_unscoped_operational_context: bool = False,
     ) -> str:
         current_state = self.build_current_mind_state(
             user_id=user_id,
             style=style,
             current_user_message=current_user_message,
+            include_unscoped_operational_context=include_unscoped_operational_context,
         )
 
         if "error" in current_state:
@@ -2349,7 +2459,9 @@ class AgentIdentityContextBuilder:
         try:
             cursor = self.db.conn.cursor()
             relational_and_proposals = self._build_relational_and_proposals_block(
-                cursor, user_id
+                cursor,
+                user_id,
+                include_action_proposals=include_unscoped_operational_context,
             )
             if relational_and_proposals:
                 lines.append(relational_and_proposals)
@@ -2361,7 +2473,10 @@ class AgentIdentityContextBuilder:
         # already assimilated from verified source pages.
         try:
             cursor = self.db.conn.cursor()
-            if self._identity_table_exists(cursor, "work_projects"):
+            if (
+                include_unscoped_operational_context
+                and self._identity_table_exists(cursor, "work_projects")
+            ):
                 from engines.work_scheduler import WorkScheduler
 
                 scheduler = WorkScheduler(self.db)
@@ -2380,6 +2495,8 @@ class AgentIdentityContextBuilder:
         self,
         cursor: Any,
         user_id: Optional[str],
+        *,
+        include_action_proposals: bool = True,
     ) -> str:
         """Build the 'Relational State' + 'Iniciativas Propostas' prompt sections.
 
@@ -2390,16 +2507,31 @@ class AgentIdentityContextBuilder:
         local_lines: List[str] = []
 
         if user_id and self._identity_table_exists(cursor, "relational_state"):
+            relation_id = self._resolve_identity_relation(user_id)
+            columns = {row[1] for row in cursor.execute("PRAGMA table_info(relational_state)")}
+            scope_clauses = ["user_id = ?"]
+            scope_params: List[Any] = [user_id]
+            if "agent_instance" in columns:
+                scope_clauses.append("agent_instance = ?")
+                scope_params.append(agent_instance)
+            if "relation_id" in columns:
+                if relation_id:
+                    scope_clauses.append("relation_id = ?")
+                    scope_params.append(relation_id)
+                elif str(user_id) == str(ADMIN_USER_ID):
+                    scope_clauses.append("relation_id IS NULL")
+                else:
+                    scope_clauses.append("1 = 0")
             cursor.execute(
-                """
+                f"""
                 SELECT agent_stance, silence_delta_hours, cadence_baseline_hours,
                        recurring_themes_json, snapshot_date
                 FROM relational_state
-                WHERE user_id = ?
+                WHERE {' AND '.join(scope_clauses)}
                 ORDER BY snapshot_date DESC, id DESC
                 LIMIT 1
                 """,
-                (user_id,),
+                tuple(scope_params),
             )
             rs_row = cursor.fetchone()
             if rs_row:
@@ -2426,7 +2558,7 @@ class AgentIdentityContextBuilder:
                     pass
                 local_lines.append("")
 
-        if self._identity_table_exists(cursor, "action_proposals"):
+        if include_action_proposals and self._identity_table_exists(cursor, "action_proposals"):
             cursor.execute(
                 """
                 SELECT action_type, gate_level, status, confidence, rationale, cycle_id

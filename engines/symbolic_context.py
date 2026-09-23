@@ -72,6 +72,22 @@ class SymbolicGraphContextBuilder:
         if not hasattr(self.db, "query_causal_neighborhood"):
             return {"status": "unavailable", "reason": "symbolic_graph_mixin_missing", "context_block": ""}
 
+        relation_id = None
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        if callable(resolver):
+            relation_id = resolver(
+                agent_instance=self.agent_instance,
+                participant_user_id=user_id,
+            )
+            if not relation_id and str(user_id) != str(ADMIN_USER_ID):
+                return {
+                    "status": "denied",
+                    "reason": "relation_required_for_symbolic_context",
+                    "context_block": "",
+                    "triple_count": 0,
+                    "triples": [],
+                }
+
         seeds = self.find_seed_nodes(user_id=user_id, message_text=message_text)
         collected_triples: List[Dict[str, Any]] = []
         seen_keys: Set[Tuple[str, str, str]] = set()
@@ -83,6 +99,8 @@ class SymbolicGraphContextBuilder:
                     start_node_name=seed,
                     max_depth=self.max_hops,
                     limit=self.max_triples,
+                    relation_id=relation_id,
+                    include_legacy=not relation_id and str(user_id) == str(ADMIN_USER_ID),
                 )
                 for p in paths:
                     key = (p.get("subject", ""), p.get("predicate", ""), p.get("object", ""))
@@ -99,6 +117,8 @@ class SymbolicGraphContextBuilder:
                 recent = self.db.list_symbolic_triples(
                     agent_instance=self.agent_instance,
                     limit=min(3, self.max_triples),
+                    relation_id=relation_id,
+                    include_legacy=not relation_id and str(user_id) == str(ADMIN_USER_ID),
                 )
                 for t in recent:
                     key = (t.get("subject", ""), t.get("predicate", ""), t.get("object", ""))

@@ -61,6 +61,74 @@ class IdentityRuminationBridge:
         """
         self.db = db_connection
 
+    def _scope(self) -> tuple[str, Optional[str]]:
+        instance = (getattr(self.db, "agent_instance", None) or AGENT_INSTANCE).strip()
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        relation_id = None
+        if callable(resolver):
+            relation_id = resolver(
+                agent_instance=instance,
+                participant_user_id=str(ADMIN_USER_ID),
+            )
+            if not relation_id:
+                raise ValueError("admin_relation_required_for_identity_rumination_bridge")
+        return instance, relation_id
+
+    def _ensure_identity_provenance(self, cursor) -> None:
+        for table in (
+            "agent_identity_core",
+            "agent_identity_contradictions",
+            "agent_possible_selves",
+        ):
+            if not cursor.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone():
+                continue
+            columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+            for column, definition in (
+                ("ownership_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+                ("origin_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+                ("origin_relation_id", "TEXT"),
+                ("origin_participant_user_id", "TEXT"),
+                ("source_refs_json", "TEXT NOT NULL DEFAULT '[]'"),
+                ("provenance_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ):
+                if column not in columns:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _stamp_identity_origin(
+        self,
+        cursor,
+        *,
+        table: str,
+        row_id: int,
+        relation_id: Optional[str],
+        source_ref: str,
+    ) -> None:
+        origin_class = "relation_private" if relation_id else "legacy_unscoped"
+        provenance = {
+            "private_derived": True,
+            "origin_class": origin_class,
+            "origin_relation_id": relation_id,
+            "origin_participant_user_id": str(ADMIN_USER_ID),
+            "source_refs": [source_ref],
+        }
+        cursor.execute(
+            f"""UPDATE {table}
+                SET ownership_class = 'instance_global', origin_class = ?,
+                    origin_relation_id = ?, origin_participant_user_id = ?,
+                    source_refs_json = ?, provenance_json = ?
+                WHERE id = ?""",
+            (
+                origin_class,
+                relation_id,
+                str(ADMIN_USER_ID),
+                json.dumps([source_ref]),
+                json.dumps(provenance, ensure_ascii=False, sort_keys=True),
+                row_id,
+            ),
+        )
+
     def sync_mature_tensions_to_contradictions(self) -> int:
         """
         Ruminação → Identidade: Tensões maduras viram contradições
@@ -74,6 +142,8 @@ class IdentityRuminationBridge:
         cursor = self.db.conn.cursor()
 
         try:
+            instance, relation_id = self._scope()
+            self._ensure_identity_provenance(cursor)
             # Verificar se tabela de ruminação existe
             cursor.execute("""
                 SELECT name FROM sqlite_master
@@ -88,9 +158,12 @@ class IdentityRuminationBridge:
                 SELECT id, pole_a_content, pole_b_content, tension_type, intensity,
                        first_detected_at
                 FROM rumination_tensions
-                WHERE maturity_score > 0.6
+                WHERE user_id = ?
+                  AND agent_instance = ?
+                  AND COALESCE(relation_id, '') = COALESCE(?, '')
+                  AND maturity_score > 0.6
                   AND status IN ('open', 'maturing', 'ready_for_synthesis')
-            """)
+            """, (str(ADMIN_USER_ID), instance, relation_id))
 
             tensions = cursor.fetchall()
 
@@ -107,7 +180,8 @@ class IdentityRuminationBridge:
                 cursor.execute("""
                     SELECT id FROM agent_identity_contradictions
                     WHERE agent_instance = ? AND pole_a = ? AND pole_b = ?
-                """, (AGENT_INSTANCE, pole_a, pole_b))
+                      AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
+                """, (instance, pole_a, pole_b, relation_id))
                 if cursor.fetchone():
                     continue
 
@@ -119,7 +193,7 @@ class IdentityRuminationBridge:
                         supporting_conversation_ids, status
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
                 """, (
-                    AGENT_INSTANCE,
+                    instance,
                     pole_a,
                     pole_b,
                     tension_type,
@@ -129,6 +203,13 @@ class IdentityRuminationBridge:
                     json.dumps([]),
                     'unresolved'
                 ))
+                self._stamp_identity_origin(
+                    cursor,
+                    table="agent_identity_contradictions",
+                    row_id=int(cursor.lastrowid),
+                    relation_id=relation_id,
+                    source_ref=f"rumination_fragment#{tension_id}",
+                )
 
                 synced_count += 1
 
@@ -154,6 +235,8 @@ class IdentityRuminationBridge:
         cursor = self.db.conn.cursor()
 
         try:
+            instance, relation_id = self._scope()
+            self._ensure_identity_provenance(cursor)
             # Verificar se tabela existe
             cursor.execute("""
                 SELECT name FROM sqlite_master
@@ -168,8 +251,11 @@ class IdentityRuminationBridge:
                 SELECT id, full_message, symbol_content,
                        crystallized_at, source_tension_id
                 FROM rumination_insights
-                WHERE status = 'ready'
-            """)
+                WHERE user_id = ?
+                  AND agent_instance = ?
+                  AND COALESCE(relation_id, '') = COALESCE(?, '')
+                  AND status = 'ready'
+            """, (str(ADMIN_USER_ID), instance, relation_id))
 
             insights = cursor.fetchall()
 
@@ -195,7 +281,8 @@ class IdentityRuminationBridge:
                     WHERE agent_instance = ?
                       AND content = ?
                       AND is_current = 1
-                """, (AGENT_INSTANCE, nuclear_content))
+                      AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
+                """, (instance, nuclear_content, relation_id))
 
                 if cursor.fetchone():
                     continue  # Já existe, pular
@@ -208,7 +295,7 @@ class IdentityRuminationBridge:
                         supporting_conversation_ids, emerged_in_relation_to
                     ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
                 """, (
-                    AGENT_INSTANCE,
+                    instance,
                     attribute_type,
                     nuclear_content,
                     0.75,  # Certainty moderado para insights de ruminação
@@ -216,6 +303,13 @@ class IdentityRuminationBridge:
                     json.dumps([conv_id] if conv_id else []),
                     'ruminação sobre interações'
                 ))
+                self._stamp_identity_origin(
+                    cursor,
+                    table="agent_identity_core",
+                    row_id=int(cursor.lastrowid),
+                    relation_id=relation_id,
+                    source_ref=f"rumination_insight#{insight_id}",
+                )
 
                 # Marcar insight como entregue
                 cursor.execute("""
@@ -248,6 +342,8 @@ class IdentityRuminationBridge:
         cursor = self.db.conn.cursor()
 
         try:
+            instance, relation_id = self._scope()
+            self._ensure_identity_provenance(cursor)
             # Verificar se tabela existe
             cursor.execute("""
                 SELECT name FROM sqlite_master
@@ -261,13 +357,16 @@ class IdentityRuminationBridge:
             cursor.execute("""
                 SELECT content, AVG(emotional_weight) as avg_charge,
                        fragment_type, MIN(created_at) as first_occurrence,
-                       COUNT(*) as occurrence_count
+                       COUNT(*) as occurrence_count, MIN(id) as source_fragment_id
                 FROM rumination_fragments
-                WHERE processed = 1
+                WHERE user_id = ?
+                  AND agent_instance = ?
+                  AND COALESCE(relation_id, '') = COALESCE(?, '')
+                  AND processed = 1
                 GROUP BY content
                 HAVING COUNT(*) >= 3
                    AND AVG(emotional_weight) > 0.6
-            """)
+            """, (str(ADMIN_USER_ID), instance, relation_id))
 
             fragments = cursor.fetchall()
 
@@ -278,7 +377,7 @@ class IdentityRuminationBridge:
 
             synced_count = 0
             for row in fragments:
-                content, avg_charge, frag_type, first_occurrence, count = row
+                content, avg_charge, frag_type, first_occurrence, count, source_fragment_id = row
 
                 # Classificar tipo de self (feared ou lost baseado no tipo de fragmento)
                 self_type = 'feared' if avg_charge > 0.75 else 'lost'
@@ -289,7 +388,8 @@ class IdentityRuminationBridge:
                     WHERE agent_instance = ?
                       AND description = ?
                       AND status = 'active'
-                """, (AGENT_INSTANCE, content))
+                      AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
+                """, (instance, content, relation_id))
 
                 if cursor.fetchone():
                     continue  # Já existe, pular
@@ -304,7 +404,7 @@ class IdentityRuminationBridge:
                         emotional_valence, status
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    AGENT_INSTANCE,
+                    instance,
                     self_type,
                     content,
                     vividness,
@@ -314,6 +414,13 @@ class IdentityRuminationBridge:
                     'negative',
                     'active'
                 ))
+                self._stamp_identity_origin(
+                    cursor,
+                    table="agent_possible_selves",
+                    row_id=int(cursor.lastrowid),
+                    relation_id=relation_id,
+                    source_ref=f"rumination_fragment#{source_fragment_id}",
+                )
 
                 synced_count += 1
 
@@ -339,6 +446,8 @@ class IdentityRuminationBridge:
         cursor = self.db.conn.cursor()
 
         try:
+            instance, relation_id = self._scope()
+            self._ensure_identity_provenance(cursor)
             # Verificar se tabela de ruminação existe
             cursor.execute("""
                 SELECT name FROM sqlite_master
@@ -354,6 +463,7 @@ class IdentityRuminationBridge:
                 SELECT id, pole_a, pole_b, contradiction_type, tension_level
                 FROM agent_identity_contradictions
                 WHERE agent_instance = ?
+                  AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
                   AND status IN ('unresolved', 'integrating')
                   AND tension_level > 0.55
                   AND (fed_to_rumination = 0 OR fed_to_rumination IS NULL)
@@ -363,7 +473,7 @@ class IdentityRuminationBridge:
                     COALESCE(last_activated_at, first_detected_at) DESC,
                     id DESC
                 LIMIT ?
-            """, (AGENT_INSTANCE, MAX_IDENTITY_CONTRADICTIONS_PER_BRIDGE_RUN))
+            """, (instance, relation_id, MAX_IDENTITY_CONTRADICTIONS_PER_BRIDGE_RUN))
 
             contradictions = cursor.fetchall()
 
@@ -377,9 +487,9 @@ class IdentityRuminationBridge:
                 FROM rumination_tensions
                 WHERE user_id = ?
                   AND (agent_instance = ? OR agent_instance IS NULL)
-                  AND relation_id IS NULL
+                  AND COALESCE(relation_id, '') = COALESCE(?, '')
                   AND status IN ('open', 'maturing', 'ready_for_synthesis')
-            """, (ADMIN_USER_ID, AGENT_INSTANCE))
+            """, (ADMIN_USER_ID, instance, relation_id))
             active_tension_count = int(cursor.fetchone()[0])
 
             fed_count = 0
@@ -392,10 +502,10 @@ class IdentityRuminationBridge:
                     SELECT id FROM rumination_tensions
                     WHERE user_id = ?
                       AND (agent_instance = ? OR agent_instance IS NULL)
-                      AND relation_id IS NULL
+                      AND COALESCE(relation_id, '') = COALESCE(?, '')
                       AND pole_a_content = ? AND pole_b_content = ?
                     LIMIT 1
-                """, (ADMIN_USER_ID, AGENT_INSTANCE, pole_a, pole_b))
+                """, (ADMIN_USER_ID, instance, relation_id, pole_a, pole_b))
                 if cursor.fetchone():
                     cursor.execute("""
                         UPDATE agent_identity_contradictions
@@ -414,8 +524,8 @@ class IdentityRuminationBridge:
                         user_id, agent_instance, relation_id,
                         pole_a_content, pole_b_content, tension_type,
                         intensity, status, maturity_score
-                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, 'open', 0.0)
-                """, (ADMIN_USER_ID, AGENT_INSTANCE, pole_a, pole_b, contra_type, tension))
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 0.0)
+                """, (ADMIN_USER_ID, instance, relation_id, pole_a, pole_b, contra_type, tension))
 
                 # Marcar contradição como alimentada
                 cursor.execute("""

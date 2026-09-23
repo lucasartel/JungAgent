@@ -51,6 +51,11 @@ class IntegrativeSelfDatabaseMixin:
                 source_refs_json TEXT NOT NULL,
                 limits_json TEXT NOT NULL,
                 metadata_json TEXT,
+                ownership_class TEXT NOT NULL DEFAULT 'legacy_unscoped',
+                origin_class TEXT NOT NULL DEFAULT 'legacy_unscoped',
+                origin_relation_id TEXT,
+                origin_participant_user_id TEXT,
+                provenance_json TEXT NOT NULL DEFAULT '{}',
                 generated_at TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -62,6 +67,26 @@ class IntegrativeSelfDatabaseMixin:
             """
             CREATE INDEX IF NOT EXISTS idx_integrative_self_latest
             ON integrative_self_snapshots(agent_instance, user_id, snapshot_date DESC, id DESC)
+            """
+        )
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(integrative_self_snapshots)")}
+        for name, definition in (
+            ("ownership_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+            ("origin_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+            ("origin_relation_id", "TEXT"),
+            ("origin_participant_user_id", "TEXT"),
+            ("provenance_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ):
+            if name not in columns:
+                cursor.execute(
+                    f"ALTER TABLE integrative_self_snapshots ADD COLUMN {name} {definition}"
+                )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_integrative_self_origin
+            ON integrative_self_snapshots(
+                agent_instance, origin_relation_id, origin_class, snapshot_date DESC
+            )
             """
         )
         cursor.execute(
@@ -107,6 +132,8 @@ class IntegrativeSelfDatabaseMixin:
         metadata: Optional[Dict[str, Any]] = None,
         status: str = "generated",
         influence_mode: str = READ_ONLY_INFLUENCE_MODE,
+        relation_id: Optional[str] = None,
+        provenance: Optional[Dict[str, Any]] = None,
     ) -> int:
         if not agent_instance or not user_id or not summary or not first_person_snapshot:
             raise ValueError("agent_instance_user_summary_snapshot_required")
@@ -118,6 +145,22 @@ class IntegrativeSelfDatabaseMixin:
             raise ValueError("integrative_self_must_remain_read_only")
 
         refs = self._normalize_integrative_source_refs(source_refs)
+        resolver = getattr(self, "resolve_relation_id", None)
+        resolved_relation = relation_id
+        if callable(resolver):
+            resolved_relation = resolver(
+                agent_instance=agent_instance,
+                participant_user_id=user_id,
+                relation_id=relation_id,
+            )
+        origin_class = "relation_private" if resolved_relation else "legacy_unscoped"
+        provenance_payload = {
+            "private_derived": True,
+            "origin_class": origin_class,
+            "origin_relation_id": resolved_relation,
+            "origin_participant_user_id": user_id,
+            **(provenance or {}),
+        }
         day = (snapshot_date or _today()).strip()
         now = _now_iso()
 
@@ -129,8 +172,10 @@ class IntegrativeSelfDatabaseMixin:
                     agent_instance, user_id, cycle_id, snapshot_date, status,
                     influence_mode, summary, first_person_snapshot,
                     components_json, source_refs_json, limits_json, metadata_json,
+                    ownership_class, origin_class, origin_relation_id,
+                    origin_participant_user_id, provenance_json,
                     generated_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(agent_instance, user_id, snapshot_date) DO UPDATE SET
                     cycle_id = excluded.cycle_id,
                     status = excluded.status,
@@ -141,6 +186,11 @@ class IntegrativeSelfDatabaseMixin:
                     source_refs_json = excluded.source_refs_json,
                     limits_json = excluded.limits_json,
                     metadata_json = excluded.metadata_json,
+                    ownership_class = excluded.ownership_class,
+                    origin_class = excluded.origin_class,
+                    origin_relation_id = excluded.origin_relation_id,
+                    origin_participant_user_id = excluded.origin_participant_user_id,
+                    provenance_json = excluded.provenance_json,
                     generated_at = excluded.generated_at,
                     updated_at = excluded.updated_at
                 """,
@@ -157,6 +207,11 @@ class IntegrativeSelfDatabaseMixin:
                     _json_dumps(refs),
                     _json_dumps(limits or {}),
                     _json_dumps(metadata or {}),
+                    "instance_global",
+                    origin_class,
+                    resolved_relation,
+                    user_id,
+                    _json_dumps(provenance_payload),
                     now,
                     now,
                     now,
@@ -178,17 +233,27 @@ class IntegrativeSelfDatabaseMixin:
         *,
         agent_instance: str,
         user_id: str,
+        relation_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        resolver = getattr(self, "resolve_relation_id", None)
+        resolved_relation = relation_id
+        if callable(resolver):
+            resolved_relation = resolver(
+                agent_instance=agent_instance,
+                participant_user_id=user_id,
+                relation_id=relation_id,
+            )
         cursor = self.conn.cursor()
         cursor.execute(
             """
             SELECT *
             FROM integrative_self_snapshots
             WHERE agent_instance = ? AND user_id = ?
+              AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
             ORDER BY snapshot_date DESC, id DESC
             LIMIT 1
             """,
-            (agent_instance, user_id),
+            (agent_instance, user_id, resolved_relation),
         )
         row = cursor.fetchone()
         if not row:
@@ -200,6 +265,7 @@ class IntegrativeSelfDatabaseMixin:
         *,
         agent_instance: str,
         user_id: Optional[str] = None,
+        relation_id: Optional[str] = None,
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
         clauses = ["agent_instance = ?"]
@@ -207,6 +273,11 @@ class IntegrativeSelfDatabaseMixin:
         if user_id:
             clauses.append("user_id = ?")
             params.append(user_id)
+        if relation_id:
+            clauses.append("origin_relation_id = ?")
+            params.append(relation_id)
+        else:
+            clauses.append("origin_relation_id IS NULL")
         params.append(max(1, int(limit)))
         cursor = self.conn.cursor()
         cursor.execute(
@@ -227,4 +298,5 @@ class IntegrativeSelfDatabaseMixin:
         item["source_refs"] = _json_loads(item.pop("source_refs_json", None), [])
         item["limits"] = _json_loads(item.pop("limits_json", None), {})
         item["metadata"] = _json_loads(item.pop("metadata_json", None), {})
+        item["provenance"] = _json_loads(item.pop("provenance_json", None), {})
         return item

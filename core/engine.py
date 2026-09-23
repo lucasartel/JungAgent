@@ -255,9 +255,11 @@ class JungianEngine:
                     SELECT topic, synthesized_insight, trigger_reason, research_lens
                     FROM external_research
                     WHERE user_id = ? AND status = 'active'
+                      AND (agent_instance = ? OR agent_instance IS NULL)
+                      AND origin_relation_id IS NULL
                     ORDER BY created_at DESC
                     LIMIT 2
-                """, (user_id,))
+                """, (user_id, str(Config.AGENT_INSTANCE)))
                 _er_rows = _ri_cursor.fetchall()
                 if _er_rows:
                     _er_lines = ["\n[SÍNTESES ACADÊMICAS RECENTES QUE VOCÊ ESTUDOU AUTONOMAMENTE:]"]
@@ -563,17 +565,51 @@ class JungianEngine:
                 items.append(insight_text)
         return items
 
-    def _fetch_recent_external_research(self, user_id: str, limit: int = 2) -> List[Dict[str, Any]]:
+    def _fetch_recent_external_research(
+        self,
+        user_id: str,
+        limit: int = 2,
+        relation_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        resolved_relation = None
+        if callable(resolver):
+            resolved_relation = resolver(
+                agent_instance=str(Config.AGENT_INSTANCE),
+                participant_user_id=str(user_id),
+                relation_id=relation_id,
+            )
         cursor = self.db.conn.cursor()
+        if resolved_relation:
+            visibility_sql = "(origin_relation_id = ? OR finding_scope = 'instance_global')"
+            visibility_params: List[Any] = [str(resolved_relation)]
+        elif str(user_id) == self._get_admin_user_id():
+            visibility_sql = "origin_relation_id IS NULL"
+            visibility_params = []
+        else:
+            return []
         cursor.execute(
-            """
-            SELECT topic, synthesized_insight, trigger_reason, research_lens
+            f"""
+            SELECT topic,
+                   CASE
+                       WHEN origin_relation_id = ? THEN synthesized_insight
+                       WHEN finding_scope = 'instance_global' THEN public_finding
+                       ELSE NULL
+                   END AS visible_finding,
+                   CASE WHEN origin_relation_id = ? THEN trigger_reason ELSE NULL END,
+                   research_lens
             FROM external_research
-            WHERE user_id = ? AND status = 'active'
+            WHERE agent_instance = ? AND status = 'active' AND {visibility_sql}
             ORDER BY created_at DESC
             LIMIT ?
             """,
-            (user_id, limit),
+            (
+                resolved_relation,
+                resolved_relation,
+                str(Config.AGENT_INSTANCE),
+                *visibility_params,
+                limit,
+            ),
         )
         items = []
         for row in cursor.fetchall():
@@ -589,18 +625,51 @@ class JungianEngine:
                 )
         return items
 
-    def _fetch_recent_will_states(self, user_id: str, limit: int = 2) -> List[Dict[str, Any]]:
+    def _resolve_prompt_relation(
+        self, user_id: str, relation_id: Optional[str] = None
+    ) -> Optional[str]:
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        if not callable(resolver):
+            return relation_id
+        resolved = resolver(
+            agent_instance=str(getattr(self.db, "agent_instance", Config.AGENT_INSTANCE)),
+            participant_user_id=str(user_id),
+            relation_id=relation_id,
+        )
+        if not resolved and str(user_id) != self._get_admin_user_id():
+            raise ValueError("relation_required_for_prompt_context")
+        return str(resolved) if resolved else None
+
+    def _fetch_recent_will_states(
+        self, user_id: str, limit: int = 2, relation_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        relation_id = self._resolve_prompt_relation(user_id, relation_id)
+        columns = set(self._safe_table_columns("agent_will_states"))
+        clauses = ["user_id = ?"]
+        params: List[Any] = [user_id]
+        if "agent_instance" in columns:
+            clauses.append("agent_instance = ?")
+            params.append(str(getattr(self.db, "agent_instance", Config.AGENT_INSTANCE)))
+        if {"scope_kind", "relation_id"}.issubset(columns):
+            if relation_id:
+                clauses.append(
+                    "((scope_kind = 'relation' AND relation_id = ?) "
+                    "OR (scope_kind = 'global' AND relation_id IS NULL))"
+                )
+                params.append(relation_id)
+            else:
+                clauses.append("scope_kind = 'global' AND relation_id IS NULL")
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             SELECT dominant_will, secondary_will, constrained_will,
                    will_conflict, attention_bias_note, daily_text
             FROM agent_will_states
-            WHERE user_id = ?
+            WHERE {' AND '.join(clauses)}
             ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
-            (user_id, limit),
+            (*params, limit),
         )
         items = []
         for row in cursor.fetchall():
@@ -635,7 +704,10 @@ class JungianEngine:
             "directed_memory_hits": 0,
         }
 
-        priority_fact_context = self.db.build_priority_fact_context(user_id, user_input, limit=8)
+        relation_id = self._resolve_prompt_relation(user_id)
+        priority_fact_context = self.db.build_priority_fact_context(
+            user_id, user_input, limit=8, relation_id=relation_id
+        )
         stats["priority_fact_count"] = self._count_context_items(priority_fact_context)
 
         semantic_context = ""
@@ -643,7 +715,12 @@ class JungianEngine:
 
         if self.db.mem0:
             try:
-                mem0_context = self.db.mem0.get_context(user_id, user_input, limit=10)
+                if relation_id:
+                    mem0_context = self.db.mem0.get_context(
+                        user_id, user_input, limit=10, relation_id=relation_id
+                    )
+                else:
+                    mem0_context = self.db.mem0.get_context(user_id, user_input, limit=10)
             except Exception as exc:
                 logger.warning("⚠️ [MEM0] Falha ao recuperar contexto: %s", exc)
                 mem0_context = ""
@@ -656,12 +733,14 @@ class JungianEngine:
             elif allow_sqlite_fallback_on_empty:
                 stats["used_sqlite_fallback"] = True
                 semantic_context = self.db.build_rich_context(
-                    user_id, user_input, k_memories=5, chat_history=chat_history
+                    user_id, user_input, k_memories=5, chat_history=chat_history,
+                    relation_id=relation_id,
                 )
         else:
             stats["used_sqlite_fallback"] = True
             semantic_context = self.db.build_rich_context(
-                user_id, user_input, k_memories=5, chat_history=chat_history
+                user_id, user_input, k_memories=5, chat_history=chat_history,
+                relation_id=relation_id,
             )
 
         if not semantic_context:
@@ -669,7 +748,9 @@ class JungianEngine:
 
         if str(user_id) == self._get_admin_user_id():
             try:
-                rumination_items = self._fetch_recent_rumination_insights(user_id, limit=2)
+                rumination_items = self._fetch_recent_rumination_insights(
+                    user_id, limit=2, relation_id=relation_id
+                )
                 if rumination_items:
                     lines = ["\n[INFLUÊNCIA DE SEUS ÚLTIMOS INSIGHTS DE RUMINAÇÃO:]"]
                     for item in rumination_items:
@@ -677,7 +758,9 @@ class JungianEngine:
                     semantic_context = semantic_context + "\n".join(lines)
                     stats["rumination_insight_count"] = len(rumination_items)
 
-                will_items = self._fetch_recent_will_states(user_id, limit=2)
+                will_items = self._fetch_recent_will_states(
+                    user_id, limit=2, relation_id=relation_id
+                )
                 if will_items:
                     lines = ["\n[ESTADO RECENTE DAS SUAS VONTADES:]"]
                     for item in will_items:
@@ -695,7 +778,9 @@ class JungianEngine:
                 logger.debug("[RUMINATION/WILL] Falha em injecoes inconscientes: %s", exc)
 
         try:
-            directed_recall = self._build_directed_memory_recall(user_id, user_input, limit=8)
+            directed_recall = self._build_directed_memory_recall(
+                user_id, user_input, limit=8, relation_id=relation_id
+            )
             if directed_recall.get("triggered"):
                 semantic_context = "\n\n".join(
                     part for part in [semantic_context, directed_recall.get("text")] if part
@@ -704,7 +789,33 @@ class JungianEngine:
         except Exception as exc:
             logger.warning("⚠️ [DIRECTED MEMORY] Falha ao montar recordacao dirigida: %s", exc)
 
-        return semantic_context, stats
+        from core.cognitive_context import (
+            CognitiveContextAssembler,
+            CognitiveContextContribution,
+            CognitiveContextScope,
+        )
+
+        scope = CognitiveContextScope.resolve(
+            self.db,
+            participant_user_id=str(user_id),
+            agent_instance=str(getattr(self.db, "agent_instance", Config.AGENT_INSTANCE)),
+            admin_user_id=self._get_admin_user_id(),
+            relation_id=relation_id,
+        )
+        assembler = CognitiveContextAssembler(scope)
+        assembler.add(CognitiveContextContribution(
+            domain="semantic_memory",
+            content=semantic_context,
+            agent_instance=scope.agent_instance,
+            origin_class="relation_private" if scope.relation_id else "legacy_unscoped",
+            origin_relation_id=scope.relation_id,
+            provenance={"assembled_for_relation": scope.relation_id},
+        ))
+        self._last_semantic_context_audit = assembler.audit()
+        stats["context_policy_rejections"] = len(
+            self._last_semantic_context_audit["rejected"]
+        )
+        return assembler.render(), stats
 
     def _build_agent_identity_text(
         self,
@@ -713,88 +824,122 @@ class JungianEngine:
         development_policy: Optional[Dict[str, Any]] = None,
         relational_cadence_decision: Optional[Dict[str, Any]] = None,
     ) -> str:
+        from core.cognitive_context import (
+            CognitiveContextAssembler,
+            CognitiveContextContribution,
+            CognitiveContextScope,
+        )
+
         is_admin = str(user_id) == self._get_admin_user_id()
         identity_state_injected = False
         if development_policy is None:
             development_policy = self._get_development_policy(user_id, user_input)
+        scope = CognitiveContextScope.resolve(
+            self.db,
+            participant_user_id=str(user_id),
+            agent_instance=str(getattr(self.db, "agent_instance", Config.AGENT_INSTANCE)),
+            admin_user_id=self._get_admin_user_id(),
+        )
+        assembler = CognitiveContextAssembler(scope)
+        scoped_origin = "relation_private" if scope.relation_id else "legacy_unscoped"
+
+        def add(
+            domain: str,
+            content: str,
+            *,
+            origin_class: str = scoped_origin,
+            origin_relation_id: Optional[str] = scope.relation_id,
+            source_refs: tuple[str, ...] = (),
+            provenance: Optional[Dict[str, Any]] = None,
+        ) -> bool:
+            return assembler.add(CognitiveContextContribution(
+                domain=domain,
+                content=content or "",
+                agent_instance=scope.agent_instance,
+                origin_class=origin_class,
+                origin_relation_id=origin_relation_id,
+                source_refs=source_refs,
+                provenance=provenance or {},
+            ))
+
+        base_identity = Config.ADMIN_IDENTITY_PROMPT if is_admin else Config.STANDARD_IDENTITY_PROMPT
+        if is_admin and self.identity_context_builder:
+            try:
+                identity_ctx = self.identity_context_builder.build_context_summary_for_llm_v2(
+                    user_id=user_id,
+                    style="concise",
+                    current_user_message=user_input,
+                )
+                if identity_ctx and len(identity_ctx) > 100:
+                    identity_state_injected = add("identity_core", identity_ctx)
+                    logger.info(
+                        "[IDENTITY] Contexto admitido pela politica C12f: %s chars",
+                        len(identity_ctx),
+                    )
+            except Exception as exc:
+                logger.warning("[IDENTITY] Falha ao obter contexto de identidade: %s", exc)
 
         if is_admin:
-            agent_identity_text = Config.ADMIN_IDENTITY_PROMPT
-            if self.identity_context_builder:
-                try:
-                    identity_ctx = self.identity_context_builder.build_context_summary_for_llm_v2(
-                        user_id=user_id,
-                        style="concise",
-                        current_user_message=user_input,
-                    )
-                    if identity_ctx and len(identity_ctx) > 100:
-                        agent_identity_text = Config.ADMIN_IDENTITY_PROMPT + "\n\n" + identity_ctx
-                        identity_state_injected = True
-                        logger.info("✅ [IDENTITY] Contexto de identidade injetado para ADMIN: %s chars", len(identity_ctx))
-                except Exception as exc:
-                    logger.warning("⚠️ [IDENTITY] Falha ao obter contexto de identidade: %s", exc)
-
-            autobiographical_profile = self._build_autobiographical_profile_block(
-                development_policy.get("state") or {}
+            add(
+                "autobiography_and_meta",
+                self._build_autobiographical_profile_block(development_policy.get("state") or {}),
             )
-            if autobiographical_profile:
-                agent_identity_text += f"\n\n{autobiographical_profile}"
-                logger.info("[AUTOBIOGRAPHY] Profile autobiografico injetado no prompt: %s chars", len(autobiographical_profile))
-
             try:
                 from world_consciousness import world_consciousness
 
                 world_state = world_consciousness.get_world_state()
-                world_prompt_summary = world_state.get("formatted_prompt_summary") or world_state.get("formatted_synthesis", "")
-                if world_prompt_summary:
-                    agent_identity_text += f"\n\n{world_prompt_summary}"
+                add(
+                    "knowledge_and_world",
+                    world_state.get("formatted_prompt_summary")
+                    or world_state.get("formatted_synthesis", ""),
+                    origin_class="instance_global",
+                    origin_relation_id=None,
+                    provenance={"private_derived": False, "public_projection": True},
+                )
             except Exception as exc:
-                logger.warning("⚠️ [WORLD] Falha ao injetar consciência do mundo: %s", exc)
+                logger.warning("[WORLD] Falha ao obter contexto mundial: %s", exc)
 
-            dream_instruction = ""
-            pending_dream = self.db.get_latest_dream_insight(user_id)
+            pending_dream = self.db.get_latest_dream_insight(
+                user_id, relation_id=scope.relation_id
+            )
             if pending_dream and identity_state_injected:
                 self.db.mark_dream_delivered(pending_dream["id"])
-                pending_dream = None
-            if pending_dream:
-                dream_instruction = self._build_dream_instruction(pending_dream)
-                if dream_instruction:
+            elif pending_dream:
+                if add(
+                    "dreams",
+                    self._build_dream_instruction(pending_dream),
+                    origin_class=pending_dream.get("origin_class") or scoped_origin,
+                    origin_relation_id=pending_dream.get("origin_relation_id"),
+                    source_refs=tuple(pending_dream.get("source_refs") or ()),
+                    provenance=pending_dream.get("provenance") or {},
+                ):
                     self.db.mark_dream_delivered(pending_dream["id"])
-            identity_text = agent_identity_text + dream_instruction + development_policy.get("prompt_block", "")
-            ism_context = self._build_ism_prompt_context(user_id)
-            symbolic_context = self._build_symbolic_graph_prompt_context(user_id)
-            tom_context = self._build_theory_of_mind_prompt_context(user_id)
-            full_context = identity_text
-            if ism_context:
-                full_context += f"\n\n{ism_context}"
-            if symbolic_context:
-                full_context += f"\n\n{symbolic_context}"
-            if tom_context:
-                full_context += f"\n\n{tom_context}"
-            relational_guidance = self._relational_conversation_guidance(
-                user_id, relational_cadence_decision
-            )
-            if relational_guidance:
-                full_context += f"\n\n{relational_guidance}"
-            return full_context
 
-        identity_text = Config.STANDARD_IDENTITY_PROMPT + development_policy.get("prompt_block", "")
-        ism_context = self._build_ism_prompt_context(user_id)
-        symbolic_context = self._build_symbolic_graph_prompt_context(user_id)
-        tom_context = self._build_theory_of_mind_prompt_context(user_id)
-        full_context = identity_text
-        if ism_context:
-            full_context += f"\n\n{ism_context}"
-        if symbolic_context:
-            full_context += f"\n\n{symbolic_context}"
-        if tom_context:
-            full_context += f"\n\n{tom_context}"
-        relational_guidance = self._relational_conversation_guidance(
-            user_id, relational_cadence_decision
+        add(
+            "autobiography_and_meta",
+            development_policy.get("prompt_block", ""),
+            origin_class="instance_global",
+            origin_relation_id=None,
+            provenance={"private_derived": False},
         )
-        if relational_guidance:
-            full_context += f"\n\n{relational_guidance}"
-        return full_context
+        add("integrative_self", self._build_ism_prompt_context(user_id))
+        add(
+            "symbolic_graph",
+            self._build_symbolic_graph_prompt_context(user_id),
+        )
+        add("theory_of_mind", self._build_theory_of_mind_prompt_context(user_id))
+        add(
+            "relational_state",
+            self._relational_conversation_guidance(user_id, relational_cadence_decision),
+        )
+
+        self._last_context_assembly_audit = assembler.audit()
+        if self._last_context_assembly_audit["rejected"]:
+            logger.info(
+                "[C12F] Context contributions rejected: %s",
+                self._last_context_assembly_audit["rejected"],
+            )
+        return assembler.render(base=base_identity)
 
     def _build_theory_of_mind_prompt_context(self, user_id: str) -> str:
         if not getattr(Config, "THEORY_OF_MIND_ENABLED", False):
@@ -1464,6 +1609,7 @@ class JungianEngine:
         query: str,
         scope: str,
         limit: int = 8,
+        relation_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         terms = self._directed_memory_terms(query)
         if not terms:
@@ -1565,9 +1711,24 @@ class JungianEngine:
 
         matches: List[Dict[str, Any]] = []
         cursor = self.db.conn.cursor()
+        relation_id = self._resolve_prompt_relation(user_id, relation_id)
+        context_scope = None
+        if callable(getattr(self.db, "resolve_relation_id", None)):
+            from core.cognitive_context import CognitiveContextScope
+
+            context_scope = CognitiveContextScope.resolve(
+                self.db,
+                participant_user_id=str(user_id),
+                agent_instance=str(getattr(self.db, "agent_instance", Config.AGENT_INSTANCE)),
+                admin_user_id=self._get_admin_user_id(),
+                relation_id=relation_id,
+            )
 
         for item in search_plan:
             if "all" not in requested and item["scope"] not in requested:
+                continue
+            if item["scope"] == "work":
+                # Raw work artifacts are never prompt context under the C12 map.
                 continue
 
             table = item["table"]
@@ -1584,9 +1745,24 @@ class JungianEngine:
             if "user_id" in available:
                 clauses.append("user_id = ?")
                 params.append(user_id)
-            elif "agent_instance" in available:
+            if "agent_instance" in available:
                 clauses.append("agent_instance = ?")
-                params.append(Config.AGENT_INSTANCE)
+                params.append(str(getattr(self.db, "agent_instance", Config.AGENT_INSTANCE)))
+
+            if context_scope and item["scope"] != "will":
+                visibility, visibility_params = context_scope.sql_visibility(available)
+                clauses.extend(visibility)
+                params.extend(visibility_params)
+
+            if context_scope and item["scope"] == "will" and {"scope_kind", "relation_id"}.issubset(available):
+                if relation_id:
+                    clauses.append(
+                        "((scope_kind = 'relation' AND relation_id = ?) "
+                        "OR (scope_kind = 'global' AND relation_id IS NULL))"
+                    )
+                    params.append(relation_id)
+                else:
+                    clauses.append("scope_kind = 'global' AND relation_id IS NULL")
 
             if item["scope"] == "rumination":
                 rumination_clauses, rumination_params, allowed = self._rumination_context_scope(
@@ -1677,6 +1853,7 @@ class JungianEngine:
         user_id: str,
         user_input: str,
         limit: int = 8,
+        relation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not self._is_directed_memory_request(user_input):
             return {"triggered": False, "text": "", "stats": {}}
@@ -1688,7 +1865,12 @@ class JungianEngine:
 
         if getattr(self.db, "mem0", None):
             try:
-                mem0_context = self.db.mem0.get_context(user_id, recall_query, limit=5)
+                if relation_id:
+                    mem0_context = self.db.mem0.get_context(
+                        user_id, recall_query, limit=5, relation_id=relation_id
+                    )
+                else:
+                    mem0_context = self.db.mem0.get_context(user_id, recall_query, limit=5)
                 for line in self._extract_relevant_memory_lines(mem0_context, limit=5):
                     semantic_findings.append(
                         {
@@ -1708,6 +1890,7 @@ class JungianEngine:
             query=recall_query,
             scope=scope,
             limit=limit,
+            relation_id=relation_id,
         )
         findings: List[Dict[str, Any]] = list(sql_findings)
         remaining_slots = max(0, limit - len(findings))
@@ -2684,96 +2867,14 @@ class JungianEngine:
                 role = "Usuário" if msg["role"] == "user" else "Jung"
                 history_text += f"{role}: {msg['content'][:400]}\n"
 
-        # Identificar se e o Admin (Criador) ou Usuario Padrao.
-        admin_id = Config.ADMIN_USER_ID
-            
-        is_admin = (str(user_id) == str(admin_id))
-        identity_state_injected = False
         development_policy = self._get_development_policy(user_id, user_input)
         policy_values = development_policy.get("policy") or {}
-        
-        # Construir identidade dinâmica condicional
-        if is_admin:
-            agent_identity_text = Config.ADMIN_IDENTITY_PROMPT
-            
-            # Sub-sistemas complexos de identidade APENAS para o Admin
-            if self.identity_context_builder:
-                try:
-                    identity_ctx = self.identity_context_builder.build_context_summary_for_llm_v2(
-                        user_id=user_id,
-                        style="concise",
-                        current_user_message=user_input,
-                    )
-                    if identity_ctx and len(identity_ctx) > 100:
-                        agent_identity_text = Config.ADMIN_IDENTITY_PROMPT + "\n\n" + identity_ctx
-                        identity_state_injected = True
-                        logger.info(f"✅ [IDENTITY] Contexto de identidade injetado para ADMIN: {len(identity_ctx)} chars")
-                    else:
-                        logger.info("⚠️ [IDENTITY] Contexto de identidade vazio para ADMIN (aguardando 1ª consolidação)")
-                except Exception as e:
-                    logger.warning(f"⚠️ [IDENTITY] Falha ao obter contexto de identidade: {e}")
-
-            autobiographical_profile = self._build_autobiographical_profile_block(
-                development_policy.get("state") or {}
-            )
-            if autobiographical_profile:
-                agent_identity_text += f"\n\n{autobiographical_profile}"
-                logger.info("[AUTOBIOGRAPHY] Profile autobiografico injetado no prompt: %s chars", len(autobiographical_profile))
-
-            # 🌍 INJEÇÃO DE CONSCIÊNCIA DO MUNDO (Apenas para o Admin)
-            try:
-                from world_consciousness import world_consciousness
-                world_state = world_consciousness.get_world_state()
-                world_prompt_summary = world_state.get("formatted_prompt_summary") or world_state.get("formatted_synthesis", "")
-                if world_prompt_summary:
-                    agent_identity_text += f"\n\n{world_prompt_summary}"
-                logger.info("✅ [WORLD] Consciência da atualidade injetada no prompt.")
-            except ImportError:
-                pass
-            except Exception as e:
-                logger.warning(f"⚠️ [WORLD] Falha ao injetar consciência do mundo: {e}")
-            else:
-                logger.debug("⚠️ [IDENTITY] identity_context_builder não disponível para ADMIN")
-                
-        else:
-            # Usuário Padrão: Sem injeção de identidade nuclear profunda
-            agent_identity_text = Config.STANDARD_IDENTITY_PROMPT
-            logger.info("[IDENTITY] Carregada persona padrao de Especialista em Psicometria para Usuario")
-
-        # Obter o último sonho do motor onírico (APENAS PARA ADMIN)
-        dream_instruction = ""
-        pending_dream = None
-        if is_admin:
-            pending_dream = self.db.get_latest_dream_insight(user_id)
-            if pending_dream and identity_state_injected:
-                logger.info(
-                    f"Dream Engine: residuo do sonho #{pending_dream['id']} ja incorporado ao current mind state do admin"
-                )
-                self.db.mark_dream_delivered(pending_dream["id"])
-                pending_dream = None
-            if pending_dream and not dream_instruction:
-                dream_instruction = self._build_dream_instruction(pending_dream)
-                if dream_instruction:
-                    logger.info(f"Dream Engine: injetando residuo do sonho #{pending_dream['id']} no prompt do admin")
-                    self.db.mark_dream_delivered(pending_dream["id"])
-                    pending_dream = None
-            if pending_dream and False:
-                dream_instruction = f"\n\n[INFLUÊNCIA ONÍRICA RECENTE: Logo antes, eu produzi esta visão simbólica sobre minha relação com você: {pending_dream['dream_content']}. Minha análise profunda disso sugere que: {pending_dream['extracted_insight']}. Deixe que este sonho influencie sua escrita diretamente.]"
-                logger.info(f"🌙 [DREAM ENGINE] Injetando Sonho Mais Recente #{pending_dream['id']} no prompt do ADMIN")
-
-        agent_identity_for_prompt = (
-            agent_identity_text
-            + dream_instruction
-            + development_policy.get("prompt_block", "")
+        agent_identity_for_prompt = self._build_agent_identity_text(
+            user_id=user_id,
+            user_input=user_input,
+            development_policy=development_policy,
+            relational_cadence_decision=relational_cadence_decision,
         )
-        ism_context = self._build_ism_prompt_context(user_id)
-        if ism_context:
-            agent_identity_for_prompt += f"\n\n{ism_context}"
-        relational_guidance = self._relational_conversation_guidance(
-            user_id, relational_cadence_decision
-        )
-        if relational_guidance:
-            agent_identity_for_prompt += f"\n\n{relational_guidance}"
 
         # Construir prompt
         prompt = Config.RESPONSE_PROMPT.format(

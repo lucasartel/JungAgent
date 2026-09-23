@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -70,7 +71,10 @@ def _json_list(raw_value: str | None) -> List[Any]:
 
 
 def _safe_world_state() -> Dict[str, Any]:
+    instance_slug = re.sub(r"[^a-zA-Z0-9_.-]+", "_", AGENT_INSTANCE).strip("._") or "instance"
     cache_candidates = [
+        os.path.join("data", f"world_state_cache.{instance_slug}.json"),
+        f"world_state_cache.{instance_slug}.json",
         os.path.join("data", "world_state_cache.json"),
         "world_state_cache.json",
     ]
@@ -78,7 +82,8 @@ def _safe_world_state() -> Dict[str, Any]:
         try:
             with open(cache_path, "r", encoding="utf-8") as handle:
                 cached = json.load(handle) or {}
-            if cached:
+            cached_instance = cached.get("agent_instance")
+            if cached and (not cached_instance or cached_instance == AGENT_INSTANCE):
                 return cached
         except Exception:
             pass

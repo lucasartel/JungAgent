@@ -172,6 +172,7 @@ class AgentIdentityExtractor:
 
             # Adicionar metadados
             extracted["conversation_id"] = conversation_id
+            extracted["participant_user_id"] = user_id
             extracted["extracted_at"] = datetime.now().isoformat()
             extracted = self._sanitize_extracted_payload(extracted)
 
@@ -435,6 +436,85 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
 
         return json.dumps(current)
 
+    def _identity_origin(self, extracted: Dict) -> tuple[str, Optional[str], str, str]:
+        instance = (getattr(self.db, "agent_instance", None) or AGENT_INSTANCE).strip()
+        participant = str(extracted.get("participant_user_id") or ADMIN_USER_ID)
+        relation_id = extracted.get("relation_id")
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        if callable(resolver):
+            relation_id = resolver(
+                agent_instance=instance,
+                participant_user_id=participant,
+                relation_id=relation_id,
+            )
+            if not relation_id:
+                raise ValueError("relation_required_for_identity_evidence")
+        return instance, relation_id, participant, (
+            "relation_private" if relation_id else "legacy_unscoped"
+        )
+
+    def _ensure_identity_provenance(self, cursor) -> None:
+        for table in (
+            "agent_identity_core",
+            "agent_identity_contradictions",
+            "agent_possible_selves",
+            "agent_narrative_chapters",
+            "agent_relational_identity",
+            "agent_self_knowledge_meta",
+            "agent_agency_memory",
+        ):
+            if not cursor.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone():
+                continue
+            columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+            for column, definition in (
+                ("ownership_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+                ("origin_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+                ("origin_relation_id", "TEXT"),
+                ("origin_participant_user_id", "TEXT"),
+                ("source_refs_json", "TEXT NOT NULL DEFAULT '[]'"),
+                ("provenance_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ):
+                if column not in columns:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _stamp_identity_row(
+        self,
+        cursor,
+        *,
+        table: str,
+        row_id: int,
+        relation_id: Optional[str],
+        participant: str,
+        origin_class: str,
+        conversation_id: str,
+        relational_facet: bool = False,
+    ) -> None:
+        ownership_class = "relation_private" if relational_facet else "instance_global"
+        provenance = {
+            "private_derived": True,
+            "origin_class": origin_class,
+            "origin_relation_id": relation_id,
+            "origin_participant_user_id": participant,
+            "source_refs": [f"conversation#{conversation_id}"],
+        }
+        cursor.execute(
+            f"""UPDATE {table}
+                SET ownership_class = ?, origin_class = ?, origin_relation_id = ?,
+                    origin_participant_user_id = ?, source_refs_json = ?, provenance_json = ?
+                WHERE id = ?""",
+            (
+                ownership_class,
+                origin_class,
+                relation_id,
+                participant,
+                json.dumps([f"conversation#{conversation_id}"]),
+                json.dumps(provenance, ensure_ascii=False, sort_keys=True),
+                row_id,
+            ),
+        )
+
     def store_extracted_identity(self, extracted: Dict) -> bool:
         """
         Armazena elementos extraídos nas tabelas de identidade
@@ -461,6 +541,8 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
 
         cursor = self.db.conn.cursor()
         conversation_id = extracted.get("conversation_id")
+        self._ensure_identity_provenance(cursor)
+        instance, relation_id, participant, origin_class = self._identity_origin(extracted)
 
         try:
             # 1. Memória Nuclear
@@ -473,7 +555,7 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                             supporting_conversation_ids, emerged_in_relation_to
                         ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)
                     """, (
-                        AGENT_INSTANCE,
+                        instance,
                         item['type'],
                         item['content'],
                         item['certainty'],
@@ -487,7 +569,8 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                             SELECT supporting_conversation_ids
                             FROM agent_identity_core
                             WHERE agent_instance = ? AND content = ? AND is_current = 1
-                        """, (AGENT_INSTANCE, item['content']))
+                              AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
+                        """, (instance, item['content'], relation_id))
                         existing = cursor.fetchone()
                         updated_support = self._append_supporting_conversation_id(
                             existing[0] if existing else None,
@@ -498,7 +581,22 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                             SET last_reaffirmed_at = CURRENT_TIMESTAMP,
                                 supporting_conversation_ids = ?
                             WHERE agent_instance = ? AND content = ? AND is_current = 1
-                        """, (updated_support, AGENT_INSTANCE, item['content']))
+                              AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
+                        """, (updated_support, instance, item['content'], relation_id))
+                        row_id = int(cursor.execute(
+                            """SELECT id FROM agent_identity_core
+                               WHERE agent_instance = ? AND content = ? AND is_current = 1
+                                 AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
+                               ORDER BY id DESC LIMIT 1""",
+                            (instance, item['content'], relation_id),
+                        ).fetchone()[0])
+                    else:
+                        row_id = int(cursor.lastrowid)
+                    self._stamp_identity_row(
+                        cursor, table="agent_identity_core", row_id=row_id,
+                        relation_id=relation_id, participant=participant,
+                        origin_class=origin_class, conversation_id=conversation_id,
+                    )
 
             # 2. Contradições
             for item in extracted.get("contradictions", []):
@@ -508,13 +606,15 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                         FROM agent_identity_contradictions
                         WHERE agent_instance = ? AND contradiction_type = ?
                           AND pole_a = ? AND pole_b = ?
+                          AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
                           AND status IN ('unresolved', 'integrating')
                         LIMIT 1
                     """, (
-                        AGENT_INSTANCE,
+                        instance,
                         item['type'],
                         item['pole_a'],
                         item['pole_b'],
+                        relation_id,
                     ))
                     existing = cursor.fetchone()
 
@@ -533,6 +633,7 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                             updated_support,
                             existing[0],
                         ))
+                        row_id = int(existing[0])
                     else:
                         cursor.execute("""
                             INSERT INTO agent_identity_contradictions (
@@ -541,7 +642,7 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                                 supporting_conversation_ids, status
                             ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)
                         """, (
-                            AGENT_INSTANCE,
+                            instance,
                             item['pole_a'],
                             item['pole_b'],
                             item['type'],
@@ -550,6 +651,12 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                             json.dumps([conversation_id]),
                             'unresolved'
                         ))
+                        row_id = int(cursor.lastrowid)
+                    self._stamp_identity_row(
+                        cursor, table="agent_identity_contradictions", row_id=row_id,
+                        relation_id=relation_id, participant=participant,
+                        origin_class=origin_class, conversation_id=conversation_id,
+                    )
 
             # 3. Selves Possíveis
             for item in extracted.get("possible_selves", []):
@@ -558,7 +665,8 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                     cursor.execute("""
                         SELECT id, vividness FROM agent_possible_selves
                         WHERE agent_instance = ? AND description = ? AND status = 'active'
-                    """, (AGENT_INSTANCE, item['description']))
+                          AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
+                    """, (instance, item['description'], relation_id))
 
                     existing = cursor.fetchone()
 
@@ -570,6 +678,7 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                                 SET vividness = ?, last_revised_at = CURRENT_TIMESTAMP
                                 WHERE id = ?
                             """, (item['vividness'], existing[0]))
+                        row_id = int(existing[0])
                     else:
                         # Inserir novo
                         cursor.execute("""
@@ -578,13 +687,19 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                                 first_imagined_at, motivational_impact, status
                             ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
                         """, (
-                            AGENT_INSTANCE,
+                            instance,
                             item['self_type'],
                             item['description'],
                             item['vividness'],
                             'approach' if item['self_type'] in ['ideal', 'ought'] else 'avoidance',
                             'active'
                         ))
+                        row_id = int(cursor.lastrowid)
+                    self._stamp_identity_row(
+                        cursor, table="agent_possible_selves", row_id=row_id,
+                        relation_id=relation_id, participant=participant,
+                        origin_class=origin_class, conversation_id=conversation_id,
+                    )
 
             # 4. Identidade Relacional
             for item in extracted.get("relational", []):
@@ -593,7 +708,8 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                     cursor.execute("""
                         SELECT id FROM agent_relational_identity
                         WHERE agent_instance = ? AND identity_content = ? AND is_current = 1
-                    """, (AGENT_INSTANCE, item['content']))
+                          AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
+                    """, (instance, item['content'], relation_id))
 
                     existing = cursor.fetchone()
 
@@ -615,7 +731,9 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                                 salience = MAX(salience, ?),
                                 supporting_conversation_ids = ?
                             WHERE agent_instance = ? AND identity_content = ? AND is_current = 1
-                        """, (item['salience'], updated_support, AGENT_INSTANCE, item['content']))
+                              AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
+                        """, (item['salience'], updated_support, instance, item['content'], relation_id))
+                        row_id = int(existing[0])
                     else:
                         # Inserir novo
                         cursor.execute("""
@@ -625,13 +743,20 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                                 supporting_conversation_ids
                             ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
                         """, (
-                            AGENT_INSTANCE,
+                            instance,
                             item['relation_type'],
                             item['target'],
                             item['content'],
                             item['salience'],
                             json.dumps([conversation_id])
                         ))
+                        row_id = int(cursor.lastrowid)
+                    self._stamp_identity_row(
+                        cursor, table="agent_relational_identity", row_id=row_id,
+                        relation_id=relation_id, participant=participant,
+                        origin_class=origin_class, conversation_id=conversation_id,
+                        relational_facet=True,
+                    )
 
             # 5. Meta-conhecimento (Epistêmico)
             for item in extracted.get("epistemic", []):
@@ -639,9 +764,11 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                 cursor.execute("""
                     SELECT id FROM agent_self_knowledge_meta
                     WHERE agent_instance = ? AND topic = ?
-                """, (AGENT_INSTANCE, item['topic']))
+                      AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
+                """, (instance, item['topic'], relation_id))
 
-                if cursor.fetchone():
+                existing = cursor.fetchone()
+                if existing:
                     # Atualizar
                     cursor.execute("""
                         UPDATE agent_self_knowledge_meta
@@ -650,13 +777,16 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                             confidence = ?,
                             last_updated_at = CURRENT_TIMESTAMP
                         WHERE agent_instance = ? AND topic = ?
+                          AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
                     """, (
                         item['knowledge_type'],
                         item['self_assessment'],
                         item['confidence'],
-                        AGENT_INSTANCE,
-                        item['topic']
+                        instance,
+                        item['topic'],
+                        relation_id,
                     ))
+                    row_id = int(existing[0])
                 else:
                     # Inserir novo
                     cursor.execute("""
@@ -665,12 +795,18 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                             confidence, first_recognized_at, last_updated_at
                         ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     """, (
-                        AGENT_INSTANCE,
+                        instance,
                         item['topic'],
                         item['knowledge_type'],
                         item['self_assessment'],
                         item['confidence']
                     ))
+                    row_id = int(cursor.lastrowid)
+                self._stamp_identity_row(
+                    cursor, table="agent_self_knowledge_meta", row_id=row_id,
+                    relation_id=relation_id, participant=participant,
+                    origin_class=origin_class, conversation_id=conversation_id,
+                )
 
             # 6. Agência
             for item in extracted.get("agency", []):
@@ -681,7 +817,7 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                         impact_on_identity
                     ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)
                 """, (
-                    AGENT_INSTANCE,
+                    instance,
                     item['event'],
                     conversation_id,
                     item['agency_type'],
@@ -689,6 +825,11 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                     item['responsibility'],
                     item['impact']
                 ))
+                self._stamp_identity_row(
+                    cursor, table="agent_agency_memory", row_id=int(cursor.lastrowid),
+                    relation_id=relation_id, participant=participant,
+                    origin_class=origin_class, conversation_id=conversation_id,
+                )
 
             # 7. Capítulos Narrativos (Narrative)
             for item in extracted.get("narrative", []):
@@ -701,8 +842,9 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                     cursor.execute("""
                         SELECT id, key_scenes FROM agent_narrative_chapters 
                         WHERE agent_instance = ? AND period_end IS NULL
+                          AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
                         ORDER BY chapter_order DESC LIMIT 1
-                    """, (AGENT_INSTANCE,))
+                    """, (instance, relation_id))
                     
                     current_chapter = cursor.fetchone()
                     scene_data = {
@@ -726,9 +868,10 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                             SET key_scenes = ?, dominant_theme = ?
                             WHERE id = ?
                         """, (json.dumps(scenes), theme, chapter_id))
+                        row_id = int(chapter_id)
                     else:
                         # Criar novo capítulo (o primeiro)
-                        cursor.execute("SELECT MAX(chapter_order) FROM agent_narrative_chapters WHERE agent_instance = ?", (AGENT_INSTANCE,))
+                        cursor.execute("SELECT MAX(chapter_order) FROM agent_narrative_chapters WHERE agent_instance = ?", (instance,))
                         max_row = cursor.fetchone()
                         max_order = max_row[0] if max_row and max_row[0] is not None else 0
                         next_order = max_order + 1
@@ -739,12 +882,18 @@ Analise esta conversa e extraia **APENAS elementos sobre a identidade DO AGENTE 
                                 period_start, dominant_theme, key_scenes
                             ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
                         """, (
-                            AGENT_INSTANCE, 
+                            instance,
                             chapter_hint, 
                             next_order, 
                             theme, 
                             json.dumps([scene_data])
                         ))
+                        row_id = int(cursor.lastrowid)
+                    self._stamp_identity_row(
+                        cursor, table="agent_narrative_chapters", row_id=row_id,
+                        relation_id=relation_id, participant=participant,
+                        origin_class=origin_class, conversation_id=conversation_id,
+                    )
 
             # Commit
             self.db.conn.commit()

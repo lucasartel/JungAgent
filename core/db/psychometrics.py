@@ -3,7 +3,9 @@
 import json
 import logging
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
+
+from instance_config import ADMIN_USER_ID, AGENT_INSTANCE
 
 logger = logging.getLogger(__name__)
 
@@ -506,15 +508,63 @@ Responda APENAS em JSON vÃ¡lido (sem markdown):
 
             return result
 
-    def save_psychometrics(self, user_id: str, big_five: Dict, eq: Dict, vark: Dict, values: Dict) -> None:
+    def _psychometric_scope(
+        self,
+        user_id: str,
+        *,
+        relation_id: Optional[str] = None,
+        agent_instance: Optional[str] = None,
+    ) -> tuple[str, Optional[str]]:
+        instance = (agent_instance or getattr(self, "agent_instance", None) or AGENT_INSTANCE).strip()
+        resolver = getattr(self, "resolve_relation_id", None)
+        resolved_relation = relation_id
+        if callable(resolver):
+            resolved_relation = resolver(
+                agent_instance=instance,
+                participant_user_id=user_id,
+                relation_id=relation_id,
+            )
+            if not resolved_relation and str(user_id) != str(ADMIN_USER_ID):
+                raise ValueError("relation_required_for_psychometrics")
+        return instance, resolved_relation
+
+    def save_psychometrics(
+        self,
+        user_id: str,
+        big_five: Dict,
+        eq: Dict,
+        vark: Dict,
+        values: Dict,
+        *,
+        relation_id: Optional[str] = None,
+        agent_instance: Optional[str] = None,
+        provenance: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """
         Salva anÃ¡lises psicomÃ©tricas no banco
         """
         logger.info(f"ðŸ’¾ Salvando anÃ¡lises psicomÃ©tricas para {user_id}")
 
         # Verificar se jÃ¡ existe anÃ¡lise (para versionamento)
+        instance, resolved_relation = self._psychometric_scope(
+            user_id,
+            relation_id=relation_id,
+            agent_instance=agent_instance,
+        )
+        provenance_payload = {
+            "private_derived": True,
+            "origin_class": "relation_private" if resolved_relation else "legacy_unscoped",
+            "origin_relation_id": resolved_relation,
+            "origin_participant_user_id": user_id,
+            **(provenance or {}),
+        }
         cursor = self.conn.cursor()
-        cursor.execute("SELECT MAX(version) as max_version FROM user_psychometrics WHERE user_id = ?", (user_id,))
+        cursor.execute(
+            """SELECT MAX(version) as max_version FROM user_psychometrics
+               WHERE user_id = ? AND agent_instance = ?
+                 AND COALESCE(relation_id, '') = COALESCE(?, '')""",
+            (user_id, instance, resolved_relation),
+        )
         row = cursor.fetchone()
         version = (row['max_version'] or 0) + 1 if row else 1
 
@@ -546,7 +596,7 @@ Responda APENAS em JSON vÃ¡lido (sem markdown):
         # Insert
         cursor.execute("""
             INSERT INTO user_psychometrics (
-                user_id, version,
+                user_id, agent_instance, relation_id, ownership_class, provenance_json, version,
                 openness_score, openness_level, openness_description,
                 conscientiousness_score, conscientiousness_level, conscientiousness_description,
                 extraversion_score, extraversion_level, extraversion_description,
@@ -561,7 +611,7 @@ Responda APENAS em JSON vÃ¡lido (sem markdown):
                 executive_summary,
                 conversations_analyzed
             ) VALUES (
-                ?, ?,
+                ?, ?, ?, ?, ?, ?,
                 ?, ?, ?,
                 ?, ?, ?,
                 ?, ?, ?,
@@ -577,7 +627,9 @@ Responda APENAS em JSON vÃ¡lido (sem markdown):
                 ?
             )
         """, (
-            user_id, version,
+            user_id, instance, resolved_relation,
+            "relation_private" if resolved_relation else "legacy_unscoped",
+            json_lib.dumps(provenance_payload, ensure_ascii=False), version,
             bf_o.get('score'), bf_o.get('level'), bf_o.get('description'),
             bf_c.get('score'), bf_c.get('level'), bf_c.get('description'),
             bf_e.get('score'), bf_e.get('level'), bf_e.get('description'),
@@ -597,25 +649,40 @@ Responda APENAS em JSON vÃ¡lido (sem markdown):
         self.conn.commit()
         logger.info(f"âœ… AnÃ¡lises psicomÃ©tricas salvas (versÃ£o {version})")
 
-    def get_psychometrics(self, user_id: str, version: int = None) -> Optional[Dict]:
+    def get_psychometrics(
+        self,
+        user_id: str,
+        version: int = None,
+        *,
+        relation_id: Optional[str] = None,
+        agent_instance: Optional[str] = None,
+    ) -> Optional[Dict]:
         """
         Busca anÃ¡lises psicomÃ©tricas do usuÃ¡rio
         Se version nÃ£o especificado, retorna a mais recente
         """
+        instance, resolved_relation = self._psychometric_scope(
+            user_id,
+            relation_id=relation_id,
+            agent_instance=agent_instance,
+        )
         cursor = self.conn.cursor()
 
         if version:
             cursor.execute("""
                 SELECT * FROM user_psychometrics
-                WHERE user_id = ? AND version = ?
-            """, (user_id, version))
+                WHERE user_id = ? AND agent_instance = ?
+                  AND COALESCE(relation_id, '') = COALESCE(?, '')
+                  AND version = ?
+            """, (user_id, instance, resolved_relation, version))
         else:
             cursor.execute("""
                 SELECT * FROM user_psychometrics
-                WHERE user_id = ?
+                WHERE user_id = ? AND agent_instance = ?
+                  AND COALESCE(relation_id, '') = COALESCE(?, '')
                 ORDER BY version DESC
                 LIMIT 1
-            """, (user_id,))
+            """, (user_id, instance, resolved_relation))
 
         row = cursor.fetchone()
         return dict(row) if row else None

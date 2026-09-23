@@ -4,8 +4,16 @@ import random
 import re
 import unicodedata
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
+from core.db.cognitive_ownership import INSTANCE_GLOBAL, RELATION_PRIVATE
+from core.db.cognitive_provenance import (
+    cognitive_agent_instance,
+    cognitive_provenance,
+    json_payload,
+    normalize_source_refs,
+    resolve_cognitive_origin,
+)
 from jung_core import Config, HybridDatabaseManager
 
 logger = logging.getLogger(__name__)
@@ -104,6 +112,7 @@ class ScholarEngine:
 
     def __init__(self, db_manager: HybridDatabaseManager):
         self.db = db_manager
+        self.agent_instance = cognitive_agent_instance(db_manager)
         if hasattr(self.db, "openrouter_client") and self.db.openrouter_client:
             self.llm = self.db.openrouter_client
             self.model = Config.CONVERSATION_MODEL
@@ -118,17 +127,41 @@ class ScholarEngine:
             self.model = None
             self.is_openrouter = False
 
-    def get_recent_admin_interactions(self, user_id: str, limit: int = 15) -> str:
+    def _resolve_relation(self, user_id: str, relation_id: Optional[str] = None) -> Optional[str]:
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        if not callable(resolver):
+            return relation_id
+        return resolver(
+            agent_instance=self.agent_instance,
+            participant_user_id=user_id,
+            relation_id=relation_id,
+        )
+
+    def get_recent_admin_interactions(
+        self, user_id: str, limit: int = 15, relation_id: Optional[str] = None
+    ) -> str:
+        resolved_relation = self._resolve_relation(user_id, relation_id)
+        if not resolved_relation and hasattr(self.db, "resolve_relation_id"):
+            from instance_config import ADMIN_USER_ID
+
+            if str(user_id) != str(ADMIN_USER_ID):
+                return ""
+        if resolved_relation:
+            scope_sql = "agent_instance = ? AND relation_id = ?"
+            scope_params: List[Any] = [self.agent_instance, resolved_relation]
+        else:
+            scope_sql = "(agent_instance = ? OR agent_instance IS NULL) AND relation_id IS NULL"
+            scope_params = [self.agent_instance]
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             SELECT user_input, ai_response
             FROM conversations
-            WHERE user_id = ?
+            WHERE user_id = ? AND {scope_sql}
             ORDER BY timestamp DESC
             LIMIT ?
             """,
-            (user_id, limit),
+            [user_id, *scope_params, limit],
         )
         rows = cursor.fetchall()
         if not rows:
@@ -182,19 +215,41 @@ class ScholarEngine:
 
         return "\n\n".join(section for section in sections if section).strip()
 
-    def get_recent_loop_inspirations(self, user_id: str) -> str:
+    def get_recent_loop_inspirations(
+        self, user_id: str, relation_id: Optional[str] = None
+    ) -> str:
         cursor = self.db.conn.cursor()
         sections: List[str] = []
+        resolved_relation = self._resolve_relation(user_id, relation_id)
+        if resolved_relation:
+            private_scope = "agent_instance = ? AND relation_id = ?"
+            private_params: List[Any] = [self.agent_instance, resolved_relation]
+            dream_scope = "agent_instance = ? AND (origin_relation_id = ? OR origin_class IN ('instance_global', 'authorized_aggregate'))"
+            dream_params: List[Any] = [self.agent_instance, resolved_relation]
+            research_scope = "agent_instance = ? AND origin_relation_id = ?"
+            research_params: List[Any] = [self.agent_instance, resolved_relation]
+        else:
+            if hasattr(self.db, "resolve_relation_id"):
+                from instance_config import ADMIN_USER_ID
+
+                if str(user_id) != str(ADMIN_USER_ID):
+                    return ""
+            private_scope = "(agent_instance = ? OR agent_instance IS NULL) AND relation_id IS NULL"
+            private_params = [self.agent_instance]
+            dream_scope = "(agent_instance = ? OR agent_instance IS NULL) AND origin_relation_id IS NULL"
+            dream_params = [self.agent_instance]
+            research_scope = "(agent_instance = ? OR agent_instance IS NULL) AND origin_relation_id IS NULL"
+            research_params = [self.agent_instance]
 
         cursor.execute(
-            """
+            f"""
             SELECT symbolic_theme, extracted_insight
             FROM agent_dreams
-            WHERE user_id = ?
+            WHERE user_id = ? AND {dream_scope}
             ORDER BY id DESC
             LIMIT 1
             """,
-            (user_id,),
+            [user_id, *dream_params],
         )
         dream = cursor.fetchone()
         if dream:
@@ -212,14 +267,14 @@ class ScholarEngine:
             )
 
         cursor.execute(
-            """
+            f"""
             SELECT symbol_content, question_content, full_message
             FROM rumination_insights
-            WHERE user_id = ?
+            WHERE user_id = ? AND {private_scope}
             ORDER BY id DESC
             LIMIT 2
             """,
-            (user_id,),
+            [user_id, *private_params],
         )
         rumination_rows = cursor.fetchall()
         if rumination_rows:
@@ -234,10 +289,11 @@ class ScholarEngine:
             sections.append("Ruminacao recente:\n- " + "\n- ".join(rumination_lines))
 
         cursor.execute(
-            """
+            f"""
             SELECT tension_type, pole_a_content, pole_b_content, tension_description, status, maturity_score
             FROM rumination_tensions
-            WHERE user_id = ? AND status IN ('open', 'maturing', 'ready_for_synthesis', 'synthesized')
+            WHERE user_id = ? AND {private_scope}
+              AND status IN ('open', 'maturing', 'ready_for_synthesis', 'synthesized')
             ORDER BY
                 CASE status
                     WHEN 'ready_for_synthesis' THEN 0
@@ -251,7 +307,7 @@ class ScholarEngine:
                 id DESC
             LIMIT 3
             """,
-            (user_id,),
+            [user_id, *private_params],
         )
         tension_rows = cursor.fetchall()
         if tension_rows:
@@ -273,14 +329,14 @@ class ScholarEngine:
             sections.append("Tensoes recentes:\n- " + "\n- ".join(tension_lines))
 
         cursor.execute(
-            """
+            f"""
             SELECT topic, synthesized_insight
             FROM external_research
-            WHERE user_id = ?
+            WHERE user_id = ? AND {research_scope}
             ORDER BY id DESC
             LIMIT 1
             """,
-            (user_id,),
+            [user_id, *research_params],
         )
         scholar = cursor.fetchone()
         if scholar:
@@ -798,11 +854,11 @@ Responda APENAS com JSON valido:
             """
             SELECT topic, created_at, research_lens, trigger_reason
             FROM external_research
-            WHERE user_id = ?
+            WHERE user_id = ? AND agent_instance = ?
             ORDER BY created_at DESC
             LIMIT ?
             """,
-            (user_id, limit),
+            (user_id, self.agent_instance, limit),
         )
         rows = cursor.fetchall()
 
@@ -838,11 +894,11 @@ Responda APENAS com JSON valido:
             """
             SELECT topic, created_at, trigger_reason
             FROM external_research
-            WHERE user_id = ?
+            WHERE user_id = ? AND agent_instance = ?
             ORDER BY created_at DESC
             LIMIT ?
             """,
-            (user_id, limit),
+            (user_id, self.agent_instance, limit),
         )
         rows = cursor.fetchall()
         if not rows:
@@ -880,11 +936,11 @@ Responda APENAS com JSON valido:
             """
             SELECT id, topic, status, synthesized_insight, created_at, trigger_reason, research_lens
             FROM external_research
-            WHERE user_id = ?
+            WHERE user_id = ? AND agent_instance = ?
             ORDER BY created_at DESC
             LIMIT 25
             """,
-            (user_id,),
+            (user_id, self.agent_instance),
         )
         rows = cursor.fetchall()
         cooldown_threshold = datetime.utcnow() - timedelta(days=self.TOPIC_COOLDOWN_DAYS)
@@ -912,10 +968,10 @@ Responda APENAS com JSON valido:
             """
             SELECT id
             FROM external_research
-            WHERE user_id = ? AND status = 'active'
+            WHERE user_id = ? AND agent_instance = ? AND status = 'active'
             ORDER BY created_at DESC, id DESC
             """,
-            (user_id,),
+            (user_id, self.agent_instance),
         )
         active_ids = [row[0] for row in cursor.fetchall()]
         for research_id in active_ids[self.ACTIVE_RESEARCH_LIMIT :]:
@@ -1067,14 +1123,44 @@ Responda APENAS com JSON valido:
 
         return "\n\n".join(part for part in article_parts if part)
 
-    def _start_run(self, user_id: str, trigger_source: str, history_excerpt: str) -> int:
+    def _start_run(
+        self,
+        user_id: str,
+        trigger_source: str,
+        history_excerpt: str,
+        *,
+        relation_id: Optional[str] = None,
+        source_refs: Optional[Iterable[str]] = None,
+    ) -> int:
+        instance, origin_class, resolved_relation, participant = resolve_cognitive_origin(
+            self.db,
+            participant_user_id=user_id,
+            relation_id=relation_id,
+            agent_instance=self.agent_instance,
+        )
+        provenance = cognitive_provenance(
+            origin_class=origin_class,
+            relation_id=resolved_relation,
+            participant_user_id=participant,
+            extra={"producer": "scholar_engine"},
+        )
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
-            INSERT INTO scholar_runs (user_id, trigger_source, status, history_excerpt, started_at)
-            VALUES (?, ?, 'running', ?, CURRENT_TIMESTAMP)
+            INSERT INTO scholar_runs (
+                user_id, agent_instance, ownership_class, origin_class,
+                origin_relation_id, origin_participant_user_id,
+                source_refs_json, provenance_json,
+                trigger_source, status, history_excerpt, started_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, CURRENT_TIMESTAMP)
             """,
-            (user_id, trigger_source, history_excerpt[:4000] if history_excerpt else None),
+            (
+                user_id, instance, origin_class, origin_class,
+                resolved_relation, participant,
+                json_payload(normalize_source_refs(source_refs), []),
+                json_payload(provenance, {}), trigger_source,
+                history_excerpt[:4000] if history_excerpt else None,
+            ),
         )
         self.db.conn.commit()
         return cursor.lastrowid
@@ -1106,7 +1192,9 @@ Responda APENAS com JSON valido:
         )
         self.db.conn.commit()
 
-    def identify_research_topic(self, user_id: str) -> Dict:
+    def identify_research_topic(
+        self, user_id: str, relation_id: Optional[str] = None
+    ) -> Dict:
         if not self.llm:
             return {
                 "success": False,
@@ -1118,8 +1206,8 @@ Responda APENAS com JSON valido:
                 "selection_mode": None,
             }
 
-        history = self.get_recent_admin_interactions(user_id)
-        loop_inspirations = self.get_recent_loop_inspirations(user_id)
+        history = self.get_recent_admin_interactions(user_id, relation_id=relation_id)
+        loop_inspirations = self.get_recent_loop_inspirations(user_id, relation_id=relation_id)
         identity_context = self.get_identity_nuclear_context()
         meta_context = self._get_latest_meta_consciousness_context(user_id)
         will_conflict = self._identify_will_conflict(
@@ -1276,6 +1364,8 @@ Responda APENAS com um objeto JSON valido:
         lineage: Optional[str] = None,
         selection_mode: Optional[str] = None,
         will_conflict: Optional[Dict] = None,
+        relation_id: Optional[str] = None,
+        source_refs: Optional[Iterable[str]] = None,
     ) -> Dict:
         if not self.llm:
             return {
@@ -1290,6 +1380,18 @@ Responda APENAS com um objeto JSON valido:
             }
 
         logger.info("Iniciando pesquisa autonoma sobre: %s", topic)
+        instance, origin_class, resolved_relation, participant = resolve_cognitive_origin(
+            self.db,
+            participant_user_id=user_id,
+            relation_id=relation_id,
+            agent_instance=self.agent_instance,
+        )
+        provenance = cognitive_provenance(
+            origin_class=origin_class,
+            relation_id=resolved_relation,
+            participant_user_id=participant,
+            extra={"producer": "scholar_engine"},
+        )
 
         existing_match = self._find_recent_topic_match(user_id, topic)
         if existing_match:
@@ -1394,16 +1496,37 @@ Responda SOMENTE com o corpo do artigo, sem involucros de chat.
             cursor.execute(
                 """
                 INSERT INTO external_research (
-                    user_id, topic, source_url, raw_excerpt, synthesized_insight, status, trigger_reason, research_lens
+                    user_id, agent_instance, ownership_class, origin_class,
+                    origin_relation_id, origin_participant_user_id,
+                    source_refs_json, provenance_json,
+                    topic, source_url, raw_excerpt, synthesized_insight,
+                    private_trigger_json, public_finding, finding_scope,
+                    status, trigger_reason, research_lens
                 )
-                VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 """,
                 (
                     user_id,
+                    instance,
+                    INSTANCE_GLOBAL,
+                    origin_class,
+                    resolved_relation,
+                    participant,
+                    json_payload(normalize_source_refs(source_refs), []),
+                    json_payload(provenance, {}),
                     topic,
                     "LLM Knowledge Base",
                     history_excerpt[:4000] if history_excerpt else "Sem transcricao preservada.",
                     article,
+                    json_payload(
+                        {
+                            "history_excerpt": history_excerpt[:4000] if history_excerpt else None,
+                            "trigger_reason": enriched_trigger_reason,
+                        },
+                        {},
+                    ),
+                    None,
+                    RELATION_PRIVATE if resolved_relation else "quarantined",
                     enriched_trigger_reason,
                     chosen_lens,
                 ),
@@ -1439,10 +1562,21 @@ Responda SOMENTE com o corpo do artigo, sem involucros de chat.
                 "selection_mode": selection_mode,
             }
 
-    def run_scholarly_routine(self, user_id: str, trigger_source: str = "unknown") -> Dict:
-        topic_result = self.identify_research_topic(user_id)
+    def run_scholarly_routine(
+        self,
+        user_id: str,
+        trigger_source: str = "unknown",
+        relation_id: Optional[str] = None,
+    ) -> Dict:
+        resolved_relation = self._resolve_relation(user_id, relation_id)
+        topic_result = self.identify_research_topic(user_id, relation_id=resolved_relation)
         history_excerpt = topic_result.get("history_excerpt", "")
-        run_id = self._start_run(user_id, trigger_source, history_excerpt)
+        run_id = self._start_run(
+            user_id,
+            trigger_source,
+            history_excerpt,
+            relation_id=resolved_relation,
+        )
 
         if not topic_result.get("success"):
             result = {
@@ -1487,6 +1621,7 @@ Responda SOMENTE com o corpo do artigo, sem involucros de chat.
             lineage=topic_result.get("lineage"),
             selection_mode=topic_result.get("selection_mode"),
             will_conflict=topic_result.get("will_conflict"),
+            relation_id=resolved_relation,
         )
         result = {
             "success": research_result["success"],

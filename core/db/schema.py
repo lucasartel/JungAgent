@@ -134,6 +134,10 @@ class SchemaDatabaseMixin:
             CREATE TABLE IF NOT EXISTS user_milestones (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
+                agent_instance TEXT,
+                relation_id TEXT,
+                ownership_class TEXT NOT NULL DEFAULT 'legacy_unscoped',
+                provenance_json TEXT NOT NULL DEFAULT '{}',
                 
                 milestone_type TEXT NOT NULL,
                 milestone_title TEXT NOT NULL,
@@ -310,6 +314,13 @@ class SchemaDatabaseMixin:
             CREATE TABLE IF NOT EXISTS agent_dreams (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
+                agent_instance TEXT,
+                ownership_class TEXT NOT NULL DEFAULT 'legacy_unscoped',
+                origin_class TEXT NOT NULL DEFAULT 'legacy_unscoped',
+                origin_relation_id TEXT,
+                origin_participant_user_id TEXT,
+                source_refs_json TEXT NOT NULL DEFAULT '[]',
+                provenance_json TEXT NOT NULL DEFAULT '{}',
                 
                 dream_content TEXT NOT NULL,
                 symbolic_theme TEXT,
@@ -376,11 +387,23 @@ class SchemaDatabaseMixin:
             ("image_model", "TEXT"),
             ("image_status", "TEXT"),
             ("image_raw_response_json", "TEXT"),
+            ("agent_instance", "TEXT"),
+            ("ownership_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+            ("origin_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+            ("origin_relation_id", "TEXT"),
+            ("origin_participant_user_id", "TEXT"),
+            ("source_refs_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("provenance_json", "TEXT NOT NULL DEFAULT '{}'"),
         ):
             try:
                 cursor.execute(f"ALTER TABLE agent_dreams ADD COLUMN {column_name} {column_type};")
             except sqlite3.OperationalError:
                 pass
+
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_dreams_cognitive_scope "
+            "ON agent_dreams(agent_instance, origin_class, origin_relation_id, created_at DESC)"
+        )
 
         try:
             cursor.execute("ALTER TABLE agent_hobby_artifacts ADD COLUMN critique_summary TEXT;")
@@ -407,6 +430,13 @@ class SchemaDatabaseMixin:
             CREATE TABLE IF NOT EXISTS external_research (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
+                agent_instance TEXT,
+                ownership_class TEXT NOT NULL DEFAULT 'legacy_unscoped',
+                origin_class TEXT NOT NULL DEFAULT 'legacy_unscoped',
+                origin_relation_id TEXT,
+                origin_participant_user_id TEXT,
+                source_refs_json TEXT NOT NULL DEFAULT '[]',
+                provenance_json TEXT NOT NULL DEFAULT '{}',
                 
                 topic TEXT NOT NULL,
                 source_url TEXT,
@@ -414,6 +444,9 @@ class SchemaDatabaseMixin:
                 synthesized_insight TEXT,
                 trigger_reason TEXT,
                 research_lens TEXT,
+                private_trigger_json TEXT,
+                public_finding TEXT,
+                finding_scope TEXT NOT NULL DEFAULT 'quarantined',
                 
                 status TEXT DEFAULT 'active', -- 'active', 'archived'
                 
@@ -423,35 +456,44 @@ class SchemaDatabaseMixin:
             )
         """)
 
-        try:
-            cursor.execute("ALTER TABLE external_research ADD COLUMN status TEXT DEFAULT 'active';")
-        except sqlite3.OperationalError:
-            pass
+        for column_name, column_type in (
+            ("status", "TEXT DEFAULT 'active'"),
+            ("raw_excerpt", "TEXT"),
+            ("source_url", "TEXT"),
+            ("trigger_reason", "TEXT"),
+            ("research_lens", "TEXT"),
+            ("agent_instance", "TEXT"),
+            ("ownership_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+            ("origin_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+            ("origin_relation_id", "TEXT"),
+            ("origin_participant_user_id", "TEXT"),
+            ("source_refs_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("provenance_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("private_trigger_json", "TEXT"),
+            ("public_finding", "TEXT"),
+            ("finding_scope", "TEXT NOT NULL DEFAULT 'quarantined'"),
+        ):
+            try:
+                cursor.execute(f"ALTER TABLE external_research ADD COLUMN {column_name} {column_type};")
+            except sqlite3.OperationalError:
+                pass
 
-        try:
-            cursor.execute("ALTER TABLE external_research ADD COLUMN raw_excerpt TEXT;")
-        except sqlite3.OperationalError:
-            pass
-
-        try:
-            cursor.execute("ALTER TABLE external_research ADD COLUMN source_url TEXT;")
-        except sqlite3.OperationalError:
-            pass
-
-        try:
-            cursor.execute("ALTER TABLE external_research ADD COLUMN trigger_reason TEXT;")
-        except sqlite3.OperationalError:
-            pass
-
-        try:
-            cursor.execute("ALTER TABLE external_research ADD COLUMN research_lens TEXT;")
-        except sqlite3.OperationalError:
-            pass
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_external_research_cognitive_scope "
+            "ON external_research(agent_instance, origin_relation_id, finding_scope, status, created_at DESC)"
+        )
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS scholar_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
+                agent_instance TEXT,
+                ownership_class TEXT NOT NULL DEFAULT 'legacy_unscoped',
+                origin_class TEXT NOT NULL DEFAULT 'legacy_unscoped',
+                origin_relation_id TEXT,
+                origin_participant_user_id TEXT,
+                source_refs_json TEXT NOT NULL DEFAULT '[]',
+                provenance_json TEXT NOT NULL DEFAULT '{}',
                 trigger_source TEXT DEFAULT 'unknown',
                 status TEXT NOT NULL,
                 topic TEXT,
@@ -466,6 +508,25 @@ class SchemaDatabaseMixin:
                 FOREIGN KEY (research_id) REFERENCES external_research(id)
             )
         """)
+
+        for column_name, column_type in (
+            ("agent_instance", "TEXT"),
+            ("ownership_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+            ("origin_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+            ("origin_relation_id", "TEXT"),
+            ("origin_participant_user_id", "TEXT"),
+            ("source_refs_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("provenance_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ):
+            try:
+                cursor.execute(f"ALTER TABLE scholar_runs ADD COLUMN {column_name} {column_type};")
+            except sqlite3.OperationalError:
+                pass
+
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scholar_runs_cognitive_scope "
+            "ON scholar_runs(agent_instance, origin_relation_id, status, started_at DESC)"
+        )
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS agent_will_states (
@@ -559,6 +620,10 @@ class SchemaDatabaseMixin:
             CREATE TABLE IF NOT EXISTS user_psychometrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
+                agent_instance TEXT,
+                relation_id TEXT,
+                ownership_class TEXT NOT NULL DEFAULT 'legacy_unscoped',
+                provenance_json TEXT NOT NULL DEFAULT '{}',
                 version INTEGER DEFAULT 1,
 
                 -- Big Five (OCEAN) - scores 0-100
@@ -625,6 +690,13 @@ class SchemaDatabaseMixin:
             CREATE TABLE IF NOT EXISTS knowledge_gaps (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
+                agent_instance TEXT,
+                ownership_class TEXT NOT NULL DEFAULT 'legacy_unscoped',
+                origin_class TEXT NOT NULL DEFAULT 'legacy_unscoped',
+                origin_relation_id TEXT,
+                origin_participant_user_id TEXT,
+                source_refs_json TEXT NOT NULL DEFAULT '[]',
+                provenance_json TEXT NOT NULL DEFAULT '{}',
                 
                 topic TEXT NOT NULL,
                 the_gap TEXT NOT NULL,
@@ -635,6 +707,8 @@ class SchemaDatabaseMixin:
                 target_scope TEXT,
                 focus_terms_json TEXT,
                 source_reason TEXT,
+                public_question TEXT,
+                private_trigger_json TEXT,
                 
                 status TEXT DEFAULT 'open',
                 closure_summary TEXT,
@@ -662,11 +736,25 @@ class SchemaDatabaseMixin:
             "closure_source_type TEXT",
             "closure_source_id TEXT",
             "closure_evidence_json TEXT",
+            "agent_instance TEXT",
+            "ownership_class TEXT NOT NULL DEFAULT 'legacy_unscoped'",
+            "origin_class TEXT NOT NULL DEFAULT 'legacy_unscoped'",
+            "origin_relation_id TEXT",
+            "origin_participant_user_id TEXT",
+            "source_refs_json TEXT NOT NULL DEFAULT '[]'",
+            "provenance_json TEXT NOT NULL DEFAULT '{}'",
+            "public_question TEXT",
+            "private_trigger_json TEXT",
         ]:
             try:
                 cursor.execute(f"ALTER TABLE knowledge_gaps ADD COLUMN {column_def}")
             except sqlite3.OperationalError:
                 pass
+
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_gaps_cognitive_scope "
+            "ON knowledge_gaps(agent_instance, origin_relation_id, origin_class, status, importance_score DESC)"
+        )
 
         # ========== LOOP DE CONSCIENCIA ==========
         cursor.execute("""
@@ -1217,6 +1305,53 @@ class SchemaDatabaseMixin:
                             )
                             WHERE agent_instance IS NULL AND relation_id IS NOT NULL"""
                     )
+
+        for table in ("user_milestones", "user_psychometrics"):
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
+            if not cursor.fetchone():
+                continue
+            columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+            for column, definition in (
+                ("agent_instance", "TEXT"),
+                ("relation_id", "TEXT"),
+                ("ownership_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+                ("provenance_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ):
+                if column not in columns:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            cursor.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{table}_relation_scope "
+                f"ON {table}(agent_instance, relation_id, user_id)"
+            )
+
+        identity_tables = (
+            "agent_identity_core",
+            "agent_identity_contradictions",
+            "agent_possible_selves",
+            "agent_narrative_chapters",
+            "agent_relational_identity",
+            "agent_self_knowledge_meta",
+            "agent_agency_memory",
+        )
+        for table in identity_tables:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
+            if not cursor.fetchone():
+                continue
+            columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+            for column, definition in (
+                ("ownership_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+                ("origin_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+                ("origin_relation_id", "TEXT"),
+                ("origin_participant_user_id", "TEXT"),
+                ("source_refs_json", "TEXT NOT NULL DEFAULT '[]'"),
+                ("provenance_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ):
+                if column not in columns:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            cursor.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{table}_origin_scope "
+                f"ON {table}(agent_instance, origin_relation_id, origin_class)"
+            )
 
         # Rumination ownership is additive because these tables may also be
         # created lazily by RuminationEngine in older databases.

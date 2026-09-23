@@ -6,6 +6,7 @@ and causal path traversal via recursive SQL queries.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -51,6 +52,12 @@ class SymbolicGraphDatabaseMixin:
                     object_id INTEGER NOT NULL,
                     confidence REAL DEFAULT 1.0,
                     source_ref TEXT NOT NULL,
+                    ownership_class TEXT NOT NULL DEFAULT 'legacy_unscoped',
+                    origin_class TEXT NOT NULL DEFAULT 'legacy_unscoped',
+                    origin_relation_id TEXT,
+                    origin_participant_user_id TEXT,
+                    source_refs_json TEXT NOT NULL DEFAULT '[]',
+                    provenance_json TEXT NOT NULL DEFAULT '{}',
                     status TEXT DEFAULT 'candidate',
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (subject_id) REFERENCES symbolic_nodes(id),
@@ -70,6 +77,21 @@ class SymbolicGraphDatabaseMixin:
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_symbolic_triples_obj "
                 "ON symbolic_triples(agent_instance, object_id)"
+            )
+            columns = {row[1] for row in cursor.execute("PRAGMA table_info(symbolic_triples)")}
+            for column, definition in (
+                ("ownership_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+                ("origin_class", "TEXT NOT NULL DEFAULT 'legacy_unscoped'"),
+                ("origin_relation_id", "TEXT"),
+                ("origin_participant_user_id", "TEXT"),
+                ("source_refs_json", "TEXT NOT NULL DEFAULT '[]'"),
+                ("provenance_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ):
+                if column not in columns:
+                    cursor.execute(f"ALTER TABLE symbolic_triples ADD COLUMN {column} {definition}")
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_symbolic_triples_cognitive_scope "
+                "ON symbolic_triples(agent_instance, origin_relation_id, origin_class, status)"
             )
             self.conn.commit()
 
@@ -119,6 +141,10 @@ class SymbolicGraphDatabaseMixin:
         status: str = "candidate",
         subject_type: str = "concept",
         object_type: str = "concept",
+        origin_relation_id: Optional[str] = None,
+        origin_participant_user_id: Optional[str] = None,
+        origin_class: Optional[str] = None,
+        provenance: Optional[Dict[str, Any]] = None,
     ) -> int:
         """Inserts a verified or candidate triple anchored to valid evidence."""
         self._init_symbolic_graph_schema()
@@ -131,6 +157,17 @@ class SymbolicGraphDatabaseMixin:
             raise ValueError("empty_predicate")
 
         confidence = max(0.0, min(1.0, float(confidence)))
+        clean_origin = (origin_class or ("relation_private" if origin_relation_id else "instance_global")).strip().lower()
+        if clean_origin not in {"relation_private", "instance_global", "authorized_aggregate"}:
+            raise ValueError(f"invalid_origin_class:{origin_class}")
+        if clean_origin == "relation_private" and not origin_relation_id:
+            raise ValueError("relation_private_origin_requires_relation")
+        provenance_payload = {
+            "private_derived": clean_origin == "relation_private",
+            "origin_relation_id": origin_relation_id,
+            "origin_participant_user_id": origin_participant_user_id,
+        }
+        provenance_payload.update(provenance or {})
         subj_id = self.get_or_create_symbolic_node(
             agent_instance=agent_instance,
             entity_name=subject_name,
@@ -148,10 +185,18 @@ class SymbolicGraphDatabaseMixin:
                 """
                 INSERT INTO symbolic_triples (
                     agent_instance, subject_id, predicate, object_id,
-                    confidence, source_ref, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    confidence, source_ref, ownership_class, origin_class,
+                    origin_relation_id, origin_participant_user_id,
+                    source_refs_json, provenance_json, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'instance_global', ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(agent_instance, subject_id, predicate, object_id, source_ref)
-                DO UPDATE SET confidence = excluded.confidence, status = excluded.status
+                DO UPDATE SET confidence = excluded.confidence,
+                              status = excluded.status,
+                              origin_class = excluded.origin_class,
+                              origin_relation_id = excluded.origin_relation_id,
+                              origin_participant_user_id = excluded.origin_participant_user_id,
+                              source_refs_json = excluded.source_refs_json,
+                              provenance_json = excluded.provenance_json
                 """,
                 (
                     agent_instance,
@@ -160,6 +205,11 @@ class SymbolicGraphDatabaseMixin:
                     obj_id,
                     confidence,
                     clean_ref,
+                    clean_origin,
+                    origin_relation_id,
+                    origin_participant_user_id,
+                    json.dumps([clean_ref], ensure_ascii=False),
+                    json.dumps(provenance_payload, ensure_ascii=False, sort_keys=True),
                     status,
                     datetime.now(timezone.utc).isoformat(),
                 ),
@@ -185,6 +235,8 @@ class SymbolicGraphDatabaseMixin:
         subject_name: Optional[str] = None,
         predicate: Optional[str] = None,
         object_name: Optional[str] = None,
+        relation_id: Optional[str] = None,
+        include_legacy: bool = False,
     ) -> List[Dict[str, Any]]:
         """Lists symbolic triples with resolved node names."""
         self._init_symbolic_graph_schema()
@@ -201,6 +253,12 @@ class SymbolicGraphDatabaseMixin:
                     no.entity_type AS object_type,
                     t.confidence,
                     t.source_ref,
+                    t.ownership_class,
+                    t.origin_class,
+                    t.origin_relation_id,
+                    t.origin_participant_user_id,
+                    t.source_refs_json,
+                    t.provenance_json,
                     t.status,
                     t.created_at
                 FROM symbolic_triples t
@@ -209,6 +267,13 @@ class SymbolicGraphDatabaseMixin:
                 WHERE t.agent_instance = ?
             """
             params: List[Any] = [agent_instance]
+            visibility = ["t.origin_class IN ('instance_global', 'authorized_aggregate')"]
+            if relation_id:
+                visibility.append("t.origin_relation_id = ?")
+                params.append(relation_id)
+            if include_legacy:
+                visibility.append("t.origin_class = 'legacy_unscoped'")
+            query += " AND (" + " OR ".join(visibility) + ")"
 
             if status:
                 query += " AND t.status = ?"
@@ -228,7 +293,13 @@ class SymbolicGraphDatabaseMixin:
 
             cursor.execute(query, tuple(params))
             rows = cursor.fetchall()
-            return [dict(r) for r in rows]
+            results = []
+            for row in rows:
+                item = dict(row)
+                item["source_refs"] = json.loads(item.pop("source_refs_json") or "[]")
+                item["provenance"] = json.loads(item.pop("provenance_json") or "{}")
+                results.append(item)
+            return results
 
     def query_causal_neighborhood(
         self,
@@ -237,12 +308,22 @@ class SymbolicGraphDatabaseMixin:
         start_node_name: str,
         max_depth: int = 2,
         limit: int = 50,
+        relation_id: Optional[str] = None,
+        include_legacy: bool = False,
     ) -> List[Dict[str, Any]]:
         """Traverses causal and associative paths starting from a node using recursive SQL."""
         self._init_symbolic_graph_schema()
         with self._lock:
             cursor = self.conn.cursor()
-            query = """
+            visibility_parts = ["t.origin_class IN ('instance_global', 'authorized_aggregate')"]
+            visibility_params: List[Any] = []
+            if relation_id:
+                visibility_parts.append("t.origin_relation_id = ?")
+                visibility_params.append(relation_id)
+            if include_legacy:
+                visibility_parts.append("t.origin_class = 'legacy_unscoped'")
+            visibility_sql = "(" + " OR ".join(visibility_parts) + ")"
+            query = f"""
                 WITH RECURSIVE graph_path(subject_id, predicate, object_id, confidence, source_ref, depth, path_str) AS (
                     SELECT
                         t.subject_id,
@@ -255,6 +336,7 @@ class SymbolicGraphDatabaseMixin:
                     FROM symbolic_triples t
                     JOIN symbolic_nodes n ON t.subject_id = n.id
                     WHERE t.agent_instance = ? AND n.entity_name = ? AND t.status != 'rejected'
+                      AND {visibility_sql}
 
                     UNION ALL
 
@@ -272,6 +354,7 @@ class SymbolicGraphDatabaseMixin:
                       AND gp.depth < ?
                       AND gp.path_str NOT LIKE '%' || CAST(t.object_id AS TEXT) || '%'
                       AND t.status != 'rejected'
+                      AND {visibility_sql}
                 )
                 SELECT
                     gp.depth,
@@ -287,7 +370,18 @@ class SymbolicGraphDatabaseMixin:
                 ORDER BY gp.depth ASC, gp.confidence DESC
                 LIMIT ?
             """
-            cursor.execute(query, (agent_instance, start_node_name, agent_instance, max_depth, limit))
+            cursor.execute(
+                query,
+                (
+                    agent_instance,
+                    start_node_name,
+                    *visibility_params,
+                    agent_instance,
+                    max_depth,
+                    *visibility_params,
+                    limit,
+                ),
+            )
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
 

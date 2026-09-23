@@ -32,6 +32,10 @@ def test_db(tmp_path):
 
 
 def test_tom_schema_and_upsert(test_db):
+    relation_id = test_db.register_agent_relation(
+        agent_instance="test_jung",
+        participant_user_id="user_123",
+    )
     snap_id = test_db.upsert_tom_snapshot(
         agent_instance="test_jung",
         user_id="user_123",
@@ -40,22 +44,32 @@ def test_tom_schema_and_upsert(test_db):
         affective_trajectory={"agent_stance": "companionable", "pacing": "unhurried"},
         relational_needs={"orientation": "deep_dialogic", "challenge_readiness": 0.85},
         evidence_refs=["conversation#1423", "relational_state#45"],
+        relation_id=relation_id,
     )
     assert snap_id > 0
 
-    latest = test_db.get_latest_tom_snapshot(agent_instance="test_jung", user_id="user_123")
+    latest = test_db.get_latest_tom_snapshot(
+        agent_instance="test_jung", user_id="user_123", relation_id=relation_id
+    )
     assert latest is not None
     assert latest["snapshot_date"] == "2026-08-15"
     assert latest["epistemic_state"]["mode"] == "inquiry"
     assert len(latest["evidence_refs"]) == 2
+    assert latest["relation_id"] == relation_id
+    assert latest["ownership_class"] == "relation_private"
 
 
 def test_async_maturation_inbox_will_threshold(test_db):
+    relation_id = test_db.register_agent_relation(
+        agent_instance="test_jung",
+        participant_user_id="user_456",
+    )
     item1 = test_db.add_maturation_inbox_item(
         agent_instance="test_jung",
         user_id="user_456",
         inbound_message_text="Como você vê a relação entre liberdade e responsabilidade no seu próprio agir?",
         relational_threshold=0.35,
+        relation_id=relation_id,
     )
     assert item1 > 0
 
@@ -63,6 +77,8 @@ def test_async_maturation_inbox_will_threshold(test_db):
     pending_low = test_db.list_pending_maturation_items(
         agent_instance="test_jung",
         current_relational_will=0.20,
+        user_id="user_456",
+        relation_id=relation_id,
     )
     assert len(pending_low) == 0
 
@@ -70,13 +86,20 @@ def test_async_maturation_inbox_will_threshold(test_db):
     pending_high = test_db.list_pending_maturation_items(
         agent_instance="test_jung",
         current_relational_will=0.45,
+        user_id="user_456",
+        relation_id=relation_id,
     )
     assert len(pending_high) == 1
     assert pending_high[0]["id"] == item1
 
     # Marca como entregue
     assert test_db.mark_maturation_item_delivered(item1) is True
-    assert len(test_db.list_pending_maturation_items(agent_instance="test_jung", current_relational_will=0.45)) == 0
+    assert len(test_db.list_pending_maturation_items(
+        agent_instance="test_jung",
+        user_id="user_456",
+        relation_id=relation_id,
+        current_relational_will=0.45,
+    )) == 0
 
 
 def test_bakhtinian_polyphony_engine(test_db):
