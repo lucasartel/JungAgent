@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from llm_providers import get_llm_response
+from engines.text_quality import has_overlaid_words
 from work.common import (
     _extract_package_text,
     _json_loads_maybe,
@@ -18,6 +19,18 @@ logger = logging.getLogger(__name__)
 
 
 class WorkPackageBuilderMixin:
+    @staticmethod
+    def _reading_passage_is_usable(text: str) -> bool:
+        if has_overlaid_words(text):
+            return False
+        words = re.findall(r"[^\W\d_]{3,}", text.lower())
+        letters = sum(char.isalpha() for char in text)
+        return (
+            len(words) >= 8
+            and len(set(words)) >= max(5, len(words) // 3)
+            and letters >= len(text) * 0.55
+        )
+
     def _extractive_reading_fields(
         self,
         source_text: str,
@@ -34,16 +47,20 @@ class WorkPackageBuilderMixin:
             page = int(page_raw)
             if not start_page <= page <= end_page:
                 continue
-            normalized = re.sub(r"\s+", " ", page_text).strip()
+            clean_lines = [
+                line.strip() for line in page_text.splitlines()
+                if not has_overlaid_words(line)
+            ]
+            normalized = re.sub(r"\s+", " ", " ".join(clean_lines)).strip()
             if len(normalized) < 40:
                 continue
             sentences = [
                 item.strip()
                 for item in re.split(r"(?<=[.!?])\s+", normalized)
-                if len(item.strip()) >= 40
+                if self._reading_passage_is_usable(item.strip())
             ]
-            passage = sentences[0] if sentences else normalized
-            page_passages.append((page, passage))
+            if sentences:
+                page_passages.append((page, sentences[0]))
 
         if not page_passages:
             return "", [], [], [], []
@@ -111,6 +128,13 @@ class WorkPackageBuilderMixin:
             source = {"verified": False, "reason": f"reading_source_error:{type(exc).__name__}"}
         if not source.get("verified"):
             return self._blocked_reading_package(brief, project, source)
+        source_ideas = self._extractive_reading_fields(
+            str(source.get("text") or ""), int(source["start_page"]), int(source["end_page"])
+        )[1]
+        minimum_passages = min(3, max(1, int(source.get("pages_read") or 1) // 4))
+        if len(source_ideas) < minimum_passages:
+            source.update({"verified": False, "reason": "reading_source_unreadable"})
+            return self._blocked_reading_package(brief, project, source)
 
         prompt = f"""
 Leia somente o texto entre SOURCE START e SOURCE END. Nao use memoria de
@@ -150,7 +174,9 @@ SOURCE END
 
         llm_attempts = 1
         summary, key_ideas, tensions, questions, concepts = parsed_fields(raw_response)
-        if len(summary) < 80 or not key_ideas:
+        if len(summary) < 80 or not key_ideas or has_overlaid_words(summary) or any(
+            has_overlaid_words(str(item.get("idea") or "")) for item in key_ideas
+        ):
             llm_attempts = 2
             retry_prompt = f"""
 A resposta anterior nao cumpriu o contrato. Releia a fonte e devolva somente
@@ -172,7 +198,9 @@ SOURCE END
 
         start_page, end_page = int(source["start_page"]), int(source["end_page"])
         extractive_fallback = False
-        if len(summary) < 80 or not key_ideas:
+        if len(summary) < 80 or not key_ideas or has_overlaid_words(summary) or any(
+            has_overlaid_words(str(item.get("idea") or "")) for item in key_ideas
+        ):
             summary, key_ideas, tensions, questions, concepts = self._extractive_reading_fields(
                 str(source.get("text") or ""), start_page, end_page
             )

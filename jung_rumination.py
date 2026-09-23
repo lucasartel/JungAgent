@@ -23,6 +23,7 @@ import sqlite3
 
 from rumination_config import *
 from rumination_prompts import *
+from engines.text_quality import has_overlaid_words
 
 logger = logging.getLogger(__name__)
 
@@ -458,7 +459,11 @@ class RuminationEngine:
             LIMIT 12
         """, (user_id, *relation_params, MAX_DETECTION_ATTEMPTS_WITHOUT_TENSION))
 
-        recent_fragments = cursor.fetchall()
+        recent_fragments = [
+            fragment for fragment in cursor.fetchall()
+            if fragment[1] not in {"knowledge_assimilation", "knowledge_fragment", "knowledge_question"}
+            or not has_overlaid_words(fragment[2])
+        ]
 
         if len(recent_fragments) < 2:
             logger.info("   ℹ️  Poucos fragmentos para detectar tensões")
@@ -473,7 +478,11 @@ class RuminationEngine:
             LIMIT 20
         """, (user_id, *relation_params))
 
-        historical_fragments = cursor.fetchall()
+        historical_fragments = [
+            fragment for fragment in cursor.fetchall()
+            if fragment[1] not in {"knowledge_assimilation", "knowledge_fragment", "knowledge_question"}
+            or not has_overlaid_words(fragment[2])
+        ]
 
         # Formatar para o prompt
         recent_text = self._format_fragments_for_prompt(recent_fragments)

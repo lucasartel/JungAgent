@@ -20,7 +20,7 @@ from jung_core import Config, HybridDatabaseManager
 from agent_identity_context_builder import AgentIdentityContextBuilder
 from jung_rumination import RuminationEngine
 from payload_storage import persistable_image_url, sanitize_persisted_payload
-from instance_config import IMAGE_GENERATION_ENABLED
+from instance_config import AGENT_INSTANCE, IMAGE_GENERATION_ENABLED
 
 logger = logging.getLogger(__name__)
 
@@ -955,7 +955,7 @@ Responda APENAS com 1 ou 2 frases curtas (max 320 caracteres no total).
                 """,
                 (
                     user_id,
-                    getattr(self.db, "agent_instance", None),
+                    getattr(self.db, "agent_instance", None) or AGENT_INSTANCE,
                     relation_id,
                     "tensao",
                     content,

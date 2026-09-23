@@ -113,6 +113,30 @@ def test_non_admin_without_registered_relation_cannot_ingest(rumination_db):
     ) == []
 
 
+def test_corrupted_reading_fragments_never_enter_detection_prompt(rumination_db, monkeypatch):
+    engine = RuminationEngine(rumination_db)
+    conn = rumination_db.conn
+    for content in (
+        "B BB BBERGSONERGSONERGSONERGSONERGSON METODOMETODOMETODOMETODO",
+        "33 3333 SERIEERIEERIEERIEERIE INTUITIVOINTUITIVOINTUITIVO",
+    ):
+        conn.execute(
+            "INSERT INTO rumination_fragments (user_id, fragment_type, content, processed) "
+            "VALUES (?, 'knowledge_fragment', ?, 0)",
+            (engine.admin_user_id, content),
+        )
+    conn.commit()
+    monkeypatch.setattr(
+        engine, "_format_fragments_for_prompt",
+        lambda *_: (_ for _ in ()).throw(AssertionError("corrupted text reached prompt")),
+    )
+
+    assert engine.detect_tensions(engine.admin_user_id) == []
+    assert conn.execute(
+        "SELECT COUNT(*) FROM rumination_fragments WHERE processed = 0"
+    ).fetchone()[0] == 2
+
+
 def test_non_admin_cannot_use_another_participants_relation(rumination_db):
     rumination_db.get_agent_relation = lambda relation_id: {
         "participant_user_id": "another-participant"

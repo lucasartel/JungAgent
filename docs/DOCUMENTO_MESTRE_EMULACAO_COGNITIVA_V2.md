@@ -947,6 +947,12 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 - **Fronteira preservada**: livros enviados ao Work sao conhecimento global da instancia, sem Relation privada. O C12f agora bloqueia a injecao direta de tabelas Work ainda nao escopadas; tenancy, revogacao e descarte de anexos permanecem no C12g.
 - **Publicacao e evidencia**: commit `fe4c4d2` publicado e confirmado no Railway. Os briefs 223 e 224 foram reprocessados com sucesso, totalizando 52 paginas assimiladas e oito tensoes `epistemic_reading` abertas com proveniencia. O bloco local posterior passa com 764 testes offline.
 
+**Hotfix de qualidade da leitura e propriedade dos fragmentos (23/09/2026).**
+
+- **Causa verificada**: os artefatos 231 e 232 recorreram a `extractive_fallback` apos duas respostas estruturadas invalidas. O PDF de Bergson ja devolve cabecalhos sobrepostos na extracao do `PyPDF2`; o fallback anterior escolhia a primeira frase da pagina e a registrava como ideia. Work e o residuo onirico tambem gravavam `agent_instance = NULL` porque o gerenciador de banco nao possui esse atributo no runtime.
+- **Prevencao**: o fallback seleciona passagens legiveis, bloqueia intervalos sem material suficiente antes de chamar o LLM, rejeita eco do texto sobreposto e impede que fragmentos ja corrompidos entrem no prompt de deteccao. Work e sonhos usam a instancia configurada quando o banco nao a fornece.
+- **Aceite**: 770 testes offline no hotfix isolado; sem custos, mensagens, reprocessamento ou escrita em banco de producao durante a validacao. Linhas historicas nulas e os fragmentos contaminados permanecem intactos ate inventario e decisao explicita de reparo. O C12g local incompleto nao faz parte deste hotfix.
+
 **C12f - Politica unica de montagem do contexto cognitivo (22/09/2026; concluido localmente).**
 
 - **Escopo canonico**: `core/cognitive_context.py` resolve uma unica fronteira `agent_instance + participant_user_id + relation_id` e aplica o contrato de propriedade do C12a a toda contribuicao destinada ao prompt. Participante registrado sem Relation falha fechado; adaptadores antigos sem API de Relations recebem apenas um identificador efemero por participante, nunca um escopo global persistido.

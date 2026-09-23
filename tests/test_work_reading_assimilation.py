@@ -62,6 +62,14 @@ class _ReadingEngine(WorkPackageBuilderMixin):
         return {"id": project_id, "name": "Livro Teste", "progress_value": 0}
 
     def read_project_pages(self, project_id: int, **kwargs):
+        first = (
+            "A experiencia do tempo exige atencao ao movimento vivido, pois a medida "
+            "externa nao explica sozinha a duracao percebida por quem atravessa a mudanca."
+        )
+        second = (
+            "A intuicao acompanha a duracao sem substituir o texto por uma explicacao "
+            "pronta, e por isso precisa voltar aos exemplos apresentados na fonte."
+        )
         return {
             "verified": True,
             "attachment_id": 4,
@@ -74,7 +82,7 @@ class _ReadingEngine(WorkPackageBuilderMixin):
             "total_pages": 20,
             "char_count": 300,
             "truncated_by_budget": False,
-            "text": "[PAGE 1]\nConteudo um.\n[PAGE 2]\nConteudo dois.",
+            "text": f"[PAGE 1]\n{first}\n[PAGE 2]\n{second}",
         }
 
 
@@ -205,3 +213,81 @@ def test_reading_package_uses_source_only_fallback_after_two_invalid_responses(m
     assert reading["pages_read"] == 2
     assert reading["key_ideas"][0]["pages"] == [1]
     assert "experiencia do tempo" in reading["summary"].lower()
+
+
+def test_extractive_fallback_skips_repeated_pdf_header(monkeypatch):
+    engine = _ReadingEngine()
+    body = (
+        "A intuicao deve retornar ao movimento concreto da experiencia, sem reduzir "
+        "a duracao a um esquema fixo ou repetir os titulos impressos na pagina."
+    )
+    corrupted_header = (
+        "33 3333 3333SAYEGH, A STRID .\n"
+        "B BB BBERGSONERGSONERGSONERGSONERGSON .\n"
+        "O OO OO METODOMETODOMETODOMETODO INTUITIVOINTUITIVOINTUITIVO .\n"
+    )
+    engine.read_project_pages = lambda *args, **kwargs: {
+        "verified": True, "attachment_id": 4, "filename": "bergson.pdf",
+        "source_mode": "stored_pdf", "source_hash": "source-hash",
+        "start_page": 1, "end_page": 2, "pages_read": 2, "total_pages": 20,
+        "char_count": 500, "truncated_by_budget": False,
+        "text": f"[PAGE 1]\n{corrupted_header}{body}\n[PAGE 2]\n{corrupted_header}{body}",
+    }
+    monkeypatch.setattr("work.package_builder.get_llm_response", lambda *args, **kwargs: "invalid")
+
+    package = engine._build_work_package({
+        "project_id": 10, "action_type": "reading", "objective": "Ler paginas 1 a 2",
+        "extracted_json": "{}",
+    })
+
+    assert package["generation_mode"] == "reading_assimilation"
+    reading = package["reading_assimilation"]
+    assert reading["assimilation_mode"] == "extractive_fallback"
+    assert "intuicao deve retornar" in reading["summary"].lower()
+    assert "BERGSONERGSON" not in reading["summary"]
+    assert all("METODOMETODO" not in item["idea"] for item in reading["key_ideas"])
+
+
+def test_unreadable_pdf_blocks_before_llm_and_progress(monkeypatch):
+    engine = _ReadingEngine()
+    header = "B BB BBERGSONERGSONERGSONERGSONERGSON METODOMETODOMETODOMETODO. "
+    engine.read_project_pages = lambda *args, **kwargs: {
+        "verified": True, "attachment_id": 4, "filename": "bad.pdf",
+        "source_mode": "stored_pdf", "source_hash": "source-hash",
+        "start_page": 1, "end_page": 2, "pages_read": 2, "total_pages": 20,
+        "char_count": 500, "truncated_by_budget": False,
+        "text": f"[PAGE 1]\n{header * 4}\n[PAGE 2]\n{header * 4}",
+    }
+    calls = []
+    monkeypatch.setattr("work.package_builder.get_llm_response", lambda *args, **kwargs: calls.append(1))
+
+    package = engine._build_work_package({
+        "project_id": 10, "action_type": "reading", "objective": "Ler paginas 1 a 2",
+        "extracted_json": "{}",
+    })
+
+    assert package["generation_mode"] == "reading_blocked"
+    assert package["reading_assimilation"]["reason"] == "reading_source_unreadable"
+    assert calls == []
+
+
+def test_structured_output_echoing_pdf_overlay_falls_back_to_clean_source(monkeypatch):
+    noisy = {
+        "summary": "BERGSONERGSONERGSONERGSON " * 8,
+        "key_ideas": [{"idea": "METODOMETODOMETODOMETODO", "pages": [1]}],
+    }
+    calls = []
+
+    def response(*args, **kwargs):
+        calls.append(1)
+        return json.dumps(noisy)
+
+    monkeypatch.setattr("work.package_builder.get_llm_response", response)
+    package = _ReadingEngine()._build_work_package({
+        "project_id": 10, "action_type": "reading", "objective": "Ler paginas 1 a 2",
+        "extracted_json": "{}",
+    })
+
+    assert len(calls) == 2
+    assert package["reading_assimilation"]["assimilation_mode"] == "extractive_fallback"
+    assert "BERGSONERGSON" not in package["reading_assimilation"]["summary"]

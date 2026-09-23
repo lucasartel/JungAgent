@@ -6,7 +6,7 @@ import sqlite3
 from typing import Any, Dict, List, Optional
 
 from agent_identity_context_builder import AgentIdentityContextBuilder
-from instance_config import ADMIN_USER_ID
+from instance_config import ADMIN_USER_ID, AGENT_INSTANCE
 from integration_secrets import IntegrationSecretsManager
 from work.common import (
     APP_BASE_URL,
@@ -196,7 +196,7 @@ class WorkEngine(
                     """,
                     (
                         self.admin_user_id,
-                        getattr(self.db, "agent_instance", None),
+                        getattr(self.db, "agent_instance", None) or AGENT_INSTANCE,
                         self._fragment_type_for_work_event(event_type),
                         summary,
                         f"Experiencia de trabalho: {event_type}",
