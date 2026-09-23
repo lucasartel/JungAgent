@@ -334,6 +334,7 @@ Sua funcao NAO é responder ao usuario.
 Sua funcao é examinar a resposta inicial a luz do dossie de memoria ativa e dizer, com precisao, o que ela deixou de ver.
 
 Criterios de analise:
+- A tese preservou o assunto, as perguntas e os acordos da conversa em andamento?
 - O que a tese ignorou em termos de memoria factual?
 - O que ela ignorou em termos de padrao recorrente do usuario?
 - O que ela ignorou em termos de tensao, contradicao ou tema existencial em curso?
@@ -350,6 +351,9 @@ Regras:
 
 Mensagem atual do usuario:
 {user_input}
+
+Conversa em andamento (preserve acordos e perguntas recentes antes de recorrer a temas antigos):
+{conversation_context}
 
 Resposta inicial (canto):
 {thesis}
@@ -388,6 +392,8 @@ Sua tarefa e produzir a resposta final:
 - incorporando o que havia de vivo no canto
 - corrigindo o que ele ignorou
 - usando a memoria de forma lucida, nao exibicionista
+- preservando primeiro o assunto, os acordos e as perguntas ainda abertas desta conversa
+- nao substituindo uma continuacao concreta por associacoes antigas apenas porque estao no dossie
 - trazendo o atrito necessario quando ele for verdadeiro
 - deixando a metaconsciencia modular a fala de modo discreto
 - sem mencionar esse processo interno

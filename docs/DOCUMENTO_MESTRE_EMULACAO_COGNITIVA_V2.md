@@ -962,6 +962,12 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 - **Aceite local**: 764 testes offline e 20 cenarios de regressao mock aprovados. Os testes C12f cobrem duas Relations, instancia divergente, legado, global privado sem mediacao, agregado text-free, dominio proibido, propagacao da Relation a fatos/mem0 e montagem unica dos dois fluxos. Nenhuma chamada LLM, web, Telegram, scheduler, imagem, banco de producao, push, deploy ou custo foi acionado neste corte.
 - **Proximo corte**: C12g, para revogacao e delecao verificavel, inventario/apagamento de vetores historicos, namespace de perfis e arquivos, tenancy de Work e ciclo de vida de artefatos. C12h permanece como aceite integrado entre duas Relations e duas instancias.
 
+**Continuidade da conversa atual (23/09/2026; corte isolado).**
+
+- O Telegram recupera ate 18 registros persistidos no escopo da Relation/instancia. O bloco usa as tres trocas mais recentes e trechos das seis anteriores, preservando inicio e fim das falas longas; canto, contracanto (inclusive retry), coro e fallback do admin recebem esse fio, com precedencia sobre associacoes antigas.
+- Nenhuma chamada adicional ao modelo, tabela ou memoria autobiografica foi criada. O fio e reconstruido do historico a cada turno; nao e ainda um resumo persistente de sessao para conversas que ultrapassem essa janela. Esse caso pede desenho e aceite especificos, inclusive revogacao e custo.
+- **Aceite isolado**: 776 testes offline e 20 cenarios mock aprovados. Faltam observacao de qualidade em conversas reais e medida de tokens por resposta.
+
 
 **C13 - Piloto convidado observavel (bloqueado ate aceite C9-C12 e aprovacao do mantenedor).** Comecar com poucas pessoas explicitamente convidadas, Relation ativa, consentimento e regras de uso, privacidade e apagamento definidos. Usar limites de custo e contato, revogacao de acesso e mecanismo de pausa. Cockpit e probes devem mostrar disponibilidade, motivo de bloqueio/adiamento, retomadas, recibos, escopo e custo sem expor conversas privadas. Definir antes de abrir a janela, metricas, criterios de interrupcao e aceite; nao encerrar apenas pelo numero de dias. Observar continuidade da memoria, pertinencia das iniciativas, respeito ao descanso, isolamento e custo por relacao. Este e um piloto relacional da instancia existente, nao uma liberacao comercial multi-instancia.
 

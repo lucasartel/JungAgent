@@ -496,6 +496,42 @@ class JungianEngine:
             lines.append(f"{role}: {content}")
         return "\n".join(lines)
 
+    def _conversation_continuity_text(
+        self, chat_history: Optional[List[Dict]], current_input: str
+    ) -> str:
+        history = list(chat_history or [])
+        if history and history[-1].get("role") == "user" and (
+            (history[-1].get("content") or "").strip() == current_input.strip()
+        ):
+            history = history[:-1]
+        if not history:
+            return ""
+
+        def excerpt(value: str, limit: int) -> str:
+            content = re.sub(r"\s+", " ", value or "").strip()
+            if len(content) <= limit:
+                return content
+            start = limit // 3
+            return f"{content[:start].rstrip()} [...] {content[-(limit - start):].lstrip()}"
+
+        recent = history[-6:]
+        older = history[-18:-6]
+        lines = []
+        if older:
+            lines.append("[FIO ANTERIOR - trechos literais, nao resumo interpretativo]")
+            for msg in older:
+                role = "Usuario" if msg.get("role") == "user" else "Jung"
+                content = excerpt(str(msg.get("content") or ""), 180)
+                if content:
+                    lines.append(f"{role}: {content}")
+        lines.append("[TROCAS RECENTES - prioridade sobre memorias antigas]")
+        for msg in recent:
+            role = "Usuario" if msg.get("role") == "user" else "Jung"
+            content = excerpt(str(msg.get("content") or ""), 1200)
+            if content:
+                lines.append(f"{role}: {content}")
+        return "\n".join(lines)
+
     def _rumination_context_scope(
         self, table: str, user_id: str, relation_id: Optional[str] = None
     ) -> tuple[List[str], List[Any], bool]:
@@ -2260,11 +2296,15 @@ class JungianEngine:
             "text": self._strip_admin_thought_block(response).strip(),
         }
 
-    def _generate_antithesis(self, user_input: str, thesis: str, memory_dossier: str) -> Dict[str, Any]:
+    def _generate_antithesis(
+        self, user_input: str, thesis: str, memory_dossier: str,
+        conversation_context: str = "",
+    ) -> Dict[str, Any]:
         prompt = Config.ACTIVE_CONSCIOUSNESS_ANTITHESIS_PROMPT_V2.format(
             user_input=user_input,
             thesis=thesis,
             memory_dossier=memory_dossier or "Dossie de memoria muito fraco ou ausente.",
+            conversation_context=conversation_context or "Sem historico recente.",
         )
 
         def _normalize_antithesis_payload(parsed: Any) -> Dict[str, Any]:
@@ -2380,6 +2420,7 @@ class JungianEngine:
             repair_prompt = (
                 "Retorne apenas JSON valido, sem comentarios, seguindo exatamente o schema pedido.\n\n"
                 f"Mensagem atual:\n{user_input}\n\n"
+                f"Conversa em andamento:\n{conversation_context or 'Sem historico recente.'}\n\n"
                 f"Tese:\n{thesis}\n\n"
                 f"Dossie:\n{memory_dossier or 'Dossie fraco.'}\n\n"
                 "Schema obrigatorio:\n"
@@ -2503,12 +2544,7 @@ class JungianEngine:
             ),
             speech_act,
         )
-        history_text = self._build_history_text(
-            chat_history,
-            limit=8,
-            max_content=320,
-            exclude_current_user_input=user_input,
-        )
+        history_text = self._conversation_continuity_text(chat_history, user_input)
         antithesis_text = json.dumps(antithesis or {}, ensure_ascii=False, indent=2)
         debug_meta["speech_act"] = speech_act
         prompt = Config.ACTIVE_CONSCIOUSNESS_CHORUS_PROMPT_V2.format(
@@ -2560,12 +2596,7 @@ class JungianEngine:
             "total_ms": 0,
         }
 
-        short_history = self._build_history_text(
-            chat_history,
-            limit=4,
-            max_content=220,
-            exclude_current_user_input=message,
-        )
+        short_history = self._conversation_continuity_text(chat_history, message)
 
         speech_act = self._infer_active_speech_act(message)
 
@@ -2616,7 +2647,10 @@ class JungianEngine:
         thesis_verdict = ""
         try:
             antithesis_start = time.perf_counter()
-            antithesis_bundle = self._generate_antithesis(message, thesis_bundle["text"], dossier["text"])
+            antithesis_bundle = self._generate_antithesis(
+                message, thesis_bundle["text"], dossier["text"],
+                conversation_context=short_history,
+            )
             timings_ms["antithesis_ms"] = int((time.perf_counter() - antithesis_start) * 1000)
             antithesis = antithesis_bundle.get("parsed") or {}
             antithesis_retry_used = bool(antithesis_bundle.get("retry_used"))
@@ -2860,12 +2894,15 @@ class JungianEngine:
             except Exception as e:
                 logger.warning(f"⚠️ Erro no pre-compaction flush: {e}")
 
-        # Formatar histórico
-        history_text = ""
-        if chat_history:
-            for msg in chat_history[-10:]:
-                role = "Usuário" if msg["role"] == "user" else "Jung"
-                history_text += f"{role}: {msg['content'][:400]}\n"
+        # Keep the active conversation available when its multi-stage path falls back.
+        if self._active_consciousness_enabled_for_user(user_id):
+            history_text = self._conversation_continuity_text(chat_history, user_input)
+        else:
+            history_text = ""
+            if chat_history:
+                for msg in chat_history[-10:]:
+                    role = "Usuário" if msg["role"] == "user" else "Jung"
+                    history_text += f"{role}: {msg['content'][:400]}\n"
 
         development_policy = self._get_development_policy(user_id, user_input)
         policy_values = development_policy.get("policy") or {}

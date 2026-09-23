@@ -1456,7 +1456,7 @@ O que você decide?
         # 🆕 BUSCAR HISTÓRICO DO BANCO (incluindo proativas) - JUST-IN-TIME
         conversations = bot_state.db.get_user_conversations(
             user_id,
-            limit=10,  # Últimas 10 conversas
+            limit=18,  # Trocas recentes e fio anterior da conversa
             include_proactive=True  # ✅ INCLUIR PROATIVAS
         )
 
