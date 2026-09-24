@@ -776,19 +776,20 @@ tr:hover {
     border-bottom: 1px solid var(--shell-border);
 }
 
-.admin-topbar-inner-v2,
+.admin-topbar-inner-v2 {
+    width: min(1200px, calc(100% - 24px));
+    margin: 0 auto;
+    min-height: 54px;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    align-items: center;
+}
+
 .admin-main-inner-v2,
 .admin-footer-inner-v2 {
     width: min(1080px, calc(100% - 28px));
     margin: 0 auto;
-}
-
-.admin-topbar-inner-v2 {
-    min-height: 58px;
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 18px;
-    align-items: center;
 }
 
 .admin-brand-v2 {
@@ -834,22 +835,23 @@ tr:hover {
 .admin-nav-v2 {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
     flex-wrap: wrap;
 }
 
 .admin-nav-link-v2 {
-    padding: 6px 10px;
+    padding: 4px 6px;
     border-radius: 6px;
     color: var(--shell-muted);
     text-decoration: none;
-    font-size: 0.72rem;
+    font-size: 0.63rem;
     font-weight: 500;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.02em;
     text-transform: uppercase;
     font-family: var(--mono-font);
     transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
     border: 1px solid transparent;
+    white-space: nowrap;
 }
 
 .admin-nav-link-v2:hover,
