@@ -205,6 +205,17 @@ class _ScopedAnalysisRecordsEngine(_AnalysisRecordsEngine):
             return relation_id
         return {"u1": "relation-1", "u2": "relation-2"}.get(str(participant_user_id))
 
+    def get_agent_relation(self, relation_id):
+        # O gate de consentimento precisa ler o estado da Relation: sem
+        # get_agent_relation o consolidador recusaria (fail-closed).
+        if relation_id in {"relation-1", "relation-2"}:
+            return {
+                "relation_id": relation_id,
+                "status": "active",
+                "consent_status": "granted",
+            }
+        return None
+
 
 def test_detect_and_save_patterns_preserves_relation_ownership(in_memory_conn):
     _create_analysis_records_schema(in_memory_conn)
