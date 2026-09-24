@@ -9,7 +9,7 @@ Emulação cognitiva persistente sobre LLM (memória autobiográfica, ruminaçã
 ## Regras invioláveis
 
 1. **Princípio Áureo**: nenhuma capacidade nova antes de a existente fechar circuito. Não adicione features fora da fase atual do roadmap.
-2. **Fase atual**: Fase 0 (consolidação e instrumentação). Consulte a Seção 4 do documento mestre antes de começar qualquer tarefa.
+2. **Fase atual**: trilha cognitiva no corte **C12** (fechamento cognitivo multi-relacional; C12a-C12f integrados, C12g em andamento) — a Seção 10.1.2 do documento mestre é a fonte de verdade e muda a cada corte; confira-a antes de começar qualquer tarefa.
 3. **Máximo 500 linhas por arquivo novo.** Nenhum arquivo novo nasce na raiz — use os pacotes (`core/db/`, `work/`, `engines/`, `reasoning/`, `admin_web/routes/`).
 4. **Âncoras de evidência**: toda afirmação autobiográfica do agente referencia uma fonte no padrão `tipo#id` (ex.: `conversation#1423`, `dream#87`, `loop#205`). Regex canônica em `agent_diary.py` (`PROFILE_SOURCE_RE`). Nunca gere texto autobiográfico sem âncora.
 5. **Não silencie exceções.** O loop usa retry/cooldown/failure policy por fase (`consciousness_loop.py`). Novos `except Exception: pass` são proibidos; falhas devem ser logadas com contexto e, quando relevante, re-agendáveis.
