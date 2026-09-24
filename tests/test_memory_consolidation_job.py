@@ -108,7 +108,10 @@ def test_no_new_conversations_skips_llm(monkeypatch):
     timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 7)]
     db = _memory_db(_relation("active", "granted"), timestamps)
     consolidator = jmc.MemoryConsolidator(db)
-    consolidator._save_progress("user_a", "rel_1", max(timestamps), len(timestamps))
+    consolidator._save_progress(
+        "user_a", "rel_1", max(timestamps), len(timestamps),
+        ids=[f"c{i}" for i in range(len(timestamps))],
+    )
 
     def _forbidden_cluster(self, memories):
         raise AssertionError("LLM nao deveria rodar sem conversas novas")
@@ -148,7 +151,10 @@ def test_new_conversations_reopen_the_window(monkeypatch):
     timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 7)]
     db = _memory_db(_relation("active", "granted"), timestamps)
     consolidator = jmc.MemoryConsolidator(db)
-    consolidator._save_progress("user_a", "rel_1", max(timestamps), len(timestamps))
+    consolidator._save_progress(
+        "user_a", "rel_1", max(timestamps), len(timestamps),
+        ids=[f"c{i}" for i in range(len(timestamps))],
+    )
 
     db.conn.execute(
         "INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -246,23 +252,37 @@ def test_failed_summary_is_retried_without_new_conversations(monkeypatch):
 
     attempts = []
 
-    def _fail(self, **kwargs):
-        attempts.append("fail")
-        raise jmc.LLMSummaryError("llm_summary_failed: boom")
-
-    monkeypatch.setattr(jmc.MemoryConsolidator, "_create_consolidated_memory", _fail)
-    consolidator.consolidate_user_memories("user_a")
-    assert consolidator._load_progress("user_a", "rel_1") is None
-
     def _ok(self, **kwargs):
         attempts.append("ok")
         return None
 
-    monkeypatch.setattr(jmc.MemoryConsolidator, "_create_consolidated_memory", _ok)
-    consolidator.consolidate_user_memories("user_a")  # mesma janela
+    def _fail(self, **kwargs):
+        attempts.append("fail")
+        raise jmc.LLMSummaryError("llm_summary_failed: boom")
 
-    assert attempts == ["fail", "ok"]
-    assert consolidator._load_progress("user_a", "rel_1") is not None
+    # 1) sucesso inicial: marca gravada
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_create_consolidated_memory", _ok)
+    consolidator.consolidate_user_memories("user_a")
+    assert consolidator._load_progress("user_a", "rel_1")["last_ids"] == set(
+        f"c{i}" for i in range(6)
+    )
+
+    # 2) entrada nova + falha do LLM: a marca NAO cobre a nova entrada
+    db.conn.execute(
+        "INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("c99", "user_a", "in", "out", "2026-09-09T10:00:00", "k", 0.0, 0.0, 0.0, "rel_1"),
+    )
+    db.conn.commit()
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_create_consolidated_memory", _fail)
+    consolidator.consolidate_user_memories("user_a")
+    assert "c99" not in consolidator._load_progress("user_a", "rel_1")["last_ids"]
+
+    # 3) SEM entrada nova: ainda assim o resumo e recuperado
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_create_consolidated_memory", _ok)
+    consolidator.consolidate_user_memories("user_a")
+
+    assert attempts == ["ok", "fail", "ok"]
+    assert "c99" in consolidator._load_progress("user_a", "rel_1")["last_ids"]
 
 
 def test_partial_failure_blocks_progress_mark(monkeypatch):
@@ -347,6 +367,78 @@ def test_backfilled_conversation_retriggers(monkeypatch):
     assert cluster_calls == [8]
 
 
+def test_swap_with_backdated_entry_retriggers(monkeypatch):
+    """Borda exata: sai uma antiga, entra uma retroativa — count e max iguais,
+    mas ha entrada nova (por id) e o ciclo precisa rodar."""
+    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 8)]
+    db = _memory_db(_relation("active", "granted"), timestamps)
+    consolidator = jmc.MemoryConsolidator(db)
+
+    def _no_clusters(self, memories):
+        return {}
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_cluster_by_topic", _no_clusters)
+    consolidator.consolidate_user_memories("user_a")  # grava a marca
+
+    # sai a conversa mais antiga; entra uma retroativa (data anterior a max)
+    db.conn.execute("DELETE FROM conversations WHERE timestamp = ?", (timestamps[0],))
+    db.conn.execute(
+        "INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("c_back", "user_a", "in", "out", "2026-08-15T10:00:00", "k", 0.0, 0.0, 0.0, "rel_1"),
+    )
+    db.conn.commit()
+
+    cluster_calls = []
+
+    def _cluster(self, memories):
+        cluster_calls.append(len(memories))
+        return {}
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_cluster_by_topic", _cluster)
+
+    consolidator.consolidate_user_memories("user_a")
+    assert cluster_calls == [7]  # contagem igual, mas entrada nova foi vista
+
+
+# ---------------------------------------------------------------------------
+# P2 (round 3) — o gate de consentimento falha FECHADO sem o resolvedor
+# ---------------------------------------------------------------------------
+
+class _NoResolverDB:
+    """Banco sem API de Relations: o gate nao pode ser avaliado."""
+
+    def __init__(self):
+        self.conn = _PoisonConn()
+        self.agent_instance = "jung_test"
+        self.anthropic_client = None
+
+
+def test_consent_gate_fails_closed_without_resolver():
+    consolidator = jmc.MemoryConsolidator(_NoResolverDB())
+
+    with pytest.raises(ValueError, match="consent_gate_unavailable_for_consolidation"):
+        consolidator.consolidate_user_memories("user_a")
+
+
+def test_run_consolidation_job_refuses_without_consent_resolver(monkeypatch):
+    """O job inteiro e recusado antes de consultar qualquer usuario."""
+
+    class _NeverBuilt:
+        def __init__(self, db):
+            raise AssertionError("nem deveria construir o consolidador")
+
+    monkeypatch.setattr(jmc, "MemoryConsolidator", _NeverBuilt)
+
+    class _DB:
+        pass
+
+    db = _DB()
+    db.conn = sqlite3.connect(":memory:")
+    db.conn.execute("CREATE TABLE conversations (user_id TEXT)")
+
+    jmc.run_consolidation_job(db)  # recusa estrutural, sem excecao
+
+
 # ---------------------------------------------------------------------------
 # run_consolidation_job: pulos esperados nao interrompem o job
 # ---------------------------------------------------------------------------
@@ -374,7 +466,13 @@ def _db_with_users(*user_ids):
     conn.commit()
 
     class _DB:
-        pass
+        agent_instance = "jung_test"
+
+        def resolve_relation_id(self, **kwargs):
+            return "rel_1"
+
+        def get_agent_relation(self, relation_id):
+            return {"relation_id": "rel_1", "status": "active", "consent_status": "granted"}
 
     db = _DB()
     db.conn = conn
@@ -386,6 +484,7 @@ def _db_with_users(*user_ids):
     [
         ValueError("relation_scope_required_for_consolidation"),
         ValueError("relation_not_eligible_for_consolidation:status=revoked,consent=granted"),
+        ValueError("consent_gate_unavailable_for_consolidation"),
     ],
 )
 def test_run_consolidation_job_skips_users_without_eligible_relation(monkeypatch, error):

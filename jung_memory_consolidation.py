@@ -47,11 +47,15 @@ class MemoryConsolidator:
         conversas e gastaria LLM antes de o gate de arquivos recusar. Estados
         `paused`/`revoked` e consentimento `pending`/`revoked` recusam o ciclo
         inteiro, com sentinela propria, antes de qualquer consulta.
+
+        Fail-closed: sem o resolvedor de Relations o gate de consentimento nao
+        pode ser avaliado, e a execucao e RECUSADA em vez de seguir so pelo
+        usuario (a regra de consentimento nunca falha aberto).
         """
         resolver = getattr(self.db, "resolve_relation_id", None)
-        if not callable(resolver):
-            # Banco legado sem API de Relations: nao ha elegibilidade a validar.
-            return relation_id
+        getter = getattr(self.db, "get_agent_relation", None)
+        if not callable(resolver) or not callable(getter):
+            raise ValueError("consent_gate_unavailable_for_consolidation")
         relation_id = resolver(
             agent_instance=getattr(self.db, "agent_instance", None),
             participant_user_id=str(user_id),
@@ -59,7 +63,6 @@ class MemoryConsolidator:
         )
         if not relation_id:
             raise ValueError("relation_scope_required_for_consolidation")
-        getter = getattr(self.db, "get_agent_relation", None)
         relation = getter(str(relation_id)) if callable(getter) else None
         if not relation:
             raise ValueError("relation_scope_required_for_consolidation")
@@ -120,19 +123,20 @@ class MemoryConsolidator:
 
         logger.info(f"   Encontradas {len(memories)} memórias para consolidar")
 
-        # 2. Idempotencia e controle de custo: a janela rolante de 90 dias
-        #    encolhe sozinha quando uma conversa antiga sai da janela — isso
-        #    NAO e entrada nova e nao deve refazer os resumos pagos. So uma
-        #    entrada nova reabre o ciclo: timestamp mais novo que a marca da
-        #    ultima consolidacao bem-sucedida, ou mais memorias que ela.
+        # 2. Idempotencia e controle de custo: "entrada nova" = conversa da
+        #    janela que ainda nao foi consolidada (comparacao por id). Isso
+        #    cobre os dois casos de borda sem re-pagar LLM nem perder dados:
+        #    saida da janela rolante nao e entrada nova (nao reprocessa), e
+        #    entrada retroativa com data anterior a mais recente e entrada
+        #    nova sim (reprocessa) — contagem/data maxima iguais nao escondem
+        #    trocas de membros na janela.
+        window_ids = [m.get("id") for m in memories]
         window_max_ts = max((m.get("timestamp") or "") for m in memories)
         window_count = len(memories)
         progress = self._load_progress(user_id, relation_id)
-        unchanged = (
-            progress is not None
-            and window_max_ts <= (progress.get("last_max_ts") or "")
-            and window_count <= int(progress.get("last_count") or 0)
-        )
+        known_ids = set(progress.get("last_ids") or ()) if progress else set()
+        new_ids = [i for i in window_ids if i not in known_ids]
+        unchanged = progress is not None and not new_ids
 
         if unchanged:
             logger.info(
@@ -172,7 +176,7 @@ class MemoryConsolidator:
                     llm_failures,
                 )
             else:
-                self._save_progress(user_id, relation_id, window_max_ts, window_count)
+                self._save_progress(user_id, relation_id, window_max_ts, window_count, window_ids)
 
         # 5. Reconstruir profile.md com dados atualizados
         try:
@@ -210,6 +214,7 @@ class MemoryConsolidator:
                 last_max_ts TEXT,
                 last_count INTEGER NOT NULL DEFAULT 0,
                 last_run_at TEXT NOT NULL,
+                last_ids_json TEXT,
                 PRIMARY KEY (user_id, relation_id)
             )
             """
@@ -221,7 +226,7 @@ class MemoryConsolidator:
             conn = self.db.conn
             self._progress_table(conn)
             row = conn.execute(
-                "SELECT last_max_ts, last_count, last_run_at"
+                "SELECT last_max_ts, last_count, last_run_at, last_ids_json"
                 " FROM consolidation_progress WHERE user_id = ? AND relation_id = ?",
                 (str(user_id), str(relation_id)),
             ).fetchone()
@@ -230,21 +235,33 @@ class MemoryConsolidator:
             return None
         if not row:
             return None
-        return {"last_max_ts": row[0], "last_count": row[1], "last_run_at": row[2]}
+        try:
+            last_ids = set(json.loads(row[3] or "[]"))
+        except Exception:
+            last_ids = set()
+        return {
+            "last_max_ts": row[0],
+            "last_count": row[1],
+            "last_run_at": row[2],
+            "last_ids": last_ids,
+        }
 
-    def _save_progress(self, user_id: str, relation_id, max_ts, count: int) -> None:
+    def _save_progress(
+        self, user_id: str, relation_id, max_ts, count: int, ids: Optional[List[Any]] = None
+    ) -> None:
         try:
             conn = self.db.conn
             self._progress_table(conn)
             conn.execute(
                 """
                 INSERT INTO consolidation_progress
-                    (user_id, relation_id, last_max_ts, last_count, last_run_at)
-                VALUES (?, ?, ?, ?, ?)
+                    (user_id, relation_id, last_max_ts, last_count, last_run_at, last_ids_json)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id, relation_id) DO UPDATE SET
                     last_max_ts = excluded.last_max_ts,
                     last_count = excluded.last_count,
-                    last_run_at = excluded.last_run_at
+                    last_run_at = excluded.last_run_at,
+                    last_ids_json = excluded.last_ids_json
                 """,
                 (
                     str(user_id),
@@ -252,6 +269,7 @@ class MemoryConsolidator:
                     str(max_ts or ""),
                     int(count),
                     datetime.now().isoformat(),
+                    json.dumps([str(i) for i in (ids or [])], ensure_ascii=False),
                 ),
             )
             conn.commit()
@@ -538,6 +556,18 @@ def run_consolidation_job(db_manager):
     """
     logger.info("🔄 Iniciando job de consolidação de memórias")
 
+    # Fail-closed do gate de consentimento: sem o resolvedor de Relations
+    # nenhuma elegibilidade pode ser avaliada — o job inteiro e recusado,
+    # em vez de consolidar so por usuario.
+    if not callable(getattr(db_manager, "resolve_relation_id", None)) or not callable(
+        getattr(db_manager, "get_agent_relation", None)
+    ):
+        logger.error(
+            "   Consolidação RECUSADA: resolvedor de Relations indisponível "
+            "(gate de consentimento fail-closed)"
+        )
+        return
+
     consolidator = MemoryConsolidator(db_manager)
 
     # Buscar todos os usuários
@@ -554,7 +584,9 @@ def run_consolidation_job(db_manager):
             # Sem Relation elegivel (ausente, paused/revoked, consentimento
             # pendente/revogado) o pulo e esperado (C12g), nao um erro que
             # interrompe o job ou polui o log.
-            if (
+            if "consent_gate_unavailable_for_consolidation" in str(e):
+                logger.error("   Consolidação recusada para %s: gate de consentimento indisponível", user_id)
+            elif (
                 "relation_scope_required_for_consolidation" in str(e)
                 or "relation_not_eligible_for_consolidation" in str(e)
             ):
