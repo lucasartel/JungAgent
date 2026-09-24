@@ -1,22 +1,30 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&display=swap');
+
 /**
- * Jung Claude Admin - Stylesheet Principal
- * Tema escuro com cores purple/pink inspirado no Jung Lab
+ * JungAgent Admin - Modern Monospaced Stylesheet
+ * Inspired by Letta.com technical research aesthetic & Carl Jung Inner Life Engine
  */
 
 /* ========================================
    BASE STYLES
    ======================================== */
 
+:root {
+    --mono-font: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
 * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-    font-family: 'Inter', sans-serif;
-    background: #000000 !important;
-    color: #e2e8f0 !important;
+    font-family: var(--mono-font) !important;
+    background: #0d0f14 !important;
+    color: #C9CDD1 !important;
     min-height: 100vh;
 }
 
@@ -736,22 +744,26 @@ tr:hover {
    ======================================== */
 
 .admin-shell-v2 {
-    --shell-bg: #04070d;
-    --shell-panel: rgba(12, 18, 30, 0.92);
-    --shell-border: rgba(148, 163, 184, 0.16);
-    --shell-border-strong: rgba(148, 163, 184, 0.24);
-    --shell-text: #e7edf6;
-    --shell-muted: #93a1b6;
-    --shell-accent: #d6bcfa;
-    --shell-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+    --shell-bg: #0d0f14;
+    --shell-panel: rgba(19, 23, 34, 0.88);
+    --shell-border: rgba(148, 163, 184, 0.12);
+    --shell-border-strong: rgba(148, 163, 184, 0.22);
+    --shell-text: #C9CDD1;
+    --shell-muted: #64748B;
+    --shell-accent: #38BDF8;
+    --shell-shadow: 0 18px 40px rgba(0, 0, 0, 0.4);
     margin: 0;
     min-height: 100vh;
     background:
-        radial-gradient(circle at top left, rgba(168, 85, 247, 0.12), transparent 28%),
-        radial-gradient(circle at top right, rgba(56, 189, 248, 0.08), transparent 24%),
-        linear-gradient(180deg, #04070d 0%, #070c14 100%);
+        radial-gradient(circle at top left, rgba(192, 132, 252, 0.05), transparent 28%),
+        radial-gradient(circle at top right, rgba(56, 189, 248, 0.05), transparent 24%),
+        linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+        #0d0f14;
+    background-size: 100% 100%, 100% 100%, 48px 48px, 48px 48px, 100% 100%;
+    background-attachment: fixed;
     color: var(--shell-text);
-    font-family: "Segoe UI", Inter, system-ui, sans-serif;
+    font-family: var(--mono-font) !important;
     font-size: 80%;
 }
 
@@ -759,8 +771,8 @@ tr:hover {
     position: sticky;
     top: 0;
     z-index: 40;
-    backdrop-filter: blur(10px);
-    background: rgba(4, 7, 13, 0.84);
+    backdrop-filter: blur(12px);
+    background: rgba(13, 15, 20, 0.88);
     border-bottom: 1px solid var(--shell-border);
 }
 
@@ -785,6 +797,7 @@ tr:hover {
     gap: 8px;
     text-decoration: none;
     color: var(--shell-text);
+    font-family: var(--mono-font);
 }
 
 .admin-brand-v2:hover {
@@ -792,8 +805,10 @@ tr:hover {
 }
 
 .admin-brand-v2 img {
-    width: 29px;
-    height: 29px;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid var(--shell-border);
     object-fit: contain;
 }
 
@@ -813,31 +828,36 @@ tr:hover {
 
 .admin-brand-agent-v2 {
     font-weight: 400;
+    color: #c084fc;
 }
 
 .admin-nav-v2 {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
+    flex-wrap: wrap;
 }
 
 .admin-nav-link-v2 {
-    padding: 8px 11px;
-    border-radius: 999px;
+    padding: 6px 10px;
+    border-radius: 6px;
     color: var(--shell-muted);
     text-decoration: none;
-    font-size: 0.76rem;
-    font-weight: 600;
-    transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-family: var(--mono-font);
+    transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
     border: 1px solid transparent;
 }
 
 .admin-nav-link-v2:hover,
 .admin-nav-link-v2.is-active {
     transform: none;
-    color: var(--shell-text);
-    background: rgba(168, 85, 247, 0.12);
-    border-color: rgba(168, 85, 247, 0.22);
+    color: #f8fafc;
+    background: rgba(56, 189, 248, 0.08);
+    border-color: rgba(56, 189, 248, 0.22);
 }
 
 .admin-topbar-meta-v2 {
@@ -953,10 +973,10 @@ tr:hover {
 
 .metric-card-v2,
 .panel-v2 {
-    background: linear-gradient(180deg, rgba(13, 19, 32, 0.96), rgba(10, 16, 27, 0.88));
+    background: rgba(19, 23, 34, 0.78);
     border: 1px solid var(--shell-border);
-    border-radius: 20px;
-    box-shadow: var(--shell-shadow);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 
 .metric-card-v2 {
@@ -1107,32 +1127,44 @@ tr:hover {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: 34px;
-    padding: 0 13px;
-    border-radius: 10px;
-    border: 1px solid rgba(168, 85, 247, 0.22);
-    background: linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(124, 58, 237, 0.1));
-    color: #eee7ff !important;
+    min-height: 32px;
+    padding: 0 14px;
+    border-radius: 6px;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    background: rgba(56, 189, 248, 0.08);
+    color: #f8fafc !important;
     text-decoration: none;
-    font-weight: 600;
+    font-family: var(--mono-font);
+    font-weight: 500;
     font-size: 0.74rem;
-    transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease;
+    letter-spacing: 0.04em;
+    transition: all 150ms ease;
+    cursor: pointer;
 }
 
 .button-v2:hover {
-    transform: translateY(-1px);
+    background: rgba(56, 189, 248, 0.16);
+    border-color: rgba(56, 189, 248, 0.5);
+    color: #ffffff !important;
+    transform: none;
 }
 
 .button-v2--ghost {
-    background: rgba(148, 163, 184, 0.08);
-    border-color: var(--shell-border-strong);
+    background: rgba(148, 163, 184, 0.06);
+    border-color: var(--shell-border);
     color: var(--shell-text) !important;
 }
 
+.button-v2--ghost:hover {
+    background: rgba(148, 163, 184, 0.12);
+    border-color: var(--shell-border-strong);
+    color: #ffffff !important;
+}
+
 .button-v2--small {
-    min-height: 31px;
-    padding: 0 11px;
-    font-size: 0.7rem;
+    min-height: 28px;
+    padding: 0 10px;
+    font-size: 0.68rem;
 }
 
 .empty-state-v2 {

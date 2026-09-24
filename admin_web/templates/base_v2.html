@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}JungAgent Admin{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&display=swap">
     <link rel="stylesheet" href="/static/admin.css">
     {% block head_extra %}{% endblock %}
 </head>
@@ -83,6 +85,7 @@
             </nav>
 
             <div class="admin-topbar-meta-v2">
+                <span class="admin-status-chip-v2"><span class="pulse-dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#38bdf8;box-shadow:0 0 6px #38bdf8;margin-right:6px;"></span>LIVE</span>
                 <a href="/admin/logout" class="admin-meta-link-v2">Logout</a>
                 {% block topbar_meta %}{% endblock %}
             </div>
