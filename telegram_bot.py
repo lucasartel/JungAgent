@@ -664,10 +664,17 @@ async def meu_perfil_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     user_id = ensure_user_in_database(user)
 
-    profile_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "data", "users", user_id, "profile.md"
-    )
+    from engines.participant_files import participant_dir, relation_file_scope
+    from user_profile_writer import DATA_DIR
+
+    try:
+        file_instance, file_relation = relation_file_scope(bot_state.db, user_id)
+    except ValueError:
+        await update.message.reply_text("Perfil indisponivel para esta relacao.")
+        return
+    profile_path = str(participant_dir(
+        DATA_DIR, agent_instance=file_instance, relation_id=file_relation, user_id=user_id
+    ) / "profile.md")
 
     if not os.path.exists(profile_path):
         await update.message.reply_text(

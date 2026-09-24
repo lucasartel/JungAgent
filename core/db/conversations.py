@@ -199,7 +199,9 @@ class ConversationDatabaseMixin:
 
         # 8. HOOK: Log diÃ¡rio em arquivo .md (memÃ³ria textual)
         try:
+            from engines.participant_files import relation_file_scope
             from user_profile_writer import write_session_entry
+            file_instance, file_relation = relation_file_scope(self, user_id, relation_id)
             write_session_entry(
                 user_id=user_id,
                 user_name=user_name,
@@ -209,6 +211,8 @@ class ConversationDatabaseMixin:
                     "tension_level": tension_level,
                     "affective_charge": affective_charge,
                 },
+                agent_instance=file_instance,
+                relation_id=file_relation,
             )
         except Exception as e:
             logger.warning(f"âš ï¸ Erro no hook de log diÃ¡rio: {e}")

@@ -110,20 +110,16 @@ class MemoryConsolidator:
                     relation_id=relation_id,
                 )
 
-        # profile.md ainda e user-keyed; C12g definira seu namespace por instancia.
-        if relation_id:
-            logger.info(
-                "Profile rebuild deferred for Relation-scoped consolidation: relation_id=%s",
-                relation_id,
-            )
-            return
-
         # 4. Reconstruir profile.md com dados atualizados
         try:
+            from engines.participant_files import relation_file_scope
             from user_profile_writer import rebuild_profile_md
-            facts = self.db._get_current_facts(user_id)
-            psychometrics = self.db.get_psychometrics(user_id)
-            patterns = self.db._get_relevant_patterns(user_id, "")
+            file_instance, file_relation = relation_file_scope(self.db, user_id, relation_id)
+            facts = self.db._get_current_facts(user_id, relation_id=file_relation)
+            psychometrics = self.db.get_psychometrics(
+                user_id, relation_id=file_relation, agent_instance=file_instance
+            )
+            patterns = self.db._get_relevant_patterns(user_id, "", relation_id=file_relation)
             user_row = self.db.conn.execute(
                 "SELECT user_name FROM users WHERE user_id = ?", (user_id,)
             ).fetchone()
@@ -134,6 +130,8 @@ class MemoryConsolidator:
                 facts=facts,
                 psychometrics=psychometrics,
                 patterns=patterns,
+                agent_instance=file_instance,
+                relation_id=file_relation,
             )
         except Exception as e:
             logger.warning(f"⚠️ Erro ao reconstruir profile.md para {user_id}: {e}")

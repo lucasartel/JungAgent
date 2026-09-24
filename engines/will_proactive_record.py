@@ -116,12 +116,20 @@ def _invoke(db, effect, conversation):
         extractor = getattr(db, "extract_and_save_facts_v2", None) or db.extract_and_save_facts
         extractor(user_id, conversation["user_input"], conversation["id"])
     elif effect == "session_log":
+        from engines.participant_files import relation_file_scope
         from user_profile_writer import write_session_entry
 
+        try:
+            file_instance, file_relation = relation_file_scope(
+                db, user_id, conversation["relation_id"]
+            )
+        except ValueError as exc:
+            return "blocked", str(exc)
         write_session_entry(user_id=user_id, user_name=conversation["user_name"],
             user_input=conversation["user_input"], ai_response=conversation["ai_response"],
             metadata={"tension_level": 0.0, "affective_charge": 60.0},
-            tag=f"[conversation#{conversation['id']}]", raise_on_error=True)
+            tag=f"[conversation#{conversation['id']}]", raise_on_error=True,
+            agent_instance=file_instance, relation_id=file_relation)
     elif effect == "semantic_memory":
         if not getattr(db, "mem0", None):
             return "blocked", "semantic_memory_unavailable"

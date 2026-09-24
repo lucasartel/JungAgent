@@ -1,9 +1,10 @@
 """
 user_profile_writer.py - Camada de memória textual do JungAgent
 
-Mantém dois níveis de memória em arquivos .md:
-  data/users/{user_id}/sessions/YYYY-MM-DD.md  ← log bruto do dia (append-only)
-  data/users/{user_id}/profile.md              ← perfil psicológico consolidado
+Mantém dois níveis de memória em arquivos .md, sob o volume persistente
+(RAILWAY_VOLUME_MOUNT_PATH > /data > ./data):
+  {volume}/users/instances/{instance}/relations/{relation}/users/{user}/sessions/YYYY-MM-DD.md
+  {volume}/users/instances/{instance}/relations/{relation}/users/{user}/profile.md
 """
 
 import os
@@ -11,16 +12,30 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Optional
 
+from engines.participant_files import participant_dir
+
 logger = logging.getLogger(__name__)
 
-DATA_DIR = os.path.join(".", "data", "users")  # mesmo base que jung_core.py usa (./data → /data no Railway)
-AGENT_DIR = os.path.join(".", "data", "agent")  # diretório do perfil do agente
+def _volume_root() -> str:
+    """Volume persistente, mesmo padrao de will_engine/world_consciousness:
+    RAILWAY_VOLUME_MOUNT_PATH > /data detectado > ./data local.
+    Sem isso, perfis e logs escritos em /app/data desaparecem a cada deploy."""
+    data_dir = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+    if not data_dir:
+        data_dir = "/data" if os.path.exists("/data") else "./data"
+    return data_dir
 
 
-def _user_dir(user_id: str) -> str:
-    path = os.path.join(DATA_DIR, user_id)
-    os.makedirs(os.path.join(path, "sessions"), exist_ok=True)
-    return path
+DATA_DIR = os.path.join(_volume_root(), "users")
+AGENT_DIR = os.path.join(_volume_root(), "agent")
+
+
+def _user_dir(user_id: str, *, agent_instance: str, relation_id: str) -> str:
+    path = participant_dir(
+        DATA_DIR, agent_instance=agent_instance, relation_id=relation_id, user_id=user_id
+    )
+    (path / "sessions").mkdir(parents=True, exist_ok=True)
+    return str(path)
 
 
 def write_session_entry(
@@ -31,14 +46,21 @@ def write_session_entry(
     metadata: Optional[Dict] = None,
     tag: str = "",
     raise_on_error: bool = False,
+    agent_instance: Optional[str] = None,
+    relation_id: Optional[str] = None,
 ) -> None:
     """
     Appenda uma entrada de conversa no log diário do usuário.
     tag: string opcional ex. '[FLUSH]' para marcar entradas de flush de contexto.
     """
+    if not agent_instance or not relation_id:
+        raise ValueError("relation_file_scope_required")
     try:
         today = datetime.now().strftime("%Y-%m-%d")
-        session_path = os.path.join(_user_dir(user_id), "sessions", f"{today}.md")
+        session_path = os.path.join(
+            _user_dir(user_id, agent_instance=agent_instance, relation_id=relation_id),
+            "sessions", f"{today}.md",
+        )
 
         meta = metadata or {}
         tension = meta.get("tension_level", 0.0)
@@ -73,13 +95,21 @@ def rebuild_profile_md(
     facts: List[Dict],
     psychometrics: Optional[Dict] = None,
     patterns: Optional[List[Dict]] = None,
+    *,
+    agent_instance: Optional[str] = None,
+    relation_id: Optional[str] = None,
 ) -> None:
     """
     Reescreve o profile.md do usuário com todos os dados atuais.
     Chamado após cada consolidação de memória.
     """
+    if not agent_instance or not relation_id:
+        raise ValueError("relation_file_scope_required")
     try:
-        profile_path = os.path.join(_user_dir(user_id), "profile.md")
+        profile_path = os.path.join(
+            _user_dir(user_id, agent_instance=agent_instance, relation_id=relation_id),
+            "profile.md",
+        )
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         lines = [f"# Perfil: {user_name} — atualizado em {now}\n"]

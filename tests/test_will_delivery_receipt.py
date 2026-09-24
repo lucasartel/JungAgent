@@ -145,9 +145,12 @@ def test_proactive_effects_are_invoked_once_after_durable_record(delivery, monke
     expected = {"agent_instance": TEST_INSTANCE, "relation_id": None, "scope_kind": "global", "user_id": USER}
     first = run_pending_effects(delivery.db, delivery.expression_id, expected=expected)
     second = run_pending_effects(delivery.db, delivery.expression_id, expected=expected)
-    assert first == {effect: "returned" for effect in ("development", "facts", "session_log", "semantic_memory")}
+    assert first == {
+        "development": "returned", "facts": "returned",
+        "session_log": "blocked", "semantic_memory": "returned",
+    }
     assert second == {}
-    assert [call[0] for call in calls] == ["development", "facts", "session_log", "semantic_memory"]
+    assert [call[0] for call in calls] == ["development", "facts", "semantic_memory"]
 
 
 def test_private_relation_records_but_blocks_unscoped_memory_hooks(delivery):
