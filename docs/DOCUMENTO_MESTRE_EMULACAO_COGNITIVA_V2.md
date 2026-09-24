@@ -242,15 +242,17 @@ Trilha cognitiva ativa (Secao 10.1.2):
   C11 - Expressao conversacional e proatividade   <- CONCLUIDO E PUBLICADO; OBSERVACAO NATURAL PENDENTE
   C12 - Fechamento cognitivo multi-relacional     <- EM ANDAMENTO; C12a-C12f INTEGRADOS; PROXIMO C12g
   C13 - Piloto convidado observavel               <- BLOQUEADO ATE ACEITE C9-C12
+  C14 - Mundo e criacao orientados por vontades   <- FUTURO; APOS C13; WORLD E ARTE/HOBBY SAEM DO LOOP
 Trilha comercial apos os gates (Secoes 10.2 e 10.3):
   multiplas instancias isoladas -> contrato/API comum -> companion + simulacoes PET/NPC -> piloto delimitado
+  conectores reais de saber/expressar dependem tambem do aceite C14 e de aprovacao externa
 ```
 
 Transversais a todas as fases: suite de regressao verde a cada merge, probes read-only de producao apos deploy relevante, relatorios de pesquisa em `docs/research/` quando houver frente empirica, e manutencao do principio da evidencia. A avaliacao cega deixou de ser criterio bloqueante, mas permanece protocolo de pesquisa preservado.
 
 A numeracao salta de 0 para III por continuidade historica: as antigas Fases I e II ja foram entregues.
 
-Os identificadores C9-C13 continuam os oito cortes relacionais ja registrados; nao sao novas fases cognitivas. O C9 fecha lacunas dos cortes 7 e 8 sem descartar suas fundacoes. Especificacao e simulacao comercial podem ocorrer em paralelo; a liberacao de efeitos externos continua dependente dos gates. O proximo executor deve continuar o C9 a partir do registro C9a/C9b/C9c na Secao 10.1.2, e nao diretamente pelo periodo refratario ou pelo convite a participantes.
+Os identificadores C9-C13 continuam os cortes relacionais ja registrados; nao sao novas fases cognitivas. O C9 fecha lacunas dos cortes 7 e 8 sem descartar suas fundacoes. C14 e uma reforma posterior, nao reabre automaticamente os cortes anteriores. Especificacao e simulacao comercial podem ocorrer em paralelo; a liberacao de efeitos externos continua dependente dos gates. O proximo executor deve concluir os cortes cognitivos abertos antes de iniciar C14.
 
 ---
 
@@ -495,6 +497,8 @@ A partir de 18/08/2026, o roadmap passa a ter duas trilhas coordenadas. A trilha
 Antes de qualquer abertura controlada da instancia a novos participantes, o modulo WILL devera deixar de ser apenas um leitor de scores e se tornar o regulador persistente de direcao, disponibilidade e recuperacao do agente. A autonomia aqui e arquitetural: a continuidade do agente escolhe, com base em estado e evidencia, quando se orientar ao mundo, a uma relacao, a uma expressao ou a um periodo de elaboracao; nao e uma alegacao de consciencia humana continua.
 
 **Principio de ritmo**: o ciclo circadiano continua como esqueleto metabolico. Sonho, identidade, ruminacao e fechamento volitivo permanecem protegidos como momentos de integracao. `world`, `work` e `hobby/expressar` poderao ser satisfeitos antecipadamente por um transbordo de vontade somente quando houver uma expressao concluida e um recibo de evidencia. O loop nunca podera marcar uma fase como concluida apenas porque uma pressao ficou alta.
+
+**Decisao de arquitetura futura (C14; apos C13)**: esta regra descreve o ciclo vigente durante C9-C13. Depois de concluir esses cortes e observar o piloto, `world` e `hobby/arte` deixarao de ser fases obrigatorias do loop. Saber e expressar passarao a selecionar capacidades por vontade, com resultado e recibo proprios, nao por equivalencia com uma fase que deixou de existir. Sonho, identidade, ruminacoes, Work e WILL continuam no metabolismo circadiano ate decisao posterior explicita. Registros historicos das fases antigas permanecem auditaveis; a migracao nao os apaga nem os reclassifica silenciosamente.
 
 **Fluxo alvo**:
 
@@ -947,11 +951,12 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 - **Fronteira preservada**: livros enviados ao Work sao conhecimento global da instancia, sem Relation privada. O C12f agora bloqueia a injecao direta de tabelas Work ainda nao escopadas; tenancy, revogacao e descarte de anexos permanecem no C12g.
 - **Publicacao e evidencia**: commit `fe4c4d2` publicado e confirmado no Railway. Os briefs 223 e 224 foram reprocessados com sucesso, totalizando 52 paginas assimiladas e oito tensoes `epistemic_reading` abertas com proveniencia. O bloco local posterior passa com 764 testes offline.
 
-**Hotfix de qualidade da leitura e propriedade dos fragmentos (23/09/2026).**
+**Correcao da qualidade das leituras e do escopo dos fragmentos (23/09/2026; publicada em `321df2b`).**
 
-- **Causa verificada**: os artefatos 231 e 232 recorreram a `extractive_fallback` apos duas respostas estruturadas invalidas. O PDF de Bergson ja devolve cabecalhos sobrepostos na extracao do `PyPDF2`; o fallback anterior escolhia a primeira frase da pagina e a registrava como ideia. Work e o residuo onirico tambem gravavam `agent_instance = NULL` porque o gerenciador de banco nao possui esse atributo no runtime.
-- **Prevencao**: o fallback seleciona passagens legiveis, bloqueia intervalos sem material suficiente antes de chamar o LLM, rejeita eco do texto sobreposto e impede que fragmentos ja corrompidos entrem no prompt de deteccao. Work e sonhos usam a instancia configurada quando o banco nao a fornece.
-- **Aceite**: 770 testes offline no hotfix isolado; sem custos, mensagens, reprocessamento ou escrita em banco de producao durante a validacao. Linhas historicas nulas e os fragmentos contaminados permanecem intactos ate inventario e decisao explicita de reparo. O C12g local incompleto nao faz parte deste hotfix.
+- A sonda read-only identificou que os artefatos 231 e 232 usaram `extractive_fallback` apos duas respostas LLM invalidas. O PDF de Bergson ja traz cabecalhos repetidos na saida do `PyPDF2`; o fallback anterior escolhia a primeira frase de cada pagina e os tratava como ideias incorporadas. A verificacao anterior exigia apenas volume de caracteres, nao legibilidade.
+- O fallback agora seleciona passagens legiveis do corpo da pagina, descarta sobreposicoes repetidas e bloqueia o brief antes da chamada ao LLM se o intervalo nao trouxer passagens suficientes. Respostas estruturadas que ecoem a sobreposicao tambem sao rejeitadas. Fragmentos antigos com esse padrao nao entram no prompt de deteccao ruminal, mas permanecem intactos ate inventario e decisao explicita de reparo.
+- Work e resíduo onirico passam a gravar `agent_instance` pela configuracao da instancia quando o gerenciador de banco nao expuser o atributo. O `relation_id` nulo continua correto para material proprio global; linhas historicas com `agent_instance` nulo nao sao reclassificadas automaticamente.
+- **Aceite**: 770 testes offline aprovados no checkout isolado, cobrindo cabecalho repetido com corpo legivel, fonte inteiramente ilegivel, eco do modelo, exclusao de fragmentos contaminados do prompt e carimbo de instancia dos produtores. O hotfix foi publicado sem o C12g local; registros historicos permanecem intactos ate inventario e decisao explicita de reparo.
 
 **C12f - Politica unica de montagem do contexto cognitivo (22/09/2026; concluido localmente).**
 
@@ -962,14 +967,29 @@ Uma acao pode combinar vontades: uma iniciativa relacional pode selecionar uma p
 - **Aceite local**: 764 testes offline e 20 cenarios de regressao mock aprovados. Os testes C12f cobrem duas Relations, instancia divergente, legado, global privado sem mediacao, agregado text-free, dominio proibido, propagacao da Relation a fatos/mem0 e montagem unica dos dois fluxos. Nenhuma chamada LLM, web, Telegram, scheduler, imagem, banco de producao, push, deploy ou custo foi acionado neste corte.
 - **Proximo corte**: C12g, para revogacao e delecao verificavel, inventario/apagamento de vetores historicos, namespace de perfis e arquivos, tenancy de Work e ciclo de vida de artefatos. C12h permanece como aceite integrado entre duas Relations e duas instancias.
 
-**Continuidade da conversa atual (23/09/2026; corte isolado).**
+**C12g - Primeiro checkpoint: arquivos privados por Relation e instancia (23/09/2026; concluido localmente, nao publicado).**
+
+- `profile.md` e logs diarios novos passam a usar namespace `agent_instance/relation_id/user_id`, com segmentos validados. O gravador, a consolidacao, o flush e a leitura de `/meu_perfil` exigem Relation ativa com consentimento concedido e propriedade compatível. Fatos, psicometria e padroes do perfil sao consultados na mesma Relation.
+- Arquivos antigos em `data/users/<user_id>/` permanecem intactos e em quarentena: nao ha fallback, copia automatica nem reclassificacao silenciosa. Efeito de log proativo sem Relation verificavel fica bloqueado, nao registrado como sucesso.
+- **Aceite local**: 767 testes offline aprovados; sentinelas cobrem duas Relations, duas instancias, escopo ausente/invalido, revogacao e ausencia de escrita no caminho legado. Sem chamadas LLM, Telegram, banco de producao, push ou deploy neste checkpoint.
+- **Ainda aberto no C12g**: inventario e apagamento verificavel de arquivos e vetores historicos, revogacao em todos os leitores e produtores, tenancy e retencao do Work, ciclo de vida de anexos/artefatos. O aceite integrado de duas Relations e duas instancias continua no C12h.
+
+**Continuidade da conversa atual (23/09/2026; publicada em `e455620`).**
 
 - O Telegram recupera ate 18 registros persistidos no escopo da Relation/instancia. O bloco usa as tres trocas mais recentes e trechos das seis anteriores, preservando inicio e fim das falas longas; canto, contracanto (inclusive retry), coro e fallback do admin recebem esse fio, com precedencia sobre associacoes antigas.
 - Nenhuma chamada adicional ao modelo, tabela ou memoria autobiografica foi criada. O fio e reconstruido do historico a cada turno; nao e ainda um resumo persistente de sessao para conversas que ultrapassem essa janela. Esse caso pede desenho e aceite especificos, inclusive revogacao e custo.
-- **Aceite isolado**: 776 testes offline e 20 cenarios mock aprovados. Faltam observacao de qualidade em conversas reais e medida de tokens por resposta.
+- **Aceite**: 776 testes offline no checkout isolado, 779 no checkout local com C12g e 20 cenarios mock aprovados. O C12g nao entrou no commit; faltam observacao de qualidade em conversas reais e medida de tokens por resposta.
 
 
 **C13 - Piloto convidado observavel (bloqueado ate aceite C9-C12 e aprovacao do mantenedor).** Comecar com poucas pessoas explicitamente convidadas, Relation ativa, consentimento e regras de uso, privacidade e apagamento definidos. Usar limites de custo e contato, revogacao de acesso e mecanismo de pausa. Cockpit e probes devem mostrar disponibilidade, motivo de bloqueio/adiamento, retomadas, recibos, escopo e custo sem expor conversas privadas. Definir antes de abrir a janela, metricas, criterios de interrupcao e aceite; nao encerrar apenas pelo numero de dias. Observar continuidade da memoria, pertinencia das iniciativas, respeito ao descanso, isolamento e custo por relacao. Este e um piloto relacional da instancia existente, nao uma liberacao comercial multi-instancia.
+
+**C14 - Mundo e expressao criativa orientados por vontades (decisao do mantenedor em 23/09/2026; futuro, apos C13).** World e Arte/Hobby deixam de ser modulos/fases autonomos do ciclo circadiano e da navegacao principal da plataforma. O objetivo nao e perder suas capacidades: investigacao do mundo, criacao textual e visual, memoria de fonte e artefatos passam a ser capacidades governadas por WILL. `Work` (trabalho, projetos e leitura de livros) permanece como dominio e fase distintos; "World" nesta decisao nao significa "Work". O loop vigente de oito fases e as regras C9 de `saber -> world` continuam validos ate a migracao e o aceite de C14; depois, os recibos de satisfacao de fase para World/Hobby deixam de ser a semantica operacional.
+
+- **C14a - Inventario e contrato de migracao**: mapear scheduler, pulsos, pressao, recibos, caches, artefatos, cockpit, API, probes, testes e dependencias de World/Arte/Hobby. Definir a forma do loop remanescente, preservar Work e os resultados historicos em leitura, e testar rollback antes de desligar fases ou telas. Nao apagar dados, ferramentas ou geracao criativa por simples remocao de rota.
+- **C14b - Saber online**: a vontade de saber deve formar perguntas sobre o mundo e a vida atuais, inclusive lacunas que o conhecimento pretreinado do LLM nao resolve. Firecrawl sera o primeiro conector de leitura profunda online; pesquisa, selecao de fontes, frescor, URLs, datas, incerteza e proveniencia devem anteceder qualquer assimilacao em memoria, ruminacao ou identidade. A vontade e o drive; Firecrawl e uma capacidade substituivel do catalogo, nao fonte automatica de verdade. Sem pergunta/evidencia suficiente, permissao, credito ou orcamento, adiar e registrar o motivo em vez de pesquisar por obrigacao horaria.
+- **C14c - Expressar por canais**: texto, poesia, imagem e outras pecas poderao nascer de sonhos, ruminacoes, leituras do Work, aprendizados online e relacoes autorizadas. WordPress sera o primeiro conector de publicacao; reaproveitar a integracao existente de Work sem confundir o trabalho editorial com a vontade de expressar. Outros blogs, redes sociais e canais poderao ser adicionados sem alterar o nucleo de WILL. Distinguir criacao interna, revisao, proposta de publicacao e entrega externa confirmada. Geracao de imagem paga permanece desligada por padrao. Publicacao real exige aprovacao explicita do mantenedor, escopo, politica editorial, consentimento quando houver origem relacional, limite de custo, idempotencia e recibo; C14 nao autoriza publicar automaticamente.
+- **C14d - Retirada do ciclo e da plataforma principal**: depois dos adaptadores e provas de ponta a ponta, remover World e Arte/Hobby da agenda/pulsos obrigatorios e da navegacao primaria; disponibilizar pesquisa e criacao na area de vontades/capacidades. Ajustar C9, recuperacao, WM, custos e probes para observar iniciativas por vontade sem simular fases satisfeitas. Preservar historicos e compatibilidade de leitura ate politica de retencao/apagamento aprovada.
+- **Aceite de C14**: sem execucao de World/Arte por relogio; saber online apenas por intencao governada e com fontes verificaveis; criacao e publicacao separadas, WordPress em dry-run antes de qualquer envio real; bloqueios e falhas nao aliviam pressao; nenhum efeito duplicado apos retry/reinicio; isolamento por instancia/Relation; Work, sonho, identidade, ruminacao e WILL continuam operantes; custo e uso por conector visiveis no cockpit/probes. Especificacao pode ser preparada antes, mas implementacao e habilitacao somente apos o fechamento de C9-C13.
 
 **Registro obrigatorio em cada entrega**: ID do corte, commit, cenarios testados, estado de habilitacao, evidencias operacionais, pendencias com proxima acao e aprovacao ainda necessaria. A publicacao ate C9c2 e o primeiro bloco local do C9c3 nao encerram C9 e nao antecipam C10-C13. A higiene dos monolitos acompanha as fronteiras tocadas por cada corte, preservando fachadas e contratos, sem reescrita geral.
 
@@ -992,6 +1012,8 @@ A primeira entrega comercial deve definir o `Will Expression Contract v1`, com v
 
 O plano `docs/plano_desenvolvimento_inner_life_engine.md` permanece como visao de possibilidades; datas e amplitude de SDKs anteriores nao sobrepoem esta sequencia. Prioridade comercial nao significa implementacao confirmada, fechamento dos cortes cognitivos ou autorizacao de efeitos externos. Endpoints, schemas e adaptadores deverao ser definidos em especificacao complementar antes da implementacao; este mestre fixa direcao, fronteiras e aceite. Nao reabrir cortes concluidos automaticamente nem reativar funcionalidades gateadas.
 
+A especificacao comercial pode avancar em paralelo aos cortes cognitivos, mas a ativacao de conectores reais de saber e expressar deve respeitar a migracao C14 e seus gates. O piloto C13 observa a arquitetura vigente; nao e autorizacao antecipada para Firecrawl volitivo ou publicacao autonoma em WordPress.
+
 ### 10.2.1 Catalogo de conectores orientado pela vontade
 
 O modulo WILL devera possuir um catalogo de possiveis conexoes organizado pelas tres vontades fundamentais do agente: `saber`, `expressar` e `relacionar`. Esse catalogo sera uma capacidade futura da plataforma e nao uma autorizacao automatica para agir fora dela.
@@ -1001,6 +1023,8 @@ O modulo WILL devera possuir um catalogo de possiveis conexoes organizado pelas 
 1. **Saber**: fontes de pesquisa, busca e consulta, bases documentais, repositórios de conhecimento, navegacao, ferramentas academicas e outros recursos que ampliem a percepcao ou a investigacao do agente.
 2. **Expressar**: canais de publicacao, mensagens, arte, imagem, texto, audio, video, sites, blogs, documentos e outros meios pelos quais uma intencao possa produzir uma expressao externa.
 3. **Relacionar**: canais de conversa e presenca relacional, como Telegram, Discord, e-mail, comunidades, suporte, plataformas sociais e outros meios de interacao com pessoas ou entidades.
+
+**Primeiros adaptadores previstos para C14**: Firecrawl atende `saber` como leitura online do presente; WordPress atende `expressar` como destino inicial de publicacao. Nao sao vontades novas nem fornecedores exclusivos. A producao de imagem/texto e uma capacidade criativa separada do canal que publica; uma rede social futura deve entrar como outro adaptador, com permissoes e recibos proprios. A implementacao real destes adaptadores sob WILL aguarda C14 e os gates acima.
 
 Cada conector devera declarar, no minimo, seu provedor, protocolo, capacidades, vontade(s) atendida(s), acoes disponiveis, escopos de leitura e escrita, credenciais, organizacao e instancia autorizadas, relacoes alcançaveis, exigencias de consentimento, custo, limites de uso, idempotencia, auditoria, politica de aprovacao e semantica de falha. Um mesmo conector podera atender mais de uma vontade, mas suas capacidades deverao permanecer explicitamente separadas para evitar que um canal relacional seja tratado como fonte de saber ou meio de expressao sem governanca propria.
 
@@ -1226,6 +1250,7 @@ Em 19/08/2026 foi auditado o caminho completo `scores -> pressao -> pulso -> aca
 | Versao 3.11 - C9b: Evidencia Equivalente e Consumo Transacional | 06/09/2026 | Registra commits locais C9a/C9b, adaptador world, hobby inelegivel sem evidencia propria, 538 testes e 20 cenarios mock aprovados, e proximo C9c sem liberar producao |
 | Versao 3.26 - C11: Expressao Conversacional e Proatividade Unificadas | 15/09/2026 | Fecha e publica proveniencia sem auto-influencia, repouso conversacional conservador, ledger comum, idempotencia e expressao textual com imagens desligadas; 705 testes, 20 cenarios mock e deploy Railway saudavel |
 | Versao 3.27 - C12a-C12f: Interioridade Multi-relacional e Contexto Unificado | 22/09/2026 | Registra propriedade cognitiva, isolamento de memoria/ruminacao/sonhos/identidade e uma politica unica de visibilidade e proveniencia para o prompt; C12g-C12h permanecem abertos |
+| Versao 3.28 - C14 futuro: World e Arte sob WILL | 23/09/2026 | Registra, apos C9-C13, a retirada futura de World e Arte/Hobby do ciclo, preservando Work; Firecrawl e WordPress tornam-se conectores iniciais de saber e expressar, com migracao, gates e recibos proprios |
 
 ---
 
