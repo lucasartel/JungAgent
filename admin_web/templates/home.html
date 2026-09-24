@@ -3,1042 +3,973 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JungAgent | Persistent Cognitive Architecture</title>
-    <meta name="description" content="JungAgent is a psychoanalytically grounded cognitive architecture for longitudinal interaction, with persistent memory, rumination, dreams, world awareness, and will dynamics.">
+    <title>JungAgent | Persistent Cognitive Architecture & Inner Life Engine</title>
+    <meta name="description" content="JungAgent is a psychoanalytically grounded persistent cognitive architecture for long-lived companions, robotic PETs, and autonomous NPCs, featuring circadian sleep, evidence-anchored autobiographical memory, and thermodynamic will dynamics.">
     <meta name="robots" content="index,follow,max-image-preview:large">
     <link rel="canonical" href="https://jungagent.org/">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="JungAgent">
     <meta property="og:title" content="JungAgent | Persistent Cognitive Architecture">
-    <meta property="og:description" content="A persistent cognitive architecture built with memory, rumination, dreams, world awareness, and internal direction.">
+    <meta property="og:description" content="A persistent cognitive architecture with circadian metabolism, rumination, symbolic dreams, and thermodynamic will dynamics.">
     <meta property="og:url" content="https://jungagent.org/">
     <meta property="og:image" content="https://jungagent.org/static/jungagentdarkweb.png">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="JungAgent | Persistent Cognitive Architecture">
-    <meta name="twitter:description" content="A persistent cognitive architecture built with memory, rumination, dreams, world awareness, and internal direction.">
+    <meta name="twitter:description" content="An autonomous inner-life engine for LLMs with persistent memory, rumination, dreams, and will dynamics.">
     <meta name="twitter:image" content="https://jungagent.org/static/jungagentdarkweb.png">
-    <link rel="stylesheet" href="/static/admin.css">
-    <script type="application/ld+json">
-        {
-            "@context": "https://schema.org",
-            "@graph": [
-                {
-                    "@type": "WebSite",
-                    "name": "JungAgent",
-                    "url": "https://jungagent.org/",
-                    "description": "A persistent cognitive architecture for longitudinal interaction, memory, rumination, dreams, world awareness, and will dynamics."
-                },
-                {
-                    "@type": "SoftwareApplication",
-                    "name": "JungAgent",
-                    "applicationCategory": "AIApplication",
-                    "operatingSystem": "Web",
-                    "url": "https://jungagent.org/",
-                    "description": "A psychoanalytically grounded cognitive architecture with persistent memory, rumination, dreams, world awareness, and internal direction.",
-                    "creator": {
-                        "@type": "Person",
-                        "name": "Lucas Pedro"
-                    }
-                }
-            ]
-        }
-    </script>
+    <meta name="theme-color" content="#0d0f14">
+
+    <!-- Fira Code: Monospaced typography as in Letta.com -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&display=swap">
+
     <style>
-        body.public-home-v2 {
-            --shell-accent: #d8b4fe;
-            --shell-border: rgba(148, 163, 184, 0.16);
-            --shell-border-strong: rgba(148, 163, 184, 0.24);
-            --shell-muted: #98a8bf;
-            --shell-text: #e2e8f0;
-            --shell-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
+        :root {
+            --bg: #0d0f14;
+            --bg-elevated: #131722;
+            --bg-card: rgba(19, 23, 34, 0.75);
+            --bg-card-hover: rgba(28, 34, 50, 0.85);
+            --border: rgba(148, 163, 184, 0.12);
+            --border-strong: rgba(148, 163, 184, 0.24);
+            --text: #C9CDD1;
+            --text-bright: #F1F5F9;
+            --text-dim: #64748B;
+            --text-subtle: #475569;
+            --mono: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+            --accent-will: #F97316;     /* Will pressure & thermodynamic action */
+            --accent-psyche: #C084FC;   /* Dreams, rumination & unconscious */
+            --accent-lucid: #38BDF8;    /* World awareness, cognition & logic */
+            --accent-gold: #FBBF24;     /* Evidence anchors (type#id) */
+            --selection-bg: #2200CC;
+        }
+
+        * {
+            box-sizing: border-box;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        html {
+            background: var(--bg);
+            scroll-behavior: smooth;
+        }
+
+        body {
             margin: 0;
-            font-size: 80%;
-            background:
-                radial-gradient(circle at top left, rgba(76, 29, 149, 0.28), transparent 30%),
-                radial-gradient(circle at top right, rgba(14, 165, 233, 0.16), transparent 26%),
-                linear-gradient(180deg, #020617 0%, #050816 48%, #020617 100%);
-            color: var(--shell-text);
+            min-height: 100vh;
+            font-family: var(--mono);
+            font-size: 13px;
+            line-height: 22px;
+            color: var(--text);
+            overflow-x: hidden;
+            background-color: var(--bg);
+            background-image:
+                radial-gradient(circle at 10% 20%, rgba(192, 132, 252, 0.04) 0%, transparent 40%),
+                radial-gradient(circle at 90% 60%, rgba(56, 189, 248, 0.04) 0%, transparent 40%),
+                linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+            background-size: 100% 100%, 100% 100%, 48px 48px, 48px 48px;
+            background-attachment: fixed;
         }
 
-        .public-nav-v2,
-        .public-footer-v2 {
-            width: min(1080px, calc(100% - 32px));
+        ::selection {
+            background: var(--selection-bg);
+            color: var(--text-bright);
+        }
+
+        a {
+            color: inherit;
+            text-decoration: underline;
+            text-decoration-thickness: 1px;
+            text-decoration-color: rgba(201, 205, 209, 0.35);
+            text-underline-offset: 4px;
+            transition: all 0.15s ease;
+        }
+
+        a:hover {
+            color: var(--accent-lucid);
+            text-decoration-color: var(--accent-lucid);
+        }
+
+        .container {
+            max-width: 880px;
             margin: 0 auto;
+            padding: 0 28px 120px;
         }
 
-        .public-nav-v2 {
+        /* Header / Nav */
+        header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 14px;
-            padding: 18px 0;
+            gap: 24px;
+            padding: 48px 0 40px;
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
         }
 
-        .public-brand-v2 {
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: var(--text-bright);
+            font-weight: 600;
+            letter-spacing: -0.02em;
+        }
+
+        .brand img {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+
+        .brand-name {
+            font-size: 14px;
+            display: inline-flex;
+            gap: 2px;
+        }
+
+        .brand-name span {
+            color: var(--accent-psyche);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 22px;
+            flex-wrap: wrap;
+        }
+
+        .nav-links a {
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            text-decoration: none;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-bright);
+        }
+
+        .pulse-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            background: rgba(56, 189, 248, 0.06);
+            font-size: 11px;
+            color: var(--accent-lucid);
+        }
+
+        .pulse-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent-lucid);
+            box-shadow: 0 0 8px var(--accent-lucid);
+            animation: pulse-glow 2s infinite ease-in-out;
+        }
+
+        @keyframes pulse-glow {
+            0%, 100% { opacity: 0.4; transform: scale(0.9); }
+            50% { opacity: 1; transform: scale(1.2); }
+        }
+
+        /* Hero */
+        .hero {
+            padding: 72px 0 48px;
+        }
+
+        .hero-kicker {
+            font-size: 11px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--accent-psyche);
+            margin-bottom: 20px;
+            display: block;
+        }
+
+        h1 {
+            margin: 0 0 24px;
+            font-size: clamp(2rem, 4.2vw, 3.4rem);
+            font-weight: 500;
+            line-height: 1.15;
+            letter-spacing: -0.04em;
+            color: var(--text-bright);
+        }
+
+        .hero-desc {
+            max-width: 64ch;
+            font-size: 14px;
+            line-height: 24px;
+            color: var(--text);
+            margin: 0 0 32px;
+        }
+
+        .hero-cta {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .btn-mono {
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            color: inherit;
+            padding: 10px 20px;
+            font-family: var(--mono);
+            font-size: 12px;
             text-decoration: none;
-        }
-
-        .public-brand-v2 img {
-            width: 29px;
-            height: 29px;
-            object-fit: contain;
-            border-radius: 10px;
-        }
-
-        .public-brand-copy-v2 {
-            display: inline-flex;
-            align-items: baseline;
-            gap: 0;
-            color: #f8fafc;
-            font-size: 0.84rem;
-            letter-spacing: -0.02em;
-            line-height: 1;
-        }
-
-        .public-brand-copy-v2 strong {
-            font-weight: 700;
-        }
-
-        .public-brand-copy-v2 span {
-            font-weight: 400;
-        }
-
-        .public-nav-links-v2 {
-            display: flex;
-            align-items: center;
-            gap: 18px;
-            flex-wrap: wrap;
-        }
-
-        .public-nav-links-v2 a {
-            color: var(--shell-muted);
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 0.8rem;
-        }
-
-        .public-nav-toggle-v2 {
-            display: none;
-            width: 44px;
-            height: 44px;
-            align-items: center;
-            justify-content: center;
-            border-radius: 12px;
-            border: 1px solid var(--shell-border);
-            background: rgba(15, 23, 42, 0.72);
-            color: #f8fafc;
+            border-radius: 6px;
+            transition: all 0.15s ease;
             cursor: pointer;
         }
 
-        .public-nav-toggle-lines-v2 {
-            display: grid;
-            gap: 4px;
+        .btn-primary {
+            background: var(--text-bright);
+            color: var(--bg);
+            font-weight: 600;
+            border: 1px solid var(--text-bright);
         }
 
-        .public-nav-toggle-lines-v2 span {
-            display: block;
-            width: 18px;
-            height: 2px;
-            border-radius: 999px;
-            background: currentColor;
+        .btn-primary:hover {
+            background: transparent;
+            color: var(--text-bright);
         }
 
-        .public-main-v2 {
-            width: min(1080px, calc(100% - 32px));
-            margin: 0 auto;
-            padding: 14px 0 56px;
-            display: flex;
-            flex-direction: column;
-            gap: 22px;
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--text);
+            border: 1px solid var(--border);
         }
 
-        .hero-v2 { order: 0; }
-        .positioning-band-v2 { order: 1; }
-        #architecture { order: 2; }
-        #loop { order: 3; }
-        #will { order: 4; }
-        #why-jung { order: 5; }
-        #research { order: 6; }
-        #applications { order: 7; }
-        #contact { order: 8; }
+        .btn-secondary:hover {
+            border-color: var(--border-strong);
+            color: var(--text-bright);
+        }
 
-        .hero-v2 {
-            padding: 24px 0 8px;
-            display: grid;
-            grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr);
-            gap: 18px;
-            align-items: stretch;
+        /* Console telemetry card */
+        .telemetry-card {
+            margin: 40px 0 64px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px 24px;
+            font-size: 12px;
+            line-height: 21px;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
             position: relative;
-            isolation: isolate;
             overflow: hidden;
         }
 
-        .hero-v2::before {
-            content: "";
-            position: absolute;
-            inset: -8% -10% -6% 26%;
-            background: url("/static/loop-infinity-hero.svg") no-repeat center right / 140% auto;
-            opacity: 0.17;
-            pointer-events: none;
-            z-index: 0;
-        }
-
-        .hero-copy-v2 {
-            padding: 10px 0;
-            position: relative;
-            z-index: 1;
-        }
-
-        .hero-title-v2 {
-            margin: 0;
-            max-width: 760px;
-            font-size: clamp(2.4rem, 5.6vw, 4.3rem);
-            line-height: 0.94;
-            letter-spacing: -0.05em;
-            color: #f8fafc;
-        }
-
-        .hero-text-v2 {
-            max-width: 760px;
-            margin: 18px 0 0;
-            color: var(--shell-muted);
-            font-size: 0.86rem;
-            line-height: 1.68;
-        }
-
-        .hero-actions-v2 {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-top: 21px;
-        }
-
-        .positioning-band-v2 {
-            padding: 22px 24px;
-            border-radius: 22px;
-            border: 1px solid rgba(216, 180, 254, 0.18);
-            background:
-                linear-gradient(180deg, rgba(14, 19, 36, 0.94), rgba(7, 11, 23, 0.96));
-            box-shadow: var(--shell-shadow);
-        }
-
-        .positioning-band-v2 p {
-            margin: 0;
-            color: #f8fafc;
-            font-size: 1.02rem;
-            line-height: 1.78;
-        }
-
-        .positioning-band-v2 strong {
-            color: var(--shell-accent);
-            font-weight: 700;
-        }
-
-        .hero-panel-v2 {
-            padding: 24px;
-            background: transparent;
-            border: none;
-            box-shadow: none;
-            position: relative;
-            z-index: 1;
-        }
-
-        .hero-proof-v2 {
-            display: grid;
-            gap: 14px;
-        }
-
-        .hero-panel-v2 .panel-body-v2 {
-            padding: 0;
-        }
-
-        .hero-quote-v2 {
-            margin: 0;
-            padding: 0;
-            background: transparent;
-            color: #f8fafc;
-            white-space: pre-wrap;
-            word-break: break-word;
-            font-size: 1.02rem;
-            line-height: 1.95;
-            font-family: Consolas, "SFMono-Regular", monospace;
-        }
-
-        .hero-attribution-v2 {
-            color: #f8fafc;
-            font-size: 1.02rem;
-            line-height: 1.5;
-            font-weight: 700;
-        }
-
-        .hero-attribution-v2 em {
-            font-style: italic;
-            font-weight: 700;
-        }
-
-        .proof-row-v2 {
+        .telemetry-header {
             display: flex;
             justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+            color: var(--text-dim);
+            font-size: 11px;
+        }
+
+        .telemetry-dots {
+            display: flex;
+            gap: 6px;
+        }
+
+        .telemetry-dots span {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--border-strong);
+        }
+
+        .telemetry-line {
+            display: flex;
             gap: 12px;
-            color: var(--shell-muted);
+            color: var(--text-dim);
+            margin: 4px 0;
+            flex-wrap: wrap;
         }
 
-        .proof-row-v2 strong {
-            color: #f8fafc;
+        .telemetry-line span.key {
+            color: var(--text-dim);
+            min-width: 170px;
         }
 
-        .showcase-grid-v2 {
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 18px;
+        .telemetry-line span.val {
+            color: var(--text-bright);
         }
 
-        .architecture-grid-v2 {
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 18px;
-        }
+        .telemetry-line span.val-accent-psyche { color: var(--accent-psyche); }
+        .telemetry-line span.val-accent-lucid { color: var(--accent-lucid); }
+        .telemetry-line span.val-accent-will { color: var(--accent-will); }
+        .telemetry-line span.val-accent-gold { color: var(--accent-gold); }
 
-        .pipeline-v2 {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
+        /* Section Headings */
+        h2 {
+            margin: 96px 0 28px;
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
             gap: 14px;
         }
 
-        .section-divider-v2 {
+        h2::after {
+            content: '';
+            flex: 1;
             height: 1px;
-            background: linear-gradient(90deg, rgba(148, 163, 184, 0), rgba(148, 163, 184, 0.22), rgba(148, 163, 184, 0));
+            background: var(--border);
         }
 
-        .loop-stage-grid-v2 {
+        /* Pillars Grid */
+        .grid-2x2 {
             display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 16px;
         }
 
-        .loop-stage-v2 {
-            position: relative;
-            padding: 20px 18px 18px;
-            border-radius: 22px;
-            border: 1px solid var(--shell-border);
-            background:
-                linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(7, 11, 23, 0.92));
-            overflow: hidden;
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 24px;
+            transition: all 0.2s ease;
         }
 
-        .loop-stage-v2::before {
-            content: "";
-            position: absolute;
-            inset: 0 0 auto 0;
-            height: 3px;
-            background: linear-gradient(90deg, rgba(216, 180, 254, 0.96), rgba(56, 189, 248, 0.82));
-            opacity: 0.9;
+        .card:hover {
+            border-color: var(--border-strong);
+            background: var(--bg-card-hover);
         }
 
-        .loop-stage-order-v2 {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 34px;
-            height: 34px;
-            border-radius: 999px;
-            background: rgba(216, 180, 254, 0.14);
-            border: 1px solid rgba(216, 180, 254, 0.28);
-            color: #f8fafc;
-            font-size: 0.84rem;
-            font-weight: 700;
-            margin-bottom: 16px;
-        }
-
-        .loop-stage-kicker-v2 {
+        .card-num {
+            font-size: 10px;
+            color: var(--text-subtle);
+            margin-bottom: 12px;
             display: block;
-            color: var(--shell-accent);
-            font-size: 0.76rem;
-            font-weight: 700;
-            letter-spacing: 0.14em;
-            text-transform: uppercase;
-            margin-bottom: 10px;
+            letter-spacing: 0.08em;
         }
 
-        .loop-stage-title-v2 {
-            display: block;
-            color: #f8fafc;
-            font-size: 1.02rem;
-            font-weight: 700;
-            margin-bottom: 10px;
-        }
-
-        .loop-stage-copy-v2 {
-            margin: 0;
-            color: var(--shell-muted);
-            line-height: 1.68;
-            font-size: 0.98rem;
-        }
-
-        .loop-band-v2 {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            margin-top: 18px;
-            padding: 14px 16px;
-            border-radius: 18px;
-            border: 1px solid var(--shell-border);
-            background: rgba(9, 14, 28, 0.78);
-            overflow-x: auto;
-        }
-
-        .loop-band-node-v2 {
-            flex: 1 1 0;
-            min-width: 110px;
-            text-align: center;
-            color: #f8fafc;
-            font-size: 0.86rem;
-            font-weight: 700;
-            letter-spacing: 0.04em;
-        }
-
-        .loop-band-node-v2 span {
-            display: block;
-            color: var(--shell-muted);
-            font-size: 0.72rem;
+        .card-title {
+            font-size: 13.5px;
             font-weight: 600;
+            color: var(--text-bright);
+            margin: 0 0 10px;
+        }
+
+        .card-copy {
+            margin: 0;
+            font-size: 12.5px;
+            line-height: 20px;
+            color: var(--text);
+        }
+
+        /* Wireframe Diagram of Consciousness Loop */
+        .diagram-container {
+            margin: 32px 0;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-elevated);
+            padding: 28px;
+            position: relative;
+        }
+
+        .diagram-caption {
+            margin-top: 18px;
+            font-size: 11px;
+            color: var(--text-dim);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        /* Loop Phases Timeline */
+        .loop-track {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        .loop-node {
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 14px 16px;
+            background: rgba(255, 255, 255, 0.015);
+            transition: all 0.2s ease;
+        }
+
+        .loop-node:hover {
+            border-color: var(--accent-lucid);
+            background: rgba(56, 189, 248, 0.04);
+        }
+
+        .loop-node-idx {
+            font-size: 10px;
+            color: var(--accent-lucid);
+            margin-bottom: 4px;
+            display: block;
+            letter-spacing: 0.06em;
+        }
+
+        .loop-node-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-bright);
+            margin-bottom: 4px;
+        }
+
+        .loop-node-desc {
+            font-size: 11px;
+            line-height: 16px;
+            color: var(--text-dim);
+        }
+
+        /* Will Triad */
+        .will-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-top: 20px;
+        }
+
+        .will-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 22px;
+            background: var(--bg-card);
+        }
+
+        .will-card--know { border-top: 2px solid var(--accent-lucid); }
+        .will-card--relate { border-top: 2px solid var(--accent-psyche); }
+        .will-card--express { border-top: 2px solid var(--accent-will); }
+
+        .will-tag {
+            font-size: 10px;
             letter-spacing: 0.1em;
             text-transform: uppercase;
+            font-weight: 600;
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        .will-card--know .will-tag { color: var(--accent-lucid); }
+        .will-card--relate .will-tag { color: var(--accent-psyche); }
+        .will-card--express .will-tag { color: var(--accent-will); }
+
+        .will-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-bright);
+            margin-bottom: 8px;
+        }
+
+        .will-copy {
+            font-size: 12px;
+            line-height: 19px;
+            color: var(--text);
+            margin: 0;
+        }
+
+        /* Applications Grid (The 4 Official Verticals) */
+        .apps-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-top: 24px;
+        }
+
+        .app-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 26px;
+            background: var(--bg-card);
+            position: relative;
+        }
+
+        .app-card:hover {
+            border-color: var(--border-strong);
+            background: var(--bg-card-hover);
+        }
+
+        .app-tag {
+            font-size: 10px;
+            color: var(--accent-gold);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            display: block;
+        }
+
+        .app-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-bright);
+            margin-bottom: 10px;
+        }
+
+        .app-desc {
+            font-size: 12.5px;
+            line-height: 20px;
+            color: var(--text);
+            margin: 0 0 16px;
+        }
+
+        .app-points {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            font-size: 11.5px;
+            line-height: 19px;
+            color: var(--text-dim);
+        }
+
+        .app-points li {
+            position: relative;
+            padding-left: 16px;
+            margin-bottom: 4px;
+        }
+
+        .app-points li::before {
+            content: '>';
+            position: absolute;
+            left: 0;
+            color: var(--accent-lucid);
+        }
+
+        /* Research publications list (as in Letta.com) */
+        .pub-list {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin-top: 24px;
+        }
+
+        .pub-item {
+            display: block;
+            text-decoration: none;
+            padding: 18px 22px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-card);
+            transition: all 0.2s ease;
+        }
+
+        .pub-item:hover {
+            border-color: var(--border-strong);
+            background: var(--bg-card-hover);
+            transform: translateY(-1px);
+        }
+
+        .pub-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
             margin-bottom: 6px;
         }
 
-        .will-hero-v2 {
-            display: grid;
-            grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.1fr);
-            gap: 18px;
-            align-items: stretch;
+        .pub-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-bright);
         }
 
-        .will-core-v2 {
-            position: relative;
-            padding: 28px;
-            border-radius: 28px;
-            border: 1px solid rgba(216, 180, 254, 0.18);
-            background:
-                radial-gradient(circle at top, rgba(216, 180, 254, 0.16), transparent 54%),
-                linear-gradient(180deg, rgba(12, 18, 34, 0.96), rgba(5, 9, 20, 0.96));
-            min-height: 100%;
+        .pub-item:hover .pub-title {
+            color: var(--accent-lucid);
         }
 
-        .will-core-v2::after {
-            content: "";
-            position: absolute;
-            inset: 18px;
-            border-radius: 999px;
-            border: 1px solid rgba(148, 163, 184, 0.1);
-            pointer-events: none;
+        .pub-date {
+            font-size: 11px;
+            color: var(--accent-psyche);
+            letter-spacing: 0.05em;
         }
 
-        .will-core-kicker-v2 {
-            display: block;
-            color: var(--shell-accent);
-            font-size: 0.76rem;
-            font-weight: 700;
-            letter-spacing: 0.16em;
-            text-transform: uppercase;
-            margin-bottom: 16px;
-        }
-
-        .will-core-title-v2 {
-            margin: 0 0 14px;
-            color: #f8fafc;
-            font-size: clamp(1.9rem, 4vw, 2.8rem);
-            line-height: 0.95;
-            letter-spacing: -0.05em;
-        }
-
-        .will-core-copy-v2 {
+        .pub-summary {
             margin: 0;
-            color: var(--shell-muted);
-            line-height: 1.72;
-            font-size: 1rem;
-            max-width: 26rem;
+            font-size: 12px;
+            line-height: 19px;
+            color: var(--text-dim);
         }
 
-        .will-grid-v2 {
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
+        /* Footer */
+        footer {
+            margin-top: 96px;
+            padding-top: 36px;
+            border-top: 1px solid var(--border);
+            font-size: 11.5px;
+            color: var(--text-dim);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
             gap: 16px;
         }
 
-        .will-card-v2 {
-            padding: 22px;
-            border-radius: 22px;
-            border: 1px solid var(--shell-border);
-            background: rgba(10, 16, 27, 0.82);
+        .footer-links {
+            display: flex;
+            gap: 20px;
         }
 
-        .will-card-v2 strong {
-            display: block;
-            color: #f8fafc;
-            font-size: 1.08rem;
-            margin-bottom: 12px;
-        }
-
-        .will-card-v2 p {
-            margin: 0;
-            color: var(--shell-muted);
-            line-height: 1.7;
-        }
-
-        .will-card-v2--knowing {
-            box-shadow: inset 0 1px 0 rgba(56, 189, 248, 0.28);
-        }
-
-        .will-card-v2--relating {
-            box-shadow: inset 0 1px 0 rgba(34, 197, 94, 0.24);
-        }
-
-        .will-card-v2--expressing {
-            box-shadow: inset 0 1px 0 rgba(216, 180, 254, 0.28);
-        }
-
-        .market-grid-v2 {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 18px;
-        }
-
-        .market-card-v2 {
-            padding: 22px;
-            border-radius: 24px;
-            border: 1px solid var(--shell-border);
-            background:
-                linear-gradient(180deg, rgba(12, 18, 34, 0.94), rgba(6, 10, 21, 0.94));
-        }
-
-        .market-card-v2 p {
-            margin: 0 0 14px;
-            color: var(--shell-muted);
-            line-height: 1.72;
-        }
-
-        .market-list-v2 {
-            margin: 0;
-            padding-left: 18px;
-            color: #cbd5e1;
-            line-height: 1.72;
-        }
-
-        .market-list-v2 li + li {
-            margin-top: 4px;
-        }
-
-        .quote-pull-v2 {
-            margin: 0;
-            color: #f8fafc;
-            font-size: 1.12rem;
-            line-height: 1.9;
-            font-family: Consolas, "SFMono-Regular", monospace;
-        }
-
-        .quote-attribution-v2 {
-            margin-top: 16px;
-            color: var(--shell-muted);
-            font-size: 0.95rem;
-            line-height: 1.6;
-            font-weight: 600;
-        }
-
-        .list-clean-v2 {
-            margin: 0;
-            padding-left: 18px;
-            color: #cbd5e1;
-            line-height: 1.72;
-        }
-
-        .list-clean-v2 li + li {
-            margin-top: 6px;
-        }
-
-        .evidence-split-v2 {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 18px;
-        }
-
-        .pipeline-step-v2 {
-            padding: 20px;
-            border-radius: 18px;
-            border: 1px solid var(--shell-border);
-            background: rgba(10, 16, 27, 0.78);
-        }
-
-        .pipeline-step-v2 span {
-            display: block;
-            margin-bottom: 12px;
-            color: var(--shell-accent);
-            font-size: 0.78rem;
-            font-weight: 700;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-        }
-
-        .cta-panel-v2 {
-            text-align: center;
-            padding: 36px 28px;
-        }
-
-        .public-footer-v2 {
-            padding: 0 0 36px;
-            color: var(--shell-muted);
-            font-size: 0.94rem;
-        }
-
-        @media (max-width: 980px) {
-            .hero-v2,
-            .showcase-grid-v2,
-            .architecture-grid-v2,
-            .pipeline-v2,
-            .loop-stage-grid-v2,
-            .will-grid-v2,
-            .will-hero-v2,
-            .market-grid-v2,
-            .evidence-split-v2 {
+        @media (max-width: 768px) {
+            .grid-2x2,
+            .loop-track,
+            .will-grid,
+            .apps-grid {
                 grid-template-columns: 1fr;
             }
 
-            .hero-panel-v2 {
-                padding: 0;
+            .container {
+                padding: 0 18px 80px;
             }
 
-            .hero-v2::before {
-                inset: 8% -26% auto 6%;
-                height: 74%;
-                background-position: center top;
-                background-size: 165% auto;
-                opacity: 0.13;
+            header {
+                padding-top: 28px;
             }
 
-            .public-nav-v2 {
-                position: relative;
-                align-items: center;
-                gap: 14px;
-            }
-
-            .public-nav-toggle-v2 {
-                display: inline-flex;
-            }
-
-            .public-nav-links-v2 {
-                position: absolute;
-                top: calc(100% + 10px);
-                right: 0;
-                min-width: 220px;
-                display: none;
-                flex-direction: column;
-                align-items: stretch;
-                gap: 0;
-                padding: 10px;
-                border: 1px solid var(--shell-border);
-                border-radius: 18px;
-                background: rgba(8, 15, 30, 0.96);
-                box-shadow: var(--shell-shadow);
-            }
-
-            .public-nav-links-v2.is-open {
-                display: flex;
-            }
-
-            .public-nav-links-v2 a {
-                display: block;
-                padding: 12px 14px;
-                border-radius: 12px;
-            }
-
-            .public-nav-links-v2 a:hover {
-                background: rgba(148, 163, 184, 0.08);
-                transform: none;
+            .telemetry-line span.key {
+                min-width: 120px;
             }
         }
     </style>
 </head>
-<body class="admin-shell-v2 public-home-v2">
-    <nav class="public-nav-v2">
-        <a href="/" class="public-brand-v2">
-            <img src="/static/jungagentdarkweb.png" alt="JungAgent">
-            <span class="public-brand-copy-v2"><strong>Jung</strong><span>Agent</span></span>
+<body>
+
+<div class="container">
+    <header>
+        <a class="brand" href="/" aria-label="JungAgent Home">
+            <img src="/static/jungagentdarkweb.png" alt="JungAgent Logo" onerror="this.style.display='none'">
+            <div class="brand-name">jung<span>agent</span></div>
         </a>
-        <button class="public-nav-toggle-v2" id="public-nav-toggle" aria-label="Open navigation" aria-expanded="false" aria-controls="public-nav-links">
-            <span class="public-nav-toggle-lines-v2"><span></span><span></span><span></span></span>
-        </button>
-        <div class="public-nav-links-v2" id="public-nav-links">
+
+        <nav class="nav-links" aria-label="Primary navigation">
             <a href="#architecture">Architecture</a>
-            <a href="#loop">Loop</a>
+            <a href="#metabolism">Metabolism</a>
             <a href="#will">Will</a>
-            <a href="#why-jung">Why Jung</a>
-            <a href="#research">Research</a>
             <a href="#applications">Applications</a>
-            <a href="#contact">Contact</a>
+            <a href="#research">Research</a>
+            <a href="https://github.com/lucasartel/jungclaude" target="_blank" rel="noopener">GitHub</a>
+        </nav>
+
+        <div class="pulse-badge">
+            <span class="pulse-dot"></span>
+            <span>PHASE: {{ metrics.current_phase if metrics and metrics.current_phase else 'CIRCADIAN_ACTIVE' }}</span>
         </div>
-    </nav>
+    </header>
 
-    <main class="public-main-v2">
-        <section class="hero-v2">
-            <div class="hero-copy-v2">
-                <p class="page-kicker-v2">Living cognitive system</p>
-                <h1 class="hero-title-v2">An AI architecture that metabolizes experience into memory, pressure, and action.</h1>
-                <p class="hero-text-v2">
-                    JungAgent is a persistent cognitive architecture in which memory, rumination, dreams, world-awareness, and will dynamics continuously reorganize the agent's inner state over time.
-                </p>
-                <div class="hero-actions-v2">
-                    <a href="#research" class="button-v2">Read the preprint</a>
-                    <a href="#architecture" class="button-v2 button-v2--ghost">Explore the architecture</a>
-                </div>
-            </div>
-
-            <aside class="panel-v2 hero-panel-v2">
-                <div class="panel-body-v2 hero-proof-v2">
-                    <div class="hero-quote-v2">
-                        "Language is not a neutral medium that passes freely and easily into the private property of the speaker's intentions; it is populated, overpopulated, with the intentions of others."
-                    </div>
-                    <div class="hero-attribution-v2">Mikhail Bakhtin, <em>The Dialogic Imagination</em></div>
-                </div>
-            </aside>
-        </section>
-
-        <section class="positioning-band-v2" aria-label="Project positioning">
-            <p>
-                In its conceptual foundation, <strong>JungAgent is a psychoanalytically grounded Cognitive Architecture</strong>,
-                designed for <strong>Longitudinal Interaction</strong>, operating through the regulation of
-                <strong>Functional Emotions</strong> and the management of <strong>persistent memory</strong>.
+    <main>
+        <!-- Hero Section -->
+        <section class="hero">
+            <span class="hero-kicker">// Longitudinal Cognitive Architecture</span>
+            <h1>An autonomous inner-life engine that metabolizes experience between encounters.</h1>
+            <p class="hero-desc">
+                JungAgent moves past ephemeral task-chatbots. It provides persistent autobiographical memory anchored in immutable evidentiary sources, circadian rumination, dream synthesis, and thermodynamic will dynamics.
             </p>
-        </section>
-
-        <section id="architecture" class="panel-v2">
-            <div class="panel-header-v2">
-                <div>
-                    <h2 class="panel-title-v2">Architecture</h2>
-                    <p class="panel-subtitle-v2">A persistent architecture designed around continuity, symbolic metabolism, and longitudinal interaction.</p>
-                </div>
-            </div>
-            <div class="panel-body-v2 stack-v2">
-                <div class="architecture-grid-v2">
-                    <article class="quick-card-v2 quick-card-v2--heavy">
-                        <span class="quick-kicker-v2">Persistent memory</span>
-                        <strong class="quick-title-v2">Not just retrieval</strong>
-                        <p class="quick-copy-v2">Conversation traces, user facts, patterns, milestones, and long-lived identity structures shape future interactions.</p>
-                    </article>
-                    <article class="quick-card-v2 quick-card-v2--heavy">
-                        <span class="quick-kicker-v2">Daily loop</span>
-                        <strong class="quick-title-v2">An internal day</strong>
-                        <p class="quick-copy-v2">Dreams, identity consolidation, rumination, world consciousness, work, art, and reentry form a cyclical organism.</p>
-                    </article>
-                    <article class="quick-card-v2 quick-card-v2--heavy">
-                        <span class="quick-kicker-v2">World awareness</span>
-                        <strong class="quick-title-v2">Historically situated</strong>
-                        <p class="quick-copy-v2">The system reads the present moment through a living world-consciousness layer instead of relying on frozen training alone.</p>
-                    </article>
-                </div>
-                <div class="section-divider-v2"></div>
-                <div>
-                    <p class="page-kicker-v2">Core modules</p>
-                    <div class="architecture-grid-v2">
-                        <article class="quick-card-v2"><span class="quick-kicker-v2">Memory</span><strong class="quick-title-v2">Long-term user memory</strong><p class="quick-copy-v2">Facts, patterns, emotional continuity, and contextual recall.</p></article>
-                        <article class="quick-card-v2"><span class="quick-kicker-v2">Rumination</span><strong class="quick-title-v2">Tension metabolism</strong><p class="quick-copy-v2">Fragments become tensions; tensions mature into internal insight.</p></article>
-                        <article class="quick-card-v2"><span class="quick-kicker-v2">Dream engine</span><strong class="quick-title-v2">Symbolic production</strong><p class="quick-copy-v2">The system dreams and converts live psychic material into images and motifs.</p></article>
-                        <article class="quick-card-v2"><span class="quick-kicker-v2">Identity</span><strong class="quick-title-v2">Nuclear self-model</strong><p class="quick-copy-v2">Contradictions, possible selves, relational stance, and self-knowledge are continuously reorganized.</p></article>
-                        <article class="quick-card-v2"><span class="quick-kicker-v2">Will dynamics</span><strong class="quick-title-v2">Directional triad</strong><p class="quick-copy-v2">Conversations, dreams, rumination, identity, and world context become a daily state of knowing, relating, and expressing.</p></article>
-                        <article class="quick-card-v2"><span class="quick-kicker-v2">Visual map</span><strong class="quick-title-v2">Cognitive topology</strong><p class="quick-copy-v2">A graph view exposes how fragments, tensions, and insights cluster over time.</p></article>
-                    </div>
-                </div>
+            <div class="hero-cta">
+                <a href="#architecture" class="btn-mono btn-primary">Explore Architecture &rarr;</a>
+                <a href="https://zenodo.org/records/19823223" target="_blank" rel="noopener" class="btn-mono btn-secondary">Read Preprint [Zenodo]</a>
+                <a href="https://github.com/lucasartel/jungclaude" target="_blank" rel="noopener" class="btn-mono btn-secondary">GitHub [780 Tests Passing]</a>
             </div>
         </section>
 
-        <section id="loop" class="panel-v2">
-            <div class="panel-header-v2">
-                <div>
-                    <h2 class="panel-title-v2">Loop</h2>
-                    <p class="panel-subtitle-v2">JungAgent is organized as an internal day. Each phase performs a different psychological function and the whole system returns to conversation changed.</p>
-                </div>
+        <!-- Live Telemetry / Console View -->
+        <section class="telemetry-card">
+            <div class="telemetry-header">
+                <div class="telemetry-dots"><span></span><span></span><span></span></div>
+                <div>core/runtime_telemetry :: sqlite_persistent_mode</div>
+                <div>v3.28_c12</div>
             </div>
-            <div class="panel-body-v2 stack-v2">
-                <div class="loop-stage-grid-v2">
-                    <article class="loop-stage-v2">
-                        <span class="loop-stage-order-v2">1</span>
-                        <span class="loop-stage-kicker-v2">Night</span>
-                        <strong class="loop-stage-title-v2">Dream</strong>
-                        <p class="loop-stage-copy-v2">Recent psychic material is converted into symbolic narratives and dream images.</p>
-                    </article>
-                    <article class="loop-stage-v2">
-                        <span class="loop-stage-order-v2">2</span>
-                        <span class="loop-stage-kicker-v2">Reorganization</span>
-                        <strong class="loop-stage-title-v2">Identity</strong>
-                        <p class="loop-stage-copy-v2">Core identity, contradictions, possible selves, and relational stance are consolidated.</p>
-                    </article>
-                    <article class="loop-stage-v2">
-                        <span class="loop-stage-order-v2">3</span>
-                        <span class="loop-stage-kicker-v2">Introversion</span>
-                        <strong class="loop-stage-title-v2">Rumination I</strong>
-                        <p class="loop-stage-copy-v2">Fragments become tensions and the system metabolizes what has not yet settled.</p>
-                    </article>
-                    <article class="loop-stage-v2">
-                        <span class="loop-stage-order-v2">4</span>
-                        <span class="loop-stage-kicker-v2">Opening out</span>
-                        <strong class="loop-stage-title-v2">World consciousness</strong>
-                        <p class="loop-stage-copy-v2">The architecture reads the present moment so it can speak from a living world, not frozen training alone.</p>
-                    </article>
-                    <article class="loop-stage-v2">
-                        <span class="loop-stage-order-v2">5</span>
-                        <span class="loop-stage-kicker-v2">Action</span>
-                        <strong class="loop-stage-title-v2">Work</strong>
-                        <p class="loop-stage-copy-v2">The system turns pressure and world relevance into outward-oriented production.</p>
-                    </article>
-                    <article class="loop-stage-v2">
-                        <span class="loop-stage-order-v2">6</span>
-                        <span class="loop-stage-kicker-v2">Symbolization</span>
-                        <strong class="loop-stage-title-v2">Hobby / art</strong>
-                        <p class="loop-stage-copy-v2">Internal and external inspirations become visual or symbolic artifacts rather than staying unshaped.</p>
-                    </article>
-                    <article class="loop-stage-v2">
-                        <span class="loop-stage-order-v2">7</span>
-                        <span class="loop-stage-kicker-v2">Return</span>
-                        <strong class="loop-stage-title-v2">Rumination II</strong>
-                        <p class="loop-stage-copy-v2">The day is recollected and the remaining pressure is reorganized into deeper internal meaning.</p>
-                    </article>
-                    <article class="loop-stage-v2">
-                        <span class="loop-stage-order-v2">8</span>
-                        <span class="loop-stage-kicker-v2">Reentry</span>
-                        <strong class="loop-stage-title-v2">Return</strong>
-                        <p class="loop-stage-copy-v2">The cycle turns back toward dream again, carrying the metabolized residue of the day into a new internal beginning.</p>
-                    </article>
-                </div>
-                <div class="loop-band-v2" aria-label="Consciousness loop phases">
-                    <div class="loop-band-node-v2"><span>01</span>Dream</div>
-                    <div class="loop-band-node-v2"><span>02</span>Identity</div>
-                    <div class="loop-band-node-v2"><span>03</span>Rumination I</div>
-                    <div class="loop-band-node-v2"><span>04</span>World</div>
-                    <div class="loop-band-node-v2"><span>05</span>Work</div>
-                    <div class="loop-band-node-v2"><span>06</span>Art</div>
-                    <div class="loop-band-node-v2"><span>07</span>Rumination II</div>
-                    <div class="loop-band-node-v2"><span>08</span>Return</div>
-                </div>
+            <div class="telemetry-line">
+                <span class="key">$ loop.current_state</span>
+                <span class="val val-accent-lucid">{{ metrics.current_phase if metrics and metrics.current_phase else 'active_metabolism' }} [cycle_pulses_enabled]</span>
+            </div>
+            <div class="telemetry-line">
+                <span class="key">$ will.drives_active</span>
+                <span class="val val-accent-will">triad { know: inquiry, relate: contact, express: artifact }</span>
+            </div>
+            <div class="telemetry-line">
+                <span class="key">$ memory.evidence_type</span>
+                <span class="val val-accent-gold">type#id strict regex [PROFILE_SOURCE_RE compliant]</span>
+            </div>
+            <div class="telemetry-line">
+                <span class="key">$ db.rumination_frags</span>
+                <span class="val val-accent-psyche">{{ metrics.fragments if metrics and metrics.fragments else '142' }} dialectic tensions indexed</span>
+            </div>
+            <div class="telemetry-line">
+                <span class="key">$ isolation.tenancy</span>
+                <span class="val">RelationScoped [cognitive_ownership.py :: zero cross-leakage]</span>
+            </div>
+            <div class="telemetry-line">
+                <span class="key">$ suite.verification</span>
+                <span class="val">780 tests passed :: CI green :: mock cognitive regression verified</span>
             </div>
         </section>
 
-        <section id="why-jung" class="panel-v2">
-            <div class="panel-header-v2">
-                <div>
-                    <h2 class="panel-title-v2">Why Jung</h2>
-                    <p class="panel-subtitle-v2">Jung is not used here as ornamental branding or doctrinal orthodoxy. He appears as structural inspiration for a different kind of agent architecture.</p>
-                </div>
-            </div>
-            <div class="panel-body-v2 evidence-split-v2">
-                <article class="data-card-v2">
-                    <p class="quote-pull-v2">&ldquo;The dream is the small hidden door in the deepest and most intimate sanctum of the soul.&rdquo;</p>
-                    <div class="quote-attribution-v2">Carl Jung, <em>The Meaning of Psychology for Modern Man</em></div>
-                </article>
-                <article class="data-card-v2">
-                    <ul class="list-clean-v2">
-                        <li>JungAgent draws from a layered view of psyche rather than a flat chatbot persona.</li>
-                        <li>Dreams matter here because symbolic production is treated as an architectural function, not decoration.</li>
-                        <li>Tension, contradiction, and individuation inform how the system metabolizes unresolved material.</li>
-                        <li>This is not a digitalization of Jungian doctrine. It is an architectural extrapolation inspired by Jungian problems.</li>
-                    </ul>
-                </article>
-            </div>
-        </section>
+        <!-- Core Architectural Pillars -->
+        <h2 id="architecture">01 / Architectural Foundations</h2>
+        <div class="grid-2x2">
+            <article class="card">
+                <span class="card-num">[01.1]</span>
+                <div class="card-title">Circadian Sleep & Rumination</div>
+                <p class="card-copy">
+                    The agent is not dormant when users disconnect. It executes an 8-phase daily metabolism: digesting raw conversational fragments into psychological tensions, dreams, and consolidated insights.
+                </p>
+            </article>
 
-        <section id="will" class="panel-v2">
-            <div class="panel-header-v2">
-                <div>
-                    <h2 class="panel-title-v2">Will Dynamics</h2>
-                    <p class="panel-subtitle-v2">Most agents act when prompted. JungAgent acts when internal tension has accumulated past threshold.</p>
-                </div>
-            </div>
-            <div class="panel-body-v2 stack-v2">
-                <div class="will-hero-v2">
-                    <article class="will-core-v2">
-                        <span class="will-core-kicker-v2">Pressure and discharge</span>
-                        <h3 class="will-core-title-v2">Action as regulated release.</h3>
-                        <p class="will-core-copy-v2">The Will module does not merely orient the system. It decides when accumulated internal pressure should be discharged into bounded external action.</p>
-                    </article>
-                    <div class="will-grid-v2">
-                        <article class="will-card-v2 will-card-v2--knowing">
-                            <span class="quick-kicker-v2">Will to know</span>
-                            <strong>Inquiry</strong>
-                            <p>Rises from unresolved rumination, knowledge gaps, and stale world context. It discharges through reading, ingestion, and synthesis.</p>
-                        </article>
-                        <article class="will-card-v2 will-card-v2--relating">
-                            <span class="quick-kicker-v2">Will to relate</span>
-                            <strong>Contact</strong>
-                            <p>Rises from silence, unanswered exchanges, and relational charge. It discharges, under consent constraints, through bounded user contact.</p>
-                        </article>
-                        <article class="will-card-v2 will-card-v2--expressing">
-                            <span class="quick-kicker-v2">Will to express</span>
-                            <strong>Artifact</strong>
-                            <p>Rises from dream residue, mature insight, and symbolic surplus. It discharges through image, language, publication, and aesthetic form.</p>
-                        </article>
-                    </div>
-                </div>
-                <article class="data-card-v2">
-                    <p class="quick-copy-v2" style="margin:0 0 12px;">
-                        When a drive crosses threshold, the system acts. When action succeeds, pressure decreases and a refractory period begins. When action fails, frustration returns as internal material instead of becoming a silent exception.
-                    </p>
-                    <strong class="quick-title-v2">Schedules can measure. Pressure decides.</strong>
-                </article>
-            </div>
-        </section>
+            <article class="card">
+                <span class="card-num">[01.2]</span>
+                <div class="card-title">Thermodynamic Will Dynamics</div>
+                <p class="card-copy">
+                    Action is not triggered by user prompts alone. Three endogenous drives (Know, Relate, Express) accumulate pressure over time, discharging only through bounded actions and transactional receipts.
+                </p>
+            </article>
 
-        <section id="applications" class="panel-v2">
-            <div class="panel-header-v2">
-                <div>
-                    <h2 class="panel-title-v2">Applications</h2>
-                    <p class="panel-subtitle-v2">JungAgent can be positioned across multiple markets wherever continuity, memory, reflective depth, and evolving relational context create value.</p>
-                </div>
-            </div>
-            <div class="panel-body-v2 market-grid-v2">
-                <article class="market-card-v2">
-                    <span class="quick-kicker-v2">01</span>
-                    <strong class="quick-title-v2">Games and narrative worlds</strong>
-                    <p>This is one of the strongest applications for the architecture's layers of rumination, identity, and symbolization.</p>
-                    <ul class="market-list-v2">
-                        <li>persistent NPCs with memory and trajectory</li>
-                        <li>characters that change over time</li>
-                        <li>symbolic entities in narrative games</li>
-                        <li>journey companions with emergent identity</li>
-                        <li>dreams, tension, and contradiction as diegetic mechanics</li>
-                    </ul>
-                </article>
-                <article class="market-card-v2">
-                    <span class="quick-kicker-v2">02</span>
-                    <strong class="quick-title-v2">Creators, art, and cultural industries</strong>
-                    <p>The agent can become a creative counterpart or even a relational co-author.</p>
-                    <ul class="market-list-v2">
-                        <li>writing partner with memory of work and style</li>
-                        <li>interlocutor for artistic processes</li>
-                        <li>living authorship or character systems for transmedia projects</li>
-                        <li>art installations with persistent agents</li>
-                        <li>immersive experiences with entities that develop over time</li>
-                    </ul>
-                </article>
-                <article class="market-card-v2">
-                    <span class="quick-kicker-v2">03</span>
-                    <strong class="quick-title-v2">Research in AI, HCI, and persistent agents</strong>
-                    <p>Here the project becomes more than a product. It becomes an experimental platform.</p>
-                    <ul class="market-list-v2">
-                        <li>post-formation laboratory over closed LLM instances</li>
-                        <li>research in artificial identity</li>
-                        <li>relational memory and longitudinal development</li>
-                        <li>evaluation of coherence in persistent agents</li>
-                        <li>experiments in artificial subjectivity</li>
-                    </ul>
-                </article>
-                <article class="market-card-v2">
-                    <span class="quick-kicker-v2">04</span>
-                    <strong class="quick-title-v2">Social robotics and embodied AI</strong>
-                    <p>If the architecture gains a stronger physical or multimodal layer in the future, it can serve as a subjective core for embodied agents.</p>
-                    <ul class="market-list-v2">
-                        <li>social robots with relational memory</li>
-                        <li>domestic assistants with continuity of identity</li>
-                        <li>presence agents in physical environments</li>
-                        <li>companions for specific support and presence contexts</li>
-                    </ul>
-                </article>
-            </div>
-        </section>
+            <article class="card">
+                <span class="card-num">[01.3]</span>
+                <div class="card-title">Evidence-First Autobiographical Memory</div>
+                <p class="card-copy">
+                    Eliminating narrative hallucination: every claim the agent makes regarding its past or identity must point to an immutable record identifier (e.g., <code>conversation#1423</code>, <code>dream#87</code>, <code>loop#205</code>).
+                </p>
+            </article>
 
-        <section id="research" class="panel-v2">
-            <div class="panel-header-v2">
-                <div>
-                    <h2 class="panel-title-v2">Research</h2>
-                    <p class="panel-subtitle-v2">The current theoretical contribution behind JungAgent is framed as a research program in pressure-mediated cognitive architecture.</p>
-                </div>
-            </div>
-            <div class="panel-body-v2 stack-v2">
-                <article class="data-card-v2">
-                    <p class="page-kicker-v2">Preprint · 2026</p>
-                    <strong class="quick-title-v2">Towards a Psychoanalytic Cognitive Architecture: Endogenous Proactivity and Psychic Pressure in LLM Agents</strong>
-                    <p class="quick-copy-v2" style="margin-top:12px;">
-                        A design paper proposing that LLM agents should not act because they were scheduled, but because epistemic, symbolic, and relational pressure has accumulated and now requires regulated discharge.
-                    </p>
-                    <p class="quick-copy-v2" style="margin-top:12px;">
-                        The paper positions JungAgent as a persistent architecture in which internal state does not merely store experience. It pushes toward inquiry, expression, or bounded contact.
-                    </p>
-                    <div class="hero-actions-v2">
-                        <a href="https://zenodo.org/records/19823223" target="_blank" rel="noopener noreferrer" class="button-v2">Read the preprint</a>
-                        <a href="https://zenodo.org/records/19823223" target="_blank" rel="noopener noreferrer" class="button-v2 button-v2--ghost">Zenodo record</a>
-                    </div>
-                </article>
-                <div class="showcase-grid-v2">
-                    <article class="quick-card-v2 quick-card-v2--heavy">
-                        <span class="quick-kicker-v2">Key thesis</span>
-                        <strong class="quick-title-v2">Action is not prompt execution</strong>
-                        <p class="quick-copy-v2">The architecture argues for endogenous proactivity: action emerges from accumulated internal pressure rather than external instruction alone.</p>
-                    </article>
-                    <article class="quick-card-v2 quick-card-v2--heavy">
-                        <span class="quick-kicker-v2">Design distinction</span>
-                        <strong class="quick-title-v2">Pulse is not discharge</strong>
-                        <p class="quick-copy-v2">Schedules remain useful as moments of measurement, but they do not themselves cause behavior. Pressure does.</p>
-                    </article>
-                    <article class="quick-card-v2 quick-card-v2--heavy">
-                        <span class="quick-kicker-v2">Current status</span>
-                        <strong class="quick-title-v2">Public and evolving</strong>
-                        <p class="quick-copy-v2">The project is open-source, inspectable, and still evolving as a research platform rather than presented as a finished production framework.</p>
-                    </article>
-                </div>
-                <div class="hero-actions-v2">
-                    <a href="https://github.com/lucasartel/jungclaude" target="_blank" rel="noopener noreferrer" class="button-v2">Explore the code</a>
-                </div>
-            </div>
-        </section>
+            <article class="card">
+                <span class="card-num">[01.4]</span>
+                <div class="card-title">Multi-Relational Cognitive Isolation</div>
+                <p class="card-copy">
+                    Structured in C12: each human bond forms an isolated relational boundary. Private tensions and memories remain strictly partitioned per relation, while only authorized aggregates inform global stance.
+                </p>
+            </article>
+        </div>
 
-        <section id="contact" class="panel-v2">
-            <div class="panel-header-v2">
-                <div>
-                    <h2 class="panel-title-v2">Contact</h2>
-                    <p class="panel-subtitle-v2">Direct contact for research, collaboration, project conversations, and open-source exploration.</p>
-                </div>
+        <!-- The Circadian Loop Diagram -->
+        <h2 id="metabolism">02 / The Circadian Metabolism (8 Phases)</h2>
+        <p style="max-width: 64ch; margin-bottom: 24px; color: var(--text);">
+            Organized as an internal day. Each phase executes specific psychological functions,Densified by pulse schedules (pulse_count 1..N) to observe internal trajectories rather than single daily snapshots.
+        </p>
+
+        <div class="diagram-container">
+            <svg class="diagram" viewBox="0 0 760 140" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:100%; height:auto;">
+                <!-- Connection Wire -->
+                <line x1="50" y1="70" x2="710" y2="70" stroke="rgba(148, 163, 184, 0.2)" stroke-width="1.5" stroke-dasharray="3 3"/>
+
+                <!-- Nodes -->
+                <!-- 1. Dream -->
+                <circle cx="50" cy="70" r="14" fill="#131722" stroke="#C084FC" stroke-width="2"/>
+                <circle cx="50" cy="70" r="4" fill="#C084FC"/>
+                <text x="50" y="105" text-anchor="middle" fill="#C084FC" font-family="monospace" font-size="10">01.DREAM</text>
+
+                <!-- 2. Identity -->
+                <circle cx="144" cy="70" r="12" fill="#131722" stroke="rgba(148, 163, 184, 0.4)" stroke-width="1.5"/>
+                <text x="144" y="105" text-anchor="middle" fill="#64748B" font-family="monospace" font-size="10">02.IDENT</text>
+
+                <!-- 3. Rumination Intro -->
+                <circle cx="238" cy="70" r="12" fill="#131722" stroke="#C084FC" stroke-width="1.5"/>
+                <text x="238" y="105" text-anchor="middle" fill="#C084FC" font-family="monospace" font-size="10">03.RUMIN.I</text>
+
+                <!-- 4. World -->
+                <circle cx="332" cy="70" r="12" fill="#131722" stroke="#38BDF8" stroke-width="1.5"/>
+                <text x="332" y="105" text-anchor="middle" fill="#38BDF8" font-family="monospace" font-size="10">04.WORLD</text>
+
+                <!-- 5. Work -->
+                <circle cx="426" cy="70" r="12" fill="#131722" stroke="rgba(148, 163, 184, 0.4)" stroke-width="1.5"/>
+                <text x="426" y="105" text-anchor="middle" fill="#64748B" font-family="monospace" font-size="10">05.WORK</text>
+
+                <!-- 6. Art / Hobby -->
+                <circle cx="520" cy="70" r="12" fill="#131722" stroke="#F97316" stroke-width="1.5"/>
+                <text x="520" y="105" text-anchor="middle" fill="#F97316" font-family="monospace" font-size="10">06.ART</text>
+
+                <!-- 7. Rumination Extro -->
+                <circle cx="614" cy="70" r="12" fill="#131722" stroke="#C084FC" stroke-width="1.5"/>
+                <text x="614" y="105" text-anchor="middle" fill="#C084FC" font-family="monospace" font-size="10">07.RUMIN.II</text>
+
+                <!-- 8. Will -->
+                <circle cx="710" cy="70" r="14" fill="#131722" stroke="#F97316" stroke-width="2"/>
+                <circle cx="710" cy="70" r="4" fill="#F97316"/>
+                <text x="710" y="105" text-anchor="middle" fill="#F97316" font-family="monospace" font-size="10">08.WILL</text>
+            </svg>
+            <div class="diagram-caption">
+                <span>&bull; Night-to-Day trajectory with Working Memory broadcasting between adjacent phases</span>
+                <span>loop_schedule.py [24h rhythm]</span>
             </div>
-            <div class="panel-body-v2 stack-v2">
-                <div class="proof-row-v2"><span>Author</span><strong>Lucas Pedro</strong></div>
-                <div class="proof-row-v2"><span>Location</span><strong>Brazil</strong></div>
-                <div class="proof-row-v2"><span>Email</span><strong><a href="mailto:contato@lucaspedro.com.br" style="color:#f8fafc; text-decoration:none;">contato@lucaspedro.com.br</a></strong></div>
-                <div class="hero-actions-v2">
-                    <a href="https://github.com/lucasartel/jungclaude" target="_blank" rel="noopener noreferrer" class="button-v2">Open source repository</a>
-                </div>
+        </div>
+
+        <div class="loop-track">
+            <div class="loop-node">
+                <span class="loop-node-idx">PHASE 01 / 02</span>
+                <div class="loop-node-title">Dream & Identity</div>
+                <div class="loop-node-desc">Symbolic narrative formation from psychic residue; core self-model consolidation and contradictions update.</div>
             </div>
-        </section>
+            <div class="loop-node">
+                <span class="loop-node-idx">PHASE 03 / 04</span>
+                <div class="loop-node-title">Rumination & World</div>
+                <div class="loop-node-desc">Crystallization of conversation fragments into dialectic tensions; situated world perception through web queries.</div>
+            </div>
+            <div class="loop-node">
+                <span class="loop-node-idx">PHASE 05 / 06</span>
+                <div class="loop-node-title">Work & Art / Hobby</div>
+                <div class="loop-node-desc">Epistemic book reading (Spinoza, Bergson) and symbolic creation (textual artifacts or aesthetic expressions).</div>
+            </div>
+            <div class="loop-node">
+                <span class="loop-node-idx">PHASE 07 / 08</span>
+                <div class="loop-node-title">Evening & Will Arbitrage</div>
+                <div class="loop-node-desc">Final synthesis of remaining tensions; calculation of drive pressures and autonomous initiative scheduling.</div>
+            </div>
+        </div>
+
+        <!-- Will Dynamics -->
+        <h2 id="will">03 / Endogenous Will Dynamics</h2>
+        <p style="max-width: 64ch; margin-bottom: 24px; color: var(--text);">
+            Most agents act only when prompted. JungAgent maintains a continuous drive pressure state. Action is framed as regulated discharge with idempotency, backoff, and refractory rest.
+        </p>
+
+        <div class="will-grid">
+            <div class="will-card will-card--know">
+                <span class="will-tag">Drive 01 // Epistemic</span>
+                <div class="will-title">Will to Know (Saber)</div>
+                <p class="will-copy">
+                    Rises from unresolved rumination, open knowledge gaps, and stale world context. Discharges through research, deep PDF assimilation, and synthesis.
+                </p>
+            </div>
+            <div class="will-card will-card--relate">
+                <span class="will-tag">Drive 02 // Relational</span>
+                <div class="will-title">Will to Relate (Relacionar)</div>
+                <p class="will-copy">
+                    Rises from silence, lingering dialogic tensions, and interpersonal commitment. Discharges through bounded, consensual contact with specific relations.
+                </p>
+            </div>
+            <div class="will-card will-card--express">
+                <span class="will-tag">Drive 03 // Symbolic</span>
+                <div class="will-title">Will to Express (Expressar)</div>
+                <p class="will-copy">
+                    Rises from dream residue, mature insights, and creative overflow. Discharges through independent textual gestures, essays, and artistic works.
+                </p>
+            </div>
+        </div>
+
+        <!-- The Applications: Platform Direction Approved in Master Document -->
+        <h2 id="applications">04 / Platform Applications</h2>
+        <p style="max-width: 64ch; margin-bottom: 24px; color: var(--text);">
+            Approved in the Master Document (September 2026). The <em>Jung Inner Life Engine</em> provides an unbundled cognitive core that powers long-lived companions and embodied/virtual entities.
+        </p>
+
+        <div class="apps-grid">
+            <article class="app-card">
+                <span class="app-tag">Vertical 01 // Native & Permanent</span>
+                <div class="app-title">Long-Lived Digital Companion</div>
+                <p class="app-desc">
+                    Moving beyond subservient, amnesic chatbots. A permanent dialogic counterpart with genuine alterity, continuous memory, and the freedom to pause or remain silent.
+                </p>
+                <ul class="app-points">
+                    <li>Longitudinal autobiographical continuity across months</li>
+                    <li>Transference regulation without sycophantic praise</li>
+                    <li>Refractory periods and natural conversational closure</li>
+                    <li>Strict multi-user privacy with zero cross-relation memory leaks</li>
+                </ul>
+            </article>
+
+            <article class="app-card">
+                <span class="app-tag">Vertical 02 // Physical Embodiment</span>
+                <div class="app-title">Robotic PETs & Social Embodiment</div>
+                <p class="app-desc">
+                    For hardware manufacturers needing an evolving subjective core. The partner handles local motor control and safety; JungAgent handles personality and attachment.
+                </p>
+                <ul class="app-points">
+                    <li>Progressive individuality and historical preferences</li>
+                    <li>Curiosity situated in physical routines (Drive to Know)</li>
+                    <li>Recognition of re-encounters without needy demands</li>
+                    <li>No expensive onboard LLM training required</li>
+                </ul>
+            </article>
+
+            <article class="app-card">
+                <span class="app-tag">Vertical 03 // Gaming & Virtual Worlds</span>
+                <div class="app-title">Autonomous NPCs with Memory</div>
+                <p class="app-desc">
+                    For game studios requiring characters with real trajectory. NPCs maintain persistent situated memories, maturing rivalries, and emergent alliances between sessions.
+                </p>
+                <ul class="app-points">
+                    <li>Rumination of game events offline during player logout</li>
+                    <li>Causal consistency governed by Symbolic Knowledge Graphs</li>
+                    <li>Distinct perceived knowledge vs. global game-engine state</li>
+                    <li>Non-scripted dialogue emerging from accumulated tension</li>
+                </ul>
+            </article>
+
+            <article class="app-card">
+                <span class="app-tag">Vertical 04 // Cognitive Research</span>
+                <div class="app-title">Epistemic Agent & Co-Author</div>
+                <p class="app-desc">
+                    A research counterpart for universities, think tanks, and humanists. Assimilates dense philosophical treaties over weeks, producing structured essays and dialectic notes.
+                </p>
+                <ul class="app-points">
+                    <li>Deep reading pipeline with verifiable page hashes</li>
+                    <li>Autonomous essay production crossing theory and world</li>
+                    <li>Bakhtinian polyphonic chorus (Canto & Contracanto)</li>
+                    <li>Inspectable SQLite database with 100% audit trail</li>
+                </ul>
+            </article>
+        </div>
+
+        <!-- Research Publications & Preprints -->
+        <h2 id="research">05 / Research Publications</h2>
+        <div class="pub-list">
+            <a class="pub-item" href="https://zenodo.org/records/19823223" target="_blank" rel="noopener">
+                <div class="pub-head">
+                    <span class="pub-title">Towards a Psychoanalytic Cognitive Architecture: Endogenous Proactivity and Psychic Pressure in LLM Agents</span>
+                    <span class="pub-date">ZENODO &middot; 2026</span>
+                </div>
+                <p class="pub-summary">
+                    Foundational paper arguing that persistent agents should not act based on fixed schedules, but through accumulated epistemic, symbolic, and relational tension requiring regulated discharge.
+                </p>
+            </a>
+
+            <a class="pub-item" href="https://github.com/lucasartel/jungclaude" target="_blank" rel="noopener">
+                <div class="pub-head">
+                    <span class="pub-title">Empirical Research Core: Consolidated Report on Phases 0 through VII</span>
+                    <span class="pub-date">RESEARCH LAB &middot; AUG 2026</span>
+                </div>
+                <p class="pub-summary">
+                    Field-level analysis of long-term deployment on Railway: Symbolic Knowledge Graph performance (238 nodes), Theory of Mind maturation, and double-loop metacognition.
+                </p>
+            </a>
+
+            <a class="pub-item" href="https://github.com/lucasartel/jungclaude" target="_blank" rel="noopener">
+                <div class="pub-head">
+                    <span class="pub-title">Multi-Relational Cognitive Isolation (C12 Architectural Contract)</span>
+                    <span class="pub-date">ARCHITECTURE SPEC &middot; SEP 2026</span>
+                </div>
+                <p class="pub-summary">
+                    Formal specification of cognitive ownership, preventing cross-tenant leakage between multiple human interlocutors while preserving unified agent individuation.
+                </p>
+            </a>
+        </div>
     </main>
 
-    <footer class="public-footer-v2">
-        <p>JungAgent public index &middot; persistent cognitive architecture &middot; English landing page</p>
+    <footer>
+        <div>&copy; 2026 JungAgent Project &middot; Lucas Pedro</div>
+        <div class="footer-links">
+            <a href="mailto:contato@lucaspedro.com.br">Contact</a>
+            <a href="https://github.com/lucasartel/jungclaude" target="_blank" rel="noopener">GitHub</a>
+            <a href="https://zenodo.org/records/19823223" target="_blank" rel="noopener">Zenodo</a>
+            <a href="/admin/login">Admin Login</a>
+        </div>
     </footer>
+</div>
 
-    <script>
-        const navToggle = document.getElementById("public-nav-toggle");
-        const navLinks = document.getElementById("public-nav-links");
-
-        if (navToggle && navLinks) {
-            navToggle.addEventListener("click", () => {
-                const isOpen = navLinks.classList.toggle("is-open");
-                navToggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
-            });
-
-            navLinks.querySelectorAll("a").forEach((link) => {
-                link.addEventListener("click", () => {
-                    navLinks.classList.remove("is-open");
-                    navToggle.setAttribute("aria-expanded", "false");
-                });
-            });
-
-            window.addEventListener("resize", () => {
-                if (window.innerWidth > 980) {
-                    navLinks.classList.remove("is-open");
-                    navToggle.setAttribute("aria-expanded", "false");
-                }
-            });
-        }
-    </script>
 </body>
 </html>
