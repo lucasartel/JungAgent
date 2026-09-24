@@ -9,7 +9,7 @@ Responsável por:
 
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict
+from typing import Any, Dict, List, Optional
 import asyncio
 import json
 
@@ -28,24 +28,38 @@ class MemoryConsolidator:
         """
         self.db = db_manager
 
-    @staticmethod
-    def _legacy_admin_scope_allowed(user_id: str) -> bool:
-        try:
-            from instance_config import ADMIN_USER_ID
-            return str(user_id) == str(ADMIN_USER_ID)
-        except ImportError:
-            return False
-
     def _resolve_relation_scope(self, user_id: str, relation_id=None):
+        """Resolve o escopo e valida a elegibilidade ANTES de ler conversas.
+
+        A Relation e a fonte de elegibilidade do gate de arquivos (C12g): a
+        consolidacao so pode ler, resumir em LLM ou reescrever padroes de uma
+        Relation `active` com consentimento `granted`. O resolvedor do banco
+        tambem devolve Relations revogadas — sem esta checagem, o job leria
+        conversas e gastaria LLM antes de o gate de arquivos recusar. Estados
+        `paused`/`revoked` e consentimento `pending`/`revoked` recusam o ciclo
+        inteiro, com sentinela propria, antes de qualquer consulta.
+        """
         resolver = getattr(self.db, "resolve_relation_id", None)
-        if callable(resolver):
-            relation_id = resolver(
-                agent_instance=getattr(self.db, "agent_instance", None),
-                participant_user_id=str(user_id),
-                relation_id=relation_id,
+        if not callable(resolver):
+            # Banco legado sem API de Relations: nao ha elegibilidade a validar.
+            return relation_id
+        relation_id = resolver(
+            agent_instance=getattr(self.db, "agent_instance", None),
+            participant_user_id=str(user_id),
+            relation_id=relation_id,
+        )
+        if not relation_id:
+            raise ValueError("relation_scope_required_for_consolidation")
+        getter = getattr(self.db, "get_agent_relation", None)
+        relation = getter(str(relation_id)) if callable(getter) else None
+        if not relation:
+            raise ValueError("relation_scope_required_for_consolidation")
+        status = str(relation.get("status") or "")
+        consent = str(relation.get("consent_status") or "")
+        if status != "active" or consent != "granted":
+            raise ValueError(
+                f"relation_not_eligible_for_consolidation:status={status},consent={consent}"
             )
-            if not relation_id and not self._legacy_admin_scope_allowed(user_id):
-                raise ValueError("relation_scope_required_for_consolidation")
         return relation_id
 
     def consolidate_user_memories(
@@ -60,11 +74,14 @@ class MemoryConsolidator:
         """
         logger.info(f"📦 Iniciando consolidação de memórias para user_id={user_id} (lookback={lookback_days} dias)")
 
+        # 0. Elegibilidade primeiro: sem Relation active+granted nada e lido,
+        #    resumido ou reescrito (a checagem acontece antes de abrir o cursor).
+        relation_id = self._resolve_relation_scope(user_id, relation_id)
+
         # 1. Buscar todas as memórias do período
         start_date = datetime.now() - timedelta(days=lookback_days)
 
         cursor = self.db.conn.cursor()
-        relation_id = self._resolve_relation_scope(user_id, relation_id)
         columns = {row[1] for row in cursor.execute("PRAGMA table_info(conversations)")}
         scope_sql = ""
         scope_params = []
@@ -94,24 +111,46 @@ class MemoryConsolidator:
 
         logger.info(f"   Encontradas {len(memories)} memórias para consolidar")
 
-        # 2. Agrupar por tópico usando keywords
-        clusters = self._cluster_by_topic(memories)
+        # 2. Idempotencia e controle de custo: se nao chegaram conversas novas
+        #    desde a ultima consolidacao bem-sucedida, os resumos do LLM nao
+        #    sao refeitos (reinicios e deploys re-executam o job sem repetir
+        #    a conta nem reescrever o mesmo resumo).
+        window_max_ts = max((m.get("timestamp") or "") for m in memories)
+        window_count = len(memories)
+        progress = self._load_progress(user_id, relation_id)
+        unchanged = (
+            progress is not None
+            and progress.get("last_count") == window_count
+            and progress.get("last_max_ts") == window_max_ts
+        )
 
-        logger.info(f"   Identificados {len(clusters)} clusters temáticos")
+        if unchanged:
+            logger.info(
+                "   Sem conversas novas desde %s (count=%d): pulando resumos LLM (idempotente)",
+                progress.get("last_run_at"),
+                window_count,
+            )
+        else:
+            # 3. Agrupar por tópico usando keywords
+            clusters = self._cluster_by_topic(memories)
 
-        # 3. Para cada cluster grande (≥5 memórias), gerar resumo
-        for topic, cluster_memories in clusters.items():
-            if len(cluster_memories) >= 5:
-                logger.info(f"   Consolidando cluster '{topic}' ({len(cluster_memories)} memórias)")
-                self._create_consolidated_memory(
-                    user_id=user_id,
-                    topic=topic,
-                    memories=cluster_memories,
-                    lookback_days=lookback_days,
-                    relation_id=relation_id,
-                )
+            logger.info(f"   Identificados {len(clusters)} clusters temáticos")
 
-        # 4. Reconstruir profile.md com dados atualizados
+            # 4. Para cada cluster grande (≥5 memórias), gerar resumo
+            for topic, cluster_memories in clusters.items():
+                if len(cluster_memories) >= 5:
+                    logger.info(f"   Consolidando cluster '{topic}' ({len(cluster_memories)} memórias)")
+                    self._create_consolidated_memory(
+                        user_id=user_id,
+                        topic=topic,
+                        memories=cluster_memories,
+                        lookback_days=lookback_days,
+                        relation_id=relation_id,
+                    )
+
+            self._save_progress(user_id, relation_id, window_max_ts, window_count)
+
+        # 5. Reconstruir profile.md com dados atualizados
         try:
             from engines.participant_files import relation_file_scope
             from user_profile_writer import rebuild_profile_md
@@ -136,6 +175,64 @@ class MemoryConsolidator:
             )
         except Exception as e:
             logger.warning(f"⚠️ Erro ao reconstruir profile.md para {user_id}: {e}")
+
+    @staticmethod
+    def _progress_table(conn):
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS consolidation_progress (
+                user_id TEXT NOT NULL,
+                relation_id TEXT NOT NULL,
+                last_max_ts TEXT,
+                last_count INTEGER NOT NULL DEFAULT 0,
+                last_run_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, relation_id)
+            )
+            """
+        )
+        conn.commit()
+
+    def _load_progress(self, user_id: str, relation_id) -> Optional[Dict[str, Any]]:
+        try:
+            conn = self.db.conn
+            self._progress_table(conn)
+            row = conn.execute(
+                "SELECT last_max_ts, last_count, last_run_at"
+                " FROM consolidation_progress WHERE user_id = ? AND relation_id = ?",
+                (str(user_id), str(relation_id)),
+            ).fetchone()
+        except Exception as e:
+            logger.warning(f"⚠️ Erro ao ler marca de progresso de {user_id}: {e}")
+            return None
+        if not row:
+            return None
+        return {"last_max_ts": row[0], "last_count": row[1], "last_run_at": row[2]}
+
+    def _save_progress(self, user_id: str, relation_id, max_ts, count: int) -> None:
+        try:
+            conn = self.db.conn
+            self._progress_table(conn)
+            conn.execute(
+                """
+                INSERT INTO consolidation_progress
+                    (user_id, relation_id, last_max_ts, last_count, last_run_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, relation_id) DO UPDATE SET
+                    last_max_ts = excluded.last_max_ts,
+                    last_count = excluded.last_count,
+                    last_run_at = excluded.last_run_at
+                """,
+                (
+                    str(user_id),
+                    str(relation_id),
+                    str(max_ts or ""),
+                    int(count),
+                    datetime.now().isoformat(),
+                ),
+            )
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"⚠️ Erro ao salvar marca de progresso de {user_id}: {e}")
 
     def _cluster_by_topic(self, memories: List[Dict]) -> Dict[str, List[Dict]]:
         """
@@ -429,13 +526,14 @@ def run_consolidation_job(db_manager):
         try:
             consolidator.consolidate_user_memories(user_id, lookback_days=90)
         except ValueError as e:
-            # Sem Relation ativa nao ha escopo para consolidar (C12g): pulo
-            # esperado, nao erro — usuarios sem vinculo nao devem poluir o log.
-            if "relation_scope_required_for_consolidation" in str(e):
-                logger.info(
-                    "   Pulando %s: nenhuma Relation ativa para escopo de consolidacao",
-                    user_id,
-                )
+            # Sem Relation elegivel (ausente, paused/revoked, consentimento
+            # pendente/revogado) o pulo e esperado (C12g), nao um erro que
+            # interrompe o job ou polui o log.
+            if (
+                "relation_scope_required_for_consolidation" in str(e)
+                or "relation_not_eligible_for_consolidation" in str(e)
+            ):
+                logger.info("   Pulando %s: %s", user_id, e)
             else:
                 logger.error(f"Erro ao consolidar memórias de {user_id}: {e}")
         except Exception as e:

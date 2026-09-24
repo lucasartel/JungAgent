@@ -1,4 +1,6 @@
-"""Consolidacao de memorias: pulo de usuarios sem Relation e scheduler diario."""
+"""Consolidacao de memorias: elegibilidade da Relation ANTES de ler conversas
+(P1), idempotencia/custo com marca de progresso (P2), pulo de usuarios sem
+Relation elegivel e o scheduler diario do /meu_perfil."""
 
 import asyncio
 import sqlite3
@@ -8,9 +10,193 @@ import pytest
 import jung_memory_consolidation as jmc
 
 
-class _FakeDB:
-    def __init__(self, conn):
+class _PoisonConn:
+    """Falha se a consolidacao tocar o banco antes de validar a elegibilidade."""
+
+    def cursor(self):
+        raise AssertionError("consolidacao leu o banco antes de validar a elegibilidade")
+
+    def execute(self, *args, **kwargs):
+        raise AssertionError("consolidacao leu o banco antes de validar a elegibilidade")
+
+
+class _StubRelationDB:
+    """Banco falso com resolucao/gatilho de Relation e conn observavel."""
+
+    def __init__(self, relation=None, conn=None, agent_instance="jung_test"):
+        self.relation = relation
         self.conn = conn
+        self.agent_instance = agent_instance
+
+    def resolve_relation_id(self, *, agent_instance=None, participant_user_id=None, relation_id=None):
+        if relation_id:
+            return str(relation_id)
+        return (self.relation or {}).get("relation_id")
+
+    def get_agent_relation(self, relation_id):
+        relation = self.relation or {}
+        return relation if relation.get("relation_id") == str(relation_id) else None
+
+
+def _relation(status, consent):
+    return {
+        "relation_id": "rel_1",
+        "status": status,
+        "consent_status": consent,
+    }
+
+
+def _memory_db(relation, timestamps):
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE conversations (
+            id TEXT, user_id TEXT, user_input TEXT, ai_response TEXT,
+            timestamp TEXT, keywords TEXT,
+            tension_level REAL, affective_charge REAL, existential_depth REAL,
+            relation_id TEXT
+        )
+        """
+    )
+    for index, ts in enumerate(timestamps):
+        conn.execute(
+            "INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (f"c{index}", "user_a", "in", "out", ts, "k", 0.0, 0.0, 0.0, "rel_1"),
+        )
+    conn.commit()
+    return _StubRelationDB(relation, conn=conn)
+
+
+# ---------------------------------------------------------------------------
+# P1 — elegibilidade antes de ler/processar conversas
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "relation,expected",
+    [
+        (None, "relation_scope_required_for_consolidation"),
+        (_relation("active", "pending"), "relation_not_eligible_for_consolidation"),
+        (_relation("paused", "granted"), "relation_not_eligible_for_consolidation"),
+        (_relation("revoked", "granted"), "relation_not_eligible_for_consolidation"),
+        (_relation("active", "revoked"), "relation_not_eligible_for_consolidation"),
+        (_relation("archived", "granted"), "relation_not_eligible_for_consolidation"),
+    ],
+)
+def test_consolidation_refuses_before_touching_db(relation, expected):
+    """pending, paused e revoked recusam ANTES de qualquer leitura ou LLM."""
+    db = _StubRelationDB(relation, conn=_PoisonConn())
+    consolidator = jmc.MemoryConsolidator(db)
+
+    with pytest.raises(ValueError, match=expected):
+        consolidator.consolidate_user_memories("user_a")
+
+
+def test_consolidation_accepts_active_granted_relation():
+    consolidator = jmc.MemoryConsolidator(_StubRelationDB(_relation("active", "granted")))
+
+    assert consolidator._resolve_relation_scope("user_a") == "rel_1"
+
+
+# ---------------------------------------------------------------------------
+# P2 — marca de progresso: sem conversas novas, nada de LLM repetido
+# ---------------------------------------------------------------------------
+
+def test_no_new_conversations_skips_llm(monkeypatch):
+    """Janela identica a da ultima consolidacao nao refaz resumos (custo)."""
+    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 7)]
+    db = _memory_db(_relation("active", "granted"), timestamps)
+    consolidator = jmc.MemoryConsolidator(db)
+    consolidator._save_progress("user_a", "rel_1", max(timestamps), len(timestamps))
+
+    def _forbidden_cluster(self, memories):
+        raise AssertionError("LLM nao deveria rodar sem conversas novas")
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_cluster_by_topic", _forbidden_cluster)
+
+    consolidator.consolidate_user_memories("user_a")  # nao deve levantar
+
+
+def test_progress_saved_and_second_run_is_idempotent(monkeypatch):
+    """A marca de progresso e gravada e protege a re-execucao (boot/deploy)."""
+    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 7)]
+    db = _memory_db(_relation("active", "granted"), timestamps)
+    consolidator = jmc.MemoryConsolidator(db)
+
+    cluster_calls = []
+
+    def _no_clusters(self, memories):
+        cluster_calls.append(len(memories))
+        return {}
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_cluster_by_topic", _no_clusters)
+
+    consolidator.consolidate_user_memories("user_a")
+    assert cluster_calls == [6]
+
+    progress = consolidator._load_progress("user_a", "rel_1")
+    assert progress["last_count"] == 6
+    assert progress["last_max_ts"] == max(timestamps)
+
+    # segunda execucao (ex.: novo boot 10 min depois) nao repete o LLM
+    consolidator.consolidate_user_memories("user_a")
+    assert cluster_calls == [6]
+
+
+def test_new_conversations_reopen_the_window(monkeypatch):
+    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 7)]
+    db = _memory_db(_relation("active", "granted"), timestamps)
+    consolidator = jmc.MemoryConsolidator(db)
+    consolidator._save_progress("user_a", "rel_1", max(timestamps), len(timestamps))
+
+    db.conn.execute(
+        "INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("c99", "user_a", "in", "out", "2026-09-09T10:00:00", "k", 0.0, 0.0, 0.0, "rel_1"),
+    )
+    db.conn.commit()
+
+    cluster_calls = []
+
+    def _cluster(self, memories):
+        cluster_calls.append(len(memories))
+        return {}
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_cluster_by_topic", _cluster)
+
+    consolidator.consolidate_user_memories("user_a")
+    assert cluster_calls == [7]
+
+
+def test_fewer_than_five_memories_skips_everything(monkeypatch):
+    db = _memory_db(_relation("active", "granted"), ["2026-09-01T10:00:00"])
+    consolidator = jmc.MemoryConsolidator(db)
+
+    def _forbidden_cluster(self, memories):
+        raise AssertionError("LLM nao deveria rodar com menos de 5 memorias")
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_cluster_by_topic", _forbidden_cluster)
+
+    consolidator.consolidate_user_memories("user_a")
+    assert consolidator._load_progress("user_a", "rel_1") is None
+
+
+# ---------------------------------------------------------------------------
+# run_consolidation_job: pulos esperados nao interrompem o job
+# ---------------------------------------------------------------------------
+
+def _stub_consolidator(monkeypatch, error):
+    attempted = []
+
+    class StubConsolidator:
+        def __init__(self, db):
+            pass
+
+        def consolidate_user_memories(self, user_id, lookback_days=90, relation_id=None):
+            attempted.append(user_id)
+            raise error
+
+    monkeypatch.setattr(jmc, "MemoryConsolidator", StubConsolidator)
+    return attempted
 
 
 def _db_with_users(*user_ids):
@@ -19,22 +205,24 @@ def _db_with_users(*user_ids):
     for uid in user_ids:
         conn.execute("INSERT INTO conversations (user_id) VALUES (?)", (uid,))
     conn.commit()
-    return _FakeDB(conn)
+
+    class _DB:
+        pass
+
+    db = _DB()
+    db.conn = conn
+    return db
 
 
-def test_run_consolidation_job_skips_relationless_users(monkeypatch):
-    """Sem Relation ativa o pulo e esperado (C12g), nao um erro que interrompe o job."""
-    attempted = []
-
-    class StubConsolidator:
-        def __init__(self, db):
-            pass
-
-        def consolidate_user_memories(self, user_id, lookback_days=90, relation_id=None):
-            attempted.append(user_id)
-            raise ValueError("relation_scope_required_for_consolidation")
-
-    monkeypatch.setattr(jmc, "MemoryConsolidator", StubConsolidator)
+@pytest.mark.parametrize(
+    "error",
+    [
+        ValueError("relation_scope_required_for_consolidation"),
+        ValueError("relation_not_eligible_for_consolidation:status=revoked,consent=granted"),
+    ],
+)
+def test_run_consolidation_job_skips_users_without_eligible_relation(monkeypatch, error):
+    attempted = _stub_consolidator(monkeypatch, error)
     db = _db_with_users("user_a", "user_b")
 
     jmc.run_consolidation_job(db)  # nao deve levantar
@@ -43,24 +231,17 @@ def test_run_consolidation_job_skips_relationless_users(monkeypatch):
 
 
 def test_run_consolidation_job_survives_other_errors(monkeypatch):
-    """Falha real em um usuario nao interrompe o processamento dos demais."""
-    attempted = []
-
-    class StubConsolidator:
-        def __init__(self, db):
-            pass
-
-        def consolidate_user_memories(self, user_id, lookback_days=90, relation_id=None):
-            attempted.append(user_id)
-            raise RuntimeError("boom")
-
-    monkeypatch.setattr(jmc, "MemoryConsolidator", StubConsolidator)
+    attempted = _stub_consolidator(monkeypatch, RuntimeError("boom"))
     db = _db_with_users("user_a", "user_b")
 
     jmc.run_consolidation_job(db)
 
     assert sorted(attempted) == ["user_a", "user_b"]
 
+
+# ---------------------------------------------------------------------------
+# scheduler diario
+# ---------------------------------------------------------------------------
 
 def test_memory_consolidation_scheduler_runs_job_and_survives_errors(monkeypatch):
     """O scheduler agenda o job (promessa do /meu_perfil) e continua apos erros."""
