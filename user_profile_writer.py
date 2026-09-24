@@ -1,9 +1,10 @@
 """
 user_profile_writer.py - Camada de memória textual do JungAgent
 
-Mantém dois níveis de memória em arquivos .md:
-  data/users/instances/{instance}/relations/{relation}/users/{user}/sessions/YYYY-MM-DD.md
-  data/users/instances/{instance}/relations/{relation}/users/{user}/profile.md
+Mantém dois níveis de memória em arquivos .md, sob o volume persistente
+(RAILWAY_VOLUME_MOUNT_PATH > /data > ./data):
+  {volume}/users/instances/{instance}/relations/{relation}/users/{user}/sessions/YYYY-MM-DD.md
+  {volume}/users/instances/{instance}/relations/{relation}/users/{user}/profile.md
 """
 
 import os
@@ -15,8 +16,18 @@ from engines.participant_files import participant_dir
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = os.path.join(".", "data", "users")  # mesmo base que jung_core.py usa (./data → /data no Railway)
-AGENT_DIR = os.path.join(".", "data", "agent")  # diretório do perfil do agente
+def _volume_root() -> str:
+    """Volume persistente, mesmo padrao de will_engine/world_consciousness:
+    RAILWAY_VOLUME_MOUNT_PATH > /data detectado > ./data local.
+    Sem isso, perfis e logs escritos em /app/data desaparecem a cada deploy."""
+    data_dir = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+    if not data_dir:
+        data_dir = "/data" if os.path.exists("/data") else "./data"
+    return data_dir
+
+
+DATA_DIR = os.path.join(_volume_root(), "users")
+AGENT_DIR = os.path.join(_volume_root(), "agent")
 
 
 def _user_dir(user_id: str, *, agent_instance: str, relation_id: str) -> str:
