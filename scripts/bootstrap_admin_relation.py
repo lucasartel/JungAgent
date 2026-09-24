@@ -46,12 +46,19 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+# Executavel como `python scripts/bootstrap_admin_relation.py` (ex.: via
+# `railway ssh`): nesse caso o diretorio do script entra no sys.path, nao a
+# raiz do projeto — a raiz precisa ser adicionada para achar os modulos.
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 try:
     from core.db.relations import RelationsDatabaseMixin
 except ImportError:  # ambiente offline (testes): carrega o modulo sem o core/__init__ pesado
     import importlib.util
 
-    _path = Path(__file__).resolve().parents[1] / "core" / "db" / "relations.py"
+    _path = _ROOT / "core" / "db" / "relations.py"
     _spec = importlib.util.spec_from_file_location("_relations_lite", _path)
     _mod = importlib.util.module_from_spec(_spec)
     assert _spec.loader is not None

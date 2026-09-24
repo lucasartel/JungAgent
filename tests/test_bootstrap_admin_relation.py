@@ -1,11 +1,17 @@
 """Bootstrap da Relation do admin: cadastro explicito, idempotencia, recusa de
 revogacao, dry-run somente leitura e quarentena do legado."""
 
+import os
 import sqlite3
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
 from scripts import bootstrap_admin_relation as bootstrap
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture()
@@ -139,3 +145,24 @@ def test_legacy_inventory_quarantines_old_paths_and_ignores_new_namespace(tmp_pa
     assert entries[0]["session_files"] == 1
     # somente leitura: o legado permanece intacto
     assert (users / "old_user" / "profile.md").read_text() == "legacy"
+
+
+def test_script_runs_standalone_without_pythonpath(tmp_path):
+    """Como em producao (`python scripts/bootstrap_admin_relation.py`): o diretorio
+    do script, nao a raiz do projeto, entra no sys.path — o script precisa resolver
+    os modulos do projeto sozinho."""
+    db_path = tmp_path / "db.sqlite3"
+    sqlite3.connect(db_path).close()
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    proc = subprocess.run(
+        [
+            sys.executable, str(ROOT / "scripts" / "bootstrap_admin_relation.py"),
+            "--db-path", str(db_path),
+            "--instance", "jung_test",
+            "--admin-user-id", "admin",
+        ],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "banco" in proc.stdout
+    assert "somente leitura" in proc.stdout
