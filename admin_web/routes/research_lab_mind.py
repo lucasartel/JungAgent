@@ -344,7 +344,10 @@ async def symbolic_graph_data(admin=None):
 
         triples = []
         if hasattr(db, "list_symbolic_triples"):
-            triples = db.list_symbolic_triples(agent_instance=AGENT_INSTANCE, limit=150)
+            # Master-only cockpit may inspect legacy rows; other readers stay scoped.
+            triples = db.list_symbolic_triples(
+                agent_instance=AGENT_INSTANCE, limit=150, include_legacy=True
+            )
 
         nodes_map = {}
         vis_nodes = []

@@ -11,6 +11,9 @@ if not hasattr(sys.modules.get("openai"), "OpenAI"):
 
 import json
 import sqlite3
+import asyncio
+import ast
+from pathlib import Path
 import pytest
 
 from core.database import HybridDatabaseManager
@@ -195,6 +198,50 @@ def test_symbolic_graph_extractor(test_db):
         agent_instance="test_jung", relation_id=relation_id
     )
     assert len(triples) >= 3
+
+
+def test_master_symbolic_map_includes_legacy_without_private_relations(test_db, monkeypatch):
+    import instance_config
+
+    monkeypatch.setattr(instance_config, "AGENT_INSTANCE", "test_jung")
+    route_file = Path(__file__).resolve().parents[1] / "admin_web/routes/research_lab_mind.py"
+    route = next(
+        node for node in ast.parse(route_file.read_text()).body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "symbolic_graph_data"
+    )
+    namespace = {
+        "get_db": lambda: test_db,
+        "JSONResponse": lambda payload: payload,
+        "logger": None,
+    }
+    exec(compile(ast.Module(body=[route], type_ignores=[]), str(route_file), "exec"), namespace)
+
+    legacy_id = test_db.add_symbolic_triple(
+        agent_instance="test_jung",
+        subject_name="JungAgent",
+        predicate="explora",
+        object_name="Simbolo",
+        source_ref="loop#1",
+    )
+    test_db.conn.execute(
+        "UPDATE symbolic_triples SET origin_class = 'legacy_unscoped' WHERE id = ?",
+        (legacy_id,),
+    )
+    test_db.add_symbolic_triple(
+        agent_instance="test_jung",
+        subject_name="Pessoa privada",
+        predicate="sente",
+        object_name="Esperanca",
+        source_ref="conversation#2",
+        origin_relation_id="relation-other",
+    )
+    test_db.conn.commit()
+
+    payload = asyncio.run(namespace["symbolic_graph_data"](admin={"role": "master"}))
+
+    assert payload["stats"]["total_triples"] == 1
+    assert payload["triples"][0]["id"] == legacy_id
+    assert {node["full_name"] for node in payload["nodes"]} == {"JungAgent", "Simbolo"}
 
 
 def test_audit_triple_logic():
