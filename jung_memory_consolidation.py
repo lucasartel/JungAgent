@@ -10,6 +10,7 @@ Responsável por:
 import logging
 from datetime import datetime, timedelta
 from typing import List, Dict
+import asyncio
 import json
 
 logger = logging.getLogger(__name__)
@@ -427,6 +428,16 @@ def run_consolidation_job(db_manager):
     for user_id in user_ids:
         try:
             consolidator.consolidate_user_memories(user_id, lookback_days=90)
+        except ValueError as e:
+            # Sem Relation ativa nao ha escopo para consolidar (C12g): pulo
+            # esperado, nao erro — usuarios sem vinculo nao devem poluir o log.
+            if "relation_scope_required_for_consolidation" in str(e):
+                logger.info(
+                    "   Pulando %s: nenhuma Relation ativa para escopo de consolidacao",
+                    user_id,
+                )
+            else:
+                logger.error(f"Erro ao consolidar memórias de {user_id}: {e}")
         except Exception as e:
             logger.error(f"Erro ao consolidar memórias de {user_id}: {e}")
 
@@ -443,3 +454,35 @@ async def run_consolidation_job_async(db_manager):
     import asyncio
     # Executar a versão síncrona em thread separada para não bloquear event loop
     await asyncio.to_thread(run_consolidation_job, db_manager)
+
+
+async def memory_consolidation_scheduler(
+    db_manager,
+    interval_seconds: float = 86400,
+    initial_delay: float = 600,
+):
+    """Agenda a consolidacao de memorias (que gera/reconstrói o profile.md).
+
+    A promessa do bot ("/meu_perfil") e de que o perfil e gerado apos a
+    consolidacao de memorias — este scheduler torna isso verdade: roda o job
+    uma vez por dia, sem depender de trigger manual do painel admin.
+
+    Args:
+        db_manager: HybridDatabaseManager instance
+        interval_seconds: intervalo entre consolidacoes (padrao: 24h)
+        initial_delay: espera antes do primeiro ciclo (padrao: 10 min apos boot)
+    """
+    if initial_delay > 0:
+        logger.info(
+            "⏳ [MEM CONSOLIDATION] Aguardando %.0f s antes da primeira consolidacao...",
+            initial_delay,
+        )
+        await asyncio.sleep(initial_delay)
+
+    while True:
+        try:
+            await run_consolidation_job_async(db_manager)
+            logger.info("🧠 [MEM CONSOLIDATION] Consolidação de memórias concluída.")
+        except Exception as e:
+            logger.error(f"❌ Erro no scheduler de Consolidação de Memórias: {e}")
+        await asyncio.sleep(interval_seconds)

@@ -239,6 +239,11 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(identity_consolidation_scheduler())
     logger.info("✅ Job de consolidação de identidade agendado!")
 
+    # Iniciar scheduler de Consolidação de Memórias de Longo Prazo (gera profile.md)
+    from jung_memory_consolidation import memory_consolidation_scheduler
+    asyncio.create_task(memory_consolidation_scheduler(bot_state.db))
+    logger.info("✅ Job de Consolidação de Memórias (Memory Consolidation) agendado!")
+
     # Iniciar scheduler de Curiosidade Ontológica (Consciência do Mundo)
     async def world_consciousness_scheduler():
         """Atualiza o estado de mundo para manter a consciência externa viva."""
