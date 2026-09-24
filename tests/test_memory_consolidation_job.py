@@ -442,6 +442,82 @@ def test_swap_with_backdated_entry_retriggers(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Bug de producao (24/09): resposta vazia do LLM (content=None) nao pode virar
+# AttributeError nem resumo generico — e falha recuperavel com orcamento real.
+# ---------------------------------------------------------------------------
+
+class _FakeBlock:
+    def __init__(self, text):
+        self.text = text
+
+
+class _FakeResponse:
+    def __init__(self, blocks):
+        self.content = blocks
+
+
+class _FakeMessages:
+    def __init__(self, response):
+        self._response = response
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return self._response
+
+
+class _FakeClient:
+    def __init__(self, response):
+        self.messages = _FakeMessages(response)
+
+
+def _fake_memories(n=6):
+    return [
+        {
+            "id": f"c{i}",
+            "timestamp": f"2026-09-{i + 1:02d}T10:00:00",
+            "user_input": "in",
+            "ai_response": "out",
+        }
+        for i in range(n)
+    ]
+
+
+def test_empty_llm_content_is_failure_not_generic_summary():
+    """Producao 24/09: glm-5 com orcamento curto devolve content=None."""
+    db = _StubRelationDB(_relation("active", "granted"))
+    client = _FakeClient(_FakeResponse([_FakeBlock(None)]))
+    db.anthropic_client = client
+    consolidator = jmc.MemoryConsolidator(db)
+
+    with pytest.raises(jmc.LLMSummaryError, match="resposta vazia"):
+        consolidator._generate_summary_with_llm("trabalho", _fake_memories())
+    assert client.messages.calls[0]["max_tokens"] == 2000  # orcamento real
+
+
+def test_llm_text_extracted_from_any_block():
+    db = _StubRelationDB(_relation("active", "granted"))
+    db.anthropic_client = _FakeClient(
+        _FakeResponse([_FakeBlock(None), _FakeBlock("  resumo ok  ")])
+    )
+    consolidator = jmc.MemoryConsolidator(db)
+
+    assert (
+        consolidator._generate_summary_with_llm("trabalho", _fake_memories())
+        == "resumo ok"
+    )
+
+
+def test_empty_content_list_is_failure():
+    db = _StubRelationDB(_relation("active", "granted"))
+    db.anthropic_client = _FakeClient(_FakeResponse([]))
+    consolidator = jmc.MemoryConsolidator(db)
+
+    with pytest.raises(jmc.LLMSummaryError, match="resposta vazia"):
+        consolidator._generate_summary_with_llm("trabalho", _fake_memories())
+
+
+# ---------------------------------------------------------------------------
 # P2 (round 3) — o gate de consentimento falha FECHADO sem o resolvedor
 # ---------------------------------------------------------------------------
 

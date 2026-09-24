@@ -533,12 +533,32 @@ Seja conciso mas informativo. Máximo 200 palavras."""
 
         try:
             # Usar Claude Sonnet 4.5 (único provider)
+            # max_tokens generoso: o client interno (AnthropicCompatWrapper
+            # sobre OpenRouter/glm-5) e um modelo de raciocinio — orcamento
+            # curto e consumido pelo "pensamento" e o content final volta
+            # None, falhando o resumo sem motivo de conteudo.
             response = self.db.anthropic_client.messages.create(
                 model="claude-sonnet-4-5-20250929",
-                max_tokens=500,
+                max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}]
             )
-            return response.content[0].text.strip()
+            summary = ""
+            for block in getattr(response, "content", None) or []:
+                text = getattr(block, "text", None)
+                if isinstance(text, str) and text.strip():
+                    summary = text.strip()
+                    break
+            if not summary:
+                # Resposta vazia (content None, so reasoning, ou sem bloco de
+                # texto) e FALHA, nunca resumo generico gravado como sucesso:
+                # sem marca de progresso, a proxima consolidacao refaz.
+                raise LLMSummaryError(
+                    "llm_summary_failed: resposta vazia do LLM "
+                    "(content=None ou sem bloco de texto)"
+                )
+            return summary
+        except LLMSummaryError:
+            raise
         except Exception as e:
             # Falha do LLM NAO vira resumo generico gravado como sucesso:
             # propaga para o ciclo nao salvar a marca de progresso, permitindo
