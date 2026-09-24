@@ -97,13 +97,17 @@ def _extract_and_persist(
 
     # Persistir como entrada especial no log diário
     try:
+        from engines.participant_files import relation_file_scope
         from user_profile_writer import write_session_entry
+        file_instance, file_relation = relation_file_scope(db, user_id)
         write_session_entry(
             user_id=user_id,
             user_name=user_name,
             user_input="[FRAGMENTOS RECUPERADOS ANTES DO FLUSH]",
             ai_response=fragments,
             tag="[FLUSH]",
+            agent_instance=file_instance,
+            relation_id=file_relation,
         )
     except Exception as e:
         logger.warning(f"⚠️ [FLUSH] Erro ao gravar log diário: {e}")
