@@ -16,6 +16,15 @@ import json
 logger = logging.getLogger(__name__)
 
 
+class LLMSummaryError(RuntimeError):
+    """Falha na chamada do LLM ao gerar um resumo.
+
+    O ciclo NAO pode ser marcado como sucesso: sem isso, a marca de progresso
+    registraria o resumo generico de fallback como definitivo e as proximas
+    execucoes pulariam o LLM para sempre, impedindo a recuperacao do resumo.
+    """
+
+
 class MemoryConsolidator:
     """
     Consolida memórias similares em resumos temáticos
@@ -111,24 +120,25 @@ class MemoryConsolidator:
 
         logger.info(f"   Encontradas {len(memories)} memórias para consolidar")
 
-        # 2. Idempotencia e controle de custo: se nao chegaram conversas novas
-        #    desde a ultima consolidacao bem-sucedida, os resumos do LLM nao
-        #    sao refeitos (reinicios e deploys re-executam o job sem repetir
-        #    a conta nem reescrever o mesmo resumo).
+        # 2. Idempotencia e controle de custo: a janela rolante de 90 dias
+        #    encolhe sozinha quando uma conversa antiga sai da janela — isso
+        #    NAO e entrada nova e nao deve refazer os resumos pagos. So uma
+        #    entrada nova reabre o ciclo: timestamp mais novo que a marca da
+        #    ultima consolidacao bem-sucedida, ou mais memorias que ela.
         window_max_ts = max((m.get("timestamp") or "") for m in memories)
         window_count = len(memories)
         progress = self._load_progress(user_id, relation_id)
         unchanged = (
             progress is not None
-            and progress.get("last_count") == window_count
-            and progress.get("last_max_ts") == window_max_ts
+            and window_max_ts <= (progress.get("last_max_ts") or "")
+            and window_count <= int(progress.get("last_count") or 0)
         )
 
         if unchanged:
             logger.info(
-                "   Sem conversas novas desde %s (count=%d): pulando resumos LLM (idempotente)",
+                "   Sem entradas novas desde %s (max_ts=%s): pulando resumos LLM (idempotente)",
                 progress.get("last_run_at"),
-                window_count,
+                progress.get("last_max_ts"),
             )
         else:
             # 3. Agrupar por tópico usando keywords
@@ -137,18 +147,32 @@ class MemoryConsolidator:
             logger.info(f"   Identificados {len(clusters)} clusters temáticos")
 
             # 4. Para cada cluster grande (≥5 memórias), gerar resumo
+            llm_failures = 0
             for topic, cluster_memories in clusters.items():
                 if len(cluster_memories) >= 5:
                     logger.info(f"   Consolidando cluster '{topic}' ({len(cluster_memories)} memórias)")
-                    self._create_consolidated_memory(
-                        user_id=user_id,
-                        topic=topic,
-                        memories=cluster_memories,
-                        lookback_days=lookback_days,
-                        relation_id=relation_id,
-                    )
+                    try:
+                        self._create_consolidated_memory(
+                            user_id=user_id,
+                            topic=topic,
+                            memories=cluster_memories,
+                            lookback_days=lookback_days,
+                            relation_id=relation_id,
+                        )
+                    except LLMSummaryError as e:
+                        llm_failures += 1
+                        logger.warning(f"   Resumo de '{topic}' falhou ({e}); seguindo para os demais clusters")
 
-            self._save_progress(user_id, relation_id, window_max_ts, window_count)
+            if llm_failures:
+                # Falha do LLM nao e sucesso: sem marca de progresso, a
+                # proxima execucao refaz o tema (o armazenamento e upsert por
+                # periodo, entao o retry nao duplica padroes).
+                logger.warning(
+                    "   %d resumo(s) de LLM falharam; marca de progresso NAO salva — proxima consolidacao refaz",
+                    llm_failures,
+                )
+            else:
+                self._save_progress(user_id, relation_id, window_max_ts, window_count)
 
         # 5. Reconstruir profile.md com dados atualizados
         try:
@@ -484,24 +508,25 @@ EVOLUÇÃO:
 
 Seja conciso mas informativo. Máximo 200 palavras."""
 
+        if not self.db.anthropic_client:
+            # Fallback desenhado: sem LLM configurado, resumo manual basico.
+            # (Ausencia de cliente nao e falha — nao ha o que recuperar.)
+            return f"Consolidação de {len(memories)} conversas sobre {topic}."
+
         try:
             # Usar Claude Sonnet 4.5 (único provider)
-            if self.db.anthropic_client:
-                response = self.db.anthropic_client.messages.create(
-                    model="claude-sonnet-4-5-20250929",
-                    max_tokens=500,
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                summary = response.content[0].text.strip()
-            else:
-                # Fallback: resumo manual básico
-                summary = f"Consolidação de {len(memories)} conversas sobre {topic}."
-
-            return summary
-
+            response = self.db.anthropic_client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=500,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.content[0].text.strip()
         except Exception as e:
+            # Falha do LLM NAO vira resumo generico gravado como sucesso:
+            # propaga para o ciclo nao salvar a marca de progresso, permitindo
+            # que a proxima execucao refaca o resumo real.
             logger.error(f"Erro ao gerar resumo com LLM: {e}")
-            return f"Consolidação de {len(memories)} conversas sobre {topic}."
+            raise LLMSummaryError(f"llm_summary_failed: {e}") from e
 
 
 def run_consolidation_job(db_manager):

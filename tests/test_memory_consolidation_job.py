@@ -27,6 +27,7 @@ class _StubRelationDB:
         self.relation = relation
         self.conn = conn
         self.agent_instance = agent_instance
+        self.anthropic_client = None
 
     def resolve_relation_id(self, *, agent_instance=None, participant_user_id=None, relation_id=None):
         if relation_id:
@@ -178,6 +179,172 @@ def test_fewer_than_five_memories_skips_everything(monkeypatch):
 
     consolidator.consolidate_user_memories("user_a")
     assert consolidator._load_progress("user_a", "rel_1") is None
+
+
+# ---------------------------------------------------------------------------
+# P1 (round 2) — falha do LLM nao pode ser registrada como sucesso
+# ---------------------------------------------------------------------------
+
+def test_llm_error_raises_instead_of_generic_summary():
+    class _BrokenClient:
+        class messages:
+            @staticmethod
+            def create(**kwargs):
+                raise RuntimeError("api fora do ar")
+
+    db = _StubRelationDB(_relation("active", "granted"))
+    db.anthropic_client = _BrokenClient()
+    consolidator = jmc.MemoryConsolidator(db)
+
+    with pytest.raises(jmc.LLMSummaryError, match="llm_summary_failed"):
+        consolidator._generate_summary_with_llm(
+            "trabalho",
+            [{"timestamp": "2026-09-01T10:00:00", "user_input": "x", "ai_response": "y"}],
+        )
+
+
+def test_no_client_keeps_designed_generic_fallback():
+    db = _StubRelationDB(_relation("active", "granted"))
+    consolidator = jmc.MemoryConsolidator(db)
+
+    summary = consolidator._generate_summary_with_llm(
+        "trabalho",
+        [{"timestamp": "2026-09-01T10:00:00", "user_input": "x", "ai_response": "y"}],
+    )
+    assert "trabalho" in summary
+
+
+def test_llm_failure_is_not_recorded_as_success(monkeypatch):
+    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 7)]
+    db = _memory_db(_relation("active", "granted"), timestamps)
+    consolidator = jmc.MemoryConsolidator(db)
+
+    def _cluster(self, memories):
+        return {"trabalho": list(memories)}
+
+    def _fail(self, **kwargs):
+        raise jmc.LLMSummaryError("llm_summary_failed: boom")
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_cluster_by_topic", _cluster)
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_create_consolidated_memory", _fail)
+
+    consolidator.consolidate_user_memories("user_a")  # nao propaga
+
+    assert consolidator._load_progress("user_a", "rel_1") is None
+
+
+def test_failed_summary_is_retried_without_new_conversations(monkeypatch):
+    """Recuperacao: falha sem marca permite refazer o resumo sem entrada nova."""
+    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 7)]
+    db = _memory_db(_relation("active", "granted"), timestamps)
+    consolidator = jmc.MemoryConsolidator(db)
+
+    def _cluster(self, memories):
+        return {"trabalho": list(memories)}
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_cluster_by_topic", _cluster)
+
+    attempts = []
+
+    def _fail(self, **kwargs):
+        attempts.append("fail")
+        raise jmc.LLMSummaryError("llm_summary_failed: boom")
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_create_consolidated_memory", _fail)
+    consolidator.consolidate_user_memories("user_a")
+    assert consolidator._load_progress("user_a", "rel_1") is None
+
+    def _ok(self, **kwargs):
+        attempts.append("ok")
+        return None
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_create_consolidated_memory", _ok)
+    consolidator.consolidate_user_memories("user_a")  # mesma janela
+
+    assert attempts == ["fail", "ok"]
+    assert consolidator._load_progress("user_a", "rel_1") is not None
+
+
+def test_partial_failure_blocks_progress_mark(monkeypatch):
+    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 13)]
+    db = _memory_db(_relation("active", "granted"), timestamps)
+    consolidator = jmc.MemoryConsolidator(db)
+
+    def _cluster(self, memories):
+        return {"a": memories[:6], "b": memories[6:]}
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_cluster_by_topic", _cluster)
+
+    calls = []
+
+    def _mixed(self, **kwargs):
+        calls.append(kwargs["topic"])
+        if kwargs["topic"] == "b":
+            raise jmc.LLMSummaryError("llm_summary_failed: boom")
+        return None
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_create_consolidated_memory", _mixed)
+
+    consolidator.consolidate_user_memories("user_a")
+
+    assert calls == ["a", "b"]  # um tema falhar nao interrompe os demais
+    assert consolidator._load_progress("user_a", "rel_1") is None
+
+
+# ---------------------------------------------------------------------------
+# P2 (round 2) — saida da janela rolante nao e entrada nova
+# ---------------------------------------------------------------------------
+
+def test_rolling_window_outflow_does_not_retrigger(monkeypatch):
+    """Conversa antiga saindo da janela nao deve refazer os resumos pagos."""
+    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 8)]
+    db = _memory_db(_relation("active", "granted"), timestamps)
+    consolidator = jmc.MemoryConsolidator(db)
+
+    def _no_clusters(self, memories):
+        return {}
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_cluster_by_topic", _no_clusters)
+    consolidator.consolidate_user_memories("user_a")  # grava a marca
+
+    def _forbidden(self, memories):
+        raise AssertionError("LLM nao deveria rodar: saida da janela nao e entrada nova")
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_cluster_by_topic", _forbidden)
+    db.conn.execute("DELETE FROM conversations WHERE timestamp = ?", (timestamps[0],))
+    db.conn.commit()
+
+    consolidator.consolidate_user_memories("user_a")  # deve pular
+
+
+def test_backfilled_conversation_retriggers(monkeypatch):
+    """Entrada nova (mesmo antiga) aumenta a contagem e reabre o ciclo."""
+    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 8)]
+    db = _memory_db(_relation("active", "granted"), timestamps)
+    consolidator = jmc.MemoryConsolidator(db)
+
+    def _no_clusters(self, memories):
+        return {}
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_cluster_by_topic", _no_clusters)
+    consolidator.consolidate_user_memories("user_a")
+
+    db.conn.execute(
+        "INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("c_old", "user_a", "in", "out", "2026-08-01T10:00:00", "k", 0.0, 0.0, 0.0, "rel_1"),
+    )
+    db.conn.commit()
+
+    cluster_calls = []
+
+    def _cluster(self, memories):
+        cluster_calls.append(len(memories))
+        return {}
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_cluster_by_topic", _cluster)
+
+    consolidator.consolidate_user_memories("user_a")
+    assert cluster_calls == [8]
 
 
 # ---------------------------------------------------------------------------
