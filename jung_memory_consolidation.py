@@ -130,7 +130,7 @@ class MemoryConsolidator:
         #    entrada retroativa com data anterior a mais recente e entrada
         #    nova sim (reprocessa) — contagem/data maxima iguais nao escondem
         #    trocas de membros na janela.
-        window_ids = [m.get("id") for m in memories]
+        window_ids = [str(m["id"]) for m in memories]
         window_max_ts = max((m.get("timestamp") or "") for m in memories)
         window_count = len(memories)
         progress = self._load_progress(user_id, relation_id)

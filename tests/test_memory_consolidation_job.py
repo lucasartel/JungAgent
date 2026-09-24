@@ -147,6 +147,47 @@ def test_progress_saved_and_second_run_is_idempotent(monkeypatch):
     assert cluster_calls == [6]
 
 
+def test_integer_conversation_ids_do_not_repeat_consolidation(monkeypatch):
+    """O schema de producao usa INTEGER PRIMARY KEY para conversations.id."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT, user_input TEXT, ai_response TEXT,
+            timestamp TEXT, keywords TEXT,
+            tension_level REAL, affective_charge REAL, existential_depth REAL,
+            relation_id TEXT
+        )
+        """
+    )
+    for day in range(1, 7):
+        conn.execute(
+            """INSERT INTO conversations
+               (user_id, user_input, ai_response, timestamp, keywords,
+                tension_level, affective_charge, existential_depth, relation_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("user_a", "in", "out", f"2026-09-{day:02d}T10:00:00", "k", 0.0, 0.0, 0.0, "rel_1"),
+        )
+    conn.commit()
+    consolidator = jmc.MemoryConsolidator(_StubRelationDB(_relation("active", "granted"), conn))
+    cluster_calls = []
+
+    def _cluster(self, memories):
+        cluster_calls.append(len(memories))
+        return {}
+
+    monkeypatch.setattr(jmc.MemoryConsolidator, "_cluster_by_topic", _cluster)
+    consolidator.consolidate_user_memories("user_a")
+    consolidator.consolidate_user_memories("user_a")
+
+    assert cluster_calls == [6]
+    assert consolidator._load_progress("user_a", "rel_1")["last_ids"] == {
+        str(i) for i in range(1, 7)
+    }
+
+
 def test_new_conversations_reopen_the_window(monkeypatch):
     timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 7)]
     db = _memory_db(_relation("active", "granted"), timestamps)
