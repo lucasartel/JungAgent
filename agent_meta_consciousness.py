@@ -25,6 +25,13 @@ class AgentMetaConsciousnessEngine:
         self.db = db_manager
         self.agent_instance = AGENT_INSTANCE
 
+    def _query_scope(self, user_id: str):
+        from core.db.relation_scope import resolve_relation_query_scope
+
+        return resolve_relation_query_scope(
+            self.db, user_id, agent_instance=self.agent_instance
+        )
+
     def _truncate(self, text: str, limit: int = 220) -> str:
         cleaned = " ".join((text or "").strip().split())
         if len(cleaned) <= limit:
@@ -56,16 +63,18 @@ class AgentMetaConsciousnessEngine:
         return {}
 
     def _recent_conversations(self, user_id: str, limit: int = 3) -> List[Dict[str, str]]:
+        scope = self._query_scope(user_id)
+        clause, clause_params = scope.sql(("id", "user_id", "relation_id"))
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             SELECT user_input, ai_response, timestamp
             FROM conversations
-            WHERE user_id = ?
+            WHERE user_id = ?{clause}
             ORDER BY timestamp DESC
             LIMIT ?
             """,
-            (user_id, limit),
+            (user_id, *clause_params, limit),
         )
         items: List[Dict[str, str]] = []
         for row in cursor.fetchall():
@@ -79,16 +88,18 @@ class AgentMetaConsciousnessEngine:
         return list(reversed(items))
 
     def _recent_rumination_insights(self, user_id: str, limit: int = 3) -> List[str]:
+        scope = self._query_scope(user_id)
+        clause, clause_params = scope.sql(("id", "user_id", "relation_id"))
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             SELECT full_message
             FROM rumination_insights
-            WHERE user_id = ?
+            WHERE user_id = ?{clause}
             ORDER BY id DESC
             LIMIT ?
             """,
-            (user_id, limit),
+            (user_id, *clause_params, limit),
         )
         return [self._truncate(row["full_message"], 200) for row in cursor.fetchall() if row["full_message"]]
 
@@ -97,10 +108,12 @@ class AgentMetaConsciousnessEngine:
         Busca obras de arte recentes do módulo Art/Hobby.
         Retorna lista vazia se a tabela não existir.
         """
+        scope = self._query_scope(user_id)
+        clause, clause_params = scope.sql(("id", "user_id", "agent_instance"))
         cursor = self.db.conn.cursor()
         try:
             cursor.execute(
-                """
+                f"""
                 SELECT
                     title,
                     cycle_id,
@@ -110,11 +123,11 @@ class AgentMetaConsciousnessEngine:
                     critique_json,
                     created_at
                 FROM agent_hobby_artifacts
-                WHERE user_id = ?
+                WHERE user_id = ?{clause}
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?
                 """,
-                (user_id, limit),
+                (user_id, *clause_params, limit),
             )
             items: List[Dict[str, Any]] = []
             for row in cursor.fetchall():
@@ -135,6 +148,9 @@ class AgentMetaConsciousnessEngine:
                     }
                 )
             return items
+        except ValueError:
+            # Sentinela de escopo/consentimento: recusa, nunca vira lista vazia silenciosa.
+            raise
         except Exception as exc:
             # Tabela ou colunas podem não existir ainda
             logger.debug("Meta-consciousness: art/hobby memory unavailable: %s", exc)
@@ -257,6 +273,7 @@ class AgentMetaConsciousnessEngine:
         trigger_source: str,
         status: str,
     ) -> int:
+        self._query_scope(user_id).require_production()
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
@@ -286,13 +303,15 @@ class AgentMetaConsciousnessEngine:
         return cursor.lastrowid
 
     def get_latest_reading(self, user_id: str, cycle_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        scope = self._query_scope(user_id)
+        clause, clause_params = scope.sql(("id", "user_id", "agent_instance"))
         cursor = self.db.conn.cursor()
-        query = """
+        query = f"""
             SELECT *
             FROM agent_meta_consciousness
-            WHERE agent_instance = ? AND user_id = ?
+            WHERE agent_instance = ? AND user_id = ?{clause}
         """
-        params: List[Any] = [self.agent_instance, user_id]
+        params: List[Any] = [self.agent_instance, user_id, *clause_params]
         if cycle_id:
             query += " AND cycle_id = ?"
             params.append(cycle_id)

@@ -64,15 +64,22 @@ def scope_context(
         raise ValueError("relation_id_required_for_relation_scope")
     if resolved_kind == GLOBAL_SCOPE:
         resolved_relation_id = None
-    instance = (
-        (agent_instance or getattr(db_manager, "agent_instance", None) or os.getenv("AGENT_INSTANCE") or "jung_v1")
-        .strip()
-    )
+    instance = resolve_instance(agent_instance or getattr(db_manager, "agent_instance", None))
     return {
         "agent_instance": instance,
         "relation_id": resolved_relation_id,
         "scope_kind": resolved_kind,
     }
+
+
+def resolve_instance(agent_instance: Optional[str]) -> str:
+    """Canonical agent-instance resolution (same chain as the scope migration).
+
+    ``HybridDatabaseManager`` does not expose an ``agent_instance`` attribute,
+    so callers must not rely on attribute access alone — falling through to
+    ``AGENT_INSTANCE`` keeps read and migration sides consistent (C12g).
+    """
+    return (agent_instance or os.getenv("AGENT_INSTANCE") or "jung_v1").strip()
 
 
 def scope_where_clause(
@@ -94,6 +101,24 @@ def scope_where_clause(
         clauses.append("relation_id = ?")
         params.append(scope.get("relation_id"))
     return (" AND " + " AND ".join(clauses), params) if clauses else ("", [])
+
+
+def instance_where_clause(
+    cursor: sqlite3.Cursor,
+    table: str,
+    agent_instance: Optional[str],
+) -> Tuple[str, list[Any]]:
+    """Instance-tenancy clause only (no scope_kind/relation filters), for
+    readers that must not cross ``agent_instance`` boundaries (C12g)."""
+    return scope_where_clause(
+        cursor,
+        table,
+        {
+            "agent_instance": resolve_instance(agent_instance),
+            "relation_id": None,
+            "scope_kind": None,
+        },
+    )
 
 
 def scoped_insert_columns(

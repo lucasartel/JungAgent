@@ -61,12 +61,12 @@ class _ExpressiveDB(ActionProposalDatabaseMixin):
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS agent_dreams ("
             "id INTEGER PRIMARY KEY, user_id TEXT, symbolic_theme TEXT, "
-            "dream_mood TEXT, created_at DATETIME)"
+            "dream_mood TEXT, created_at DATETIME, origin_relation_id TEXT)"
         )
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS rumination_insights ("
             "id INTEGER PRIMARY KEY, user_id TEXT, symbol_content TEXT, "
-            "depth_score REAL, created_at DATETIME)"
+            "depth_score REAL, created_at DATETIME, relation_id TEXT)"
         )
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS working_memory_items ("
@@ -97,10 +97,52 @@ class _ExpressiveDB(ActionProposalDatabaseMixin):
         return cursor.lastrowid
 
 
+def _enable_relation_registry(db, relations):
+    """Registra um resolvedor de Relations verificavel nos testes (C12g).
+
+    Segue o padrao de tests/test_rumination_relation_scope.py: a fixture
+    registra Relations reais/ativas em vez de depender de fallbacks.
+    """
+
+    def get_agent_relation(relation_id):
+        relation = relations.get(str(relation_id))
+        return dict(relation) if relation else None
+
+    def resolve_relation_id(*, agent_instance=None, participant_user_id=None, relation_id=None):
+        if relation_id:
+            return str(relation_id)
+        for candidate_id, relation in relations.items():
+            if agent_instance and relation.get("agent_instance") != str(agent_instance):
+                continue
+            if participant_user_id and relation.get("participant_user_id") != str(participant_user_id):
+                continue
+            return str(candidate_id)
+        return None
+
+    db.get_agent_relation = get_agent_relation
+    db.resolve_relation_id = resolve_relation_id
+
+
+RELATION_ID = "rel-expressive-1"
+
+
 def _make_db():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    return _ExpressiveDB(conn)
+    db = _ExpressiveDB(conn)
+    _enable_relation_registry(
+        db,
+        {
+            RELATION_ID: {
+                "relation_id": RELATION_ID,
+                "agent_instance": "test_jung_v0",
+                "participant_user_id": "u1",
+                "status": "active",
+                "consent_status": "granted",
+            }
+        },
+    )
+    return db
 
 
 # ---------------------------------------------------------------------------
@@ -111,11 +153,12 @@ class TestComposeEssayDraft:
     def test_creates_artifact_with_essay_draft_content_type(self, monkeypatch):
         db = _make_db()
         db.conn.execute(
-            "INSERT INTO agent_dreams (id, user_id, symbolic_theme) VALUES (1, 'u1', 'x')"
+            "INSERT INTO agent_dreams (id, user_id, symbolic_theme, origin_relation_id) "
+            "VALUES (1, 'u1', 'x', 'rel-expressive-1')"
         )
         db.conn.execute(
-            "INSERT INTO rumination_insights (id, user_id, symbol_content, depth_score) "
-            "VALUES (1, 'u1', 'y', 0.9)"
+            "INSERT INTO rumination_insights (id, user_id, symbol_content, depth_score, relation_id) "
+            "VALUES (1, 'u1', 'y', 0.9, 'rel-expressive-1')"
         )
         db.conn.commit()
 
@@ -131,6 +174,42 @@ class TestComposeEssayDraft:
         assert result["status"] == "composed"
         assert result["content_type"] == "essay_draft"
         assert result["artifact_id"] > 0
+
+    def test_will_anchor_filters_instance_without_db_attribute(self, monkeypatch):
+        """Revisao PR-B: HybridDatabaseManager nao expoe agent_instance — o
+        filtro de instancia do anchor de Will nao pode esvaziar."""
+        db = _make_db()
+        # Duck-type do banco real: sem atributo agent_instance.
+        del db.agent_instance
+        db.conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_will_states ("
+            "id INTEGER PRIMARY KEY, user_id TEXT, agent_instance TEXT, created_at DATETIME)"
+        )
+        db.conn.execute(
+            "INSERT INTO agent_will_states (id, user_id, agent_instance, created_at) "
+            "VALUES (1, 'u1', 'test_jung_v0', '2026-09-25 10:00:00'), "
+            "(2, 'u1', 'outra-instancia', '2026-09-25 11:00:00')"
+        )
+        db.conn.commit()
+        monkeypatch.setenv("AGENT_INSTANCE", "test_jung_v0")
+
+        if "llm_providers" not in sys.modules:
+            llm_stub = type(sys)("llm_providers")
+            sys.modules["llm_providers"] = llm_stub
+        sys.modules["llm_providers"].get_llm_response = (
+            lambda prompt, temperature=0.6, max_tokens=1500: "Ensaio."
+        )
+
+        result = _EXPRESSIVE.handle_compose_essay_draft(db, {}, "u1")
+
+        assert result["status"] == "composed"
+        row = db.conn.execute(
+            "SELECT editorial_note FROM work_artifacts WHERE id = ?",
+            (result["artifact_id"],),
+        ).fetchone()
+        refs = json.loads(row["editorial_note"])["source_refs"]
+        assert "will#1" in refs
+        assert "will#2" not in refs
 
     def test_fallback_when_diary_missing(self, monkeypatch):
         db = _make_db()
@@ -155,12 +234,12 @@ class TestCuratePortfolio:
     def test_produces_curation_with_dreams_and_insights(self):
         db = _make_db()
         db.conn.execute(
-            "INSERT INTO agent_dreams (id, user_id, symbolic_theme, dream_mood) "
-            "VALUES (1, 'u1', 'theme_a', 'mood_a')"
+            "INSERT INTO agent_dreams (id, user_id, symbolic_theme, dream_mood, origin_relation_id) "
+            "VALUES (1, 'u1', 'theme_a', 'mood_a', 'rel-expressive-1')"
         )
         db.conn.execute(
-            "INSERT INTO rumination_insights (id, user_id, symbol_content, depth_score) "
-            "VALUES (1, 'u1', 'insight_a', 0.9)"
+            "INSERT INTO rumination_insights (id, user_id, symbol_content, depth_score, relation_id) "
+            "VALUES (1, 'u1', 'insight_a', 0.9, 'rel-expressive-1')"
         )
         db.conn.commit()
 
@@ -193,11 +272,12 @@ class TestDispatchExpressive:
             source_refs=["will#1"],
         )
         db.conn.execute(
-            "INSERT INTO agent_dreams (id, user_id, symbolic_theme) VALUES (1, 'u1', 'x')"
+            "INSERT INTO agent_dreams (id, user_id, symbolic_theme, origin_relation_id) "
+            "VALUES (1, 'u1', 'x', 'rel-expressive-1')"
         )
         db.conn.execute(
-            "INSERT INTO rumination_insights (id, user_id, symbol_content, depth_score) "
-            "VALUES (1, 'u1', 'y', 0.9)"
+            "INSERT INTO rumination_insights (id, user_id, symbol_content, depth_score, relation_id) "
+            "VALUES (1, 'u1', 'y', 0.9, 'rel-expressive-1')"
         )
         db.conn.commit()
 
@@ -222,7 +302,8 @@ class TestDispatchExpressive:
             source_refs=["will#1"],
         )
         db.conn.execute(
-            "INSERT INTO agent_dreams (id, user_id, symbolic_theme) VALUES (1, 'u1', 'x')"
+            "INSERT INTO agent_dreams (id, user_id, symbolic_theme, origin_relation_id) "
+            "VALUES (1, 'u1', 'x', 'rel-expressive-1')"
         )
         db.conn.commit()
 

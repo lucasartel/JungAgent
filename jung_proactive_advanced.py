@@ -746,7 +746,10 @@ Tópico:"""
     
     def _get_relevant_facts(self, user_id: str, topic: str) -> List[str]:
         """✅ NOVO: Busca fatos estruturados relevantes ao tópico"""
-        
+        from core.db.relation_scope import resolve_relation_query_scope
+
+        scope = resolve_relation_query_scope(self.db, user_id)
+        clause, clause_params = scope.sql(("id", "user_id", "relation_id"))
         cursor = self.db.conn.cursor()
         
         # Buscar fatos que mencionam palavras-chave do tópico
@@ -754,11 +757,11 @@ Tópico:"""
         
         facts = []
         
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT fact_category, fact_key, fact_value
             FROM user_facts
-            WHERE user_id = ? AND is_current = 1
-        """, (user_id,))
+            WHERE user_id = ?{clause} AND is_current = 1
+        """, (user_id, *clause_params))
         
         all_facts = cursor.fetchall()
         
@@ -873,6 +876,17 @@ Mensagem enviada: "{message}..."
         pressure_context: Dict,
     ) -> Optional[Dict]:
         """Gera uma mensagem relacional guiada pela pressão do Will, sem enviar nem persistir."""
+        from core.db.relation_scope import resolve_relation_query_scope
+
+        try:
+            resolve_relation_query_scope(self.db, user_id)
+        except ValueError as scope_err:
+            # Revogação/escopo recusado: pulso proativo é pulado com graca, sem mensagem.
+            logger.warning(
+                "⏸️ [PROATIVO] Pulso relacional recusado pelo escopo de Relation: %s",
+                scope_err,
+            )
+            return None
         self._refresh_runtime_settings()
         if self._is_in_relational_cooldown(user_id, minimum_hours=max(6.0, self.cooldown_hours / 2)):
             logger.info("⏸️ [PROATIVO] Pulso relacional bloqueado por cooldown secundário.")

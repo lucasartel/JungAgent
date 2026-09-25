@@ -119,6 +119,7 @@ class AgentDiaryWriter:
         evaluate_development: bool = True,
         development_use_llm: bool = True,
     ) -> Dict[str, Any]:
+        self._query_scope().require_production()
         cycle_id = self._normalize_cycle_id(cycle_id)
         snapshot = self.build_snapshot(cycle_id)
         markdown = self.render_markdown(snapshot)
@@ -178,6 +179,7 @@ class AgentDiaryWriter:
         days: int = 7,
         use_llm: bool = True,
     ) -> Dict[str, Any]:
+        self._query_scope().require_production()
         cycle_id = self._normalize_cycle_id(cycle_id)
         if not force and not self._profile_due(cycle_id, days):
             return {
@@ -917,83 +919,101 @@ Evidencias:
         )
 
     def _fetch_conversations(self, cycle_id: str) -> List[Dict[str, Any]]:
+        scope = self._query_scope()
+        clause, clause_params = scope.sql(("id", "user_id", "relation_id"))
         if not self._table_exists("conversations"):
             return []
         return self._fetch_all(
-            """
+            f"""
             SELECT id, timestamp, user_input, ai_response, tension_level,
                    affective_charge, existential_depth, platform
             FROM conversations
-            WHERE user_id = ? AND date(timestamp) = date(?)
+            WHERE user_id = ?{clause} AND date(timestamp) = date(?)
             ORDER BY timestamp ASC, id ASC
             LIMIT 24
             """,
-            (self.user_id, cycle_id),
+            (self.user_id, *clause_params, cycle_id),
         )
 
     def _fetch_dreams(self, cycle_id: str) -> List[Dict[str, Any]]:
+        scope = self._query_scope()
+        clause, clause_params = scope.sql(
+            ("id", "user_id", "origin_relation_id"),
+            relation_column="origin_relation_id",
+        )
         if not self._table_exists("agent_dreams"):
             return []
         return self._fetch_all(
-            """
+            f"""
             SELECT id, created_at, delivered_at, status, symbolic_theme, dream_mood,
                    dream_content, extracted_insight, regulatory_function,
                    compensated_attitude, image_status, image_url
             FROM agent_dreams
-            WHERE user_id = ? AND date(created_at) = date(?)
+            WHERE user_id = ?{clause} AND date(created_at) = date(?)
             ORDER BY created_at ASC, id ASC
             LIMIT 10
             """,
-            (self.user_id, cycle_id),
+            (self.user_id, *clause_params, cycle_id),
         )
 
     def _fetch_will_states(self, cycle_id: str) -> List[Dict[str, Any]]:
+        scope = self._query_scope()
+        clause, clause_params = scope.sql(("id", "user_id", "agent_instance"))
         if not self._table_exists("agent_will_states"):
             return []
+        from engines.will_scope import instance_where_clause
+
+        instance_clause, instance_params = instance_where_clause(
+            self.conn.cursor(), "agent_will_states", self.agent_instance
+        )
         return self._fetch_all(
-            """
+            f"""
             SELECT id, cycle_id, phase, status, saber_score, relacionar_score,
                    expressar_score, dominant_will, secondary_will, constrained_will,
                    will_conflict, attention_bias_note, daily_text, created_at, updated_at
             FROM agent_will_states
-            WHERE user_id = ? AND cycle_id = ?
+            WHERE user_id = ?{instance_clause}{clause} AND cycle_id = ?
             ORDER BY created_at DESC, id DESC
             LIMIT 5
             """,
-            (self.user_id, cycle_id),
+            (self.user_id, *instance_params, *clause_params, cycle_id),
         )
 
     def _fetch_meta_states(self, cycle_id: str) -> List[Dict[str, Any]]:
+        scope = self._query_scope()
+        clause, clause_params = scope.sql(("id", "user_id", "agent_instance"))
         if not self._table_exists("agent_meta_consciousness"):
             return []
         return self._fetch_all(
-            """
+            f"""
             SELECT id, cycle_id, phase, status, dominant_form, emergent_shift,
                    dominant_gravity, blind_spot, integration_note,
                    internal_questions_json, source_summary_json, created_at
             FROM agent_meta_consciousness
-            WHERE user_id = ? AND agent_instance = ? AND cycle_id = ?
+            WHERE user_id = ?{clause} AND agent_instance = ? AND cycle_id = ?
             ORDER BY created_at DESC, id DESC
             LIMIT 5
             """,
-            (self.user_id, self.agent_instance, cycle_id),
+            (self.user_id, *clause_params, self.agent_instance, cycle_id),
         )
 
     def _fetch_rumination_insights(self, cycle_id: str) -> List[Dict[str, Any]]:
+        scope = self._query_scope()
+        clause, clause_params = scope.sql(("id", "user_id", "relation_id"))
         if not self._table_exists("rumination_insights"):
             return []
         return self._fetch_all(
-            """
+            f"""
             SELECT id, source_tension_id, insight_type, symbol_content,
                    question_content, full_message, depth_score, novelty_score,
                    status, crystallized_at, delivered_at
             FROM rumination_insights
-            WHERE user_id = ?
+            WHERE user_id = ?{clause}
               AND date(COALESCE(crystallized_at, delivered_at)) = date(?)
             ORDER BY COALESCE(crystallized_at, delivered_at) ASC, id ASC
             LIMIT 12
             """,
-            (self.user_id, cycle_id),
+            (self.user_id, *clause_params, cycle_id),
         )
 
     def _fetch_work_runs(self, cycle_id: str) -> List[Dict[str, Any]]:
@@ -1049,33 +1069,44 @@ Evidencias:
         )
 
     def _fetch_hobby_artifacts(self, cycle_id: str) -> List[Dict[str, Any]]:
+        scope = self._query_scope()
+        clause, clause_params = scope.sql(("id", "user_id", "agent_instance"))
         if not self._table_exists("agent_hobby_artifacts"):
             return []
         return self._fetch_all(
-            """
+            f"""
             SELECT id, cycle_id, title, summary, image_prompt, image_url, provider,
                    status, critique_summary, evaluation_model, evaluated_at, created_at
             FROM agent_hobby_artifacts
-            WHERE user_id = ? AND cycle_id = ?
+            WHERE user_id = ?{clause} AND cycle_id = ?
             ORDER BY created_at ASC, id ASC
             LIMIT 10
             """,
-            (self.user_id, cycle_id),
+            (self.user_id, *clause_params, cycle_id),
         )
 
     def _fetch_development_state(self) -> Optional[Dict[str, Any]]:
+        scope = self._query_scope()
+        clause, clause_params = scope.sql(("id", "user_id", "agent_instance"))
         if not self._table_exists("agent_development"):
             return None
         return self._fetch_one(
-            """
+            f"""
             SELECT id, user_id, phase, total_interactions, self_awareness_score,
                    moral_complexity_score, emotional_depth_score, autonomy_score,
                    depth_level, autonomy_level, last_updated
             FROM agent_development
-            WHERE user_id = ?
+            WHERE user_id = ?{clause}
             LIMIT 1
             """,
-            (self.user_id,),
+            (self.user_id, *clause_params),
+        )
+
+    def _query_scope(self):
+        from core.db.relation_scope import resolve_relation_query_scope
+
+        return resolve_relation_query_scope(
+            self.db, self.user_id, agent_instance=self.agent_instance
         )
 
     def _collect_sources(self, *groups: Tuple[str, Iterable[Dict[str, Any]]]) -> List[str]:
@@ -1213,5 +1244,3 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     else:
         print(json.dumps(result, ensure_ascii=False))
     return 0
-
-
