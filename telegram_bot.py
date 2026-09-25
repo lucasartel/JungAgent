@@ -1557,6 +1557,34 @@ O que você decide?
             conflict_info,
         )
 
+    except ValueError as scope_err:
+        sentinel_text = str(scope_err)
+        if not sentinel_text.startswith(
+            (
+                "relation_not_eligible",
+                "consent_gate_unavailable_for_relation_scope",
+                "relation_scope_required_for_production",
+                "relation_scope_required_for_conversation",
+                "relation_not_eligible_for_consolidation",
+                "relation_file_scope_required",
+                "relation_scope_required_for_consolidation",
+            )
+        ):
+            logger.error(f"❌ Erro ao processar mensagem: {scope_err}", exc_info=True)
+            await update.message.reply_text(
+                "😔 Desculpe, ocorreu um erro ao processar sua mensagem.\n"
+                "Pode tentar novamente?"
+            )
+        else:
+            logger.warning(
+                "🔒 Conversa recusada pelo escopo/consentimento da Relation: user_id=%s sentinel=%s",
+                user_id[:8],
+                sentinel_text,
+            )
+            await update.message.reply_text(
+                "🔒 Este vínculo foi encerrado ou o consentimento foi revogado. "
+                "Não posso mais acessar nem produzir conteúdo desta relação."
+            )
     except Exception as e:
         logger.error(f"❌ Erro ao processar mensagem: {e}", exc_info=True)
 

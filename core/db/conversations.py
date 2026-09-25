@@ -277,15 +277,23 @@ class ConversationDatabaseMixin:
             row[1] for row in cursor.execute("PRAGMA table_info(conversations)").fetchall()
         }
         relation_id = self._resolve_relation_id(user_id, relation_id)
+        if relation_id:
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, relation_id)
         agent_instance = self._conversation_agent_instance()
         clauses = ["user_id = ?"]
         params: List[Any] = [user_id]
         if relation_id and "relation_id" in conversation_columns:
             clauses.append("relation_id = ?")
             params.append(relation_id)
-        elif agent_instance and "agent_instance" in conversation_columns:
-            clauses.append("agent_instance = ?")
-            params.append(agent_instance)
+        elif relation_id or self._legacy_admin_conversation_allowed(user_id):
+            if agent_instance and "agent_instance" in conversation_columns:
+                clauses.append("agent_instance = ?")
+                params.append(agent_instance)
+        else:
+            # Participante sem Relation resolvida: leitura vazia (fail-closed).
+            clauses.append("1 = 0")
         if not include_proactive:
             clauses.append("(platform IS NULL OR platform NOT IN ('proactive', 'proactive_rumination'))")
         params.append(limit)

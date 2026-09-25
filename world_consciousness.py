@@ -721,46 +721,57 @@ class WorldConsciousnessFetcher:
         path = self._resolve_sqlite_path()
         if not os.path.exists(path):
             return {}
+        from core.db.relation_scope import resolve_relation_query_scope
 
         conn = sqlite3.connect(path, timeout=15)
         conn.row_factory = sqlite3.Row
         try:
+            scope = resolve_relation_query_scope(
+                conn,
+                user_id,
+                agent_instance=self.agent_instance,
+                admin_user_id=self._admin_user_id(),
+            )
+            conv_clause, conv_params = scope.sql(("id", "user_id", "relation_id"))
+            tension_clause, tension_params = scope.sql(("id", "user_id", "relation_id"))
+            meta_clause, meta_params = scope.sql(("id", "user_id", "agent_instance"))
+            will_clause, will_params = scope.sql(("id", "user_id", "agent_instance"))
             cursor = conn.cursor()
 
             cursor.execute(
-                """
+                f"""
                 SELECT id, user_input, ai_response, tension_level, affective_charge, existential_depth
                 FROM conversations
-                WHERE user_id = ?
+                WHERE user_id = ?{conv_clause}
                 ORDER BY id DESC
                 LIMIT 4
                 """,
-                (user_id,),
+                (user_id, *conv_params),
             )
             conversations = [dict(row) for row in cursor.fetchall()]
 
             cursor.execute(
-                """
+                f"""
                 SELECT id, tension_type, tension_description, pole_a_content, pole_b_content, intensity, status
                 FROM rumination_tensions
-                WHERE user_id = ?
+                WHERE user_id = ?{tension_clause}
                   AND status IN ('open', 'maturing', 'ready_for_synthesis')
                 ORDER BY intensity DESC, id DESC
                 LIMIT 3
                 """,
-                (user_id,),
+                (user_id, *tension_params),
             )
             tensions = [dict(row) for row in cursor.fetchall()]
 
             cursor.execute(
-                """
+                f"""
                 SELECT dominant_form, emergent_shift, dominant_gravity, blind_spot, integration_note, internal_questions_json
                 FROM agent_meta_consciousness
-                WHERE user_id = ?
+                WHERE user_id = ?{meta_clause}
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
-                (user_id,),
+                (user_id, *meta_params),
             )
             meta_row = cursor.fetchone()
             meta = dict(meta_row) if meta_row else {}
@@ -770,14 +781,14 @@ class WorldConsciousnessFetcher:
                 meta["internal_questions"] = []
 
             cursor.execute(
-                """
+                f"""
                 SELECT daily_text, attention_bias_note, will_conflict, dominant_will, secondary_will, constrained_will
                 FROM agent_will_states
-                WHERE user_id = ?
+                WHERE user_id = ?{will_clause}
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
-                (user_id,),
+                (user_id, *will_params),
             )
             will_row = cursor.fetchone()
             will_snapshot = dict(will_row) if will_row else {}
@@ -788,6 +799,9 @@ class WorldConsciousnessFetcher:
                 "meta_consciousness": meta,
                 "will_snapshot": will_snapshot,
             }
+        except ValueError:
+            # Sentinela de escopo/consentimento: fail-closed, nunca vira leitura vazia silenciosa.
+            raise
         except Exception as exc:
             logger.debug("World Consciousness: falha ao ler insumos epistemicos: %s", exc)
             return {}
