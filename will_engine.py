@@ -564,31 +564,18 @@ class WillEngine:
     ) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
         params: List[Any] = [user_id]
-        dream_scope = getattr(self.db, "_dream_read_scope", None)
-        if callable(dream_scope):
-            try:
-                clause, clause_params = dream_scope(
-                    user_id=user_id,
-                    relation_id=relation_id,
-                    agent_instance=agent_instance,
-                )
-            except Exception:
-                # Revogado/inelegivel: sem residuo onirico (fail-closed C12g).
-                return None
-        else:
-            from core.db.relation_scope import legacy_quarantine_clause
+        from engines.will_scope import dream_scope_clause
 
-            clause, clause_params = legacy_quarantine_clause(
-                cursor,
-                table="agent_dreams",
-                relation_column="origin_relation_id",
-                agent_instance=agent_instance,
-            )
-        clause = clause.strip()
-        if clause.upper().startswith("AND "):
-            clause = clause[4:].strip()
-        if not clause:
-            clause = "1 = 1"
+        # Escopo explicito (P1): o Will global nao resolve Relations; a leitura
+        # relacional usa a Relation verificada/revogavel do caller.
+        clause, clause_params = dream_scope_clause(
+            self.db,
+            user_id=user_id,
+            relation_id=relation_id,
+            agent_instance=agent_instance,
+        )
+        if clause == "1 = 0":
+            return None
         params.extend(clause_params)
         cursor.execute(
             f"""

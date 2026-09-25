@@ -1888,22 +1888,26 @@ class ConsciousnessLoopManager:
 
     def _deliver_pending_dreams(self, result: Dict, limit: int = 3) -> List[int]:
         cursor = self.db.conn.cursor()
-        from core.db.relation_scope import legacy_quarantine_clause
+        from engines.will_scope import dream_scope_clause
 
-        dream_clause, dream_clause_params = legacy_quarantine_clause(
-            cursor,
-            table="agent_dreams",
-            relation_column="origin_relation_id",
+        # Entrega ao proprio admin: visibilidade pessoal da Relation dele
+        # (mesmo escopo da escrita em resolve_cognitive_origin) — nao e um
+        # fluxo cross-Relation, e o canal privado do dono do sonho.
+        dream_clause, dream_clause_params = dream_scope_clause(
+            self.db,
+            user_id=self.admin_user_id,
             agent_instance=getattr(self, "agent_instance", None),
+            allow_relation_resolution=True,
         )
+        dream_clause = f" AND ({dream_clause})"
         cursor.execute(
             f"""
             SELECT id, dream_content, symbolic_theme, extracted_insight,
                    regulatory_function, compensated_attitude, dream_mood,
                    image_url, image_provider, image_model, image_status,
                    status, created_at
-            FROM agent_dreams
-            WHERE user_id = ?{dream_clause}
+        FROM agent_dreams
+        WHERE user_id = ?{dream_clause}
               AND extracted_insight IS NOT NULL
               AND COALESCE(status, 'pending') != 'delivered'
             ORDER BY created_at ASC
@@ -2077,14 +2081,19 @@ class ConsciousnessLoopManager:
         from dream_engine import DreamEngine
 
         self._promote_from_placeholder(result)
-        from core.db.relation_scope import legacy_quarantine_clause
+        from engines.will_scope import dream_scope_clause
 
-        dream_clause, dream_clause_params = legacy_quarantine_clause(
-            self.db.conn.cursor(),
-            table="agent_dreams",
-            relation_column="origin_relation_id",
+        # Read-after-write do proprio ciclo: o generate_dream grava no escopo
+        # pessoal (Relation resolvida em resolve_cognitive_origin), entao a
+        # fase precisa enxergar o que acabou de gerar — visibilidade pessoal,
+        # nao fluxo cross-Relation.
+        dream_clause, dream_clause_params = dream_scope_clause(
+            self.db,
+            user_id=self.admin_user_id,
             agent_instance=getattr(self, "agent_instance", None),
+            allow_relation_resolution=True,
         )
+        dream_clause = f" AND ({dream_clause})"
         dreams_before = self._count_rows(
             "agent_dreams",
             f"user_id = ?{dream_clause}",

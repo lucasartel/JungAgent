@@ -176,11 +176,20 @@ class DreamDatabaseMixin:
         user_id: str,
         relation_id: Optional[str],
         agent_instance: Optional[str],
+        allow_relation_resolution: bool = True,
     ) -> tuple[str, list[Any]]:
+        """Escopo de leitura de sonho.
+
+        ``allow_relation_resolution=False`` forca o fluxo GLOBAL estrito:
+        nunca resolve a Relation cadastrada do usuario — so residuos sem
+        Relation de origem. O Will global normaliza o escopo em
+        ``scope_context`` (relation_id=None = global por escolha) e precisa
+        dessa distincao para nao recair na Relation privada.
+        """
         instance = cognitive_agent_instance(self, agent_instance)
         resolved_relation = None
         resolver = getattr(self, "resolve_relation_id", None)
-        if callable(resolver):
+        if callable(resolver) and (relation_id or allow_relation_resolution):
             resolved_relation = resolver(
                 agent_instance=instance,
                 participant_user_id=user_id,

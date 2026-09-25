@@ -212,3 +212,49 @@ class WillScopeDatabaseMixin:
             "relation_id": resolved_relation_id,
             "scope_kind": resolved_kind,
         }
+
+
+def dream_scope_clause(
+    db_manager: Any,
+    *,
+    user_id: str,
+    relation_id: Optional[str] = None,
+    agent_instance: Optional[str] = None,
+    allow_relation_resolution: bool = False,
+) -> tuple[str, list[Any]]:
+    """Leitura de sonho do Will com escopo EXPLICITO (C12c/P1).
+
+    Por padrao e estrito (``allow_relation_resolution=False``), como no Will:
+    ``scope_context`` ja normalizou o escopo, entao ``relation_id=None``
+    significa fluxo GLOBAL (somente residuos sem Relation de origem) e
+    ``relation_id`` definido significa o escopo daquela Relation
+    (verificado/revogavel). Revogado ou inelegivel: fail-closed, sem residuo.
+
+    ``allow_relation_resolution=True`` e a visibilidade PESSOAL do usuario
+    (diario/entrega da propria Relation), onde a Relation cadastrada pode ser
+    resolvida — nunca use em fluxos cross-Relation (blog, dashboards, Will).
+    """
+    dream_scope = getattr(db_manager, "_dream_read_scope", None)
+    if callable(dream_scope):
+        try:
+            clause, clause_params = dream_scope(
+                user_id=user_id,
+                relation_id=relation_id,
+                agent_instance=agent_instance,
+                allow_relation_resolution=allow_relation_resolution,
+            )
+        except Exception:
+            return "1 = 0", []
+    else:
+        from core.db.relation_scope import legacy_quarantine_clause
+
+        clause, clause_params = legacy_quarantine_clause(
+            db_manager.conn.cursor(),
+            table="agent_dreams",
+            relation_column="origin_relation_id",
+            agent_instance=agent_instance,
+        )
+    clause = clause.strip()
+    if clause.upper().startswith("AND "):
+        clause = clause[4:].strip()
+    return (clause or "1 = 1"), list(clause_params)

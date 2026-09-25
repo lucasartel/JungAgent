@@ -530,30 +530,16 @@ class WillPressureEngine:
             reasons.append("saber subiu porque a consciencia do mundo encontrou materia nova")
 
         dream_params: List[Any] = [user_id]
-        dream_scope = getattr(self.db, "_dream_read_scope", None)
-        if callable(dream_scope):
-            try:
-                dream_clause, dream_clause_params = dream_scope(
-                    user_id=user_id,
-                    relation_id=relation_id,
-                    agent_instance=self._scope_instance(),
-                )
-            except Exception:
-                dream_clause, dream_clause_params = "1 = 0", []
-        else:
-            from core.db.relation_scope import legacy_quarantine_clause
+        from engines.will_scope import dream_scope_clause
 
-            dream_clause, dream_clause_params = legacy_quarantine_clause(
-                cursor,
-                table="agent_dreams",
-                relation_column="origin_relation_id",
-                agent_instance=self._scope_instance(),
-            )
-        dream_clause = dream_clause.strip()
-        if dream_clause.upper().startswith("AND "):
-            dream_clause = dream_clause[4:].strip()
-        if not dream_clause:
-            dream_clause = "1 = 1"
+        # Escopo explicito (P1): global = so residuos sem Relation; relacional
+        # = a Relation verificada do caller. Nunca auto-resolucao.
+        dream_clause, dream_clause_params = dream_scope_clause(
+            self.db,
+            user_id=user_id,
+            relation_id=relation_id,
+            agent_instance=self._scope_instance(),
+        )
         dream_params.extend(dream_clause_params)
         cursor.execute(
             f"""
