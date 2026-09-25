@@ -54,6 +54,12 @@ class _ConversationEngine(ConversationDatabaseMixin):
         self.development_updates: list[str] = []
         self.fact_extractions: list[tuple[str, str, int, str | None]] = []
 
+    def resolve_relation_id(self, *, agent_instance=None, participant_user_id=None, relation_id=None):
+        # Fixtures C12g: cenario de usuario nao registrado na tabela de
+        # Relations — o lookup existe e nao encontra Relation (o gate recusa
+        # quando NENHUMA API de Relations esta disponivel).
+        return None
+
     def _update_agent_development(self, user_id: str):
         self.development_updates.append(user_id)
 

@@ -274,9 +274,10 @@ def test_cognitive_context_scope_allows_eligible_relation():
 # produtores principais (conversa, fatos, ruminação)
 # ---------------------------------------------------------------------------
 
-def _conversation_db(relation):
-    db = _make_db(relation, ConversationDatabaseMixin)
+def _prepare_conversation_db(db):
     db.development_updates = []
+    db._update_agent_development = lambda user_id: db.development_updates.append(user_id)
+    db.extract_and_save_facts_v2 = lambda *args, **kwargs: []
     db.conn.executescript(
         """
         CREATE TABLE conversations (
@@ -314,6 +315,16 @@ def _conversation_db(relation):
     )
     db.conn.commit()
     return db
+
+
+def _conversation_db(relation):
+    return _prepare_conversation_db(_make_db(relation, ConversationDatabaseMixin))
+
+
+def _conversation_db_without_relation_api():
+    return _prepare_conversation_db(
+        _make_db_without_relation_api(ConversationDatabaseMixin)
+    )
 
 
 @pytest.mark.parametrize("case", sorted(INELIGIBLE_CASES))
@@ -457,3 +468,61 @@ def test_rumination_producers_and_readers_produce_nothing_without_relation_api()
     }
     assert engine.ingest(conversation) == []
     assert engine.detect_tensions("user_a") == []
+
+
+def test_save_conversation_without_relation_api_refuses_participant():
+    db = _conversation_db_without_relation_api()
+    with pytest.raises(
+        ValueError, match="consent_gate_unavailable_for_relation_scope"
+    ):
+        db.save_conversation("user_a", "User A", "entrada", "resposta")
+    assert (
+        db.conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+    )
+
+
+def test_save_conversation_without_relation_api_keeps_legacy_admin():
+    db = _conversation_db_without_relation_api()
+    conversation_id = db.save_conversation(
+        ADMIN_USER_ID, "Admin", "entrada", "resposta"
+    )
+    assert conversation_id
+    assert (
+        db.conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 1
+    )
+
+
+def test_save_conversation_without_relation_api_verifies_explicit_relation():
+    db = _conversation_db_without_relation_api()
+    with pytest.raises(
+        ValueError, match="consent_gate_unavailable_for_relation_scope"
+    ):
+        db.save_conversation(
+            "user_a", "User A", "entrada", "resposta", relation_id="rel-1"
+        )
+    assert (
+        db.conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+    )
+
+
+def test_cognitive_scope_without_relation_api_refuses_explicit_relation():
+    with pytest.raises(
+        ValueError, match="consent_gate_unavailable_for_relation_scope"
+    ):
+        CognitiveContextScope.resolve(
+            _make_db_without_relation_api(),
+            participant_user_id="user_a",
+            agent_instance="jung_a",
+            admin_user_id=ADMIN_USER_ID,
+            relation_id="rel-1",
+        )
+
+
+def test_cognitive_scope_without_relation_api_keeps_ephemeral_adapter():
+    scope = CognitiveContextScope.resolve(
+        _make_db_without_relation_api(),
+        participant_user_id="user_a",
+        agent_instance="jung_a",
+        admin_user_id=ADMIN_USER_ID,
+    )
+    assert scope.relation_id == "ephemeral-participant:user_a"
