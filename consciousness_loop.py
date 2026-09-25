@@ -2077,6 +2077,22 @@ class ConsciousnessLoopManager:
         except Exception as exc:
             logger.warning("LOOP KNOWLEDGE NOTIFY erro ao enviar diario de saber ao admin: %s", exc)
 
+    @staticmethod
+    def _dream_reference_payload(row) -> Dict:
+        """Referencia o sonho; nao duplica conteudo privado.
+
+        raw_result_json persiste em consciousness_loop_phase_results, um
+        registro de instancia sem coluna de Relation e sem regra de acesso.
+        Narrativa, residuo e interpretacoes vivem em agent_dreams, que tem o
+        escopo correto — a entrega pessoal le a linha direta da tabela.
+        """
+        return {
+            "dream_id": row["id"],
+            "image_status": row["image_status"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+        }
+
     def _run_dream_phase(self, result: Dict) -> Dict:
         from dream_engine import DreamEngine
 
@@ -2137,23 +2153,9 @@ class ConsciousnessLoopManager:
                     artifact_type="dream",
                     artifact_id=row["id"],
                     artifact_table="agent_dreams",
-                    summary=row["symbolic_theme"] or "Tema onirico nao nomeado",
+                    summary=f"Sonho #{row['id']}",
                 )
-                result["raw_result"]["latest_dream"] = {
-                    "dream_id": row["id"],
-                    "dream_content": row["dream_content"],
-                    "symbolic_theme": row["symbolic_theme"],
-                    "regulatory_function": row["regulatory_function"],
-                    "compensated_attitude": row["compensated_attitude"],
-                    "dream_mood": row["dream_mood"],
-                    "extracted_insight": row["extracted_insight"],
-                    "image_url": row["image_url"],
-                    "image_provider": row["image_provider"],
-                    "image_model": row["image_model"],
-                    "image_status": row["image_status"],
-                    "status": row["status"],
-                    "created_at": row["created_at"],
-                }
+                result["raw_result"]["latest_dream"] = self._dream_reference_payload(row)
             delivered_ids = self._deliver_pending_dreams(result)
             result["raw_result"]["delivered_dream_ids"] = delivered_ids
             result["metrics"]["dream_deliveries"] = len(delivered_ids)
