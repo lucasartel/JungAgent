@@ -39,6 +39,35 @@ _PROPOSALS_MODULE = _load_module(
 )
 
 
+RELATION_ID = "rel-cycle-1"
+
+
+def _enable_relation_registry(db, relations):
+    """Registra um resolvedor de Relations verificavel nos testes (C12g).
+
+    Segue o padrao de tests/test_rumination_relation_scope.py: a fixture
+    registra Relations reais/ativas em vez de depender de fallbacks.
+    """
+
+    def get_agent_relation(relation_id):
+        relation = relations.get(str(relation_id))
+        return dict(relation) if relation else None
+
+    def resolve_relation_id(*, agent_instance=None, participant_user_id=None, relation_id=None):
+        if relation_id:
+            return str(relation_id)
+        for candidate_id, relation in relations.items():
+            if agent_instance and relation.get("agent_instance") != str(agent_instance):
+                continue
+            if participant_user_id and relation.get("participant_user_id") != str(participant_user_id):
+                continue
+            return str(candidate_id)
+        return None
+
+    db.get_agent_relation = get_agent_relation
+    db.resolve_relation_id = resolve_relation_id
+
+
 class _CycleDB(_PROPOSALS_MODULE.ActionProposalDatabaseMixin):
     """Stub DB with action_proposals schema and stubs for proposer/dispatcher deps."""
 
@@ -50,11 +79,11 @@ class _CycleDB(_PROPOSALS_MODULE.ActionProposalDatabaseMixin):
         # Stub tables that ActionProposer probes.
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS rumination_tensions "
-            "(id INTEGER PRIMARY KEY, user_id TEXT, status TEXT)"
+            "(id INTEGER PRIMARY KEY, user_id TEXT, status TEXT, relation_id TEXT)"
         )
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS conversations "
-            "(id INTEGER PRIMARY KEY, user_id TEXT)"
+            "(id INTEGER PRIMARY KEY, user_id TEXT, relation_id TEXT)"
         )
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS agent_will_states "
@@ -75,6 +104,18 @@ class _CycleDB(_PROPOSALS_MODULE.ActionProposalDatabaseMixin):
         self._relational_state_stub: Dict[str, Any] = {}
         self._working_memory_focus_count = 0
         self._open_goal_threads = 0
+        _enable_relation_registry(
+            self,
+            {
+                RELATION_ID: {
+                    "relation_id": RELATION_ID,
+                    "agent_instance": "test_jung_v0",
+                    "participant_user_id": "test_admin",
+                    "status": "active",
+                    "consent_status": "granted",
+                }
+            },
+        )
 
     def get_latest_relational_state(self, *, agent_instance, user_id):
         return dict(self._relational_state_stub) if self._relational_state_stub else None
@@ -132,11 +173,12 @@ class TestRunActionProposalCycle:
             (datetime.utcnow().isoformat(),),
         )
         db.conn.execute(
-            "INSERT INTO conversations (id, user_id) VALUES (1, 'test_admin')"
+            "INSERT INTO conversations (id, user_id, relation_id) "
+            "VALUES (1, 'test_admin', 'rel-cycle-1')"
         )
         db.conn.execute(
-            "INSERT INTO rumination_tensions (id, user_id, status) VALUES "
-            "(1, 'test_admin', 'open')"
+            "INSERT INTO rumination_tensions (id, user_id, status, relation_id) VALUES "
+            "(1, 'test_admin', 'open', 'rel-cycle-1')"
         )
         db.conn.commit()
 
@@ -165,7 +207,8 @@ class TestRunActionProposalCycle:
             (datetime.utcnow().isoformat(),),
         )
         db.conn.execute(
-            "INSERT INTO conversations (id, user_id) VALUES (1, 'test_admin')"
+            "INSERT INTO conversations (id, user_id, relation_id) "
+            "VALUES (1, 'test_admin', 'rel-cycle-1')"
         )
         db.conn.commit()
         db._relational_state_stub = {

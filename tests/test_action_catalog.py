@@ -301,14 +301,27 @@ class _ProposerDB(ActionProposalDatabaseMixin):
         self._lock = threading.RLock()
         self.agent_instance = "test_jung_v0"
         self._init_action_proposals_schema()
+        # C12g: registra uma Relation verificavel (ativa, com consentimento)
+        # para o participante usado pelos testes, em vez de fallbacks.
+        self._enable_relation_registry(
+            {
+                "rel-catalog-1": {
+                    "relation_id": "rel-catalog-1",
+                    "agent_instance": "test_jung_v0",
+                    "participant_user_id": "user_1",
+                    "status": "active",
+                    "consent_status": "granted",
+                }
+            }
+        )
         # Stub tables the proposer may probe.
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS rumination_tensions "
-            "(id INTEGER PRIMARY KEY, user_id TEXT, status TEXT)"
+            "(id INTEGER PRIMARY KEY, user_id TEXT, status TEXT, relation_id TEXT)"
         )
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS conversations "
-            "(id INTEGER PRIMARY KEY, user_id TEXT)"
+            "(id INTEGER PRIMARY KEY, user_id TEXT, relation_id TEXT)"
         )
         # agent_will_states so load_latest_will_state can query it.
         self.conn.execute(
@@ -390,6 +403,30 @@ class _ProposerDB(ActionProposalDatabaseMixin):
         )
         self.conn.commit()
 
+    def _enable_relation_registry(self, relations):
+        """Resolvedor de Relations verificavel para o gate de escopo (C12g).
+
+        Segue o padrao de tests/test_rumination_relation_scope.py.
+        """
+
+        def get_agent_relation(relation_id):
+            relation = relations.get(str(relation_id))
+            return dict(relation) if relation else None
+
+        def resolve_relation_id(*, agent_instance=None, participant_user_id=None, relation_id=None):
+            if relation_id:
+                return str(relation_id)
+            for candidate_id, relation in relations.items():
+                if agent_instance and relation.get("agent_instance") != str(agent_instance):
+                    continue
+                if participant_user_id and relation.get("participant_user_id") != str(participant_user_id):
+                    continue
+                return str(candidate_id)
+            return None
+
+        self.get_agent_relation = get_agent_relation
+        self.resolve_relation_id = resolve_relation_id
+
     def get_latest_relational_state(self, *, agent_instance, user_id):
         return dict(self._relational_state_stub) if self._relational_state_stub else None
 
@@ -412,16 +449,17 @@ class TestActionProposer:
         }
         # 2 active tensions
         db.conn.execute(
-            "INSERT INTO rumination_tensions (user_id, status) VALUES (?, ?)",
-            ("user_1", "open"),
+            "INSERT INTO rumination_tensions (user_id, status, relation_id) VALUES (?, ?, ?)",
+            ("user_1", "open", "rel-catalog-1"),
         )
         db.conn.execute(
-            "INSERT INTO rumination_tensions (user_id, status) VALUES (?, ?)",
-            ("user_1", "maturing"),
+            "INSERT INTO rumination_tensions (user_id, status, relation_id) VALUES (?, ?, ?)",
+            ("user_1", "maturing", "rel-catalog-1"),
         )
         db.conn.commit()
         db.conn.execute(
-            "INSERT INTO conversations (user_id) VALUES (?)", ("user_1",)
+            "INSERT INTO conversations (user_id, relation_id) VALUES (?, ?)",
+            ("user_1", "rel-catalog-1"),
         )
         db.conn.commit()
         proposer = ap_module.ActionProposer(db)
@@ -439,7 +477,8 @@ class TestActionProposer:
             "id": 5, "agent_stance": "concerned", "silence_delta_hours": 36.0,
         }
         db.conn.execute(
-            "INSERT INTO conversations (user_id) VALUES (?)", ("user_1",)
+            "INSERT INTO conversations (user_id, relation_id) VALUES (?, ?)",
+            ("user_1", "rel-catalog-1"),
         )
         db.conn.commit()
         proposer = ap_module.ActionProposer(db)
@@ -473,7 +512,8 @@ class TestActionProposer:
             "id": 7, "agent_stance": "curious", "silence_delta_hours": 2.0,
         }
         db.conn.execute(
-            "INSERT INTO conversations (user_id) VALUES (?)", ("user_1",)
+            "INSERT INTO conversations (user_id, relation_id) VALUES (?, ?)",
+            ("user_1", "rel-catalog-1"),
         )
         db.conn.commit()
         proposer = ap_module.ActionProposer(db)

@@ -18,6 +18,28 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Membership references for the C12g relation scope gate (helper only tests
+# presence/absence of the scope column).
+# agent_will_states nao tem coluna de Relation (nem agent_instance): a tupla
+# e a referencia de presenca usada pelo helper — nao declarar relation_id aqui.
+WILL_STATES_SCOPE_COLUMNS = ("id", "user_id")
+DREAMS_SCOPE_COLUMNS = ("id", "user_id", "origin_relation_id")
+RUMINATION_INSIGHTS_SCOPE_COLUMNS = ("id", "user_id", "relation_id")
+HOBBY_ARTIFACTS_SCOPE_COLUMNS = ("id", "title", "summary")
+
+
+def _relation_scope(db: Any, user_id: str) -> Any:
+    """Resolve o escopo de Relation fail-closed para SQL bruto (C12g).
+
+    Recusas canonicas (Relation inelegivel, gate de consentimento
+    indisponivel) propagam como ``ValueError``; nunca capturadas aqui.
+    """
+    from core.db.relation_scope import resolve_relation_query_scope
+
+    return resolve_relation_query_scope(
+        db, user_id, agent_instance=getattr(db, "agent_instance", None)
+    )
+
 
 def _resolve_agent_dir() -> Path:
     volume = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
@@ -60,6 +82,10 @@ def handle_compose_essay_draft(
     """
     from llm_providers import get_llm_response
 
+    # C12g: o ensaio e conteudo derivado do usuario — so produz com Relation
+    # elegivel (ou admin legado na quarentena).
+    scope = _relation_scope(db, user_id).require_production()
+
     agent_dir = _resolve_agent_dir()
     profile_text = _read_file(agent_dir / "profile.md", limit=4000)
     timeline_text = _read_file(agent_dir / "timeline.json", limit=3000)
@@ -72,21 +98,26 @@ def handle_compose_essay_draft(
     # Try to find the latest will/dream/insight anchors from the DB.
     try:
         cursor = db.conn.cursor()
+        will_clause, will_params = scope.sql(WILL_STATES_SCOPE_COLUMNS)
         cursor.execute(
-            "SELECT id FROM agent_will_states WHERE user_id=? ORDER BY id DESC LIMIT 1",
-            (user_id,))
+            f"SELECT id FROM agent_will_states WHERE user_id=?{will_clause} ORDER BY id DESC LIMIT 1",
+            (user_id, *will_params))
         r = cursor.fetchone()
         if r:
             source_refs.append(f"will#{r[0]}")
+        dream_clause, dream_params = scope.sql(
+            DREAMS_SCOPE_COLUMNS, relation_column="origin_relation_id"
+        )
         cursor.execute(
-            "SELECT id FROM agent_dreams WHERE user_id=? ORDER BY id DESC LIMIT 1",
-            (user_id,))
+            f"SELECT id FROM agent_dreams WHERE user_id=?{dream_clause} ORDER BY id DESC LIMIT 1",
+            (user_id, *dream_params))
         r = cursor.fetchone()
         if r:
             source_refs.append(f"dream#{r[0]}")
+        rum_clause, rum_params = scope.sql(RUMINATION_INSIGHTS_SCOPE_COLUMNS)
         cursor.execute(
-            "SELECT id FROM rumination_insights WHERE user_id=? ORDER BY id DESC LIMIT 1",
-            (user_id,))
+            f"SELECT id FROM rumination_insights WHERE user_id=?{rum_clause} ORDER BY id DESC LIMIT 1",
+            (user_id, *rum_params))
         r = cursor.fetchone()
         if r:
             source_refs.append(f"rumination_insight#{r[0]}")
@@ -162,15 +193,23 @@ def handle_curate_portfolio(
 ) -> Dict[str, Any]:
     """Select top dreams, art, and insights by depth/novelty and create
     a working_memory curation note.  Gate: internal_only."""
+    # C12g: a curadoria e conteudo derivado do usuario — so produz com
+    # Relation elegivel (ou admin legado na quarentena).
+    scope = _relation_scope(db, user_id).require_production()
+
     cursor = db.conn.cursor()
     source_refs: List[str] = []
     curated: List[str] = []
 
     # Top 3 dreams by recency
     try:
+        dream_clause, dream_params = scope.sql(
+            DREAMS_SCOPE_COLUMNS, relation_column="origin_relation_id"
+        )
         for r in cursor.execute(
-            "SELECT id, symbolic_theme, dream_mood FROM agent_dreams "
-            "WHERE user_id=? ORDER BY id DESC LIMIT 3", (user_id,)
+            f"SELECT id, symbolic_theme, dream_mood FROM agent_dreams "
+            f"WHERE user_id=?{dream_clause} ORDER BY id DESC LIMIT 3",
+            (user_id, *dream_params)
         ).fetchall():
             curated.append(
                 f"� Sonho #{r[0]}: {_trunc(r[1], 80)} [{r[2] or '?'}]"
@@ -181,10 +220,12 @@ def handle_curate_portfolio(
 
     # Top 3 insights by depth_score
     try:
+        rum_clause, rum_params = scope.sql(RUMINATION_INSIGHTS_SCOPE_COLUMNS)
         for r in cursor.execute(
-            "SELECT id, symbol_content, depth_score FROM rumination_insights "
-            "WHERE user_id=? AND depth_score>0.5 ORDER BY depth_score DESC LIMIT 3",
-            (user_id,)
+            f"SELECT id, symbol_content, depth_score FROM rumination_insights "
+            f"WHERE user_id=?{rum_clause} AND depth_score>0.5 "
+            f"ORDER BY depth_score DESC LIMIT 3",
+            (user_id, *rum_params)
         ).fetchall():
             curated.append(
                 f"💡 Insight #{r[0]} (depth={r[2]:.2f}): {_trunc(r[1], 80)}"
@@ -195,9 +236,12 @@ def handle_curate_portfolio(
 
     # Top 2 hobby artefacts by recency (if table exists)
     try:
+        art_clause, art_params = scope.sql(HOBBY_ARTIFACTS_SCOPE_COLUMNS)
         for r in cursor.execute(
-            "SELECT id, title, summary FROM agent_hobby_artifacts "
-            "ORDER BY id DESC LIMIT 2"
+            f"SELECT id, title, summary FROM agent_hobby_artifacts "
+            f"WHERE 1 = 1{art_clause} "
+            f"ORDER BY id DESC LIMIT 2",
+            art_params
         ).fetchall():
             curated.append(
                 f"🎨 Arte #{r[0]}: {_trunc(r[1] or r[2], 80)}"

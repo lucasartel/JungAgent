@@ -41,6 +41,33 @@ logger = logging.getLogger(__name__)
 MAX_PROPOSALS_PER_CYCLE = 3
 DEFAULT_RECENT_WINDOW_HOURS = 48
 
+# Membership references for the C12g relation scope gate (helper only tests
+# presence/absence of the scope column).
+RUMINATION_TENSIONS_SCOPE_COLUMNS = ("id", "user_id", "relation_id")
+CONVERSATIONS_SCOPE_COLUMNS = ("id", "user_id", "relation_id")
+
+
+def _relation_scope(
+    db: Any,
+    *,
+    user_id: str,
+    relation_id: Optional[str] = None,
+    agent_instance: Optional[str] = None,
+) -> Any:
+    """Resolve o escopo de Relation fail-closed para SQL bruto (C12g).
+
+    Recusas canonicas (Relation inelegivel, gate de consentimento
+    indisponivel) propagam como ``ValueError``; nunca capturadas aqui.
+    """
+    from core.db.relation_scope import resolve_relation_query_scope
+
+    return resolve_relation_query_scope(
+        db,
+        user_id,
+        relation_id=relation_id,
+        agent_instance=agent_instance,
+    )
+
 
 def _safe_load_relational(db, *, agent_instance: str, user_id: str) -> Optional[Dict[str, Any]]:
     try:
@@ -74,15 +101,25 @@ def _safe_count_working_memory_focus(db, *, agent_instance: str, user_id: str) -
         return 0
 
 
-def _safe_count_active_rumination_tensions(db, *, user_id: str) -> int:
+def _safe_count_active_rumination_tensions(
+    db,
+    *,
+    user_id: str,
+    relation_id: Optional[str] = None,
+    agent_instance: Optional[str] = None,
+) -> int:
+    scope = _relation_scope(
+        db, user_id=user_id, relation_id=relation_id, agent_instance=agent_instance
+    )
+    clause, clause_params = scope.sql(RUMINATION_TENSIONS_SCOPE_COLUMNS)
     try:
         cursor = db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             SELECT COUNT(*) AS n FROM rumination_tensions
-            WHERE user_id = ? AND status IN ('open', 'maturing', 'ready_for_synthesis')
+            WHERE user_id = ?{clause} AND status IN ('open', 'maturing', 'ready_for_synthesis')
             """,
-            (user_id,),
+            (user_id, *clause_params),
         )
         row = cursor.fetchone()
         return int(row[0]) if row else 0
@@ -104,12 +141,22 @@ def _safe_count_goal_threads(db, *, agent_instance: str, user_id: str) -> int:
         return 0
 
 
-def _safe_latest_conversation_id(db, *, user_id: str) -> Optional[int]:
+def _safe_latest_conversation_id(
+    db,
+    *,
+    user_id: str,
+    relation_id: Optional[str] = None,
+    agent_instance: Optional[str] = None,
+) -> Optional[int]:
+    scope = _relation_scope(
+        db, user_id=user_id, relation_id=relation_id, agent_instance=agent_instance
+    )
+    clause, clause_params = scope.sql(CONVERSATIONS_SCOPE_COLUMNS)
     try:
         cursor = db.conn.cursor()
         cursor.execute(
-            "SELECT id FROM conversations WHERE user_id = ? ORDER BY id DESC LIMIT 1",
-            (user_id,),
+            f"SELECT id FROM conversations WHERE user_id = ?{clause} ORDER BY id DESC LIMIT 1",
+            (user_id, *clause_params),
         )
         row = cursor.fetchone()
         return int(row[0]) if row else None
@@ -277,14 +324,18 @@ class ActionProposer:
         relational_state = _safe_load_relational(
             self.db, agent_instance=self.agent_instance, user_id=user_id
         )
-        active_tensions = _safe_count_active_rumination_tensions(self.db, user_id=user_id)
+        active_tensions = _safe_count_active_rumination_tensions(
+            self.db, user_id=user_id, agent_instance=self.agent_instance
+        )
         working_memory_focus = _safe_count_working_memory_focus(
             self.db, agent_instance=self.agent_instance, user_id=user_id
         )
         open_goal_threads = _safe_count_goal_threads(
             self.db, agent_instance=self.agent_instance, user_id=user_id
         )
-        latest_conversation_id = _safe_latest_conversation_id(self.db, user_id=user_id)
+        latest_conversation_id = _safe_latest_conversation_id(
+            self.db, user_id=user_id, agent_instance=self.agent_instance
+        )
 
         candidates = _heuristic_candidates(
             will_state=will_state,

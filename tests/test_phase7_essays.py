@@ -28,6 +28,16 @@ def test_db(tmp_path):
     db._lock = threading.Lock()
     db.agent_instance = "test_jung"
     db._init_sqlite_schema()
+    # C12g: registra uma Relation real e ativa para os consumidores que
+    # resolvem escopo de Relation em SQL bruto (fixtures precisam de
+    # Relations verificaveis em vez de fallbacks).
+    db._init_relations_schema()
+    db.register_agent_relation(
+        agent_instance="test_jung",
+        participant_user_id="user-1",
+        status="active",
+        consent_status="granted",
+    )
     return db
 
 

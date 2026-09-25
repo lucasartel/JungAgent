@@ -25,6 +25,12 @@ from instance_config import IMAGE_GENERATION_ENABLED
 
 logger = logging.getLogger(__name__)
 
+# Membership references for the C12g relation scope gate (helper only tests
+# presence/absence of the scope column).
+CONVERSATIONS_SCOPE_COLUMNS = ("id", "user_id", "relation_id")
+DREAMS_SCOPE_COLUMNS = ("id", "user_id", "origin_relation_id")
+RUMINATION_INSIGHTS_SCOPE_COLUMNS = ("id", "user_id", "relation_id")
+
 DEFAULT_ART_STYLE_NAME = "impressionismo"
 DEFAULT_ART_STYLE_PROMPT = (
     "pintura impressionista, pinceladas visiveis, cor luminosa, atmosfera vibrante, "
@@ -39,6 +45,7 @@ DEFAULT_ART_IMAGE_MODEL = "google/gemini-3.1-flash-image-preview"
 class HobbyArtEngine:
     def __init__(self, db_manager):
         self.db = db_manager
+        self.agent_instance = getattr(db_manager, "agent_instance", None)
         self.conversation_model = os.getenv("CONVERSATION_MODEL", "z-ai/glm-5")
         self.art_style_name = os.getenv("HOBBY_ART_STYLE", DEFAULT_ART_STYLE_NAME).strip() or DEFAULT_ART_STYLE_NAME
         self.art_style_prompt = os.getenv("HOBBY_ART_STYLE_PROMPT", DEFAULT_ART_STYLE_PROMPT).strip() or DEFAULT_ART_STYLE_PROMPT
@@ -52,6 +59,18 @@ class HobbyArtEngine:
             or os.getenv("DREAM_IMAGE_MODEL")
             or DEFAULT_ART_IMAGE_MODEL
         ).strip()
+
+    def _query_scope(self, user_id: str) -> Any:
+        """Resolve o escopo de Relation fail-closed para SQL bruto (C12g).
+
+        Recusas canonicas (Relation inelegivel, gate de consentimento
+        indisponivel) propagam como ``ValueError``; nunca capturadas aqui.
+        """
+        from core.db.relation_scope import resolve_relation_query_scope
+
+        return resolve_relation_query_scope(
+            self.db, user_id, agent_instance=self.agent_instance
+        )
 
     def _truncate(self, text: str, limit: int = 220) -> str:
         cleaned = " ".join((text or "").strip().split())
@@ -84,16 +103,18 @@ class HobbyArtEngine:
         return {}
 
     def _recent_conversations(self, user_id: str, limit: int = 4) -> List[str]:
+        scope = self._query_scope(user_id)
+        clause, clause_params = scope.sql(CONVERSATIONS_SCOPE_COLUMNS)
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             SELECT user_input, ai_response
             FROM conversations
-            WHERE user_id = ?
+            WHERE user_id = ?{clause}
             ORDER BY timestamp DESC
             LIMIT ?
             """,
-            (user_id, limit),
+            (user_id, *clause_params, limit),
         )
         lines: List[str] = []
         for row in reversed(cursor.fetchall()):
@@ -106,35 +127,41 @@ class HobbyArtEngine:
         return lines
 
     def _latest_dream(self, user_id: str) -> Optional[Dict[str, Any]]:
+        scope = self._query_scope(user_id)
+        clause, clause_params = scope.sql(
+            DREAMS_SCOPE_COLUMNS, relation_column="origin_relation_id"
+        )
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             SELECT id, symbolic_theme, extracted_insight, dream_content, image_url
             FROM agent_dreams
-            WHERE user_id = ?
+            WHERE user_id = ?{clause}
             ORDER BY id DESC
             LIMIT 1
             """,
-            (user_id,),
+            (user_id, *clause_params),
         )
         row = cursor.fetchone()
         return dict(row) if row else None
 
     def _latest_rumination(self, user_id: str, limit: int = 2) -> List[Dict[str, Any]]:
+        scope = self._query_scope(user_id)
+        clause, clause_params = scope.sql(RUMINATION_INSIGHTS_SCOPE_COLUMNS)
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             SELECT
                 id,
                 symbol_content AS title,
                 question_content AS core_image,
                 full_message
             FROM rumination_insights
-            WHERE user_id = ?
+            WHERE user_id = ?{clause}
             ORDER BY id DESC
             LIMIT ?
             """,
-            (user_id, limit),
+            (user_id, *clause_params, limit),
         )
         return [dict(row) for row in cursor.fetchall()]
 
@@ -596,6 +623,9 @@ Responda APENAS com JSON valido:
         critique_payload: Optional[Dict[str, Any]] = None,
         evaluation_model: Optional[str] = None,
     ) -> int:
+        # C12g: artefato derivado de conversas so e produzido com Relation
+        # elegivel (ou admin legado na quarentena).
+        self._query_scope(user_id).require_production()
         cursor = self.db.conn.cursor()
         stored_image_url = persistable_image_url(image_url)
         stored_raw_response = sanitize_persisted_payload(raw_response)
@@ -627,6 +657,9 @@ Responda APENAS com JSON valido:
         return cursor.lastrowid
 
     def generate_cycle_art(self, user_id: str, cycle_id: str, world_state: Dict[str, Any]) -> Dict[str, Any]:
+        # C12g: gerar artefato de hobby a partir de conversas exige Relation
+        # elegivel (ou admin legado na quarentena).
+        self._query_scope(user_id).require_production()
         if not IMAGE_GENERATION_ENABLED:
             logger.info("HobbyArtEngine: usando expressao textual com imagem pausada")
             inspirations = self._build_inspirations(user_id, cycle_id, world_state)
