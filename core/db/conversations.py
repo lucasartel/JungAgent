@@ -96,10 +96,11 @@ class ConversationDatabaseMixin:
             from core.db.relations import require_eligible_relation
 
             require_eligible_relation(self, relation_id)
-        elif not self._conversation_scope_api_available() and not self._legacy_admin_conversation_allowed(user_id):
-            # Fail-closed C12g: sem API de Relations nao ha como verificar
-            # consentimento — so o admin legado grava sem escopo de Relation.
-            raise ValueError("consent_gate_unavailable_for_relation_scope")
+        elif not self._legacy_admin_conversation_allowed(user_id):
+            # Sem Relation elegivel, so o admin legado pode gravar sem escopo.
+            if not self._conversation_scope_api_available():
+                raise ValueError("consent_gate_unavailable_for_relation_scope")
+            raise ValueError("relation_scope_required_for_conversation")
         agent_instance = self._conversation_agent_instance()
 
         # Log minimal metadata only. Avoid writing user content to application logs.

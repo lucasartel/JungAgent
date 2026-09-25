@@ -339,6 +339,21 @@ def test_save_conversation_refuses_before_any_write(case):
     )
 
 
+def test_save_conversation_without_relation_refuses_participant():
+    db = _conversation_db(None)
+    with pytest.raises(ValueError, match="relation_scope_required_for_conversation"):
+        db.save_conversation("user_b", "User B", "entrada", "resposta")
+    assert db.conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+    assert db.development_updates == []
+
+
+def test_save_conversation_without_relation_keeps_legacy_admin():
+    db = _conversation_db(None)
+    conversation_id = db.save_conversation(ADMIN_USER_ID, "Admin", "entrada", "resposta")
+    assert conversation_id
+    assert db.conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 1
+
+
 @pytest.mark.parametrize("case", sorted(INELIGIBLE_CASES))
 def test_fact_extraction_refuses_ineligible_relation(case):
     db = _make_db(INELIGIBLE_CASES[case], FactExtractionDatabaseMixin)

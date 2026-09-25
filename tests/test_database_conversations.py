@@ -51,13 +51,16 @@ class _ConversationEngine(ConversationDatabaseMixin):
         self.conn = conn
         self._lock = threading.RLock()
         self.mem0 = None
+        self.agent_instance = "test_agent"
         self.development_updates: list[str] = []
         self.fact_extractions: list[tuple[str, str, int, str | None]] = []
 
     def resolve_relation_id(self, *, agent_instance=None, participant_user_id=None, relation_id=None):
-        # Fixtures C12g: cenario de usuario nao registrado na tabela de
-        # Relations — o lookup existe e nao encontra Relation (o gate recusa
-        # quando NENHUMA API de Relations esta disponivel).
+        return str(relation_id) if relation_id else "rel-test"
+
+    def get_agent_relation(self, relation_id):
+        if relation_id == "rel-test":
+            return {"relation_id": relation_id, "status": "active", "consent_status": "granted"}
         return None
 
     def _update_agent_development(self, user_id: str):
@@ -96,7 +99,9 @@ def _create_conversation_schema(conn: sqlite3.Connection):
             complexity TEXT DEFAULT 'medium',
             keywords TEXT,
             chroma_id TEXT UNIQUE,
-            platform TEXT DEFAULT 'telegram'
+            platform TEXT DEFAULT 'telegram',
+            relation_id TEXT,
+            agent_instance TEXT
         );
 
         CREATE TABLE archetype_conflicts (
@@ -132,7 +137,7 @@ def test_conversation_mixin_saves_conversation_and_triggers_internal_hooks(in_me
     assert row["chroma_id"] == f"conv_{conversation_id}"
     assert row["platform"] == "telegram"
     assert engine.development_updates == ["123"]
-    assert engine.fact_extractions == [("123", "hello", conversation_id, None)]
+    assert engine.fact_extractions == [("123", "hello", conversation_id, "rel-test")]
 
 
 def test_conversation_mixin_filters_proactive_conversations_by_default(in_memory_conn):

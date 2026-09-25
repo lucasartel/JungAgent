@@ -8,6 +8,8 @@ import threading
 import types
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 original_core = sys.modules.get("core")
 original_models = sys.modules.get("core.models")
@@ -107,21 +109,18 @@ class _ConversationRelationDB(ConversationDatabaseMixin):
         self.fact_extractions.append((user_id, user_input, conversation_id, relation_id))
 
 
-def test_save_binds_existing_relation_and_read_can_filter_it():
+def test_save_binds_existing_relation_and_refuses_unbound_participant():
     db = _ConversationRelationDB()
     related_id = db.save_conversation("user_a", "A", "related", "ok")
-    unbound_id = db.save_conversation("user_b", "B", "unbound", "ok")
+    with pytest.raises(ValueError, match="relation_scope_required_for_conversation"):
+        db.save_conversation("user_b", "B", "unbound", "ok")
 
     related = db.conn.execute(
         "SELECT relation_id, agent_instance FROM conversations WHERE id = ?", (related_id,)
     ).fetchone()
-    unbound = db.conn.execute(
-        "SELECT relation_id, agent_instance FROM conversations WHERE id = ?", (unbound_id,)
-    ).fetchone()
     assert related["relation_id"] == "rel-a"
     assert related["agent_instance"] == "jung_a"
-    assert unbound["relation_id"] is None
-    assert unbound["agent_instance"] == "jung_a"
+    assert db.conn.execute("SELECT COUNT(*) FROM conversations WHERE user_id = 'user_b'").fetchone()[0] == 0
     assert [row["id"] for row in db.get_user_conversations("user_a", relation_id="rel-a")] == [related_id]
     assert db.count_conversations("user_a", relation_id="rel-a") == 1
     assert db.fact_extractions[0][-1] == "rel-a"
