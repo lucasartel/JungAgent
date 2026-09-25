@@ -161,7 +161,18 @@ def _enable_relation_registry(db, relations):
     db.agent_instance = "instance-a"
 
     def get_relation(relation_id):
-        return relations.get(str(relation_id))
+        # Fixtures C12g: Relations registradas estao ativas e com
+        # consentimento concedido; o isolamento vem dos escopos distintos.
+        relation = relations.get(str(relation_id))
+        if not relation:
+            return None
+        return {
+            "relation_id": str(relation_id),
+            "status": "active",
+            "consent_status": "granted",
+            "agent_instance": relation["agent_instance"],
+            "participant_user_id": relation["participant_user_id"],
+        }
 
     def resolve_relation_id(*, agent_instance=None, participant_user_id=None, relation_id=None):
         if relation_id:

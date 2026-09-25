@@ -189,6 +189,11 @@ class DreamDatabaseMixin:
         elif relation_id:
             resolved_relation = relation_id
         if resolved_relation:
+            # Revogacao C12g: residuos de sonho nao vazam de Relations
+            # sem consentimento concedido.
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, resolved_relation)
             return (
                 "agent_instance = ? AND (origin_relation_id = ? OR origin_class IN (?, ?))",
                 [instance, resolved_relation, INSTANCE_GLOBAL, AUTHORIZED_AGGREGATE],

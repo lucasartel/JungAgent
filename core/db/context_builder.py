@@ -351,4 +351,10 @@ class ContextBuilderDatabaseMixin:
             participant_user_id=user_id,
             relation_id=relation_id,
         )
+        if resolved:
+            # Revogacao C12g: contexto de prompt so com Relation ativa e
+            # consentimento concedido.
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, resolved)
         return resolved, bool(resolved or self._legacy_admin_context_allowed(user_id))

@@ -59,6 +59,21 @@ class RelationDB:
             raise ValueError("relation_scope_mismatch")
         return resolved
 
+    def get_agent_relation(self, relation_id):
+        # Fixtures C12g: Relations registradas estao ativas e com
+        # consentimento concedido; o isolamento vem dos escopos distintos.
+        clean = (relation_id or "").strip()
+        for (instance, participant), expected in self.relations.items():
+            if clean == expected:
+                return {
+                    "relation_id": expected,
+                    "status": "active",
+                    "consent_status": "granted",
+                    "participant_user_id": participant,
+                    "agent_instance": instance,
+                }
+        return None
+
 
 def _item(**overrides):
     payload = {

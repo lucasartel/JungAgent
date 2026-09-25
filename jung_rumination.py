@@ -281,6 +281,12 @@ class RuminationEngine:
             return False
         if not relation:
             return False
+        # Revogacao C12g: sem Relation ativa e consentimento concedido,
+        # a ruminação nao lê nem produz nada da Relation.
+        from core.db.relations import is_relation_eligible
+
+        if not is_relation_eligible(relation):
+            return False
         if str(relation.get("participant_user_id")) != str(user_id):
             return False
         instance = self._agent_instance()

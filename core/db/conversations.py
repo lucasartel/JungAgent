@@ -76,6 +76,12 @@ class ConversationDatabaseMixin:
         """
 
         relation_id = self._resolve_relation_id(user_id, relation_id)
+        if relation_id:
+            # Revogacao C12g: nada e gravado nem derivado para uma Relation que
+            # nao esteja ativa com consentimento concedido (fail-closed).
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, relation_id)
         agent_instance = self._conversation_agent_instance()
 
         # Log minimal metadata only. Avoid writing user content to application logs.

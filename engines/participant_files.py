@@ -31,6 +31,8 @@ def relation_file_scope(db, user_id: str, relation_id=None) -> tuple[str, str]:
     relation = getter(resolved) if resolved else None
     if not relation or relation.get("agent_instance") != instance or str(relation.get("participant_user_id")) != str(user_id):
         raise ValueError("relation_file_scope_required")
-    if relation.get("status") != "active" or relation.get("consent_status") != "granted":
+    from core.db.relations import is_relation_eligible
+
+    if not is_relation_eligible(relation):
         raise ValueError("relation_file_access_revoked")
     return instance, str(resolved)

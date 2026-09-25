@@ -68,7 +68,9 @@ class MemoryConsolidator:
             raise ValueError("relation_scope_required_for_consolidation")
         status = str(relation.get("status") or "")
         consent = str(relation.get("consent_status") or "")
-        if status != "active" or consent != "granted":
+        from core.db.relations import is_relation_eligible
+
+        if not is_relation_eligible(relation):
             raise ValueError(
                 f"relation_not_eligible_for_consolidation:status={status},consent={consent}"
             )

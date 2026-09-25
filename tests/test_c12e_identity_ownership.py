@@ -36,14 +36,19 @@ def _db(tmp_path: Path) -> HybridDatabaseManager:
 
 
 def _relations(db: HybridDatabaseManager) -> tuple[str, str, str]:
+    # Fixtures C12g: as tres Relations do cenario ficam ativas e com
+    # consentimento concedido; o isolamento vem dos escopos distintos.
     relation_a = db.register_agent_relation(
-        agent_instance="instance_a", participant_user_id="user_a"
+        agent_instance="instance_a", participant_user_id="user_a",
+        consent_status="granted",
     )
     relation_b = db.register_agent_relation(
-        agent_instance="instance_a", participant_user_id="user_b"
+        agent_instance="instance_a", participant_user_id="user_b",
+        consent_status="granted",
     )
     relation_c = db.register_agent_relation(
-        agent_instance="instance_b", participant_user_id="user_c"
+        agent_instance="instance_b", participant_user_id="user_c",
+        consent_status="granted",
     )
     return relation_a, relation_b, relation_c
 

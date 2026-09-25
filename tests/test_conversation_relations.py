@@ -89,6 +89,15 @@ class _ConversationRelationDB(ConversationDatabaseMixin):
             return {"relation_id": "rel-a"}
         return None
 
+    def get_agent_relation(self, relation_id: str):
+        if relation_id == "rel-a":
+            return {
+                "relation_id": "rel-a",
+                "status": "active",
+                "consent_status": "granted",
+            }
+        return None
+
     def _update_agent_development(self, user_id: str):
         self.development_updates.append(user_id)
 

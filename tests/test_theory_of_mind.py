@@ -35,6 +35,7 @@ def test_tom_schema_and_upsert(test_db):
     relation_id = test_db.register_agent_relation(
         agent_instance="test_jung",
         participant_user_id="user_123",
+        consent_status="granted",
     )
     snap_id = test_db.upsert_tom_snapshot(
         agent_instance="test_jung",
@@ -63,6 +64,7 @@ def test_async_maturation_inbox_will_threshold(test_db):
     relation_id = test_db.register_agent_relation(
         agent_instance="test_jung",
         participant_user_id="user_456",
+        consent_status="granted",
     )
     item1 = test_db.add_maturation_inbox_item(
         agent_instance="test_jung",

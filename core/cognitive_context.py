@@ -46,6 +46,12 @@ class CognitiveContextScope:
                 participant_user_id=participant,
                 relation_id=relation_id,
             )
+            if resolved:
+                # Revogacao C12g: nenhuma contribuicao entra em prompt sem
+                # Relation ativa com consentimento concedido.
+                from core.db.relations import require_eligible_relation
+
+                require_eligible_relation(db, resolved)
         elif not resolved:
             # Compatibility for lightweight/legacy adapters with no Relation API.
             # This identifier exists only for prompt assembly and is never stored.

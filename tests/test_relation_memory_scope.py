@@ -33,6 +33,21 @@ class RelationStateDB(state_mod.RelationalStateDatabaseMixin, relations_mod.Rela
         self._init_relations_schema()
 
 
+def _seed_eligible_relation(db, relation_id: str, participant_user_id: str):
+    """Fixture C12g: Relation registrada com id explicito, ativa e com
+    consentimento concedido, para o gate de elegibilidade verificar de fato
+    via get_agent_relation real (sem contornar nenhum gate)."""
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    db.conn.execute(
+        """INSERT INTO agent_relations (
+               relation_id, agent_instance, participant_user_id, relation_type,
+               status, consent_status, created_at, updated_at
+           ) VALUES (?, ?, ?, 'participant', 'active', 'granted', ?, ?)""",
+        (relation_id, db.agent_instance, participant_user_id, now, now),
+    )
+    db.conn.commit()
+
+
 def test_register_relation_binds_legacy_participant_rows():
     db = RelationStateDB()
     db.conn.executescript(
@@ -55,6 +70,8 @@ def test_register_relation_binds_legacy_participant_rows():
 
 def test_relational_state_engine_reads_only_relation_scoped_conversations():
     db = RelationStateDB()
+    _seed_eligible_relation(db, "r1", "u1")
+    _seed_eligible_relation(db, "r2", "u2")
     db.conn.execute(
         """CREATE TABLE conversations (
             id INTEGER PRIMARY KEY, user_id TEXT, relation_id TEXT, timestamp DATETIME,
@@ -90,6 +107,22 @@ class FactDB(facts_mod.FactLookupDatabaseMixin, fact_extract_mod.FactExtractionD
         self.conn = sqlite3.connect(":memory:")
         self.conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        self._relations = {
+            "r1": {
+                "relation_id": "r1",
+                "status": "active",
+                "consent_status": "granted",
+                "participant_user_id": "same-user",
+                "agent_instance": "test_jung",
+            },
+            "r2": {
+                "relation_id": "r2",
+                "status": "active",
+                "consent_status": "granted",
+                "participant_user_id": "same-user",
+                "agent_instance": "test_jung",
+            },
+        }
         self.conn.execute(
             """CREATE TABLE user_facts_v2 (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, relation_id TEXT,
@@ -99,6 +132,11 @@ class FactDB(facts_mod.FactLookupDatabaseMixin, fact_extract_mod.FactExtractionD
             )"""
         )
         self.conn.commit()
+
+    def get_agent_relation(self, relation_id):
+        # Fixtures C12g: r1/r2 estao ativas e com consentimento concedido;
+        # o isolamento vem dos escopos distintos.
+        return self._relations.get((relation_id or "").strip())
 
 
 def test_structured_facts_do_not_cross_relation_scope():

@@ -526,6 +526,12 @@ Responda APENAS em JSON vÃ¡lido (sem markdown):
             )
             if not resolved_relation and str(user_id) != str(ADMIN_USER_ID):
                 raise ValueError("relation_required_for_psychometrics")
+        if resolved_relation:
+            # Revogacao C12g: psicometria nao e lida nem gravada sem
+            # Relation ativa com consentimento concedido.
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, resolved_relation)
         return instance, resolved_relation
 
     def save_psychometrics(

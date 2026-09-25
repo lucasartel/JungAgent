@@ -40,6 +40,18 @@ class FactExtractionDatabaseMixin:
     def _relation_id_for_fact(
         self, user_id: str, relation_id: Optional[str] = None, conversation_id: Optional[int] = None
     ) -> Optional[str]:
+        resolved = self._resolve_fact_relation_id(user_id, relation_id, conversation_id)
+        if resolved:
+            # Revogacao C12g: fatos nao sao gravados para uma Relation que
+            # nao esteja ativa com consentimento concedido.
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, resolved)
+        return resolved
+
+    def _resolve_fact_relation_id(
+        self, user_id: str, relation_id: Optional[str] = None, conversation_id: Optional[int] = None
+    ) -> Optional[str]:
         if relation_id:
             return str(relation_id)
         try:

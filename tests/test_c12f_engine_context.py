@@ -36,6 +36,19 @@ class ScopedDB:
             raise ValueError("relation_scope_mismatch")
         return "rel-a"
 
+    def get_agent_relation(self, relation_id):
+        # Fixtures C12g: a Relation do cenario esta ativa e com consentimento
+        # concedido, entao o gate de elegibilidade libera o escopo.
+        if (relation_id or "").strip() == "rel-a":
+            return {
+                "relation_id": "rel-a",
+                "status": "active",
+                "consent_status": "granted",
+                "participant_user_id": "user-a",
+                "agent_instance": "instance-a",
+            }
+        return None
+
     def build_priority_fact_context(self, user_id, query, limit=8, relation_id=None):
         self.fact_relation = relation_id
         return "relation fact"

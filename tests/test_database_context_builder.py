@@ -39,6 +39,20 @@ class _ContextEngine(ContextBuilderDatabaseMixin):
     def get_user(self, user_id: str):
         return {"user_name": "User One"}
 
+    def get_agent_relation(self, relation_id):
+        # Fixtures C12g: as Relations r1/r2 do cenario estao ativas e com
+        # consentimento concedido; o isolamento vem dos escopos distintos.
+        clean = (relation_id or "").strip()
+        if clean not in ("r1", "r2"):
+            return None
+        return {
+            "relation_id": clean,
+            "status": "active",
+            "consent_status": "granted",
+            "participant_user_id": "same-user",
+            "agent_instance": "instance-a",
+        }
+
     def semantic_search(
         self, user_id: str, query: str, k: int | None = None,
         chat_history=None, relation_id=None,

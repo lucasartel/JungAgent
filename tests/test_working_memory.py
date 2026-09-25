@@ -28,7 +28,21 @@ class _WorkingMemoryDB(WorkingMemoryDatabaseMixin):
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
         self._lock = threading.RLock()
+        self._relations = {
+            "rel-a": {
+                "relation_id": "rel-a",
+                "status": "active",
+                "consent_status": "granted",
+                "participant_user_id": "user-a",
+                "agent_instance": "jung_a",
+            },
+        }
         self._init_working_memory_schema()
+
+    def get_agent_relation(self, relation_id):
+        # Fixtures C12g: so ha memoria privada com Relation ativa e
+        # consentimento concedido, verificaveis pelo gate de elegibilidade.
+        return self._relations.get((relation_id or "").strip())
 
 
 def test_working_memory_engine_records_focus_and_fringe(in_memory_conn):

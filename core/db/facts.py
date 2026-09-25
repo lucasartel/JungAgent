@@ -22,6 +22,11 @@ class FactLookupDatabaseMixin:
                 participant_user_id=user_id,
                 relation_id=relation_id,
             )
+        if relation_id:
+            # Revogacao C12g: nada e lido de uma Relation nao elegivel.
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, relation_id)
         try:
             columns = {row[1] for row in self.conn.execute(f"PRAGMA table_info({table})")}
         except Exception as exc:

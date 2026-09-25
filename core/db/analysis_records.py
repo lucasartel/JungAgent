@@ -25,6 +25,12 @@ class AnalysisRecordsDatabaseMixin:
             )
             if not relation_id and not self._legacy_admin_pattern_scope_allowed(user_id):
                 raise ValueError("relation_scope_required_for_pattern")
+        if relation_id:
+            # Revogacao C12g: padroes nao sao lidos nem produzidos sem
+            # Relation ativa com consentimento concedido.
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, relation_id)
         return relation_id
 
     def detect_and_save_patterns(self, user_id: str, relation_id=None):
@@ -263,4 +269,3 @@ class AnalysisRecordsDatabaseMixin:
         """Fecha conexÃµes"""
         self.conn.close()
         logger.info("âœ… Banco de dados fechado")
-

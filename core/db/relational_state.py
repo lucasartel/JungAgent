@@ -163,6 +163,12 @@ class RelationalStateDatabaseMixin:
             )
             if not relation_id and not self._legacy_admin_relational_scope_allowed(user_id):
                 raise ValueError("relation_scope_required_for_relational_state")
+        if relation_id:
+            # Revogacao C12g: estado relacional nao e gravado sem Relation
+            # ativa com consentimento concedido.
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, relation_id)
         last_contact_iso: Optional[str] = None
         if last_contact_at is not None:
             if isinstance(last_contact_at, datetime):
@@ -237,6 +243,10 @@ class RelationalStateDatabaseMixin:
             )
             if not relation_id and not self._legacy_admin_relational_scope_allowed(user_id):
                 return None
+        if relation_id:
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, relation_id)
         relation_clause = " AND relation_id = ?" if relation_id else ""
         params = [agent_instance, user_id] + ([relation_id] if relation_id else [])
         cursor = self.conn.cursor()
@@ -271,6 +281,10 @@ class RelationalStateDatabaseMixin:
             )
             if not relation_id and not self._legacy_admin_relational_scope_allowed(user_id):
                 return []
+        if relation_id:
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, relation_id)
         relation_clause = " AND relation_id = ?" if relation_id else ""
         params = [agent_instance, user_id] + ([relation_id] if relation_id else []) + [int(limit)]
         cursor = self.conn.cursor()

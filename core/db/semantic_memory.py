@@ -309,6 +309,12 @@ class SemanticMemoryDatabaseMixin:
                     user_id_str,
                 )
                 return []
+        if relation_id:
+            # Revogacao C12g: memoria semantica nao e consultada sem
+            # Relation ativa com consentimento concedido.
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, relation_id)
 
         if self.mem0:
             try:
