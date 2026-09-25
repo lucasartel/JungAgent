@@ -266,14 +266,15 @@ class RuminationEngine:
     def _relation_allowed(self, user_id: str, relation_id: Optional[str]) -> bool:
         # Legacy admin rows remain readable only through the null-relation quarantine.
         if not relation_id:
-            return (
-                str(user_id) == str(self.admin_user_id)
-                or not callable(getattr(self.db, "resolve_relation_id", None))
-            )
+            # Fail-closed C12g: sem Relation e sem API de Relations nada garante
+            # escopo — so o admin legado continua na quarentena relation IS NULL.
+            return str(user_id) == str(self.admin_user_id)
 
         relation_reader = getattr(self.db, "get_agent_relation", None)
         if not callable(relation_reader):
-            return True
+            # Fail-closed: sem leitor de Relations a elegibilidade nao pode ser
+            # verificada — a ruminação nao lê nem produz nada.
+            return False
         try:
             relation = relation_reader(str(relation_id))
         except Exception as exc:

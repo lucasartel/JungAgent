@@ -53,6 +53,13 @@ class _ContextEngine(ContextBuilderDatabaseMixin):
             "agent_instance": "instance-a",
         }
 
+    def resolve_relation_id(self, *, agent_instance=None, participant_user_id=None, relation_id=None):
+        # Fixtures C12g: o caminho legado sem Relation e resolvido para uma
+        # Relation verificavel; Relation explicita passa direto.
+        if relation_id:
+            return str(relation_id)
+        return "r1" if str(participant_user_id) == "u1" else None
+
     def semantic_search(
         self, user_id: str, query: str, k: int | None = None,
         chat_history=None, relation_id=None,

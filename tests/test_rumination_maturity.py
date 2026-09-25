@@ -89,7 +89,9 @@ class TestMaturityWeights:
 class TestRuminationStats:
     def test_get_stats_counts_all_statuses(self, engine, rumination_db):
         conn = rumination_db.conn
-        user_id = "u1"
+        # Linhas legadas sem Relation so contam pela quarentena do admin
+        # (falha fechado C12g: participante sem Relation registrada e recusado).
+        user_id = engine.admin_user_id
 
         conn.execute(
             """

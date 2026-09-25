@@ -11,8 +11,8 @@ def _insert_fragment(conn, user_id: str, relation_id: str, content: str, process
     cursor = conn.execute(
         """
         INSERT INTO rumination_fragments (
-            user_id, relation_id, fragment_type, content, source_quote, processed
-        ) VALUES (?, ?, 'thought', ?, ?, ?)
+            user_id, agent_instance, relation_id, fragment_type, content, source_quote, processed
+        ) VALUES (?, 'instance-a', ?, 'thought', ?, ?, ?)
         """,
         (user_id, relation_id, content, content, processed),
     )
@@ -24,10 +24,10 @@ def _insert_tension(conn, user_id: str, relation_id: str, status: str = "open"):
     cursor = conn.execute(
         """
         INSERT INTO rumination_tensions (
-            user_id, relation_id, tension_type, pole_a_content, pole_a_fragment_ids,
+            user_id, agent_instance, relation_id, tension_type, pole_a_content, pole_a_fragment_ids,
             pole_b_content, pole_b_fragment_ids, tension_description, intensity,
             maturity_score, evidence_count, first_detected_at, status
-        ) VALUES (?, ?, 'value_behavior', 'autonomy', ?, 'belonging', ?, 'same relation',
+        ) VALUES (?, 'instance-a', ?, 'value_behavior', 'autonomy', ?, 'belonging', ?, 'same relation',
                   0.6, 0.2, 2, ?, ?)
         """,
         (user_id, relation_id, json.dumps([]), json.dumps([]), old, status),
@@ -39,6 +39,15 @@ def test_stats_do_not_mix_relations(rumination_db):
     engine = RuminationEngine(rumination_db)
     conn = rumination_db.conn
     user_id = "participant"
+    # Fixtures C12g: sem Relation registrada o gate recusa a execucao — o
+    # isolamento aqui precisa de Relations reais verificaveis.
+    _enable_relation_registry(
+        rumination_db,
+        {
+            "relation-a": {"agent_instance": "instance-a", "participant_user_id": user_id},
+            "relation-b": {"agent_instance": "instance-a", "participant_user_id": user_id},
+        },
+    )
 
     _insert_fragment(conn, user_id, "relation-a", "fragment a")
     _insert_fragment(conn, user_id, "relation-b", "fragment b")
@@ -47,16 +56,16 @@ def test_stats_do_not_mix_relations(rumination_db):
     conn.execute(
         """
         INSERT INTO rumination_insights (
-            user_id, relation_id, full_message, status
-        ) VALUES (?, ?, 'insight a', 'ready')
+            user_id, agent_instance, relation_id, full_message, status
+        ) VALUES (?, 'instance-a', ?, 'insight a', 'ready')
         """,
         (user_id, "relation-a"),
     )
     conn.execute(
         """
         INSERT INTO rumination_insights (
-            user_id, relation_id, full_message, status
-        ) VALUES (?, ?, 'insight b', 'delivered')
+            user_id, agent_instance, relation_id, full_message, status
+        ) VALUES (?, 'instance-a', ?, 'insight b', 'delivered')
         """,
         (user_id, "relation-b"),
     )
@@ -80,6 +89,13 @@ def test_digest_only_updates_the_selected_relation(rumination_db):
     engine = RuminationEngine(rumination_db)
     conn = rumination_db.conn
     user_id = "participant"
+    _enable_relation_registry(
+        rumination_db,
+        {
+            "relation-a": {"agent_instance": "instance-a", "participant_user_id": user_id},
+            "relation-b": {"agent_instance": "instance-a", "participant_user_id": user_id},
+        },
+    )
     tension_a = _insert_tension(conn, user_id, "relation-a")
     tension_b = _insert_tension(conn, user_id, "relation-b")
     conn.commit()

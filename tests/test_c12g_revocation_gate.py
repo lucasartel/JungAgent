@@ -47,6 +47,7 @@ from core.db.semantic_memory import SemanticMemoryDatabaseMixin
 from core.db.theory_of_mind import TheoryOfMindDatabaseMixin
 from core.db.working_memory import RELATION_PRIVATE, WorkingMemoryDatabaseMixin
 from engines.participant_files import relation_file_scope
+from instance_config import ADMIN_USER_ID
 from jung_memory_consolidation import MemoryConsolidator
 from jung_rumination import RuminationEngine
 
@@ -390,3 +391,69 @@ def test_consolidation_sentinel_preserved(case, expected):
     consolidator = MemoryConsolidator(db)
     with pytest.raises(ValueError, match=expected):
         consolidator._resolve_relation_scope("user_a")
+
+
+# ---------------------------------------------------------------------------
+# indisponibilidade da API de Relations: sem leitor/resolvedor nao ha
+# permissao (fail-closed) — revisao do PR #43
+# ---------------------------------------------------------------------------
+
+def _make_db_without_relation_api(*mixins):
+    class _DB(*mixins):
+        def __init__(self):
+            self.conn = sqlite3.connect(":memory:")
+            self.conn.row_factory = sqlite3.Row
+            self._lock = threading.RLock()
+            self.mem0 = None
+            self.agent_instance = "jung_a"
+
+    return _DB()
+
+
+def test_context_builder_without_resolver_refuses_participant():
+    db = _make_db_without_relation_api(ContextBuilderDatabaseMixin)
+    _resolved, allowed = db._resolve_context_relation("user_a")
+    assert allowed is False
+
+
+def test_context_builder_without_resolver_keeps_legacy_admin():
+    db = _make_db_without_relation_api(ContextBuilderDatabaseMixin)
+    assert db._resolve_context_relation(ADMIN_USER_ID) == (None, True)
+
+
+def test_context_builder_without_resolver_refuses_explicit_relation():
+    db = _make_db_without_relation_api(ContextBuilderDatabaseMixin)
+    with pytest.raises(
+        ValueError, match="consent_gate_unavailable_for_relation_scope"
+    ):
+        db._resolve_context_relation("user_a", "rel-1")
+
+
+def test_rumination_without_relation_api_refuses_relation_scope():
+    engine = RuminationEngine(_make_db_without_relation_api())
+    assert engine._relation_allowed("user_a", "rel-1") is False
+
+
+def test_rumination_without_relation_api_refuses_participant_without_relation():
+    engine = RuminationEngine(_make_db_without_relation_api())
+    assert engine._relation_allowed("user_a", None) is False
+
+
+def test_rumination_without_relation_api_keeps_legacy_admin():
+    engine = RuminationEngine(_make_db_without_relation_api())
+    assert engine._relation_allowed(ADMIN_USER_ID, None) is True
+
+
+def test_rumination_producers_and_readers_produce_nothing_without_relation_api():
+    engine = RuminationEngine(_make_db_without_relation_api())
+    conversation = {
+        "user_id": "user_a",
+        "user_input": "entrada",
+        "ai_response": "resposta",
+        "conversation_id": 1,
+        "tension_level": 9.0,
+        "affective_charge": 9.0,
+        "existential_depth": 9.0,
+    }
+    assert engine.ingest(conversation) == []
+    assert engine.detect_tensions("user_a") == []
