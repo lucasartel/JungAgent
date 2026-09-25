@@ -96,6 +96,20 @@ def scope_where_clause(
     return (" AND " + " AND ".join(clauses), params) if clauses else ("", [])
 
 
+def instance_where_clause(
+    cursor: sqlite3.Cursor,
+    table: str,
+    agent_instance: Optional[str],
+) -> Tuple[str, list[Any]]:
+    """Instance-tenancy clause only (no scope_kind/relation filters), for
+    readers that must not cross ``agent_instance`` boundaries (C12g)."""
+    return scope_where_clause(
+        cursor,
+        table,
+        {"agent_instance": agent_instance, "relation_id": None, "scope_kind": None},
+    )
+
+
 def scoped_insert_columns(
     cursor: sqlite3.Cursor,
     table: str,

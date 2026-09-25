@@ -722,6 +722,7 @@ class WorldConsciousnessFetcher:
         if not os.path.exists(path):
             return {}
         from core.db.relation_scope import resolve_relation_query_scope
+        from engines.will_scope import instance_where_clause
 
         conn = sqlite3.connect(path, timeout=15)
         conn.row_factory = sqlite3.Row
@@ -731,6 +732,15 @@ class WorldConsciousnessFetcher:
                 user_id,
                 agent_instance=self.agent_instance,
                 admin_user_id=self._admin_user_id(),
+            )
+            # Tenancy por instancia (C12g): meta e Will so entram da instancia
+            # atual — o mesmo usuario em outra instancia nao pode vazar conteudo
+            # para esta leitura. Cláusula aditiva por presenca de coluna.
+            meta_instance_clause, meta_instance_params = instance_where_clause(
+                conn.cursor(), "agent_meta_consciousness", self.agent_instance
+            )
+            will_instance_clause, will_instance_params = instance_where_clause(
+                conn.cursor(), "agent_will_states", self.agent_instance
             )
             conv_clause, conv_params = scope.sql(("id", "user_id", "relation_id"))
             tension_clause, tension_params = scope.sql(("id", "user_id", "relation_id"))
@@ -767,11 +777,11 @@ class WorldConsciousnessFetcher:
                 f"""
                 SELECT dominant_form, emergent_shift, dominant_gravity, blind_spot, integration_note, internal_questions_json
                 FROM agent_meta_consciousness
-                WHERE user_id = ?{meta_clause}
+                WHERE user_id = ?{meta_instance_clause}{meta_clause}
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
-                (user_id, *meta_params),
+                (user_id, *meta_instance_params, *meta_params),
             )
             meta_row = cursor.fetchone()
             meta = dict(meta_row) if meta_row else {}
@@ -784,11 +794,11 @@ class WorldConsciousnessFetcher:
                 f"""
                 SELECT daily_text, attention_bias_note, will_conflict, dominant_will, secondary_will, constrained_will
                 FROM agent_will_states
-                WHERE user_id = ?{will_clause}
+                WHERE user_id = ?{will_instance_clause}{will_clause}
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
-                (user_id, *will_params),
+                (user_id, *will_instance_params, *will_params),
             )
             will_row = cursor.fetchone()
             will_snapshot = dict(will_row) if will_row else {}

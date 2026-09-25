@@ -961,17 +961,22 @@ Evidencias:
         clause, clause_params = scope.sql(("id", "user_id", "agent_instance"))
         if not self._table_exists("agent_will_states"):
             return []
+        from engines.will_scope import instance_where_clause
+
+        instance_clause, instance_params = instance_where_clause(
+            self.conn.cursor(), "agent_will_states", self.agent_instance
+        )
         return self._fetch_all(
             f"""
             SELECT id, cycle_id, phase, status, saber_score, relacionar_score,
                    expressar_score, dominant_will, secondary_will, constrained_will,
                    will_conflict, attention_bias_note, daily_text, created_at, updated_at
             FROM agent_will_states
-            WHERE user_id = ?{clause} AND cycle_id = ?
+            WHERE user_id = ?{instance_clause}{clause} AND cycle_id = ?
             ORDER BY created_at DESC, id DESC
             LIMIT 5
             """,
-            (self.user_id, *clause_params, cycle_id),
+            (self.user_id, *instance_params, *clause_params, cycle_id),
         )
 
     def _fetch_meta_states(self, cycle_id: str) -> List[Dict[str, Any]]:
@@ -1239,4 +1244,3 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     else:
         print(json.dumps(result, ensure_ascii=False))
     return 0
-

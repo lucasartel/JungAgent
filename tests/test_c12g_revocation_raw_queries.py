@@ -298,3 +298,194 @@ def test_proactive_skips_revoked_relation_gracefully():
         )
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# revisao PR-B: isolamento entre usuarios e entre instancias
+# ---------------------------------------------------------------------------
+
+
+class _CurateDB(_ScopeDB):
+    """DB minimo para handle_curate_portfolio; captura a escrita de curadoria."""
+
+    def __init__(self):
+        super().__init__()
+        self.conn.executescript(
+            """
+            CREATE TABLE agent_hobby_artifacts (
+                id INTEGER PRIMARY KEY,
+                user_id TEXT,
+                title TEXT,
+                summary TEXT
+            );
+            """
+        )
+        self.wm_writes = []
+
+    def create_working_memory_item(self, **kwargs):
+        self.wm_writes.append(kwargs)
+        return 1
+
+
+def test_curation_does_not_read_other_users_artifacts():
+    """P1: a curadoria nao pode incorporar a obra de outro usuario."""
+    from engines.expressive_action import handle_curate_portfolio
+
+    db = _CurateDB()
+    _register(db, RELATIONS)
+    db.conn.executescript(
+        """
+        INSERT INTO agent_hobby_artifacts (id, user_id, title, summary)
+        VALUES (1, 'participant', 'obra-propria', 'do participante');
+        INSERT INTO agent_hobby_artifacts (id, user_id, title, summary)
+        VALUES (2, 'outro-usuario', 'obra-alheia', 'de outra pessoa');
+        """
+    )
+    db.conn.commit()
+
+    result = handle_curate_portfolio(db, {}, "participant")
+
+    assert result["status"] == "curated"
+    assert result["curated_count"] == 1
+    summary = db.wm_writes[0]["summary"]
+    assert "obra-propria" in summary
+    assert "obra-alheia" not in summary
+
+
+def test_epistemic_inputs_do_not_cross_instances(tmp_path, monkeypatch):
+    """P2: o mesmo usuario em outra instancia nao pode vazar meta nem Will."""
+    from world_consciousness import WorldConsciousnessFetcher
+
+    db_path = tmp_path / "wc.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE agent_relations (
+            relation_id TEXT PRIMARY KEY,
+            agent_instance TEXT,
+            participant_user_id TEXT,
+            relation_type TEXT,
+            status TEXT,
+            consent_status TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        );
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY,
+            user_id TEXT,
+            relation_id TEXT,
+            user_input TEXT,
+            ai_response TEXT,
+            tension_level REAL,
+            affective_charge REAL,
+            existential_depth REAL
+        );
+        CREATE TABLE rumination_tensions (
+            id INTEGER PRIMARY KEY,
+            user_id TEXT,
+            relation_id TEXT,
+            tension_type TEXT,
+            tension_description TEXT,
+            pole_a_content TEXT,
+            pole_b_content TEXT,
+            intensity REAL,
+            status TEXT
+        );
+        CREATE TABLE agent_meta_consciousness (
+            id INTEGER PRIMARY KEY,
+            user_id TEXT,
+            agent_instance TEXT,
+            dominant_form TEXT,
+            emergent_shift TEXT,
+            dominant_gravity TEXT,
+            blind_spot TEXT,
+            integration_note TEXT,
+            internal_questions_json TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE agent_will_states (
+            id INTEGER PRIMARY KEY,
+            user_id TEXT,
+            agent_instance TEXT,
+            daily_text TEXT,
+            attention_bias_note TEXT,
+            will_conflict TEXT,
+            dominant_will TEXT,
+            secondary_will TEXT,
+            constrained_will TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO agent_relations
+            (relation_id, agent_instance, participant_user_id, relation_type,
+             status, consent_status, created_at, updated_at)
+        VALUES ('rel-a', 'instance-a', 'user-1', 'participant',
+                'active', 'granted', '', ''),
+               ('rel-b', 'instance-b', 'user-1', 'participant',
+                'active', 'granted', '', '');
+        INSERT INTO agent_meta_consciousness
+            (id, user_id, agent_instance, dominant_form, created_at)
+        VALUES (1, 'user-1', 'instance-a', 'meta-da-instancia-a', '2026-09-25 10:00:00'),
+               (2, 'user-1', 'instance-b', 'meta-da-instancia-b', '2026-09-25 11:00:00');
+        INSERT INTO agent_will_states
+            (id, user_id, agent_instance, daily_text, created_at)
+        VALUES (1, 'user-1', 'instance-a', 'will-da-instancia-a', '2026-09-25 10:00:00'),
+               (2, 'user-1', 'instance-b', 'will-da-instancia-b', '2026-09-25 11:00:00');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("SQLITE_DB_PATH", str(db_path))
+
+    wc_a = WorldConsciousnessFetcher(cache_dir=str(tmp_path), agent_instance="instance-a")
+    inputs_a = wc_a._load_epistemic_inputs("user-1")
+    assert inputs_a["meta_consciousness"]["dominant_form"] == "meta-da-instancia-a"
+    assert inputs_a["will_snapshot"]["daily_text"] == "will-da-instancia-a"
+
+    wc_b = WorldConsciousnessFetcher(cache_dir=str(tmp_path), agent_instance="instance-b")
+    inputs_b = wc_b._load_epistemic_inputs("user-1")
+    assert inputs_b["meta_consciousness"]["dominant_form"] == "meta-da-instancia-b"
+    assert inputs_b["will_snapshot"]["daily_text"] == "will-da-instancia-b"
+
+
+def test_diary_will_states_do_not_cross_instances(tmp_path):
+    """P2: o fetcher de Will do diario tambem respeita a instancia."""
+    from agent_diary import AgentDiaryWriter
+
+    db = _ScopeDB()
+    _register(db, RELATIONS)
+    db.conn.executescript(
+        """
+        CREATE TABLE agent_will_states (
+            id INTEGER PRIMARY KEY,
+            user_id TEXT,
+            agent_instance TEXT,
+            cycle_id TEXT,
+            phase TEXT,
+            status TEXT,
+            saber_score REAL DEFAULT 0.34,
+            relacionar_score REAL DEFAULT 0.33,
+            expressar_score REAL DEFAULT 0.33,
+            dominant_will TEXT,
+            secondary_will TEXT,
+            constrained_will TEXT,
+            will_conflict TEXT,
+            attention_bias_note TEXT,
+            daily_text TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO agent_will_states (id, user_id, agent_instance, cycle_id, daily_text)
+        VALUES (1, 'participant', 'instance-a', '2026-09-25', 'will-da-instancia-a'),
+               (2, 'participant', 'instance-b', '2026-09-25', 'will-da-instancia-b');
+        """
+    )
+    db.conn.commit()
+
+    diary_a = AgentDiaryWriter(db, tmp_path, user_id="participant", agent_instance="instance-a")
+    rows_a = diary_a._fetch_will_states("2026-09-25")
+    assert [row["daily_text"] for row in rows_a] == ["will-da-instancia-a"]
+
+    diary_b = AgentDiaryWriter(db, tmp_path, user_id="participant", agent_instance="instance-b")
+    rows_b = diary_b._fetch_will_states("2026-09-25")
+    assert [row["daily_text"] for row in rows_b] == ["will-da-instancia-b"]

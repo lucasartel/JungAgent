@@ -99,9 +99,15 @@ def handle_compose_essay_draft(
     try:
         cursor = db.conn.cursor()
         will_clause, will_params = scope.sql(WILL_STATES_SCOPE_COLUMNS)
+        from engines.will_scope import instance_where_clause
+
+        will_instance_clause, will_instance_params = instance_where_clause(
+            cursor, "agent_will_states", getattr(db, "agent_instance", None)
+        )
         cursor.execute(
-            f"SELECT id FROM agent_will_states WHERE user_id=?{will_clause} ORDER BY id DESC LIMIT 1",
-            (user_id, *will_params))
+            f"SELECT id FROM agent_will_states WHERE user_id=?"
+            f"{will_instance_clause}{will_clause} ORDER BY id DESC LIMIT 1",
+            (user_id, *will_instance_params, *will_params))
         r = cursor.fetchone()
         if r:
             source_refs.append(f"will#{r[0]}")
@@ -239,9 +245,9 @@ def handle_curate_portfolio(
         art_clause, art_params = scope.sql(HOBBY_ARTIFACTS_SCOPE_COLUMNS)
         for r in cursor.execute(
             f"SELECT id, title, summary FROM agent_hobby_artifacts "
-            f"WHERE 1 = 1{art_clause} "
+            f"WHERE user_id = ?{art_clause} "
             f"ORDER BY id DESC LIMIT 2",
-            art_params
+            (user_id, *art_params)
         ).fetchall():
             curated.append(
                 f"🎨 Arte #{r[0]}: {_trunc(r[1] or r[2], 80)}"
