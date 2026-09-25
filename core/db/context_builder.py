@@ -345,10 +345,24 @@ class ContextBuilderDatabaseMixin:
     def _resolve_context_relation(self, user_id: str, relation_id=None):
         resolver = getattr(self, "resolve_relation_id", None)
         if not callable(resolver):
-            return relation_id, True
+            # Fail-closed C12g: sem resolvedor de Relations a elegibilidade nao
+            # pode ser verificada. So o admin legado segue sem Relation, como no
+            # caminho com resolvedor; um relation_id explicito ainda exige
+            # verificacao (que tambem falha fechado sem o leitor de Relations).
+            if relation_id:
+                from core.db.relations import require_eligible_relation
+
+                require_eligible_relation(self, relation_id)
+            return relation_id, self._legacy_admin_context_allowed(user_id)
         resolved = resolver(
             agent_instance=getattr(self, "agent_instance", None),
             participant_user_id=user_id,
             relation_id=relation_id,
         )
+        if resolved:
+            # Revogacao C12g: contexto de prompt so com Relation ativa e
+            # consentimento concedido.
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, resolved)
         return resolved, bool(resolved or self._legacy_admin_context_allowed(user_id))

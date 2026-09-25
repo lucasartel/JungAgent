@@ -54,6 +54,20 @@ class ConversationDatabaseMixin:
         except ImportError:
             return None
 
+    def _conversation_scope_api_available(self) -> bool:
+        return callable(getattr(self, "resolve_relation_id", None)) or callable(
+            getattr(self, "get_agent_relation_for_participant", None)
+        )
+
+    @staticmethod
+    def _legacy_admin_conversation_allowed(user_id: str) -> bool:
+        try:
+            from instance_config import ADMIN_USER_ID
+
+            return str(user_id) == str(ADMIN_USER_ID)
+        except ImportError:
+            return False
+
     def save_conversation(self, user_id: str, user_name: str, user_input: str,
                          ai_response: str, session_id: str = None,
                          archetype_analyses: Dict = None,
@@ -76,6 +90,17 @@ class ConversationDatabaseMixin:
         """
 
         relation_id = self._resolve_relation_id(user_id, relation_id)
+        if relation_id:
+            # Revogacao C12g: nada e gravado nem derivado para uma Relation que
+            # nao esteja ativa com consentimento concedido (fail-closed).
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, relation_id)
+        elif not self._legacy_admin_conversation_allowed(user_id):
+            # Sem Relation elegivel, so o admin legado pode gravar sem escopo.
+            if not self._conversation_scope_api_available():
+                raise ValueError("consent_gate_unavailable_for_relation_scope")
+            raise ValueError("relation_scope_required_for_conversation")
         agent_instance = self._conversation_agent_instance()
 
         # Log minimal metadata only. Avoid writing user content to application logs.

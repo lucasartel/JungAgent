@@ -194,6 +194,11 @@ class WorkingMemoryDatabaseMixin:
                 raise ValueError("relation_id_required_for_private_memory")
             if not clean_participant:
                 raise ValueError("participant_user_id_required_for_private_memory")
+            # Revogacao C12g: memoria privada so com Relation ativa e
+            # consentimento concedido.
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, clean_relation)
         elif clean_relation or clean_participant:
             raise ValueError("relation_identity_forbidden_for_global_memory")
         return clean_class, clean_relation, clean_participant

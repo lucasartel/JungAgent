@@ -49,6 +49,21 @@ class _CognitiveDB(SchemaDatabaseMixin, DreamDatabaseMixin, KnowledgeGapDatabase
             raise ValueError("relation_participant_mismatch")
         return relation_id or expected
 
+    def get_agent_relation(self, relation_id):
+        # Fixtures C12g: ambas as Relations do cenario estao ativas e com
+        # consentimento concedido; o isolamento vem dos escopos distintos.
+        clean = (relation_id or "").strip()
+        for participant, expected in self.relations.items():
+            if clean == expected:
+                return {
+                    "relation_id": expected,
+                    "status": "active",
+                    "consent_status": "granted",
+                    "participant_user_id": participant,
+                    "agent_instance": self.agent_instance,
+                }
+        return None
+
 
 def test_c12d_schema_carries_ownership_and_public_projection(in_memory_conn):
     _CognitiveDB(in_memory_conn)

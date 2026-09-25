@@ -110,6 +110,11 @@ class TheoryOfMindDatabaseMixin:
                 relation_id=relation_id,
             )
         if resolved:
+            # Revogacao C12g: snapshots ToM so com Relation ativa e
+            # consentimento concedido.
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self, resolved)
             return str(resolved)
         from instance_config import ADMIN_USER_ID
 

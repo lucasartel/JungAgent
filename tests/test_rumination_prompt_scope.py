@@ -75,6 +75,20 @@ class _ScopedRuminationDB:
             return "relation-a"
         return None
 
+    def get_agent_relation(self, relation_id):
+        # Fixtures C12g: as Relations do cenario estao ativas e com
+        # consentimento concedido; o isolamento vem dos escopos distintos.
+        relation = self.relations.get(str(relation_id))
+        if not relation:
+            return None
+        return {
+            "relation_id": str(relation_id),
+            "status": "active",
+            "consent_status": "granted",
+            "agent_instance": relation["agent_instance"],
+            "participant_user_id": relation["participant_user_id"],
+        }
+
 
 def _engine(db):
     engine = JungianEngine.__new__(JungianEngine)

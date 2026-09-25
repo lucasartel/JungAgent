@@ -11,6 +11,53 @@ RELATION_STATUSES = {"active", "paused", "revoked", "archived"}
 CONSENT_STATUSES = {"pending", "granted", "revoked"}
 
 
+# ---------------------------------------------------------------------------
+# Elegibilidade C12g — gate unico de revogacao (leitura/producao de conteudo)
+# ---------------------------------------------------------------------------
+
+def is_relation_eligible(relation: Optional[Mapping[str, Any]]) -> bool:
+    """Uma Relation so lê/produz conteudo quando ativa e com consentimento concedido.
+
+    Politica C12g unica: status='active' E consent_status='granted'.
+    Relation ausente nunca e elegivel (fail-closed).
+    """
+    if not relation:
+        return False
+    return (
+        relation.get("status") == "active"
+        and relation.get("consent_status") == "granted"
+    )
+
+
+def relation_ineligibility_sentinel(relation: Optional[Mapping[str, Any]]) -> str:
+    """Sentinel estavel de recusa por estado/consentimento da Relation."""
+    data = relation or {}
+    return "relation_not_eligible:status=%s,consent=%s" % (
+        data.get("status"),
+        data.get("consent_status"),
+    )
+
+
+def assert_relation_eligible(relation: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Fail-closed: devolve a Relation quando elegivel; senao recusa a execucao."""
+    if not is_relation_eligible(relation):
+        raise ValueError(relation_ineligibility_sentinel(relation))
+    return dict(relation)
+
+
+def require_eligible_relation(db: Any, relation_id: str) -> Dict[str, Any]:
+    """Carrega a Relation pelo id e exige elegibilidade C12g (fail-closed).
+
+    Sem o leitor de Relations disponivel a execucao tambem e recusada:
+    elegibilidade nao verificavel nunca e tratada como consentimento.
+    """
+    reader = getattr(db, "get_agent_relation", None)
+    if not callable(reader):
+        raise ValueError("consent_gate_unavailable_for_relation_scope")
+    relation = reader(str(relation_id))
+    return assert_relation_eligible(relation)
+
+
 def _json_dumps(value: Mapping[str, Any]) -> str:
     return json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
 
