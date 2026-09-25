@@ -123,3 +123,39 @@ def resolve_relation_query_scope(
     if not callable(reader):
         return RelationQueryScope(denied="consent_gate_unavailable_for_relation_scope")
     return RelationQueryScope(denied="relation_scope_required_for_production")
+
+
+def legacy_quarantine_clause(
+    cursor: Any,
+    *,
+    table: str = "conversations",
+    relation_column: str = "relation_id",
+    agent_instance: Optional[str] = None,
+    prefix: str = "",
+) -> tuple[str, list[Any]]:
+    """Admin-legacy quarantine for raw readers (C12c): only relation-less rows
+    of the current instance stay visible.
+
+    Content stamped with an origin Relation never enters legacy-global
+    streams (identity consolidation, blog feed, dashboards, Will inputs).
+    Column presence is checked so pre-migration databases keep working, and
+    the instance value falls back to the canonical chain so the tenancy
+    filter cannot silently vanish (PR-B lesson).
+    """
+    cursor.execute(f"PRAGMA table_info({table})")
+    cols = {row[1] for row in cursor.fetchall()}
+    parts: list[str] = []
+    params: list[Any] = []
+    if relation_column in cols:
+        parts.append(f"{prefix}{relation_column} IS NULL")
+    if "agent_instance" in cols:
+        try:
+            from engines.will_scope import resolve_instance
+
+            instance = resolve_instance(agent_instance)
+        except ImportError:
+            instance = (agent_instance or "").strip()
+        if instance:
+            parts.append(f"({prefix}agent_instance = ? OR {prefix}agent_instance IS NULL)")
+            params.append(instance)
+    return (" AND " + " AND ".join(parts)) if parts else "", params

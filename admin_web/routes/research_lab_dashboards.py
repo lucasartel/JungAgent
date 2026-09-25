@@ -55,8 +55,16 @@ async def dreams_dashboard(
     db = get_db()
     cursor = db.conn.cursor()
     
-    # Buscar todos os sonhos do banco
-    cursor.execute("""
+    # Buscar sonhos globais do banco (C12c: material derivado de Relations
+    # privadas nao entra em dashboards de pesquisa).
+    from core.db.relation_scope import legacy_quarantine_clause
+
+    dream_clause, dream_clause_params = legacy_quarantine_clause(
+        cursor,
+        table="agent_dreams",
+        relation_column="origin_relation_id",
+    )
+    cursor.execute(f"""
         SELECT id, user_id, dream_content, symbolic_theme,
                regulatory_function, compensated_attitude, dream_mood,
                extracted_insight, status, image_url, image_prompt,
@@ -64,9 +72,10 @@ async def dreams_dashboard(
                datetime(created_at, 'localtime') as created_at,
                datetime(delivered_at, 'localtime') as delivered_at
         FROM agent_dreams
+        WHERE 1 = 1{dream_clause}
         ORDER BY created_at DESC
         LIMIT 100
-    """)
+    """, dream_clause_params)
     dreams = [dict(row) for row in cursor.fetchall()]
     
     return templates.TemplateResponse("dashboards/dreams.html", {

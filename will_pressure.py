@@ -529,15 +529,27 @@ class WillPressureEngine:
             markers["last_world_phase_result_id"] = latest_world_result_id
             reasons.append("saber subiu porque a consciencia do mundo encontrou materia nova")
 
+        dream_params: List[Any] = [user_id]
+        from engines.will_scope import dream_scope_clause
+
+        # Escopo explicito (P1): global = so residuos sem Relation; relacional
+        # = a Relation verificada do caller. Nunca auto-resolucao.
+        dream_clause, dream_clause_params = dream_scope_clause(
+            self.db,
+            user_id=user_id,
+            relation_id=relation_id,
+            agent_instance=self._scope_instance(),
+        )
+        dream_params.extend(dream_clause_params)
         cursor.execute(
-            """
+            f"""
             SELECT id, symbolic_theme, extracted_insight
             FROM agent_dreams
-            WHERE user_id = ?
+            WHERE user_id = ? AND ({dream_clause})
             ORDER BY id DESC
             LIMIT 1
             """,
-            (user_id,),
+            dream_params,
         )
         row = cursor.fetchone()
         latest_dream_id = int(row["id"]) if row else 0

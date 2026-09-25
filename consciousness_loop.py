@@ -1534,17 +1534,25 @@ class ConsciousnessLoopManager:
                 injected_fragments.extend(fragment_ids)
 
         cursor = self.db.conn.cursor()
+        from core.db.relation_scope import legacy_quarantine_clause
+
+        dream_clause, dream_clause_params = legacy_quarantine_clause(
+            cursor,
+            table="agent_dreams",
+            relation_column="origin_relation_id",
+            agent_instance=getattr(self, "agent_instance", None),
+        )
 
         if phase_mode == "intro":
             cursor.execute(
-                """
+                f"""
                 SELECT symbolic_theme, extracted_insight
                 FROM agent_dreams
-                WHERE user_id = ?
+                WHERE user_id = ?{dream_clause}
                 ORDER BY id DESC
                 LIMIT 1
                 """,
-                (self.admin_user_id,),
+                (self.admin_user_id, *dream_clause_params),
             )
             dream_row = cursor.fetchone()
             if dream_row:
@@ -1880,20 +1888,32 @@ class ConsciousnessLoopManager:
 
     def _deliver_pending_dreams(self, result: Dict, limit: int = 3) -> List[int]:
         cursor = self.db.conn.cursor()
+        from engines.will_scope import dream_scope_clause
+
+        # Entrega ao proprio admin: visibilidade pessoal da Relation dele
+        # (mesmo escopo da escrita em resolve_cognitive_origin) — nao e um
+        # fluxo cross-Relation, e o canal privado do dono do sonho.
+        dream_clause, dream_clause_params = dream_scope_clause(
+            self.db,
+            user_id=self.admin_user_id,
+            agent_instance=getattr(self, "agent_instance", None),
+            allow_relation_resolution=True,
+        )
+        dream_clause = f" AND ({dream_clause})"
         cursor.execute(
-            """
+            f"""
             SELECT id, dream_content, symbolic_theme, extracted_insight,
                    regulatory_function, compensated_attitude, dream_mood,
                    image_url, image_provider, image_model, image_status,
                    status, created_at
-            FROM agent_dreams
-            WHERE user_id = ?
+        FROM agent_dreams
+        WHERE user_id = ?{dream_clause}
               AND extracted_insight IS NOT NULL
               AND COALESCE(status, 'pending') != 'delivered'
             ORDER BY created_at ASC
             LIMIT ?
             """,
-            (self.admin_user_id, limit),
+            (self.admin_user_id, *dream_clause_params, limit),
         )
         rows = cursor.fetchall()
 
@@ -2057,16 +2077,53 @@ class ConsciousnessLoopManager:
         except Exception as exc:
             logger.warning("LOOP KNOWLEDGE NOTIFY erro ao enviar diario de saber ao admin: %s", exc)
 
+    @staticmethod
+    def _dream_reference_payload(row) -> Dict:
+        """Referencia o sonho; nao duplica conteudo privado.
+
+        raw_result_json persiste em consciousness_loop_phase_results, um
+        registro de instancia sem coluna de Relation e sem regra de acesso.
+        Narrativa, residuo e interpretacoes vivem em agent_dreams, que tem o
+        escopo correto — a entrega pessoal le a linha direta da tabela.
+        """
+        return {
+            "dream_id": row["id"],
+            "image_status": row["image_status"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+        }
+
     def _run_dream_phase(self, result: Dict) -> Dict:
         from dream_engine import DreamEngine
 
         self._promote_from_placeholder(result)
-        dreams_before = self._count_rows("agent_dreams", "user_id = ?", (self.admin_user_id,))
+        from engines.will_scope import dream_scope_clause
+
+        # Read-after-write do proprio ciclo: o generate_dream grava no escopo
+        # pessoal (Relation resolvida em resolve_cognitive_origin), entao a
+        # fase precisa enxergar o que acabou de gerar — visibilidade pessoal,
+        # nao fluxo cross-Relation.
+        dream_clause, dream_clause_params = dream_scope_clause(
+            self.db,
+            user_id=self.admin_user_id,
+            agent_instance=getattr(self, "agent_instance", None),
+            allow_relation_resolution=True,
+        )
+        dream_clause = f" AND ({dream_clause})"
+        dreams_before = self._count_rows(
+            "agent_dreams",
+            f"user_id = ?{dream_clause}",
+            (self.admin_user_id, *dream_clause_params),
+        )
         dream_fragments_before = self._count_dream_rumination_fragments()
         dream_engine = DreamEngine(self.db)
         success = dream_engine.generate_dream(self.admin_user_id)
         result["raw_result"]["dream_generated"] = success
-        dreams_after = self._count_rows("agent_dreams", "user_id = ?", (self.admin_user_id,))
+        dreams_after = self._count_rows(
+            "agent_dreams",
+            f"user_id = ?{dream_clause}",
+            (self.admin_user_id, *dream_clause_params),
+        )
         dream_fragments_after = self._count_dream_rumination_fragments()
         result["metrics"]["dream_rows_delta"] = max(0, dreams_after - dreams_before)
         result["metrics"]["dream_rumination_fragments_delta"] = max(
@@ -2077,17 +2134,17 @@ class ConsciousnessLoopManager:
         if success:
             cursor = self.db.conn.cursor()
             cursor.execute(
-                """
+                f"""
                 SELECT id, dream_content, symbolic_theme, extracted_insight,
                        regulatory_function, compensated_attitude, dream_mood,
                        image_url, image_provider, image_model, image_status,
                        status, created_at
                 FROM agent_dreams
-                WHERE user_id = ?
+                WHERE user_id = ?{dream_clause}
                 ORDER BY id DESC
                 LIMIT 1
                 """,
-                (self.admin_user_id,),
+                (self.admin_user_id, *dream_clause_params),
             )
             row = cursor.fetchone()
             if row:
@@ -2096,23 +2153,9 @@ class ConsciousnessLoopManager:
                     artifact_type="dream",
                     artifact_id=row["id"],
                     artifact_table="agent_dreams",
-                    summary=row["symbolic_theme"] or "Tema onirico nao nomeado",
+                    summary=f"Sonho #{row['id']}",
                 )
-                result["raw_result"]["latest_dream"] = {
-                    "dream_id": row["id"],
-                    "dream_content": row["dream_content"],
-                    "symbolic_theme": row["symbolic_theme"],
-                    "regulatory_function": row["regulatory_function"],
-                    "compensated_attitude": row["compensated_attitude"],
-                    "dream_mood": row["dream_mood"],
-                    "extracted_insight": row["extracted_insight"],
-                    "image_url": row["image_url"],
-                    "image_provider": row["image_provider"],
-                    "image_model": row["image_model"],
-                    "image_status": row["image_status"],
-                    "status": row["status"],
-                    "created_at": row["created_at"],
-                }
+                result["raw_result"]["latest_dream"] = self._dream_reference_payload(row)
             delivered_ids = self._deliver_pending_dreams(result)
             result["raw_result"]["delivered_dream_ids"] = delivered_ids
             result["metrics"]["dream_deliveries"] = len(delivered_ids)

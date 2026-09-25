@@ -555,17 +555,37 @@ class WillEngine:
             )
         return list(reversed(items))
 
-    def _latest_dream(self, user_id: str) -> Optional[Dict[str, Any]]:
+    def _latest_dream(
+        self,
+        user_id: str,
+        *,
+        relation_id: Optional[str] = None,
+        agent_instance: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
+        params: List[Any] = [user_id]
+        from engines.will_scope import dream_scope_clause
+
+        # Escopo explicito (P1): o Will global nao resolve Relations; a leitura
+        # relacional usa a Relation verificada/revogavel do caller.
+        clause, clause_params = dream_scope_clause(
+            self.db,
+            user_id=user_id,
+            relation_id=relation_id,
+            agent_instance=agent_instance,
+        )
+        if clause == "1 = 0":
+            return None
+        params.extend(clause_params)
         cursor.execute(
-            """
+            f"""
             SELECT id, symbolic_theme, extracted_insight, created_at
             FROM agent_dreams
-            WHERE user_id = ?
+            WHERE user_id = ? AND ({clause})
             ORDER BY id DESC
             LIMIT 1
             """,
-            (user_id,),
+            params,
         )
         row = cursor.fetchone()
         return dict(row) if row else None
@@ -702,7 +722,11 @@ class WillEngine:
             scope_kind=scope_kind,
         )
         scoped_relation_id = scope.get("relation_id")
-        dream = self._latest_dream(user_id)
+        dream = self._latest_dream(
+            user_id,
+            relation_id=scoped_relation_id,
+            agent_instance=scope.get("agent_instance"),
+        )
         rumination = (
             self._recent_rumination(user_id, relation_id=scoped_relation_id)
             if scoped_relation_id

@@ -88,18 +88,27 @@ async def run_agent_identity_consolidation():
         # Buscar conversas do master admin não processadas
         last_consolidation = datetime.now() - timedelta(hours=IDENTITY_CONSOLIDATION_INTERVAL_HOURS * 2)
 
-        cursor.execute("""
+        from core.db.relation_scope import legacy_quarantine_clause
+
+        quarantine_clause, quarantine_params = legacy_quarantine_clause(
+            cursor,
+            table="conversations",
+            relation_column="relation_id",
+            agent_instance=getattr(db, "agent_instance", None),
+            prefix="c.",
+        )
+        cursor.execute(f"""
             SELECT c.id, c.timestamp, c.user_id, c.user_input, c.ai_response
             FROM conversations c
             LEFT JOIN agent_identity_extractions aie ON c.id = aie.conversation_id
-            WHERE c.user_id = ?
+            WHERE c.user_id = ?{quarantine_clause}
               AND c.timestamp > ?
               AND aie.id IS NULL
               AND c.ai_response IS NOT NULL
               AND c.ai_response != ''
             ORDER BY c.timestamp ASC
             LIMIT ?
-        """, (ADMIN_USER_ID, last_consolidation.isoformat(), MAX_CONVERSATIONS_PER_CONSOLIDATION))
+        """, (ADMIN_USER_ID, *quarantine_params, last_consolidation.isoformat(), MAX_CONVERSATIONS_PER_CONSOLIDATION))
 
         conversations = cursor.fetchall()
 
