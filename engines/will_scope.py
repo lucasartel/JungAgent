@@ -64,15 +64,22 @@ def scope_context(
         raise ValueError("relation_id_required_for_relation_scope")
     if resolved_kind == GLOBAL_SCOPE:
         resolved_relation_id = None
-    instance = (
-        (agent_instance or getattr(db_manager, "agent_instance", None) or os.getenv("AGENT_INSTANCE") or "jung_v1")
-        .strip()
-    )
+    instance = resolve_instance(agent_instance or getattr(db_manager, "agent_instance", None))
     return {
         "agent_instance": instance,
         "relation_id": resolved_relation_id,
         "scope_kind": resolved_kind,
     }
+
+
+def resolve_instance(agent_instance: Optional[str]) -> str:
+    """Canonical agent-instance resolution (same chain as the scope migration).
+
+    ``HybridDatabaseManager`` does not expose an ``agent_instance`` attribute,
+    so callers must not rely on attribute access alone — falling through to
+    ``AGENT_INSTANCE`` keeps read and migration sides consistent (C12g).
+    """
+    return (agent_instance or os.getenv("AGENT_INSTANCE") or "jung_v1").strip()
 
 
 def scope_where_clause(
@@ -106,7 +113,11 @@ def instance_where_clause(
     return scope_where_clause(
         cursor,
         table,
-        {"agent_instance": agent_instance, "relation_id": None, "scope_kind": None},
+        {
+            "agent_instance": resolve_instance(agent_instance),
+            "relation_id": None,
+            "scope_kind": None,
+        },
     )
 
 

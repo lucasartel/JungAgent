@@ -489,3 +489,20 @@ def test_diary_will_states_do_not_cross_instances(tmp_path):
     diary_b = AgentDiaryWriter(db, tmp_path, user_id="participant", agent_instance="instance-b")
     rows_b = diary_b._fetch_will_states("2026-09-25")
     assert [row["daily_text"] for row in rows_b] == ["will-da-instancia-b"]
+
+
+def test_instance_clause_never_vanishes_without_db_attribute(monkeypatch):
+    """P2 (revisao 2): sem atributo agent_instance, a cláusula resolve pela
+    cadeia canonica (env AGENT_INSTANCE) em vez de esvaziar."""
+    from engines.will_scope import instance_where_clause
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE agent_will_states (id INTEGER PRIMARY KEY, user_id TEXT, agent_instance TEXT)"
+    )
+    monkeypatch.setenv("AGENT_INSTANCE", "inst-do-ambiente")
+
+    clause, params = instance_where_clause(conn.cursor(), "agent_will_states", None)
+
+    assert clause == " AND agent_instance = ?"
+    assert params == ["inst-do-ambiente"]

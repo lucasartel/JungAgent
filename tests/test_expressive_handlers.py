@@ -175,6 +175,42 @@ class TestComposeEssayDraft:
         assert result["content_type"] == "essay_draft"
         assert result["artifact_id"] > 0
 
+    def test_will_anchor_filters_instance_without_db_attribute(self, monkeypatch):
+        """Revisao PR-B: HybridDatabaseManager nao expoe agent_instance — o
+        filtro de instancia do anchor de Will nao pode esvaziar."""
+        db = _make_db()
+        # Duck-type do banco real: sem atributo agent_instance.
+        del db.agent_instance
+        db.conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_will_states ("
+            "id INTEGER PRIMARY KEY, user_id TEXT, agent_instance TEXT, created_at DATETIME)"
+        )
+        db.conn.execute(
+            "INSERT INTO agent_will_states (id, user_id, agent_instance, created_at) "
+            "VALUES (1, 'u1', 'test_jung_v0', '2026-09-25 10:00:00'), "
+            "(2, 'u1', 'outra-instancia', '2026-09-25 11:00:00')"
+        )
+        db.conn.commit()
+        monkeypatch.setenv("AGENT_INSTANCE", "test_jung_v0")
+
+        if "llm_providers" not in sys.modules:
+            llm_stub = type(sys)("llm_providers")
+            sys.modules["llm_providers"] = llm_stub
+        sys.modules["llm_providers"].get_llm_response = (
+            lambda prompt, temperature=0.6, max_tokens=1500: "Ensaio."
+        )
+
+        result = _EXPRESSIVE.handle_compose_essay_draft(db, {}, "u1")
+
+        assert result["status"] == "composed"
+        row = db.conn.execute(
+            "SELECT editorial_note FROM work_artifacts WHERE id = ?",
+            (result["artifact_id"],),
+        ).fetchone()
+        refs = json.loads(row["editorial_note"])["source_refs"]
+        assert "will#1" in refs
+        assert "will#2" not in refs
+
     def test_fallback_when_diary_missing(self, monkeypatch):
         db = _make_db()
         # Make LLM fail.
