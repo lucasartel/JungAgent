@@ -281,28 +281,42 @@ def build_instance_cockpit_payload(db) -> Dict[str, Any]:
     except Exception:
         will_state = {}
 
+    from core.db.relation_scope import legacy_quarantine_clause
+
+    dashboard_cursor = db.conn.cursor()
+    dream_clause, dream_clause_params = legacy_quarantine_clause(
+        dashboard_cursor,
+        table="agent_dreams",
+        relation_column="origin_relation_id",
+    )
+    insight_clause, insight_clause_params = legacy_quarantine_clause(
+        dashboard_cursor,
+        table="rumination_insights",
+        relation_column="relation_id",
+    )
+
     latest_dream = _fetch_one(
         db,
-        """
+        f"""
         SELECT id, symbolic_theme, extracted_insight, dream_content, image_url, status, created_at
         FROM agent_dreams
-        WHERE user_id = ?
+        WHERE user_id = ?{dream_clause}
         ORDER BY created_at DESC, id DESC
         LIMIT 1
         """,
-        (ADMIN_USER_ID,),
+        (ADMIN_USER_ID, *dream_clause_params),
     )
 
     latest_insight = _fetch_one(
         db,
-        """
+        f"""
         SELECT id, symbol_content, question_content, full_message, status, crystallized_at
         FROM rumination_insights
-        WHERE user_id = ?
+        WHERE user_id = ?{insight_clause}
         ORDER BY crystallized_at DESC, id DESC
         LIMIT 1
         """,
-        (ADMIN_USER_ID,),
+        (ADMIN_USER_ID, *insight_clause_params),
     )
 
     work_snapshot = {

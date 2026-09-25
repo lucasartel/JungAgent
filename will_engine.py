@@ -555,17 +555,50 @@ class WillEngine:
             )
         return list(reversed(items))
 
-    def _latest_dream(self, user_id: str) -> Optional[Dict[str, Any]]:
+    def _latest_dream(
+        self,
+        user_id: str,
+        *,
+        relation_id: Optional[str] = None,
+        agent_instance: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
+        params: List[Any] = [user_id]
+        dream_scope = getattr(self.db, "_dream_read_scope", None)
+        if callable(dream_scope):
+            try:
+                clause, clause_params = dream_scope(
+                    user_id=user_id,
+                    relation_id=relation_id,
+                    agent_instance=agent_instance,
+                )
+            except Exception:
+                # Revogado/inelegivel: sem residuo onirico (fail-closed C12g).
+                return None
+        else:
+            from core.db.relation_scope import legacy_quarantine_clause
+
+            clause, clause_params = legacy_quarantine_clause(
+                cursor,
+                table="agent_dreams",
+                relation_column="origin_relation_id",
+                agent_instance=agent_instance,
+            )
+        clause = clause.strip()
+        if clause.upper().startswith("AND "):
+            clause = clause[4:].strip()
+        if not clause:
+            clause = "1 = 1"
+        params.extend(clause_params)
         cursor.execute(
-            """
+            f"""
             SELECT id, symbolic_theme, extracted_insight, created_at
             FROM agent_dreams
-            WHERE user_id = ?
+            WHERE user_id = ? AND ({clause})
             ORDER BY id DESC
             LIMIT 1
             """,
-            (user_id,),
+            params,
         )
         row = cursor.fetchone()
         return dict(row) if row else None
@@ -702,7 +735,11 @@ class WillEngine:
             scope_kind=scope_kind,
         )
         scoped_relation_id = scope.get("relation_id")
-        dream = self._latest_dream(user_id)
+        dream = self._latest_dream(
+            user_id,
+            relation_id=scoped_relation_id,
+            agent_instance=scope.get("agent_instance"),
+        )
         rumination = (
             self._recent_rumination(user_id, relation_id=scoped_relation_id)
             if scoped_relation_id

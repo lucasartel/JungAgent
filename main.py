@@ -813,14 +813,21 @@ def _load_blogdojung_entries(limit_days: int = 3) -> List[Dict]:
 
     entries: List[Dict] = []
 
+    from core.db.relation_scope import legacy_quarantine_clause
+
+    blog_clause, blog_clause_params = legacy_quarantine_clause(
+        cursor,
+        table="agent_dreams",
+        relation_column="origin_relation_id",
+    )
     cursor.execute(
-        """
+        f"""
         SELECT created_at, symbolic_theme, extracted_insight, dream_content, image_url
         FROM agent_dreams
-        WHERE datetime(created_at) >= datetime(?)
+        WHERE datetime(created_at) >= datetime(?){blog_clause}
         ORDER BY datetime(created_at) DESC
         """,
-        (start_iso,),
+        (start_iso, *blog_clause_params),
     )
     for created_at, symbolic_theme, extracted_insight, dream_content, image_url in cursor.fetchall():
         entries.append(

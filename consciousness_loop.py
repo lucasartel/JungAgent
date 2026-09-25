@@ -1534,17 +1534,25 @@ class ConsciousnessLoopManager:
                 injected_fragments.extend(fragment_ids)
 
         cursor = self.db.conn.cursor()
+        from core.db.relation_scope import legacy_quarantine_clause
+
+        dream_clause, dream_clause_params = legacy_quarantine_clause(
+            cursor,
+            table="agent_dreams",
+            relation_column="origin_relation_id",
+            agent_instance=getattr(self, "agent_instance", None),
+        )
 
         if phase_mode == "intro":
             cursor.execute(
-                """
+                f"""
                 SELECT symbolic_theme, extracted_insight
                 FROM agent_dreams
-                WHERE user_id = ?
+                WHERE user_id = ?{dream_clause}
                 ORDER BY id DESC
                 LIMIT 1
                 """,
-                (self.admin_user_id,),
+                (self.admin_user_id, *dream_clause_params),
             )
             dream_row = cursor.fetchone()
             if dream_row:
@@ -1880,20 +1888,28 @@ class ConsciousnessLoopManager:
 
     def _deliver_pending_dreams(self, result: Dict, limit: int = 3) -> List[int]:
         cursor = self.db.conn.cursor()
+        from core.db.relation_scope import legacy_quarantine_clause
+
+        dream_clause, dream_clause_params = legacy_quarantine_clause(
+            cursor,
+            table="agent_dreams",
+            relation_column="origin_relation_id",
+            agent_instance=getattr(self, "agent_instance", None),
+        )
         cursor.execute(
-            """
+            f"""
             SELECT id, dream_content, symbolic_theme, extracted_insight,
                    regulatory_function, compensated_attitude, dream_mood,
                    image_url, image_provider, image_model, image_status,
                    status, created_at
             FROM agent_dreams
-            WHERE user_id = ?
+            WHERE user_id = ?{dream_clause}
               AND extracted_insight IS NOT NULL
               AND COALESCE(status, 'pending') != 'delivered'
             ORDER BY created_at ASC
             LIMIT ?
             """,
-            (self.admin_user_id, limit),
+            (self.admin_user_id, *dream_clause_params, limit),
         )
         rows = cursor.fetchall()
 
@@ -2061,12 +2077,28 @@ class ConsciousnessLoopManager:
         from dream_engine import DreamEngine
 
         self._promote_from_placeholder(result)
-        dreams_before = self._count_rows("agent_dreams", "user_id = ?", (self.admin_user_id,))
+        from core.db.relation_scope import legacy_quarantine_clause
+
+        dream_clause, dream_clause_params = legacy_quarantine_clause(
+            self.db.conn.cursor(),
+            table="agent_dreams",
+            relation_column="origin_relation_id",
+            agent_instance=getattr(self, "agent_instance", None),
+        )
+        dreams_before = self._count_rows(
+            "agent_dreams",
+            f"user_id = ?{dream_clause}",
+            (self.admin_user_id, *dream_clause_params),
+        )
         dream_fragments_before = self._count_dream_rumination_fragments()
         dream_engine = DreamEngine(self.db)
         success = dream_engine.generate_dream(self.admin_user_id)
         result["raw_result"]["dream_generated"] = success
-        dreams_after = self._count_rows("agent_dreams", "user_id = ?", (self.admin_user_id,))
+        dreams_after = self._count_rows(
+            "agent_dreams",
+            f"user_id = ?{dream_clause}",
+            (self.admin_user_id, *dream_clause_params),
+        )
         dream_fragments_after = self._count_dream_rumination_fragments()
         result["metrics"]["dream_rows_delta"] = max(0, dreams_after - dreams_before)
         result["metrics"]["dream_rumination_fragments_delta"] = max(
@@ -2077,17 +2109,17 @@ class ConsciousnessLoopManager:
         if success:
             cursor = self.db.conn.cursor()
             cursor.execute(
-                """
+                f"""
                 SELECT id, dream_content, symbolic_theme, extracted_insight,
                        regulatory_function, compensated_attitude, dream_mood,
                        image_url, image_provider, image_model, image_status,
                        status, created_at
                 FROM agent_dreams
-                WHERE user_id = ?
+                WHERE user_id = ?{dream_clause}
                 ORDER BY id DESC
                 LIMIT 1
                 """,
-                (self.admin_user_id,),
+                (self.admin_user_id, *dream_clause_params),
             )
             row = cursor.fetchone()
             if row:

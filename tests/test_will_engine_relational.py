@@ -126,7 +126,7 @@ def _load_will_engine_module():
 def _stub_auxiliary_fetchers(engine):
     """Stub the many source-fetchers in WillEngine so _build_source_payload
     doesn't require all the subsystem tables to exist."""
-    engine._latest_dream = lambda user_id: None
+    engine._latest_dream = lambda user_id, **kwargs: None
     engine._recent_rumination = lambda user_id: []
     engine._active_rumination_tensions = lambda user_id: []
     engine._latest_meta_consciousness = lambda user_id: None

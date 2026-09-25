@@ -566,16 +566,26 @@ async def run_manual_consolidation(
         db = get_hybrid_db()
         cursor = db.conn.cursor()
 
-        # Buscar conversas do master admin não processadas
-        cursor.execute("""
+        # Buscar conversas do master admin não processadas (C12c: dialogo
+        # privado de Relations nao entra na identidade global do agente).
+        from core.db.relation_scope import legacy_quarantine_clause
+
+        quarantine_clause, quarantine_params = legacy_quarantine_clause(
+            cursor,
+            table="conversations",
+            relation_column="relation_id",
+            agent_instance=getattr(db, "agent_instance", None),
+            prefix="c.",
+        )
+        cursor.execute(f"""
             SELECT c.id, c.user_input, c.ai_response, c.timestamp
             FROM conversations c
             LEFT JOIN agent_identity_extractions e ON c.id = e.conversation_id
-            WHERE c.user_id = ?
+            WHERE c.user_id = ?{quarantine_clause}
               AND e.conversation_id IS NULL
             ORDER BY c.timestamp DESC
             LIMIT ?
-        """, (ADMIN_USER_ID, MAX_CONVERSATIONS_PER_CONSOLIDATION))
+        """, (ADMIN_USER_ID, *quarantine_params, MAX_CONVERSATIONS_PER_CONSOLIDATION))
 
         conversations = cursor.fetchall()
 
