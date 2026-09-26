@@ -899,6 +899,42 @@ class JungianEngine:
             ))
 
         base_identity = Config.ADMIN_IDENTITY_PROMPT if is_admin else Config.STANDARD_IDENTITY_PROMPT
+        try:
+            from core.rumination_interiority import (
+                admin_reading_awareness,
+                global_rumination_influence,
+            )
+
+            influence = global_rumination_influence(
+                self.db, scope.agent_instance, self._get_admin_user_id()
+            )
+            if influence:
+                add(
+                    "rumination_influence",
+                    influence,
+                    origin_class="authorized_aggregate",
+                    origin_relation_id=None,
+                    provenance={"raw_relational_text_used": False},
+                )
+            if is_admin:
+                reading, reading_refs = admin_reading_awareness(
+                    self.db,
+                    agent_instance=scope.agent_instance,
+                    user_id=str(user_id),
+                    admin_user_id=self._get_admin_user_id(),
+                    user_message=user_input,
+                )
+                if reading:
+                    add(
+                        "private_source_recall",
+                        reading,
+                        origin_class=scoped_origin,
+                        origin_relation_id=scope.relation_id,
+                        source_refs=reading_refs,
+                    )
+        except Exception as exc:
+            logger.warning("[INTERIORITY] Falha ao montar influencia global: %s", exc)
+
         if is_admin and self.identity_context_builder:
             try:
                 identity_ctx = self.identity_context_builder.build_context_summary_for_llm_v2(

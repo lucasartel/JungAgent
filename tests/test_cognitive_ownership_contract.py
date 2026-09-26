@@ -34,10 +34,10 @@ def _by_domain():
 
 def test_c12a_contract_is_complete_and_internally_valid():
     assert validate_ownership_contracts() == ()
-    assert len(OWNERSHIP_CONTRACTS) == 23
+    assert len(OWNERSHIP_CONTRACTS) == 25
     required = {
         "conversations", "structured_facts", "semantic_memory", "rumination",
-        "working_memory", "dreams", "identity_core", "integrative_self",
+        "rumination_influence", "private_source_recall", "working_memory", "dreams", "identity_core", "integrative_self",
         "theory_of_mind", "symbolic_graph", "will_relation_state",
         "will_global_aggregation", "availability_and_cadence", "tenant_control_plane",
     }
