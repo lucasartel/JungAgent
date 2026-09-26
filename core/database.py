@@ -112,6 +112,13 @@ class HybridDatabaseManager(
                         participant_user_id=str(user_id),
                     )
                 )
+                from core.db.relations import is_relation_eligible
+
+                self.mem0.set_relation_eligibility_checker(
+                    lambda relation_id: is_relation_eligible(
+                        self.get_agent_relation(relation_id)
+                    )
+                )
         except Exception as e:
             self.mem0 = None
             logger.warning(f"âš ï¸ [MEM0] Erro ao inicializar: {e}")

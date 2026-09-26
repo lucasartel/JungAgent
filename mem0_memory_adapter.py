@@ -28,6 +28,7 @@ Configuração via variáveis de ambiente:
 
 import os
 import logging
+import math
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -144,14 +145,76 @@ class Mem0MemoryAdapter:
         config = _build_mem0_config()
         self.mem = Memory.from_config(config)
         self._relation_resolver = None
+        self._relation_eligibility_checker = None
         logger.info("✅ [MEM0] Adaptador inicializado (Qdrant Cloud)")
 
     def set_relation_resolver(self, resolver) -> None:
         """Attach the database relation resolver without coupling mem0 to SQLite."""
         self._relation_resolver = resolver
 
+    def set_relation_eligibility_checker(self, checker) -> None:
+        self._relation_eligibility_checker = checker
+
+    def _legacy_admin_namespace(self, user_id: str, scoped_user_id: str, *, for_deletion: bool = False):
+        """The original admin's Qdrant key predates Relations; never share it by user ID alone."""
+        from instance_config import ADMIN_USER_ID, AGENT_INSTANCE
+
+        if (
+            str(user_id) != str(ADMIN_USER_ID)
+            or str(AGENT_INSTANCE) != "jung_v1"
+            or _default_collection_name() != "jung_memories_jung_v1"
+            or not callable(getattr(self, "_relation_resolver", None))
+        ):
+            return None
+        relation_id = self._relation_resolver(str(user_id))
+        if not relation_id or scoped_user_id != f"relation:{relation_id}":
+            return None
+        if not for_deletion:
+            checker = getattr(self, "_relation_eligibility_checker", None)
+            if not callable(checker) or not checker(str(relation_id)):
+                return None
+        return str(user_id)
+
+    @staticmethod
+    def _result_rows(results):
+        rows = results.get("results", []) if isinstance(results, dict) else results
+        return [row for row in rows or [] if isinstance(row, dict) and row.get("memory")]
+
+    @staticmethod
+    def _merge_ranked_memories(batches, limit: int):
+        ranked = []
+        for source_index, rows in enumerate(batches):
+            for rank, row in enumerate(rows):
+                try:
+                    score = float(row.get("score"))
+                    if not math.isfinite(score):
+                        score = None
+                except (TypeError, ValueError):
+                    score = None
+                ranked.append((row, rank, source_index, score))
+        if ranked and all(item[3] is not None for item in ranked):
+            ranked.sort(key=lambda item: (-item[3], item[1], item[2]))
+        else:
+            ranked.sort(key=lambda item: (item[1], item[2]))
+        merged, seen = [], set()
+        for row, _, _, _ in ranked:
+            key = " ".join(str(row["memory"]).casefold().split())
+            if key and key not in seen:
+                seen.add(key)
+                merged.append(row)
+                if len(merged) >= limit:
+                    break
+        return merged
+
     def _memory_user_id(self, user_id: str, relation_id=None) -> str:
         resolved = relation_id
+        if resolved and self._relation_resolver:
+            try:
+                expected = self._relation_resolver(str(user_id))
+            except Exception as exc:
+                raise ValueError("relation_scope_resolution_failed") from exc
+            if str(expected or "") != str(resolved):
+                raise ValueError("relation_participant_mismatch")
         if not resolved and self._relation_resolver:
             try:
                 resolved = self._relation_resolver(str(user_id))
@@ -174,8 +237,18 @@ class Mem0MemoryAdapter:
         """
         try:
             scoped_user_id = self._memory_user_id(user_id, relation_id)
-            results = self.mem.search(query=query, user_id=scoped_user_id, limit=limit)
-            memories = results.get("results", []) if isinstance(results, dict) else results
+            legacy_user_id = self._legacy_admin_namespace(user_id, scoped_user_id)
+            batches = []
+            for namespace in (scoped_user_id, legacy_user_id):
+                if not namespace:
+                    continue
+                try:
+                    batches.append(self._result_rows(
+                        self.mem.search(query=query, user_id=namespace, limit=limit)
+                    ))
+                except Exception as exc:
+                    logger.warning("⚠️ [MEM0] Busca em namespace indisponível: %s", exc)
+            memories = self._merge_ranked_memories(batches, max(1, int(limit)))
 
             if not memories:
                 return ""
@@ -234,17 +307,15 @@ class Mem0MemoryAdapter:
     def get_all_memories(self, user_id: str) -> list:
         """Retorna todas as memórias do usuário em formato estruturado."""
         try:
-            all_memories = self.mem.get_all(user_id=self._memory_user_id(user_id))
-            memories = all_memories.get("results", []) if isinstance(all_memories, dict) else all_memories
-
-            normalized = []
-            for memory in memories or []:
-                if isinstance(memory, dict):
-                    normalized.append(memory)
-                else:
-                    normalized.append({"memory": str(memory)})
-
-            return normalized
+            scoped_user_id = self._memory_user_id(user_id)
+            legacy_user_id = self._legacy_admin_namespace(user_id, scoped_user_id)
+            batches = []
+            for namespace in (scoped_user_id, legacy_user_id):
+                if namespace:
+                    batches.append(self._result_rows(self.mem.get_all(user_id=namespace)))
+            return self._merge_ranked_memories(
+                batches, sum(len(batch) for batch in batches)
+            )
         except Exception as e:
             logger.warning(f"⚠️ [MEM0] Erro ao recuperar memórias estruturadas: {e}")
             return []
@@ -267,9 +338,21 @@ class Mem0MemoryAdapter:
         Chamado por HybridDatabaseManager.delete_user_completely().
         """
         try:
-            self.mem.delete_all(user_id=self._memory_user_id(user_id))
-            logger.info(f"✅ [MEM0] Todas as memórias deletadas para user={user_id[:8]}")
-            return True
+            scoped_user_id = self._memory_user_id(user_id)
+            legacy_user_id = self._legacy_admin_namespace(
+                user_id, scoped_user_id, for_deletion=True
+            )
+            deleted_all = True
+            for namespace in (scoped_user_id, legacy_user_id):
+                if namespace:
+                    try:
+                        self.mem.delete_all(user_id=namespace)
+                    except Exception as exc:
+                        deleted_all = False
+                        logger.warning("⚠️ [MEM0] Falha ao apagar namespace: %s", exc)
+            if deleted_all:
+                logger.info(f"✅ [MEM0] Todas as memórias deletadas para user={user_id[:8]}")
+            return deleted_all
         except Exception as e:
             logger.warning(f"⚠️ [MEM0] Erro ao deletar memórias de {user_id[:8]}: {e}")
             return False

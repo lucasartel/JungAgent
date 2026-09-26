@@ -188,3 +188,97 @@ def test_mem0_denies_non_admin_legacy_namespace_without_relation():
 
     assert adapter.mem.searches == []
     assert adapter.mem.adds == []
+
+
+class LegacyMemoryStub:
+    def __init__(self, admin_id, relation_id):
+        self.searches = []
+        self.adds = []
+        self.deletes = []
+        self.fail_deletes = set()
+        self.rows = {
+            admin_id: [
+                {"memory": "lembranca antiga", "score": 0.95},
+                {"memory": "memoria repetida", "score": 0.80},
+            ],
+            f"relation:{relation_id}": [
+                {"memory": "lembranca nova", "score": 0.90},
+                {"memory": "MEMORIA  REPETIDA", "score": 0.70},
+            ],
+        }
+
+    def search(self, *, query, user_id, limit):
+        self.searches.append(user_id)
+        return {"results": self.rows.get(user_id, [])[:limit]}
+
+    def get_all(self, *, user_id):
+        return {"results": self.rows.get(user_id, [])}
+
+    def add(self, *, messages, user_id):
+        self.adds.append(user_id)
+        return {"results": []}
+
+    def delete_all(self, *, user_id):
+        self.deletes.append(user_id)
+        if user_id in self.fail_deletes:
+            raise RuntimeError("delete failed")
+
+
+def _legacy_admin_adapter(monkeypatch, *, eligible=True):
+    import instance_config
+
+    admin_id = str(instance_config.ADMIN_USER_ID)
+    relation_id = "admin-relation"
+    monkeypatch.setattr(instance_config, "AGENT_INSTANCE", "jung_v1")
+    monkeypatch.setattr(mem0_mod, "_default_collection_name", lambda: "jung_memories_jung_v1")
+    adapter = mem0_mod.Mem0MemoryAdapter.__new__(mem0_mod.Mem0MemoryAdapter)
+    adapter.mem = LegacyMemoryStub(admin_id, relation_id)
+    adapter.set_relation_resolver(lambda user_id: relation_id if user_id == admin_id else "other-relation")
+    adapter.set_relation_eligibility_checker(lambda rid: eligible and rid == relation_id)
+    return adapter, admin_id, relation_id
+
+
+def test_legacy_admin_memories_return_to_own_relation_without_duplicate(monkeypatch):
+    adapter, admin_id, relation_id = _legacy_admin_adapter(monkeypatch)
+
+    context = adapter.get_context(admin_id, "consulta", limit=3, relation_id=relation_id)
+    assert "lembranca antiga" in context
+    assert "lembranca nova" in context
+    assert context.casefold().count("memoria repetida") == 1
+    assert adapter.mem.searches == [f"relation:{relation_id}", admin_id]
+    assert len(adapter.get_all_memories(admin_id)) == 3
+
+    adapter.add_exchange(admin_id, "ola", "resposta", relation_id=relation_id)
+    assert adapter.mem.adds == [f"relation:{relation_id}"]
+
+
+def test_legacy_admin_namespace_never_crosses_relation_or_instance(monkeypatch):
+    import instance_config
+
+    adapter, admin_id, relation_id = _legacy_admin_adapter(monkeypatch)
+    adapter.get_context("other-user", "consulta", relation_id="other-relation")
+    adapter.get_context(admin_id, "consulta", relation_id="wrong-relation")
+    assert adapter.mem.searches == ["relation:other-relation"]
+
+    adapter.mem.searches.clear()
+    monkeypatch.setattr(instance_config, "AGENT_INSTANCE", "other-instance")
+    adapter.get_context(admin_id, "consulta", relation_id=relation_id)
+    assert adapter.mem.searches == [f"relation:{relation_id}"]
+
+
+def test_legacy_admin_namespace_requires_active_consent(monkeypatch):
+    adapter, admin_id, relation_id = _legacy_admin_adapter(monkeypatch, eligible=False)
+    adapter.get_context(admin_id, "consulta", relation_id=relation_id)
+    assert adapter.mem.searches == [f"relation:{relation_id}"]
+    assert len(adapter.get_all_memories(admin_id)) == 2
+
+
+def test_admin_deletion_covers_legacy_and_relation_namespaces(monkeypatch):
+    adapter, admin_id, relation_id = _legacy_admin_adapter(monkeypatch, eligible=False)
+    assert adapter.delete_all(admin_id)
+    assert adapter.mem.deletes == [f"relation:{relation_id}", admin_id]
+
+    adapter.mem.deletes.clear()
+    adapter.mem.fail_deletes.add(f"relation:{relation_id}")
+    assert not adapter.delete_all(admin_id)
+    assert adapter.mem.deletes == [f"relation:{relation_id}", admin_id]
