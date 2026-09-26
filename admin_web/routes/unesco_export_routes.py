@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from admin_web.auth.middleware import require_master
+from core.db.legacy_exports import fetch_unesco_participants
 
 router = APIRouter(prefix="/admin", tags=["unesco_export"])
 templates = Jinja2Templates(directory="admin_web/templates")
@@ -34,29 +35,7 @@ def get_db():
 async def view_unesco_data(request: Request, admin: Dict = Depends(require_master)):
     """Pagina visual para ver os dados do Piloto UNESCO antes de exportar."""
     db = get_db()
-    cursor = db.conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT
-            u.user_id,
-            u.baseline_stress_score,
-            u.baseline_trait_challenge,
-            u.baseline_expectation,
-            u.post_test_stress_score,
-            u.dossier_accuracy_rating,
-            u.safety_triggers_count,
-
-            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id) as total_messages,
-            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id) as retention_days,
-
-            u.created_at,
-            u.completed_at
-        FROM unesco_pilot_data u
-        """
-    )
-
-    rows = cursor.fetchall()
+    rows = fetch_unesco_participants(db.conn)
 
     participants = []
     for idx, row in enumerate(rows, 1):
@@ -83,28 +62,7 @@ async def view_unesco_data(request: Request, admin: Dict = Depends(require_maste
 async def export_unesco_csv(admin: Dict = Depends(require_master)):
     """Gera CSV anonimizado com os dados quantitativos e qualitativos do Piloto UNESCO."""
     db = get_db()
-    cursor = db.conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT
-            u.user_id,
-            u.baseline_stress_score,
-            u.baseline_trait_challenge,
-            u.baseline_expectation,
-            u.post_test_stress_score,
-            u.safety_triggers_count,
-
-            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id) as total_messages,
-            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id) as retention_days,
-
-            u.created_at,
-            u.completed_at
-        FROM unesco_pilot_data u
-        """
-    )
-
-    rows = cursor.fetchall()
+    rows = fetch_unesco_participants(db.conn)
 
     f = StringIO()
     writer = csv.writer(f)
@@ -132,11 +90,11 @@ async def export_unesco_csv(admin: Dict = Depends(require_master)):
                 row[2],
                 row[3],
                 row[4],
-                row[5],
                 row[6],
                 row[7],
                 row[8],
                 row[9],
+                row[10],
             ]
         )
 

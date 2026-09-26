@@ -132,6 +132,7 @@ def legacy_quarantine_clause(
     relation_column: str = "relation_id",
     agent_instance: Optional[str] = None,
     prefix: str = "",
+    include_instance: bool = True,
 ) -> tuple[str, list[Any]]:
     """Admin-legacy quarantine for raw readers (C12c): only relation-less rows
     of the current instance stay visible.
@@ -148,7 +149,7 @@ def legacy_quarantine_clause(
     params: list[Any] = []
     if relation_column in cols:
         parts.append(f"{prefix}{relation_column} IS NULL")
-    if "agent_instance" in cols:
+    if include_instance and "agent_instance" in cols:
         try:
             from engines.will_scope import resolve_instance
 

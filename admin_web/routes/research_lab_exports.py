@@ -4,6 +4,12 @@ from typing import Dict
 from fastapi.responses import JSONResponse
 
 from admin_web.routes.research_lab_context import get_db, internal_error_response, logger
+from core.db.legacy_exports import (
+    fetch_research_fragments,
+    fetch_research_insights,
+    fetch_research_tension_diagnostics,
+    fetch_research_tensions,
+)
 
 async def why_no_insights(
     _admin: Dict = None
@@ -35,17 +41,10 @@ async def why_no_insights(
             "solution": None
         }
 
-        # Buscar todas as tensões
-        cursor.execute("""
-            SELECT id, tension_type, status, intensity, maturity_score,
-                   evidence_count, revisit_count, first_detected_at,
-                   last_revisited_at, last_evidence_at
-            FROM rumination_tensions
-            WHERE user_id = ?
-            ORDER BY maturity_score DESC
-        """, (ADMIN_USER_ID,))
-
-        tensions = cursor.fetchall()
+        # Buscar todas as tensões (quarentena: sem Relation — C12c2)
+        tensions = fetch_research_tension_diagnostics(
+            db.conn, ADMIN_USER_ID, getattr(db, "agent_instance", None)
+        )
 
         if not tensions:
             result["problem_identified"] = "Não há tensões detectadas"
@@ -186,15 +185,9 @@ async def export_fragments(
         db = get_db()
         cursor = db.conn.cursor()
 
-        cursor.execute("""
-            SELECT id, user_id, content, emotional_weight,
-                   context_type, detected_at, metadata
-            FROM rumination_fragments
-            WHERE user_id = ?
-            ORDER BY detected_at DESC
-        """, (ADMIN_USER_ID,))
-
-        fragments = [dict(row) for row in cursor.fetchall()]
+        fragments = fetch_research_fragments(
+            db.conn, ADMIN_USER_ID, getattr(db, "agent_instance", None)
+        )
 
         return JSONResponse({
             "total": len(fragments),
@@ -218,18 +211,9 @@ async def export_tensions(
         db = get_db()
         cursor = db.conn.cursor()
 
-        cursor.execute("""
-            SELECT id, user_id, tension_type, pole_a, pole_b,
-                   pole_a_fragment_ids, pole_b_fragment_ids,
-                   status, intensity, maturity_score, evidence_count,
-                   revisit_count, first_detected_at, last_revisited_at,
-                   last_evidence_at, resolved_at, metadata
-            FROM rumination_tensions
-            WHERE user_id = ?
-            ORDER BY first_detected_at DESC
-        """, (ADMIN_USER_ID,))
-
-        tensions = [dict(row) for row in cursor.fetchall()]
+        tensions = fetch_research_tensions(
+            db.conn, ADMIN_USER_ID, getattr(db, "agent_instance", None)
+        )
 
         return JSONResponse({
             "total": len(tensions),
@@ -253,17 +237,9 @@ async def export_insights(
         db = get_db()
         cursor = db.conn.cursor()
 
-        cursor.execute("""
-            SELECT id, user_id, tension_id, insight_type,
-                   content, confidence_score, status,
-                   generated_at, delivered_at, user_feedback,
-                   metadata
-            FROM rumination_insights
-            WHERE user_id = ?
-            ORDER BY generated_at DESC
-        """, (ADMIN_USER_ID,))
-
-        insights = [dict(row) for row in cursor.fetchall()]
+        insights = fetch_research_insights(
+            db.conn, ADMIN_USER_ID, getattr(db, "agent_instance", None)
+        )
 
         return JSONResponse({
             "total": len(insights),

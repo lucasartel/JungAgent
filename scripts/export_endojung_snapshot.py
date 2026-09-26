@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from identity_config import AGENT_INSTANCE, ADMIN_USER_ID
+from endojung_snapshot_export import _snapshot_scope_clause
 
 
 USER_SCOPED_TABLES: Tuple[str, ...] = (
@@ -118,6 +119,7 @@ def build_endojung_snapshot(
             "notes": [
                 "Includes SQLite-backed EndoJung data only.",
                 "Vector stores such as ChromaDB and Qdrant/mem0 are not included in this archive.",
+                "Legacy-global scope: relation-stamped rows are excluded (C12c2 quarantine).",
             ],
         },
         "tables": {},
@@ -126,19 +128,23 @@ def build_endojung_snapshot(
     }
 
     for table_name in existing_user_tables:
+        scope_sql, scope_params = _snapshot_scope_clause(conn, table_name, agent_instance)
         rows = _fetch_rows(
             conn,
-            f"SELECT * FROM {table_name} WHERE user_id = ? ORDER BY ROWID ASC",
-            (admin_user_id,),
+            f"SELECT * FROM {table_name} WHERE user_id = ?{scope_sql} ORDER BY ROWID ASC",
+            (admin_user_id, *scope_params),
         )
         snapshot["tables"][table_name] = rows
         snapshot["schemas"][table_name] = _get_table_schema(conn, table_name)
         snapshot["summary"][table_name] = len(rows)
 
     for table_name in existing_agent_tables:
+        scope_sql, scope_params = _snapshot_scope_clause(
+            conn, table_name, agent_instance, include_instance=False
+        )
         rows = _fetch_rows(
             conn,
-            f"SELECT * FROM {table_name} WHERE agent_instance = ? ORDER BY ROWID ASC",
+            f"SELECT * FROM {table_name} WHERE agent_instance = ?{scope_sql} ORDER BY ROWID ASC",
             (agent_instance,),
         )
         snapshot["tables"][table_name] = rows
@@ -146,16 +152,20 @@ def build_endojung_snapshot(
         snapshot["summary"][table_name] = len(rows)
 
     if "agent_identity_extractions" in _get_existing_tables(conn, ("agent_identity_extractions",)):
+        c_scope, c_params = _snapshot_scope_clause(conn, "conversations", agent_instance, prefix="c.")
+        aie_scope, aie_params = _snapshot_scope_clause(
+            conn, "agent_identity_extractions", agent_instance, prefix="aie."
+        )
         extraction_rows = _fetch_rows(
             conn,
-            """
+            f"""
             SELECT aie.*
             FROM agent_identity_extractions aie
             JOIN conversations c ON c.id = aie.conversation_id
-            WHERE c.user_id = ?
+            WHERE c.user_id = ?{c_scope}{aie_scope}
             ORDER BY aie.extracted_at ASC
             """,
-            (admin_user_id,),
+            (admin_user_id, *c_params, *aie_params),
         )
         snapshot["tables"]["agent_identity_extractions"] = extraction_rows
         snapshot["schemas"]["agent_identity_extractions"] = _get_table_schema(conn, "agent_identity_extractions")
