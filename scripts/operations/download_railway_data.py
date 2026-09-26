@@ -2,9 +2,10 @@
 Interactive helper to download Jung Lab exports from Railway into docs/diagnostics.
 """
 
-from getpass import getpass
 from pathlib import Path
 import json
+import os
+import sys
 
 import requests
 
@@ -25,16 +26,31 @@ def save_json(filename: str, payload: dict) -> Path:
     return target
 
 
-railway_url = input("Digite a URL do Railway (ex: https://seu-projeto.railway.app): ").strip()
+railway_url = (
+    os.getenv("JUNG_ADMIN_URL")
+    or input("Digite a URL do Railway (ex: https://seu-projeto.railway.app): ").strip()
+)
 if not railway_url.startswith("http"):
     railway_url = f"https://{railway_url}"
 
-print("\nAutenticacao Admin")
-username = input("Username: ").strip()
-password = getpass("Password: ")
+# Credenciais via variáveis de ambiente — nunca commitadas (C12c2)
+username = os.getenv("JUNG_ADMIN_USER")
+password = os.getenv("JUNG_ADMIN_PASSWORD")
+if not username or not password:
+    print("❌ Defina JUNG_ADMIN_USER e JUNG_ADMIN_PASSWORD no ambiente.")
+    sys.exit(1)
 
+# Sessão autenticada: o painel usa cookie de sessão (POST /admin/login),
+# não HTTP Basic.
 session = requests.Session()
-session.auth = (username, password)
+login = session.post(
+    f"{railway_url}/admin/login",
+    data={"email": username, "password": password},
+    allow_redirects=False,
+)
+if login.status_code not in (200, 302, 303) or "session_id" not in session.cookies:
+    print(f"❌ Login falhou: HTTP {login.status_code}")
+    sys.exit(1)
 
 print("\nBaixando dados do Railway...\n")
 
