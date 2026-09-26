@@ -160,3 +160,50 @@ def legacy_quarantine_clause(
             parts.append(f"({prefix}agent_instance = ? OR {prefix}agent_instance IS NULL)")
             params.append(instance)
     return (" AND " + " AND ".join(parts)) if parts else "", params
+
+
+def personal_scope_clause(
+    cursor: Any,
+    *,
+    table: str = "conversations",
+    relation_column: str = "relation_id",
+    relation_id: Optional[str] = None,
+    agent_instance: Optional[str] = None,
+    prefix: str = "",
+    include_instance: bool = True,
+) -> tuple[str, list[Any]]:
+    """Visibilidade PESSOAL do usuario (C12c2/P1): sem Relation OU a Relation
+    verificada do proprio usuario.
+
+    Uso restrito a consultas do proprietario sobre os proprios dados
+    (diagnosticos e exports do research lab, diario/entrega). Cada linha
+    retornada DEVE ser rotulada com o escopo real (``relation`` /
+    ``no_relation``): ``relation_id IS NULL`` nao comprova origem global —
+    pode ser material de origem nao classificada (work_reading/work, cuja
+    classificacao real chega no C4). Nunca use em fluxos cross-Relation
+    (blog, Will, consolidacao de identidade) — ai vale a quarentena estrita.
+
+    ``relation_id`` deve vir ja verificado (ex. ``resolve_relation_query_scope``);
+    sem Relation resolvida o escopo cai para as linhas sem Relation.
+    """
+    cursor.execute(f"PRAGMA table_info({table})")
+    cols = {row[1] for row in cursor.fetchall()}
+    parts: list[str] = []
+    params: list[Any] = []
+    if relation_column in cols:
+        if relation_id:
+            parts.append(f"({prefix}{relation_column} IS NULL OR {prefix}{relation_column} = ?)")
+            params.append(str(relation_id))
+        else:
+            parts.append(f"{prefix}{relation_column} IS NULL")
+    if include_instance and "agent_instance" in cols:
+        try:
+            from engines.will_scope import resolve_instance
+
+            instance = resolve_instance(agent_instance)
+        except ImportError:
+            instance = (agent_instance or "").strip()
+        if instance:
+            parts.append(f"({prefix}agent_instance = ? OR {prefix}agent_instance IS NULL)")
+            params.append(instance)
+    return (" AND " + " AND ".join(parts)) if parts else "", params

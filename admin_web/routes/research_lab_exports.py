@@ -9,14 +9,35 @@ from core.db.legacy_exports import (
     fetch_research_insights,
     fetch_research_tension_diagnostics,
     fetch_research_tensions,
+    count_out_of_personal_scope,
+    no_tensions_diagnosis,
+    scope_counts,
+    source_kind_counts,
 )
+
+
+def _personal_relation_id(db, user_id: str, agent_instance=None):
+    """Relation verificada do usuário para a visibilidade pessoal (C12c2/P1)."""
+    try:
+        from core.db.relation_scope import resolve_relation_query_scope
+
+        scope = resolve_relation_query_scope(db, user_id, agent_instance=agent_instance)
+        return scope.relation_id
+    except Exception as exc:
+        logger.warning(f"⚠️ Relation pessoal não resolvida (escopo fica só no sem-Relation): {exc}")
+        return None
+
 
 async def why_no_insights(
     _admin: Dict = None
 ):
     """
     Diagnóstico específico: Por que não há insights sendo gerados?
-    Analisa maturidade das tensões e identifica bloqueios
+    Analisa maturidade das tensões e identifica bloqueios.
+
+    Visibilidade pessoal (C12c2/P1): sem Relation + a Relation verificada do
+    admin. O resultado traz a contagem por escopo e nunca afirma ausência de
+    tensões que existem fora da visibilidade.
     """
     from rumination_config import (
         ADMIN_USER_ID, MIN_MATURITY_FOR_SYNTHESIS,
@@ -27,7 +48,8 @@ async def why_no_insights(
 
     try:
         db = get_db()
-        cursor = db.conn.cursor()
+        instance = getattr(db, "agent_instance", None)
+        relation_id = _personal_relation_id(db, ADMIN_USER_ID, instance)
 
         result = {
             "config": {
@@ -36,19 +58,29 @@ async def why_no_insights(
                 "MIN_EVIDENCE_FOR_SYNTHESIS": MIN_EVIDENCE_FOR_SYNTHESIS,
                 "MATURITY_WEIGHTS": MATURITY_WEIGHTS
             },
+            "scope": {
+                "kind": "personal",
+                "relation_id": relation_id,
+            },
             "tensions": [],
             "problem_identified": None,
             "solution": None
         }
 
-        # Buscar todas as tensões (quarentena: sem Relation — C12c2)
+        # Tensões na visibilidade pessoal (sem Relation + Relation verificada)
         tensions = fetch_research_tension_diagnostics(
-            db.conn, ADMIN_USER_ID, getattr(db, "agent_instance", None)
+            db.conn, ADMIN_USER_ID, instance, relation_id
         )
+        result["scope"]["counts"] = scope_counts(tensions)
 
         if not tensions:
-            result["problem_identified"] = "Não há tensões detectadas"
-            result["solution"] = "Sistema precisa detectar tensões primeiro. Continue usando o bot normalmente."
+            out_of_scope = count_out_of_personal_scope(
+                db.conn, ADMIN_USER_ID, "rumination_tensions", relation_id, instance
+            )
+            result["scope"]["out_of_scope"] = out_of_scope
+            diagnosis = no_tensions_diagnosis(out_of_scope)
+            result["problem_identified"] = diagnosis["problem_identified"]
+            result["solution"] = diagnosis["solution"]
             return JSONResponse(result)
 
         for t_row in tensions:
@@ -183,14 +215,22 @@ async def export_fragments(
 
     try:
         db = get_db()
-        cursor = db.conn.cursor()
+        instance = getattr(db, "agent_instance", None)
+        relation_id = _personal_relation_id(db, ADMIN_USER_ID, instance)
 
         fragments = fetch_research_fragments(
-            db.conn, ADMIN_USER_ID, getattr(db, "agent_instance", None)
+            db.conn, ADMIN_USER_ID, instance, relation_id
         )
 
         return JSONResponse({
             "total": len(fragments),
+            "scope": {
+                "kind": "personal",
+                "relation_id": relation_id,
+                "counts": scope_counts(fragments),
+                "source_kind_counts": source_kind_counts(fragments),
+                "note": "scope=no_relation não certifica origem global (ex.: work_reading/work, classificação real no C4)",
+            },
             "fragments": fragments
         })
 
@@ -209,14 +249,20 @@ async def export_tensions(
 
     try:
         db = get_db()
-        cursor = db.conn.cursor()
+        instance = getattr(db, "agent_instance", None)
+        relation_id = _personal_relation_id(db, ADMIN_USER_ID, instance)
 
         tensions = fetch_research_tensions(
-            db.conn, ADMIN_USER_ID, getattr(db, "agent_instance", None)
+            db.conn, ADMIN_USER_ID, instance, relation_id
         )
 
         return JSONResponse({
             "total": len(tensions),
+            "scope": {
+                "kind": "personal",
+                "relation_id": relation_id,
+                "counts": scope_counts(tensions),
+            },
             "tensions": tensions
         })
 
@@ -235,14 +281,20 @@ async def export_insights(
 
     try:
         db = get_db()
-        cursor = db.conn.cursor()
+        instance = getattr(db, "agent_instance", None)
+        relation_id = _personal_relation_id(db, ADMIN_USER_ID, instance)
 
         insights = fetch_research_insights(
-            db.conn, ADMIN_USER_ID, getattr(db, "agent_instance", None)
+            db.conn, ADMIN_USER_ID, instance, relation_id
         )
 
         return JSONResponse({
             "total": len(insights),
+            "scope": {
+                "kind": "personal",
+                "relation_id": relation_id,
+                "counts": scope_counts(insights),
+            },
             "insights": insights
         })
 

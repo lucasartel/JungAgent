@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from admin_web.auth.middleware import require_master
-from core.db.legacy_exports import fetch_unesco_participants
+from core.db.legacy_exports import build_unesco_csv, build_unesco_participants, fetch_unesco_participants
 
 router = APIRouter(prefix="/admin", tags=["unesco_export"])
 templates = Jinja2Templates(directory="admin_web/templates")
@@ -36,24 +36,7 @@ async def view_unesco_data(request: Request, admin: Dict = Depends(require_maste
     """Pagina visual para ver os dados do Piloto UNESCO antes de exportar."""
     db = get_db()
     rows = fetch_unesco_participants(db.conn)
-
-    participants = []
-    for idx, row in enumerate(rows, 1):
-        participants.append(
-            {
-                "id": f"Participant_{idx:03d}",
-                "stress_in": row[1],
-                "challenge": row[2],
-                "expectation": row[3],
-                "stress_out": row[4],
-                "dossier_acc": row[5],
-                "safety_triggers": row[6],
-                "msgs": row[7],
-                "days": row[8],
-                "start": row[9],
-                "end": row[10],
-            }
-        )
+    participants = build_unesco_participants(rows)
 
     return templates.TemplateResponse("unesco_export.html", {"request": request, "participants": participants})
 
@@ -63,40 +46,12 @@ async def export_unesco_csv(admin: Dict = Depends(require_master)):
     """Gera CSV anonimizado com os dados quantitativos e qualitativos do Piloto UNESCO."""
     db = get_db()
     rows = fetch_unesco_participants(db.conn)
+    header, data_rows = build_unesco_csv(rows)
 
     f = StringIO()
     writer = csv.writer(f)
-
-    writer.writerow(
-        [
-            "Participant_ID",
-            "Baseline_Stress",
-            "Baseline_Challenge",
-            "Baseline_Expectation",
-            "PostTest_Stress",
-            "Safety_Triggers",
-            "Total_Messages",
-            "Retention_Days",
-            "Start_Date",
-            "End_Date",
-        ]
-    )
-
-    for idx, row in enumerate(rows, 1):
-        writer.writerow(
-            [
-                f"Participant_{idx:03d}",
-                row[1],
-                row[2],
-                row[3],
-                row[4],
-                row[6],
-                row[7],
-                row[8],
-                row[9],
-                row[10],
-            ]
-        )
+    writer.writerow(header)
+    writer.writerows(data_rows)
 
     f.seek(0)
 

@@ -164,7 +164,10 @@ def build_endojung_snapshot_from_connection(
             "notes": [
                 "Includes SQLite-backed EndoJung data only.",
                 "Vector stores such as ChromaDB and Qdrant/mem0 are not included in this archive.",
-                "Legacy-global scope: relation-stamped rows are excluded (C12c2 quarantine).",
+                "C12c2 scope: relation-stamped rows are excluded (strict quarantine).",
+                "Rows without a relation stamp have UNCLASSIFIED origin — NOT certified global "
+                "(e.g. work_reading/work material; real Work classification arrives in C4). "
+                "See included_source_kind_counts for what is actually inside.",
             ],
         },
         "tables": {},
@@ -222,6 +225,20 @@ def build_endojung_snapshot_from_connection(
         for key, count in snapshot["summary"].items()
         if key not in {"total_exported_tables", "total_exported_rows"}
     )
+
+    # P2 do C12c2: expor a origem real do material incluído — linhas sem
+    # Relation não são "global classificado" (hoje work_reading/work).
+    source_kind_counts: Dict[str, int] = {}
+    for table_name, rows in snapshot["tables"].items():
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            kind = str(row.get("source_kind") or "").strip()
+            if not kind:
+                continue
+            key = f"{table_name}:{kind}"
+            source_kind_counts[key] = source_kind_counts.get(key, 0) + 1
+    snapshot["meta"]["included_source_kind_counts"] = source_kind_counts
 
     return snapshot
 
