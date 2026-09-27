@@ -35,7 +35,7 @@ def get_db():
 async def view_unesco_data(request: Request, admin: Dict = Depends(require_master)):
     """Pagina visual para ver os dados do Piloto UNESCO antes de exportar."""
     db = get_db()
-    rows = fetch_unesco_participants(db.conn)
+    rows = fetch_unesco_participants(db.conn, getattr(db, "agent_instance", None))
     participants = build_unesco_participants(rows)
 
     return templates.TemplateResponse("unesco_export.html", {"request": request, "participants": participants})
@@ -45,7 +45,7 @@ async def view_unesco_data(request: Request, admin: Dict = Depends(require_maste
 async def export_unesco_csv(admin: Dict = Depends(require_master)):
     """Gera CSV anonimizado com os dados quantitativos e qualitativos do Piloto UNESCO."""
     db = get_db()
-    rows = fetch_unesco_participants(db.conn)
+    rows = fetch_unesco_participants(db.conn, getattr(db, "agent_instance", None))
     header, data_rows = build_unesco_csv(rows)
 
     f = StringIO()

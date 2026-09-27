@@ -16,16 +16,23 @@ from core.db.legacy_exports import (
 )
 
 
-def _personal_relation_id(db, user_id: str, agent_instance=None):
-    """Relation verificada do usuário para a visibilidade pessoal (C12c2/P1)."""
-    try:
-        from core.db.relation_scope import resolve_relation_query_scope
+def _resolve_export_scope(db, user_id: str, agent_instance=None):
+    """Escopo pessoal fail-CLOSED dos exports (C12c2/P1, revisão round 2).
 
-        scope = resolve_relation_query_scope(db, user_id, agent_instance=agent_instance)
-        return scope.relation_id
-    except Exception as exc:
-        logger.warning(f"⚠️ Relation pessoal não resolvida (escopo fica só no sem-Relation): {exc}")
-        return None
+    Relation revogada/inelegível ou elegibilidade não verificável ⇒ RECUSA
+    (403 com a sentinela canônica). Somente a ausência genuína de cadastro cai
+    no legado (linhas sem Relation). Nunca degrada para o legado em caso de
+    falha: em produção as linhas sem Relation incluem material Work não
+    classificado.
+    """
+    from core.db.relation_scope import resolve_personal_export_scope
+
+    try:
+        scope = resolve_personal_export_scope(db, user_id, agent_instance=agent_instance)
+    except ValueError as exc:
+        logger.warning(f"⚠️ Export recusado — Relation não elegível/não verificável: {exc}")
+        return None, JSONResponse({"detail": str(exc)}, status_code=403)
+    return scope, None
 
 
 async def why_no_insights(
@@ -49,7 +56,10 @@ async def why_no_insights(
     try:
         db = get_db()
         instance = getattr(db, "agent_instance", None)
-        relation_id = _personal_relation_id(db, ADMIN_USER_ID, instance)
+        scope, refusal = _resolve_export_scope(db, ADMIN_USER_ID, instance)
+        if refusal is not None:
+            return refusal
+        relation_id = scope.relation_id
 
         result = {
             "config": {
@@ -61,6 +71,7 @@ async def why_no_insights(
             "scope": {
                 "kind": "personal",
                 "relation_id": relation_id,
+                "status": scope.status,
             },
             "tensions": [],
             "problem_identified": None,
@@ -216,7 +227,10 @@ async def export_fragments(
     try:
         db = get_db()
         instance = getattr(db, "agent_instance", None)
-        relation_id = _personal_relation_id(db, ADMIN_USER_ID, instance)
+        scope, refusal = _resolve_export_scope(db, ADMIN_USER_ID, instance)
+        if refusal is not None:
+            return refusal
+        relation_id = scope.relation_id
 
         fragments = fetch_research_fragments(
             db.conn, ADMIN_USER_ID, instance, relation_id
@@ -227,6 +241,7 @@ async def export_fragments(
             "scope": {
                 "kind": "personal",
                 "relation_id": relation_id,
+                "status": scope.status,
                 "counts": scope_counts(fragments),
                 "source_kind_counts": source_kind_counts(fragments),
                 "note": "scope=no_relation não certifica origem global (ex.: work_reading/work, classificação real no C4)",
@@ -250,7 +265,10 @@ async def export_tensions(
     try:
         db = get_db()
         instance = getattr(db, "agent_instance", None)
-        relation_id = _personal_relation_id(db, ADMIN_USER_ID, instance)
+        scope, refusal = _resolve_export_scope(db, ADMIN_USER_ID, instance)
+        if refusal is not None:
+            return refusal
+        relation_id = scope.relation_id
 
         tensions = fetch_research_tensions(
             db.conn, ADMIN_USER_ID, instance, relation_id
@@ -261,6 +279,7 @@ async def export_tensions(
             "scope": {
                 "kind": "personal",
                 "relation_id": relation_id,
+                "status": scope.status,
                 "counts": scope_counts(tensions),
             },
             "tensions": tensions
@@ -282,7 +301,10 @@ async def export_insights(
     try:
         db = get_db()
         instance = getattr(db, "agent_instance", None)
-        relation_id = _personal_relation_id(db, ADMIN_USER_ID, instance)
+        scope, refusal = _resolve_export_scope(db, ADMIN_USER_ID, instance)
+        if refusal is not None:
+            return refusal
+        relation_id = scope.relation_id
 
         insights = fetch_research_insights(
             db.conn, ADMIN_USER_ID, instance, relation_id
@@ -293,6 +315,7 @@ async def export_insights(
             "scope": {
                 "kind": "personal",
                 "relation_id": relation_id,
+                "status": scope.status,
                 "counts": scope_counts(insights),
             },
             "insights": insights

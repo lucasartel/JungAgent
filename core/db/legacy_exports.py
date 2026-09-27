@@ -34,6 +34,18 @@ def personal_export_scope_clause(
     )
 
 
+def _table_columns(cursor, table: str) -> set:
+    cursor.execute(f"PRAGMA table_info({table})")
+    return {row[1] for row in cursor.fetchall()}
+
+
+def _col_or_null(columns: set, column: str) -> str:
+    """Coluna quando existe; senão ``NULL AS column`` — bancos anteriores ao
+    schema de Relation/source_kind continuam legíveis (lacuna de
+    compatibilidade apontada na revisão do C12c2)."""
+    return column if column in columns else f"NULL AS {column}"
+
+
 def _tag_scope(rows: List[dict]) -> List[dict]:
     """Rotula o escopo real de cada linha — NULL nao comprova origem global."""
     for row in rows:
@@ -61,6 +73,7 @@ def fetch_research_fragments(
     conn, admin_user_id: str, agent_instance: Optional[str] = None, relation_id: Optional[str] = None
 ):
     cursor = conn.cursor()
+    cols = _table_columns(cursor, "rumination_fragments")
     scope_sql, scope_params = personal_export_scope_clause(
         cursor, "rumination_fragments", agent_instance, relation_id
     )
@@ -68,7 +81,8 @@ def fetch_research_fragments(
         f"""
         SELECT id, user_id, content, emotional_weight,
                context_type, detected_at, metadata,
-               relation_id, source_kind
+               {_col_or_null(cols, "relation_id")},
+               {_col_or_null(cols, "source_kind")}
         FROM rumination_fragments
         WHERE user_id = ?{scope_sql}
         ORDER BY detected_at DESC
@@ -82,6 +96,7 @@ def fetch_research_tensions(
     conn, admin_user_id: str, agent_instance: Optional[str] = None, relation_id: Optional[str] = None
 ):
     cursor = conn.cursor()
+    cols = _table_columns(cursor, "rumination_tensions")
     scope_sql, scope_params = personal_export_scope_clause(
         cursor, "rumination_tensions", agent_instance, relation_id
     )
@@ -91,7 +106,8 @@ def fetch_research_tensions(
                pole_a_fragment_ids, pole_b_fragment_ids,
                status, intensity, maturity_score, evidence_count,
                revisit_count, first_detected_at, last_revisited_at,
-               last_evidence_at, resolved_at, metadata, relation_id
+               last_evidence_at, resolved_at, metadata,
+               {_col_or_null(cols, "relation_id")}
         FROM rumination_tensions
         WHERE user_id = ?{scope_sql}
         ORDER BY first_detected_at DESC
@@ -105,6 +121,7 @@ def fetch_research_insights(
     conn, admin_user_id: str, agent_instance: Optional[str] = None, relation_id: Optional[str] = None
 ):
     cursor = conn.cursor()
+    cols = _table_columns(cursor, "rumination_insights")
     scope_sql, scope_params = personal_export_scope_clause(
         cursor, "rumination_insights", agent_instance, relation_id
     )
@@ -113,7 +130,7 @@ def fetch_research_insights(
         SELECT id, user_id, tension_id, insight_type,
                content, confidence_score, status,
                generated_at, delivered_at, user_feedback,
-               metadata, relation_id
+               metadata, {_col_or_null(cols, "relation_id")}
         FROM rumination_insights
         WHERE user_id = ?{scope_sql}
         ORDER BY generated_at DESC
@@ -128,6 +145,7 @@ def fetch_research_tension_diagnostics(
 ):
     """Tensões para o diagnóstico why-no-insights, com a visibilidade pessoal."""
     cursor = conn.cursor()
+    cols = _table_columns(cursor, "rumination_tensions")
     scope_sql, scope_params = personal_export_scope_clause(
         cursor, "rumination_tensions", agent_instance, relation_id
     )
@@ -135,7 +153,8 @@ def fetch_research_tension_diagnostics(
         f"""
         SELECT id, tension_type, status, intensity, maturity_score,
                evidence_count, revisit_count, first_detected_at,
-               last_revisited_at, last_evidence_at, relation_id
+               last_revisited_at, last_evidence_at,
+               {_col_or_null(cols, "relation_id")}
         FROM rumination_tensions
         WHERE user_id = ?{scope_sql}
         ORDER BY maturity_score DESC
@@ -212,18 +231,34 @@ UNESCO_CSV_HEADER = [
 ]
 
 
-def fetch_unesco_participants(conn):
+def fetch_unesco_participants(conn, agent_instance: Optional[str] = None):
     """Linhas do piloto UNESCO com totais CORRETOS e quebra explícita por escopo.
 
     Revisão P2 do C12c2: contar só conversas sem Relation mostrava zero falso
     para participantes cujas conversas estão vinculadas a Relations. Os totais
     voltam a somar todas as escopas; as colunas por escopo trazem a quebra
-    explícita. unesco_pilot_data não tem colunas de org/Relation/instância —
-    o fatiamento por org segue como pendência documentada.
+    explícita. Revisão P2 (round 2): as conversas também são filtradas pela
+    instância canônica (+ NULL) — conversa da mesma pessoa em OUTRA instância
+    não entra no piloto. unesco_pilot_data não tem colunas de org/Relation/
+    instância — o fatiamento por org segue como pendência documentada.
     """
     cursor = conn.cursor()
+    c_cols = _table_columns(cursor, "conversations")
+    try:
+        from engines.will_scope import resolve_instance
+
+        instance = resolve_instance(agent_instance)
+    except ImportError:
+        instance = (agent_instance or "").strip()
+    inst_clause = ""
+    inst_params: List[str] = []
+    if instance and "agent_instance" in c_cols:
+        inst_clause = " AND (c.agent_instance = ? OR c.agent_instance IS NULL)"
+        inst_params = [instance]
+    rel_null = " AND c.relation_id IS NULL" if "relation_id" in c_cols else ""
+    rel_not_null = " AND c.relation_id IS NOT NULL" if "relation_id" in c_cols else " AND 0"
     cursor.execute(
-        """
+        f"""
         SELECT
             u.user_id,
             u.baseline_stress_score,
@@ -232,16 +267,17 @@ def fetch_unesco_participants(conn):
             u.post_test_stress_score,
             u.dossier_accuracy_rating,
             u.safety_triggers_count,
-            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id) as total_messages,
-            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id) as retention_days,
-            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id AND c.relation_id IS NULL) as messages_no_relation,
-            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id AND c.relation_id IS NOT NULL) as messages_with_relation,
-            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id AND c.relation_id IS NULL) as days_no_relation,
-            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id AND c.relation_id IS NOT NULL) as days_with_relation,
+            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id{inst_clause}) as total_messages,
+            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id{inst_clause}) as retention_days,
+            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id{rel_null}{inst_clause}) as messages_no_relation,
+            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id{rel_not_null}{inst_clause}) as messages_with_relation,
+            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id{rel_null}{inst_clause}) as days_no_relation,
+            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id{rel_not_null}{inst_clause}) as days_with_relation,
             u.created_at,
             u.completed_at
         FROM unesco_pilot_data u
-        """
+        """,
+        inst_params * 6,
     )
     return cursor.fetchall()
 

@@ -125,6 +125,65 @@ def resolve_relation_query_scope(
     return RelationQueryScope(denied="relation_scope_required_for_production")
 
 
+@dataclass(frozen=True)
+class PersonalExportScope:
+    """Escopo fail-closed dos exports pessoais (C12c2). ``status`` é
+    ``relation`` (Relation elegível verificada) ou ``no_relation`` (ausência
+    GENUÍNA de cadastro — única entrada da regra de legado)."""
+
+    relation_id: Optional[str] = None
+    status: str = "no_relation"
+
+
+def resolve_personal_export_scope(
+    db: Any,
+    user_id: str,
+    *,
+    agent_instance: Optional[str] = None,
+) -> PersonalExportScope:
+    """Resolve o escopo pessoal de exports com fail-CLOSED (revisão C12c2/P1).
+
+    Três estados, nunca ambíguos:
+
+    - Relation elegível verificada → escopo ``relation``;
+    - ausência GENUÍNA de cadastro (nenhuma Relation registrada para o par
+      instância/usuário) → ``no_relation``; só este caso segue a regra de
+      legado (linhas sem Relation);
+    - Relation revogada/pausada/sem consentimento OU elegibilidade não
+      verificável (API de Relations indisponível, erro de leitura, instância
+      não resolvível) → RECUSA via ``ValueError`` com a sentinela canônica.
+
+    Nunca degrada para o escopo legado em caso de falha: em produção as
+    linhas sem Relation incluem material de origem não classificada
+    (work_reading/work), e o diagnóstico/export não pode lê-las quando a
+    Relation do usuário não está elegível ou não pôde ser verificada.
+    """
+    api = relations_api(db, agent_instance=agent_instance)
+    reader = getattr(api, "get_agent_relation", None)
+    if not callable(reader):
+        raise ValueError("consent_gate_unavailable_for_relation_scope")
+    try:
+        from engines.will_scope import resolve_instance
+
+        instance = resolve_instance(agent_instance)
+    except ImportError:
+        instance = (agent_instance or "").strip()
+    if not instance:
+        raise ValueError("consent_gate_unavailable_for_relation_scope")
+    try:
+        resolved = api.resolve_relation_id(
+            agent_instance=instance,
+            participant_user_id=str(user_id),
+        )
+    except sqlite3.Error as exc:
+        raise ValueError("consent_gate_unavailable_for_relation_scope") from exc
+    if not resolved:
+        # Consulta bem-formada e sem nenhum cadastro: ausência genuína.
+        return PersonalExportScope(relation_id=None, status="no_relation")
+    require_eligible_relation(api, str(resolved))
+    return PersonalExportScope(relation_id=str(resolved), status="relation")
+
+
 def legacy_quarantine_clause(
     cursor: Any,
     *,

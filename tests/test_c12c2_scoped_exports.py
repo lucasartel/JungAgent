@@ -176,6 +176,117 @@ def test_diagnostic_never_falsely_claims_absence():
     assert "Não há tensões detectadas" in honest_empty["problem_identified"]
 
 
+class _StubRelationsAPI:
+    """API mínima para exercitar os ramos fail-closed do resolver."""
+
+    def __init__(self, resolved=None, relation=None, resolve_error=None):
+        self._resolved = resolved
+        self._relation = relation
+        self._error = resolve_error
+
+    def resolve_relation_id(self, *, agent_instance=None, participant_user_id=None, relation_id=None):
+        if self._error is not None:
+            raise self._error
+        return self._resolved
+
+    def get_agent_relation(self, relation_id):
+        return self._relation
+
+
+def test_export_scope_fail_closed_states():
+    import sqlite3 as _sqlite3
+
+    import pytest
+
+    from core.db.relation_scope import resolve_personal_export_scope
+
+    admin = str(ADMIN_USER_ID)
+    eligible = {"status": "active", "consent_status": "granted"}
+
+    # Relation elegível verificada → escopo relation.
+    scope = resolve_personal_export_scope(
+        _StubRelationsAPI(resolved="rel-jungle", relation=eligible), admin
+    )
+    assert (scope.status, scope.relation_id) == ("relation", "rel-jungle")
+
+    # Ausência GENUÍNA de cadastro → único caso que cai no legado.
+    scope = resolve_personal_export_scope(_StubRelationsAPI(resolved=None), admin)
+    assert (scope.status, scope.relation_id) == ("no_relation", None)
+
+    # Revogada → RECUSA (antes: exceção engolida virava None e lia o legado).
+    with pytest.raises(ValueError, match="relation_not_eligible"):
+        resolve_personal_export_scope(
+            _StubRelationsAPI(
+                resolved="rel-jungle",
+                relation={"status": "revoked", "consent_status": "revoked"},
+            ),
+            admin,
+        )
+
+    # Consentimento revogado / pausada → RECUSA.
+    for relation in (
+        {"status": "active", "consent_status": "revoked"},
+        {"status": "paused", "consent_status": "granted"},
+    ):
+        with pytest.raises(ValueError, match="relation_not_eligible"):
+            resolve_personal_export_scope(
+                _StubRelationsAPI(resolved="rel-jungle", relation=relation), admin
+            )
+
+    # Elegibilidade não verificável (Relation ilegível) → RECUSA.
+    with pytest.raises(ValueError, match="relation_not_eligible"):
+        resolve_personal_export_scope(
+            _StubRelationsAPI(resolved="rel-jungle", relation=None), admin
+        )
+
+    # API de Relations indisponível (erro de SQL) → RECUSA, nunca legado.
+    with pytest.raises(ValueError, match="consent_gate_unavailable_for_relation_scope"):
+        resolve_personal_export_scope(
+            _StubRelationsAPI(resolve_error=_sqlite3.OperationalError("db fora")),
+            admin,
+        )
+
+
+def test_export_scope_fail_closed_on_real_revoked_relation():
+    import threading
+
+    import pytest
+
+    from core.db.relation_scope import RawConnectionRelationsAPI, resolve_personal_export_scope
+
+    admin = str(ADMIN_USER_ID)
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    api = RawConnectionRelationsAPI(conn)
+    api._lock = threading.Lock()
+    api._init_relations_schema()
+    api.register_agent_relation(
+        agent_instance="jung_v1",
+        participant_user_id=admin,
+        status="revoked",
+        consent_status="revoked",
+        revoked_at="2026-09-27T10:00:00",
+    )
+    with pytest.raises(ValueError, match="relation_not_eligible"):
+        resolve_personal_export_scope(conn, admin, agent_instance="jung_v1")
+
+    api.register_agent_relation(
+        agent_instance="jung_v1",
+        participant_user_id=admin,
+        status="active",
+        consent_status="granted",
+    )
+    scope = resolve_personal_export_scope(conn, admin, agent_instance="jung_v1")
+    assert scope.status == "relation" and scope.relation_id
+
+    empty = sqlite3.connect(":memory:")
+    empty.row_factory = sqlite3.Row
+    empty_api = RawConnectionRelationsAPI(empty)
+    empty_api._init_relations_schema()
+    scope = resolve_personal_export_scope(empty, admin, agent_instance="jung_v1")
+    assert (scope.status, scope.relation_id) == ("no_relation", None)
+
+
 def _unesco_conn():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -254,6 +365,92 @@ def test_unesco_view_payload_has_scope_fields():
     assert participants[1]["msgs"] == 2
     assert participants[1]["msgs_with_relation"] == 2
     assert participants[1]["start"] is not None
+
+
+def test_unesco_totals_respect_instance_isolation():
+    from core.db.legacy_exports import fetch_unesco_participants
+
+    conn = _unesco_conn()
+    # Mesma pessoa, conversas em OUTRA instância (fora) e na instância (dentro).
+    conn.executemany(
+        "INSERT INTO conversations (id, user_id, timestamp, relation_id, agent_instance)"
+        " VALUES (?, 'u1', ?, NULL, ?)",
+        [
+            (7, "2026-09-08 10:00:00", "outra_instancia_v9"),
+            (8, "2026-09-09 10:00:00", "jung_v1"),
+        ],
+    )
+    conn.commit()
+    rows = fetch_unesco_participants(conn, agent_instance="jung_v1")
+    u1 = next(row for row in rows if row[0] == "u1")
+    assert u1[7] == 5, "conversa de outra instância não pode entrar no piloto"
+    assert u1[9] == 3 and u1[10] == 2
+
+
+def test_fetches_handle_pre_relation_schema():
+    """Bancos anteriores às colunas relation_id/source_kind continuam legíveis."""
+    from core.db.legacy_exports import (
+        fetch_research_fragments,
+        fetch_research_insights,
+        fetch_research_tension_diagnostics,
+        fetch_research_tensions,
+        fetch_unesco_participants,
+    )
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE rumination_fragments (
+            id INTEGER PRIMARY KEY, user_id TEXT, content TEXT,
+            emotional_weight REAL, context_type TEXT, detected_at TEXT, metadata TEXT);
+        CREATE TABLE rumination_tensions (
+            id INTEGER PRIMARY KEY, user_id TEXT, tension_type TEXT,
+            pole_a TEXT, pole_b TEXT, pole_a_fragment_ids TEXT, pole_b_fragment_ids TEXT,
+            status TEXT, intensity REAL, maturity_score REAL, evidence_count INTEGER,
+            revisit_count INTEGER, first_detected_at TEXT, last_revisited_at TEXT,
+            last_evidence_at TEXT, resolved_at TEXT, metadata TEXT);
+        CREATE TABLE rumination_insights (
+            id INTEGER PRIMARY KEY, user_id TEXT, tension_id INTEGER,
+            insight_type TEXT, content TEXT, confidence_score REAL, status TEXT,
+            generated_at TEXT, delivered_at TEXT, user_feedback TEXT, metadata TEXT);
+        CREATE TABLE unesco_pilot_data (
+            user_id TEXT PRIMARY KEY, baseline_stress_score INTEGER,
+            baseline_trait_challenge TEXT, baseline_expectation TEXT,
+            post_test_stress_score INTEGER, dossier_accuracy_rating INTEGER,
+            safety_triggers_count INTEGER DEFAULT 0, created_at DATETIME,
+            completed_at DATETIME);
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY, user_id TEXT, timestamp TEXT);
+        INSERT INTO rumination_fragments (id, user_id, content)
+            VALUES (1, 'admin1', 'fragmento-legado');
+        INSERT INTO rumination_tensions (id, user_id, tension_type, first_detected_at)
+            VALUES (1, 'admin1', 'tensao-legada', '2026-09-20T10:00:00');
+        INSERT INTO rumination_insights (id, user_id, content)
+            VALUES (1, 'admin1', 'insight-legado');
+        INSERT INTO unesco_pilot_data (user_id, baseline_stress_score, baseline_trait_challenge,
+            baseline_expectation, post_test_stress_score, dossier_accuracy_rating)
+            VALUES ('u1', 10, 'd', 'e', 5, 2);
+        INSERT INTO conversations (id, user_id, timestamp) VALUES (1, 'u1', '2026-09-02 10:00:00');
+        """
+    )
+    conn.commit()
+    admin = "admin1"
+    for fetch in (
+        fetch_research_fragments,
+        fetch_research_tensions,
+        fetch_research_insights,
+        fetch_research_tension_diagnostics,
+    ):
+        rows = fetch(conn, admin, None, "rel-jungle")
+        assert len(rows) == 1, fetch.__name__
+        assert rows[0]["scope"] == "no_relation", fetch.__name__
+    fragments = fetch_research_fragments(conn, admin, None, "rel-jungle")
+    assert "source_kind" in fragments[0]
+
+    unesco = fetch_unesco_participants(conn, agent_instance="jung_v1")
+    assert unesco[0][7] == 1
+    assert unesco[0][9] == 1 and unesco[0][10] == 0
 
 
 def _snapshot_conn():
@@ -368,11 +565,14 @@ def test_export_handlers_wired_to_scoped_queries():
         "fetch_research_insights",
         "fetch_research_tension_diagnostics",
         "no_tensions_diagnosis",
+        "resolve_personal_export_scope",
     ):
         assert fetch_name in research, fetch_name
     assert "fetch_unesco_participants" in unesco
     assert "build_unesco_csv" in unesco
     assert "FROM rumination_" not in research, "handler voltou a SQL cru sem escopo"
+    assert "status_code=403" in research, "export precisa recusar Relation não elegível"
+    assert "_personal_relation_id" not in research, "helper fail-open não pode voltar"
 
 
 def test_download_scripts_have_no_hardcoded_credentials():
