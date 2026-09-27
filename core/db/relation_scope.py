@@ -125,6 +125,65 @@ def resolve_relation_query_scope(
     return RelationQueryScope(denied="relation_scope_required_for_production")
 
 
+@dataclass(frozen=True)
+class PersonalExportScope:
+    """Escopo fail-closed dos exports pessoais (C12c2). ``status`` é
+    ``relation`` (Relation elegível verificada) ou ``no_relation`` (ausência
+    GENUÍNA de cadastro — única entrada da regra de legado)."""
+
+    relation_id: Optional[str] = None
+    status: str = "no_relation"
+
+
+def resolve_personal_export_scope(
+    db: Any,
+    user_id: str,
+    *,
+    agent_instance: Optional[str] = None,
+) -> PersonalExportScope:
+    """Resolve o escopo pessoal de exports com fail-CLOSED (revisão C12c2/P1).
+
+    Três estados, nunca ambíguos:
+
+    - Relation elegível verificada → escopo ``relation``;
+    - ausência GENUÍNA de cadastro (nenhuma Relation registrada para o par
+      instância/usuário) → ``no_relation``; só este caso segue a regra de
+      legado (linhas sem Relation);
+    - Relation revogada/pausada/sem consentimento OU elegibilidade não
+      verificável (API de Relations indisponível, erro de leitura, instância
+      não resolvível) → RECUSA via ``ValueError`` com a sentinela canônica.
+
+    Nunca degrada para o escopo legado em caso de falha: em produção as
+    linhas sem Relation incluem material de origem não classificada
+    (work_reading/work), e o diagnóstico/export não pode lê-las quando a
+    Relation do usuário não está elegível ou não pôde ser verificada.
+    """
+    api = relations_api(db, agent_instance=agent_instance)
+    reader = getattr(api, "get_agent_relation", None)
+    if not callable(reader):
+        raise ValueError("consent_gate_unavailable_for_relation_scope")
+    try:
+        from engines.will_scope import resolve_instance
+
+        instance = resolve_instance(agent_instance)
+    except ImportError:
+        instance = (agent_instance or "").strip()
+    if not instance:
+        raise ValueError("consent_gate_unavailable_for_relation_scope")
+    try:
+        resolved = api.resolve_relation_id(
+            agent_instance=instance,
+            participant_user_id=str(user_id),
+        )
+    except sqlite3.Error as exc:
+        raise ValueError("consent_gate_unavailable_for_relation_scope") from exc
+    if not resolved:
+        # Consulta bem-formada e sem nenhum cadastro: ausência genuína.
+        return PersonalExportScope(relation_id=None, status="no_relation")
+    require_eligible_relation(api, str(resolved))
+    return PersonalExportScope(relation_id=str(resolved), status="relation")
+
+
 def legacy_quarantine_clause(
     cursor: Any,
     *,
@@ -132,6 +191,7 @@ def legacy_quarantine_clause(
     relation_column: str = "relation_id",
     agent_instance: Optional[str] = None,
     prefix: str = "",
+    include_instance: bool = True,
 ) -> tuple[str, list[Any]]:
     """Admin-legacy quarantine for raw readers (C12c): only relation-less rows
     of the current instance stay visible.
@@ -148,7 +208,54 @@ def legacy_quarantine_clause(
     params: list[Any] = []
     if relation_column in cols:
         parts.append(f"{prefix}{relation_column} IS NULL")
-    if "agent_instance" in cols:
+    if include_instance and "agent_instance" in cols:
+        try:
+            from engines.will_scope import resolve_instance
+
+            instance = resolve_instance(agent_instance)
+        except ImportError:
+            instance = (agent_instance or "").strip()
+        if instance:
+            parts.append(f"({prefix}agent_instance = ? OR {prefix}agent_instance IS NULL)")
+            params.append(instance)
+    return (" AND " + " AND ".join(parts)) if parts else "", params
+
+
+def personal_scope_clause(
+    cursor: Any,
+    *,
+    table: str = "conversations",
+    relation_column: str = "relation_id",
+    relation_id: Optional[str] = None,
+    agent_instance: Optional[str] = None,
+    prefix: str = "",
+    include_instance: bool = True,
+) -> tuple[str, list[Any]]:
+    """Visibilidade PESSOAL do usuario (C12c2/P1): sem Relation OU a Relation
+    verificada do proprio usuario.
+
+    Uso restrito a consultas do proprietario sobre os proprios dados
+    (diagnosticos e exports do research lab, diario/entrega). Cada linha
+    retornada DEVE ser rotulada com o escopo real (``relation`` /
+    ``no_relation``): ``relation_id IS NULL`` nao comprova origem global —
+    pode ser material de origem nao classificada (work_reading/work, cuja
+    classificacao real chega no C4). Nunca use em fluxos cross-Relation
+    (blog, Will, consolidacao de identidade) — ai vale a quarentena estrita.
+
+    ``relation_id`` deve vir ja verificado (ex. ``resolve_relation_query_scope``);
+    sem Relation resolvida o escopo cai para as linhas sem Relation.
+    """
+    cursor.execute(f"PRAGMA table_info({table})")
+    cols = {row[1] for row in cursor.fetchall()}
+    parts: list[str] = []
+    params: list[Any] = []
+    if relation_column in cols:
+        if relation_id:
+            parts.append(f"({prefix}{relation_column} IS NULL OR {prefix}{relation_column} = ?)")
+            params.append(str(relation_id))
+        else:
+            parts.append(f"{prefix}{relation_column} IS NULL")
+    if include_instance and "agent_instance" in cols:
         try:
             from engines.will_scope import resolve_instance
 

@@ -3,6 +3,7 @@ Script para baixar dados do Railway para analise local
 """
 import requests
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -14,18 +15,28 @@ EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 def export_path(filename):
     return EXPORT_DIR / filename
 
-# URL do Railway
-RAILWAY_URL = "https://jungclaude-production.up.railway.app"
+# URL do Railway (sobrescreva com JUNG_ADMIN_URL)
+RAILWAY_URL = os.getenv("JUNG_ADMIN_URL", "https://jungclaude-production.up.railway.app")
 
-# Credenciais admin
-username = "admin"
-password = "admin"
+# Credenciais via variáveis de ambiente — nunca commitadas (C12c2)
+username = os.getenv("JUNG_ADMIN_USER")
+password = os.getenv("JUNG_ADMIN_PASSWORD")
 
-auth = (username, password)
+if not username or not password:
+    print("❌ Defina JUNG_ADMIN_USER e JUNG_ADMIN_PASSWORD no ambiente.")
+    sys.exit(1)
 
-# Criar sessão
+# Sessão autenticada: o painel usa cookie de sessão (POST /admin/login),
+# não HTTP Basic.
 session = requests.Session()
-session.auth = auth
+login = session.post(
+    f"{RAILWAY_URL}/admin/login",
+    data={"email": username, "password": password},
+    allow_redirects=False,
+)
+if login.status_code not in (200, 302, 303) or "session_id" not in session.cookies:
+    print(f"❌ Login falhou: HTTP {login.status_code}")
+    sys.exit(1)
 
 print("\nBaixando dados do Railway...\n")
 

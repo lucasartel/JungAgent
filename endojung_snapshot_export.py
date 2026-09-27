@@ -114,6 +114,37 @@ def _fetch_rows(conn: sqlite3.Connection, query: str, params: Sequence[Any]) -> 
     return _rows_to_dicts(cursor.fetchall())
 
 
+def _snapshot_scope_clause(
+    conn: sqlite3.Connection,
+    table: str,
+    agent_instance: Optional[str],
+    *,
+    prefix: str = "",
+    include_instance: bool = True,
+) -> tuple:
+    """Quarentena IS NULL para o snapshot legado (decisão C12c2).
+
+    Escolhe a coluna de Relation real da tabela (origin_relation_id em
+    sonhos/identidade, relation_id no resto) e reaproveita a presença-check
+    do legacy_quarantine_clause, para bancos pré-migração continuarem
+    abrindo. Conteúdo carimbado com Relation não entra no snapshot global.
+    """
+    from core.db.relation_scope import legacy_quarantine_clause
+
+    cursor = conn.cursor()
+    cursor.execute(f"PRAGMA table_info({table})")
+    cols = {row[1] for row in cursor.fetchall()}
+    relation_column = "origin_relation_id" if "origin_relation_id" in cols else "relation_id"
+    return legacy_quarantine_clause(
+        cursor,
+        table=table,
+        relation_column=relation_column,
+        agent_instance=agent_instance,
+        prefix=prefix,
+        include_instance=include_instance,
+    )
+
+
 def build_endojung_snapshot_from_connection(
     conn: sqlite3.Connection,
     admin_user_id: str = ADMIN_USER_ID,
@@ -133,6 +164,10 @@ def build_endojung_snapshot_from_connection(
             "notes": [
                 "Includes SQLite-backed EndoJung data only.",
                 "Vector stores such as ChromaDB and Qdrant/mem0 are not included in this archive.",
+                "C12c2 scope: relation-stamped rows are excluded (strict quarantine).",
+                "Rows without a relation stamp have UNCLASSIFIED origin — NOT certified global "
+                "(e.g. work_reading/work material; real Work classification arrives in C4). "
+                "See included_source_kind_counts for what is actually inside.",
             ],
         },
         "tables": {},
@@ -141,19 +176,23 @@ def build_endojung_snapshot_from_connection(
     }
 
     for table_name in existing_user_tables:
+        scope_sql, scope_params = _snapshot_scope_clause(conn, table_name, agent_instance)
         rows = _fetch_rows(
             conn,
-            f"SELECT * FROM {table_name} WHERE user_id = ? ORDER BY ROWID ASC",
-            (admin_user_id,),
+            f"SELECT * FROM {table_name} WHERE user_id = ?{scope_sql} ORDER BY ROWID ASC",
+            (admin_user_id, *scope_params),
         )
         snapshot["tables"][table_name] = rows
         snapshot["schemas"][table_name] = _get_table_schema(conn, table_name)
         snapshot["summary"][table_name] = len(rows)
 
     for table_name in existing_agent_tables:
+        scope_sql, scope_params = _snapshot_scope_clause(
+            conn, table_name, agent_instance, include_instance=False
+        )
         rows = _fetch_rows(
             conn,
-            f"SELECT * FROM {table_name} WHERE agent_instance = ? ORDER BY ROWID ASC",
+            f"SELECT * FROM {table_name} WHERE agent_instance = ?{scope_sql} ORDER BY ROWID ASC",
             (agent_instance,),
         )
         snapshot["tables"][table_name] = rows
@@ -161,16 +200,20 @@ def build_endojung_snapshot_from_connection(
         snapshot["summary"][table_name] = len(rows)
 
     if "agent_identity_extractions" in _get_existing_tables(conn, ("agent_identity_extractions",)):
+        c_scope, c_params = _snapshot_scope_clause(conn, "conversations", agent_instance, prefix="c.")
+        aie_scope, aie_params = _snapshot_scope_clause(
+            conn, "agent_identity_extractions", agent_instance, prefix="aie."
+        )
         extraction_rows = _fetch_rows(
             conn,
-            """
+            f"""
             SELECT aie.*
             FROM agent_identity_extractions aie
             JOIN conversations c ON c.id = aie.conversation_id
-            WHERE c.user_id = ?
+            WHERE c.user_id = ?{c_scope}{aie_scope}
             ORDER BY aie.extracted_at ASC
             """,
-            (admin_user_id,),
+            (admin_user_id, *c_params, *aie_params),
         )
         snapshot["tables"]["agent_identity_extractions"] = extraction_rows
         snapshot["schemas"]["agent_identity_extractions"] = _get_table_schema(conn, "agent_identity_extractions")
@@ -182,6 +225,20 @@ def build_endojung_snapshot_from_connection(
         for key, count in snapshot["summary"].items()
         if key not in {"total_exported_tables", "total_exported_rows"}
     )
+
+    # P2 do C12c2: expor a origem real do material incluído — linhas sem
+    # Relation não são "global classificado" (hoje work_reading/work).
+    source_kind_counts: Dict[str, int] = {}
+    for table_name, rows in snapshot["tables"].items():
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            kind = str(row.get("source_kind") or "").strip()
+            if not kind:
+                continue
+            key = f"{table_name}:{kind}"
+            source_kind_counts[key] = source_kind_counts.get(key, 0) + 1
+    snapshot["meta"]["included_source_kind_counts"] = source_kind_counts
 
     return snapshot
 
