@@ -11,17 +11,18 @@ logger = logging.getLogger(__name__)
 
 
 class PsychometricsDatabaseMixin:
-    def analyze_big_five(self, user_id: str, min_conversations: int = 20) -> Dict:
+    def analyze_big_five(self, user_id: str, min_conversations: int = 20, *, relation_id: Optional[str] = None) -> Dict:
         """
         Analisa Big Five (OCEAN) do usuÃ¡rio via Grok AI
 
         Retorna dict com scores 0-100 para cada dimensÃ£o:
         - openness, conscientiousness, extraversion, agreeableness, neuroticism
         """
+        _, relation_id = self._psychometric_scope(user_id, relation_id=relation_id)
         logger.info(f"ðŸ§¬ Iniciando anÃ¡lise Big Five para {user_id}")
 
         # Buscar conversas do usuÃ¡rio
-        conversations = self.get_user_conversations(user_id, limit=50)
+        conversations = self.get_user_conversations(user_id, limit=50, relation_id=relation_id)
 
         if len(conversations) < min_conversations:
             return {
@@ -111,7 +112,7 @@ Responda APENAS em JSON vÃ¡lido (sem markdown):
                 "conversations_analyzed": len(conversations)
             }
 
-    def analyze_emotional_intelligence(self, user_id: str) -> Dict:
+    def analyze_emotional_intelligence(self, user_id: str, *, relation_id: Optional[str] = None) -> Dict:
         """
         Calcula InteligÃªncia Emocional (EQ) baseado em dados jÃ¡ coletados
 
@@ -122,16 +123,21 @@ Responda APENAS em JSON vÃ¡lido (sem markdown):
         4. GestÃ£o de Relacionamentos (evoluÃ§Ã£o de conflitos)
         """
         logger.info(f"ðŸ’– Iniciando anÃ¡lise EQ para {user_id}")
+        _, relation_id = self._psychometric_scope(user_id, relation_id=relation_id)
 
         # 1. AutoconsciÃªncia - pegar do agent_development do usuÃ¡rio
         cursor = self.conn.cursor()
-        cursor.execute("SELECT self_awareness_score FROM agent_development WHERE user_id = ?", (user_id,))
+        dev_sql, dev_params = self._analysis_scope_clause("agent_development", relation_id)
+        cursor.execute(
+            f"SELECT self_awareness_score FROM agent_development WHERE user_id = ?{dev_sql}",
+            (user_id, *dev_params),
+        )
         agent_state = cursor.fetchone()
         self_awareness_raw = agent_state['self_awareness_score'] if agent_state else 0.0
         self_awareness = int(min(100, self_awareness_raw * 100))  # Normalizar para 0-100
 
         # 2. AutogestÃ£o - analisar variaÃ§Ã£o de tension_level
-        conversations = self.get_user_conversations(user_id, limit=50)
+        conversations = self.get_user_conversations(user_id, limit=50, relation_id=relation_id)
         if len(conversations) < 10:
             return {
                 "error": f"Dados insuficientes ({len(conversations)} conversas, mÃ­nimo 10)",
@@ -164,7 +170,7 @@ Responda APENAS em JSON vÃ¡lido (sem markdown):
         social_awareness = int(min(100, social_ratio * 30 + 40))  # Base 40, atÃ© 100
 
         # 4. GestÃ£o de Relacionamentos - analisar conflitos Persona vs outros
-        conflicts = self.get_user_conflicts(user_id, limit=100)
+        conflicts = self.get_user_conflicts(user_id, limit=100, relation_id=relation_id)
         persona_conflicts = [c for c in conflicts if 'persona' in c['archetype1'].lower() or 'persona' in c['archetype2'].lower()]
 
         if len(persona_conflicts) > 5:
@@ -273,16 +279,17 @@ Responda APENAS em JSON vÃ¡lido (sem markdown):
             logger.error(f"Resposta recebida: {response[:500]}...")
             raise ValueError(f"Resposta LLM nÃ£o Ã© JSON vÃ¡lido: {str(e)}")
 
-    def analyze_learning_style(self, user_id: str, min_conversations: int = 20) -> Dict:
+    def analyze_learning_style(self, user_id: str, min_conversations: int = 20, *, relation_id: Optional[str] = None) -> Dict:
         """
         Analisa Estilos de Aprendizagem (VARK) via Grok AI
 
         VARK:
         - Visual, Auditory, Reading/Writing, Kinesthetic
         """
+        _, relation_id = self._psychometric_scope(user_id, relation_id=relation_id)
         logger.info(f"ðŸ“š Iniciando anÃ¡lise VARK para {user_id}")
 
-        conversations = self.get_user_conversations(user_id, limit=40)
+        conversations = self.get_user_conversations(user_id, limit=40, relation_id=relation_id)
 
         if len(conversations) < min_conversations:
             return {
@@ -361,28 +368,30 @@ IMPORTANTE: Os 4 scores devem somar aproximadamente 100.
                 "conversations_analyzed": len(conversations)
             }
 
-    def analyze_personal_values(self, user_id: str, min_conversations: int = 20) -> Dict:
+    def analyze_personal_values(self, user_id: str, min_conversations: int = 20, *, relation_id: Optional[str] = None) -> Dict:
         """
         Analisa Valores Pessoais (Schwartz) via extraÃ§Ã£o de user_facts + Grok AI
 
         10 Valores Universais de Schwartz
         """
+        _, relation_id = self._psychometric_scope(user_id, relation_id=relation_id)
         logger.info(f"â­ Iniciando anÃ¡lise Valores Schwartz para {user_id}")
 
         # Primeiro tentar buscar de user_facts categoria 'values'
         cursor = self.conn.cursor()
-        cursor.execute("""
+        facts_sql, facts_params = self._analysis_scope_clause("user_facts", relation_id)
+        cursor.execute(f"""
             SELECT fact_key, fact_value, confidence
             FROM user_facts
-            WHERE user_id = ? AND fact_category = 'values' AND is_current = 1
+            WHERE user_id = ?{facts_sql} AND fact_category = 'values' AND is_current = 1
             ORDER BY confidence DESC
-        """, (user_id,))
+        """, (user_id, *facts_params))
 
         existing_values = cursor.fetchall()
 
         # Se tiver menos de 3 valores, usar Grok para inferir
         if len(existing_values) < 3:
-            conversations = self.get_user_conversations(user_id, limit=40)
+            conversations = self.get_user_conversations(user_id, limit=40, relation_id=relation_id)
 
             if len(conversations) < min_conversations:
                 return {

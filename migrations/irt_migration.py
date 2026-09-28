@@ -103,6 +103,26 @@ def execute_schema(conn, ctx: MigrationContext):
     if existing_tables:
         log_warning(f"Tabelas já existentes: {', '.join(existing_tables)}")
 
+    # C12c3: adaptar bancos existentes ANTES do schema — CREATE INDEX do
+    # schema novo referencia agent_instance e falha em tabelas antigas
+    # (CREATE TABLE IF NOT EXISTS nao altera tabelas ja criadas).
+    for table_name in (
+        "detected_fragments",
+        "irt_trait_estimates",
+        "facet_scores",
+        "psychometric_quality_checks",
+    ):
+        if not table_exists(conn, table_name):
+            continue
+        columns = {
+            row[1]
+            for row in cursor.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        if "agent_instance" not in columns:
+            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN agent_instance TEXT")
+            log_info(f"C12c3: coluna agent_instance adicionada a {table_name}")
+    conn.commit()
+
     # Executar schema (CREATE IF NOT EXISTS é idempotente)
     try:
         cursor.executescript(schema_sql)

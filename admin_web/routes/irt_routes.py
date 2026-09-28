@@ -23,7 +23,10 @@ import logging
 import json
 
 # Importar middleware de autenticação
+# C12c3: leituras abrem para org_admin com visão restrita à própria org;
+# operações de schema (migração/seed) seguem master-only.
 from admin_web.auth.middleware import require_master
+from admin_web.auth.org_scope import org_user_scope_clause
 
 router = APIRouter(prefix="/admin/irt", tags=["irt"])
 templates = Jinja2Templates(directory="admin_web/templates")
@@ -75,6 +78,14 @@ async def irt_dashboard(
 
     try:
         cursor = _db_manager.conn.cursor()
+        # C12c3 (revisão 3): superfície TRI master-only até cada registro ter
+        # origem atribuível (org/Relation/instância) e o filtro poder ser
+        # aplicado por organização e instância. O escopo abaixo fica
+        # estruturado para quando essa origem existir (master → sem corte).
+        # Escopos qualificados — queries com JOIN precisam do alias
+        # (user_id ambíguo com users); tabelas únicas usam o escopo plano.
+        scope_df, params_df = org_user_scope_clause(admin, table_alias="df")
+        scope_sql, scope_params = org_user_scope_clause(admin)
         logger.info("🔍 [IRT Dashboard] Iniciando verificação de tabelas...")
 
         # 1. Verificar se TODAS as tabelas TRI existem
@@ -137,57 +148,69 @@ async def irt_dashboard(
 
         # Total de detecções
         logger.info("🔍 [IRT Dashboard] Query 2: COUNT detected_fragments")
-        cursor.execute("SELECT COUNT(*) FROM detected_fragments")
+        cursor.execute(
+            f"SELECT COUNT(*) FROM detected_fragments df WHERE 1=1{scope_df}", params_df
+        )
         row = cursor.fetchone()
         stats["total_detections"] = row[0] if row else 0
         logger.info(f"   → total_detections = {stats['total_detections']}")
 
         # Usuários únicos com detecções
         logger.info("🔍 [IRT Dashboard] Query 3: COUNT DISTINCT user_id")
-        cursor.execute("SELECT COUNT(DISTINCT user_id) FROM detected_fragments")
+        cursor.execute(
+            f"SELECT COUNT(DISTINCT user_id) FROM detected_fragments df WHERE 1=1{scope_df}",
+            params_df,
+        )
         row = cursor.fetchone()
         stats["unique_users_with_detections"] = row[0] if row else 0
         logger.info(f"   → unique_users = {stats['unique_users_with_detections']}")
 
         # Distribuição por domínio
         logger.info("🔍 [IRT Dashboard] Query 4: by_domain")
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT f.domain, COUNT(*) as count
             FROM detected_fragments df
             JOIN irt_fragments f ON df.fragment_id = f.fragment_id
+            WHERE 1=1{scope_df}
             GROUP BY f.domain
             ORDER BY count DESC
-        """)
+        """, params_df)
         stats["by_domain"] = {row[0]: row[1] for row in cursor.fetchall()}
         logger.info(f"   → by_domain = {stats['by_domain']}")
 
         # Top 10 usuários por fragmentos
-        logger.info("🔍 [IRT Dashboard] Query 5: top_users")
-        cursor.execute("""
-            SELECT
-                df.user_id,
-                u.user_name,
-                COUNT(*) as fragment_count,
-                AVG(df.intensity) as avg_intensity
-            FROM detected_fragments df
-            LEFT JOIN users u ON df.user_id = u.user_id
-            GROUP BY df.user_id
-            ORDER BY fragment_count DESC
-            LIMIT 10
-        """)
+        # C12c3 (revisão 2/3): lista nominal de pessoas. A rota inteira é
+        # master-only; a checagem abaixo é defesa em profundidade.
         stats["top_users"] = []
-        for row in cursor.fetchall():
-            stats["top_users"].append({
-                "user_id": row[0],
-                "user_name": row[1] or "Unknown",
-                "fragment_count": row[2],
-                "avg_intensity": round(row[3], 2) if row[3] else 0
-            })
-        logger.info(f"   → top_users count = {len(stats['top_users'])}")
+        if admin.get("role") == "master":
+            logger.info("🔍 [IRT Dashboard] Query 5: top_users")
+            cursor.execute(f"""
+                SELECT
+                    df.user_id,
+                    u.user_name,
+                    COUNT(*) as fragment_count,
+                    AVG(df.intensity) as avg_intensity
+                FROM detected_fragments df
+                LEFT JOIN users u ON df.user_id = u.user_id
+                WHERE 1=1{scope_df}
+                GROUP BY df.user_id
+                ORDER BY fragment_count DESC
+                LIMIT 10
+            """, params_df)
+            for row in cursor.fetchall():
+                stats["top_users"].append({
+                    "user_id": row[0],
+                    "user_name": row[1] or "Unknown",
+                    "fragment_count": row[2],
+                    "avg_intensity": round(row[3], 2) if row[3] else 0
+                })
+            logger.info(f"   → top_users count = {len(stats['top_users'])}")
 
         # Estimativas de traço salvas
         logger.info("🔍 [IRT Dashboard] Query 6: COUNT irt_trait_estimates")
-        cursor.execute("SELECT COUNT(*) FROM irt_trait_estimates")
+        cursor.execute(
+            f"SELECT COUNT(*) FROM irt_trait_estimates WHERE 1=1{scope_sql}", scope_params
+        )
         row = cursor.fetchone()
         stats["total_trait_estimates"] = row[0] if row else 0
         logger.info(f"   → total_trait_estimates = {stats['total_trait_estimates']}")
@@ -200,12 +223,18 @@ async def irt_dashboard(
 
         if 'passed' in columns:
             logger.info("🔍 [IRT Dashboard] Query 7a: COUNT passed=1")
-            cursor.execute("SELECT COUNT(*) FROM psychometric_quality_checks WHERE passed = 1")
+            cursor.execute(
+                f"SELECT COUNT(*) FROM psychometric_quality_checks WHERE passed = 1{scope_sql}",
+                scope_params,
+            )
             row = cursor.fetchone()
             stats["quality_checks_passed"] = row[0] if row else 0
 
             logger.info("🔍 [IRT Dashboard] Query 7b: COUNT passed=0")
-            cursor.execute("SELECT COUNT(*) FROM psychometric_quality_checks WHERE passed = 0")
+            cursor.execute(
+                f"SELECT COUNT(*) FROM psychometric_quality_checks WHERE passed = 0{scope_sql}",
+                scope_params,
+            )
             row = cursor.fetchone()
             stats["quality_checks_failed"] = row[0] if row else 0
         else:
@@ -250,6 +279,10 @@ async def get_user_tri_profile(
     - Fragmentos detectados
     - Histórico de qualidade
     """
+    # C12c3 (revisão 2): dado individual nominal exige master. O vínculo de
+    # org não comprova autorização para perfil/escores/fragmentos, e o
+    # recorte por user_id não distingue a origem (org/Relation/instância)
+    # dos registros — superfície master-only até existir origem por registro.
     if not _db_manager:
         raise HTTPException(503, "DatabaseManager não disponível")
 
@@ -392,6 +425,8 @@ async def compare_tri_legacy(
 
     Útil para validação do sistema TRI.
     """
+    # C12c3 (revisão 2): dado individual nominal — master-only (mesmo
+    # limite de /user/{user_id}: origem dos registros indistinguível).
     if not _db_manager:
         raise HTTPException(503, "DatabaseManager não disponível")
 
@@ -740,6 +775,9 @@ async def get_fragment_stats(
 
     try:
         cursor = _db_manager.conn.cursor()
+        # C12c3 (revisão 3): master-only até haver origem por registro (ver
+        # nota do dashboard); escopo estruturado para o filtro por origem.
+        scope_sql, scope_params = org_user_scope_clause(admin, table_alias="df")
 
         stats = {
             "seed_stats": {},
@@ -759,15 +797,16 @@ async def get_fragment_stats(
         stats["seed_stats"]["total_facets"] = cursor.fetchone()[0]
 
         # 2. Stats de detecções
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT
                 COUNT(*) as total_detections,
                 COUNT(DISTINCT user_id) as unique_users,
                 COUNT(DISTINCT fragment_id) as unique_fragments,
                 AVG(intensity) as avg_intensity,
                 AVG(confidence) as avg_confidence
-            FROM detected_fragments
-        """)
+            FROM detected_fragments df
+            WHERE 1=1{scope_sql}
+        """, scope_params)
         row = cursor.fetchone()
         if row:
             stats["detection_stats"] = {
@@ -779,7 +818,7 @@ async def get_fragment_stats(
             }
 
         # 3. Top fragmentos mais detectados
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT
                 df.fragment_id,
                 f.facet_code,
@@ -788,10 +827,11 @@ async def get_fragment_stats(
                 AVG(df.intensity) as avg_intensity
             FROM detected_fragments df
             JOIN irt_fragments f ON df.fragment_id = f.fragment_id
+            WHERE 1=1{scope_sql}
             GROUP BY df.fragment_id
             ORDER BY detection_count DESC
             LIMIT 20
-        """)
+        """, scope_params)
 
         stats["top_fragments"] = []
         for row in cursor.fetchall():
@@ -804,17 +844,18 @@ async def get_fragment_stats(
             })
 
         # 4. Stats por faceta
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT
                 f.facet_code,
                 f.domain,
                 COUNT(df.id) as detections,
                 AVG(df.intensity) as avg_intensity
             FROM irt_fragments f
-            LEFT JOIN detected_fragments df ON f.fragment_id = df.fragment_id
+            LEFT JOIN detected_fragments df
+                ON f.fragment_id = df.fragment_id{scope_sql}
             GROUP BY f.facet_code
             ORDER BY f.domain, f.facet_code
-        """)
+        """, scope_params)
 
         for row in cursor.fetchall():
             stats["by_facet"][row[0]] = {
@@ -847,13 +888,15 @@ async def get_domain_distribution(
 
     try:
         cursor = _db_manager.conn.cursor()
+        scope_sql, scope_params = org_user_scope_clause(admin, table_alias="df")
 
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT f.domain, COUNT(*) as count
             FROM detected_fragments df
             JOIN irt_fragments f ON df.fragment_id = f.fragment_id
+            WHERE 1=1{scope_sql}
             GROUP BY f.domain
-        """)
+        """, scope_params)
 
         data = {
             "labels": [],
@@ -891,16 +934,17 @@ async def get_detection_timeline(
 
     try:
         cursor = _db_manager.conn.cursor()
+        scope_sql, scope_params = org_user_scope_clause(admin)
 
         cursor.execute(f"""
             SELECT
                 DATE(detected_at) as date,
                 COUNT(*) as count
             FROM detected_fragments
-            WHERE detected_at >= DATE('now', '-{days} days')
+            WHERE detected_at >= DATE('now', '-{days} days'){scope_sql}
             GROUP BY DATE(detected_at)
             ORDER BY date
-        """)
+        """, scope_params)
 
         data = {
             "dates": [],

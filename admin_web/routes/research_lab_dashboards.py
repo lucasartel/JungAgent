@@ -27,14 +27,23 @@ async def memory_metrics_dashboard(
     db = get_db()
 
     if format == "json":
-        return JSONResponse(_build_memory_metrics_payload(db))
+        return JSONResponse(_build_memory_metrics_payload(db, admin))
 
     if format == "facts":
         if not user_id:
             return JSONResponse({"error": "user_id é obrigatório"}, status_code=400)
+        # C12c3: fatos pessoais individuais (incluindo memórias) exigem visão
+        # master — o vínculo de org não comprova autorização para esse conteúdo.
+        if (admin or {}).get("role") != "master":
+            return JSONResponse(
+                {"error": "personal_facts_require_master"}, status_code=403
+            )
+        from admin_web.auth.middleware import verify_user_access
+
+        verify_user_access(admin, user_id)
         return JSONResponse(_fetch_user_memory_detail(db, user_id))
 
-    initial_data = _build_memory_metrics_payload(db)
+    initial_data = _build_memory_metrics_payload(db, admin)
     return templates.TemplateResponse("memory_metrics.html", {
         "request": request,
         "unsafe_admin_endpoints_enabled": UNSAFE_ADMIN_ENDPOINTS_ENABLED,

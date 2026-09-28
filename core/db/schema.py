@@ -1306,7 +1306,12 @@ class SchemaDatabaseMixin:
                             WHERE agent_instance IS NULL AND relation_id IS NOT NULL"""
                     )
 
-        for table in ("user_milestones", "user_psychometrics"):
+        for table in (
+            "user_milestones",
+            "user_psychometrics",
+            "archetype_conflicts",
+            "full_analyses",
+        ):
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
             if not cursor.fetchone():
                 continue

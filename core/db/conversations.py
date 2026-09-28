@@ -173,17 +173,35 @@ class ConversationDatabaseMixin:
         if detected_conflicts:
             with self._lock:
                 for conflict in detected_conflicts:
-                    cursor.execute("""
-                        INSERT INTO archetype_conflicts
-                        (user_id, conversation_id, archetype1, archetype2,
-                         conflict_type, tension_level, description)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (
+                    conflict_columns = {
+                        row[1]
+                        for row in cursor.execute(
+                            "PRAGMA table_info(archetype_conflicts)"
+                        ).fetchall()
+                    }
+                    insert_columns = [
+                        "user_id", "conversation_id", "archetype1", "archetype2",
+                        "conflict_type", "tension_level", "description",
+                    ]
+                    insert_values = [
                         user_id, conversation_id,
                         conflict.archetype_1, conflict.archetype_2,
                         conflict.conflict_type, conflict.tension_level,
-                        conflict.description
-                    ))
+                        conflict.description,
+                    ]
+                    # C12c3: conflito nasce no escopo da conversa que o detectou.
+                    if relation_id and "relation_id" in conflict_columns:
+                        insert_columns.append("relation_id")
+                        insert_values.append(relation_id)
+                    if agent_instance and "agent_instance" in conflict_columns:
+                        insert_columns.append("agent_instance")
+                        insert_values.append(agent_instance)
+                    placeholders = ", ".join("?" for _ in insert_values)
+                    cursor.execute(
+                        f"INSERT INTO archetype_conflicts ({', '.join(insert_columns)}) "
+                        f"VALUES ({placeholders})",
+                        tuple(insert_values),
+                    )
 
                 self.conn.commit()
         

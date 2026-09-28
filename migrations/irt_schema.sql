@@ -103,6 +103,7 @@ CREATE INDEX IF NOT EXISTS idx_params_calibration_date ON irt_item_parameters(ca
 CREATE TABLE IF NOT EXISTS detected_fragments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL,
+    agent_instance TEXT,                       -- C12c3: particao cognitiva
     fragment_id TEXT NOT NULL,
     conversation_id INTEGER,                   -- FK: conversations.id
 
@@ -136,6 +137,11 @@ CREATE INDEX IF NOT EXISTS idx_detected_fragment ON detected_fragments(fragment_
 CREATE INDEX IF NOT EXISTS idx_detected_timestamp ON detected_fragments(detected_at);
 CREATE INDEX IF NOT EXISTS idx_detected_conversation ON detected_fragments(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_detected_user_fragment ON detected_fragments(user_id, fragment_id);
+CREATE INDEX IF NOT EXISTS idx_detected_user_instance ON detected_fragments(user_id, agent_instance);
+-- C12c3: particao por instancia no UPSERT (uma pessoa em duas instancias
+-- nao pode sobrescrever as deteccoes da outra).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_detected_user_fragment_instance
+    ON detected_fragments(user_id, fragment_id, agent_instance);
 
 
 -- ============================================
@@ -148,6 +154,7 @@ CREATE INDEX IF NOT EXISTS idx_detected_user_fragment ON detected_fragments(user
 CREATE TABLE IF NOT EXISTS irt_trait_estimates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL,
+    agent_instance TEXT,                       -- C12c3: particao cognitiva
     domain TEXT NOT NULL,                      -- "Extraversion", etc.
 
     -- Estimativa TRI
@@ -186,6 +193,10 @@ CREATE INDEX IF NOT EXISTS idx_estimates_user_domain ON irt_trait_estimates(user
 CREATE INDEX IF NOT EXISTS idx_estimates_theta ON irt_trait_estimates(theta);
 CREATE INDEX IF NOT EXISTS idx_estimates_date ON irt_trait_estimates(estimated_at);
 CREATE INDEX IF NOT EXISTS idx_estimates_user ON irt_trait_estimates(user_id);
+CREATE INDEX IF NOT EXISTS idx_estimates_user_instance ON irt_trait_estimates(user_id, agent_instance);
+-- C12c3: estimativas particionadas por instancia.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_estimates_user_domain_instance
+    ON irt_trait_estimates(user_id, domain, agent_instance);
 
 
 -- ============================================
@@ -197,6 +208,7 @@ CREATE INDEX IF NOT EXISTS idx_estimates_user ON irt_trait_estimates(user_id);
 CREATE TABLE IF NOT EXISTS facet_scores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL,
+    agent_instance TEXT,                       -- C12c3: particao cognitiva
     domain TEXT NOT NULL,                      -- "Extraversion", etc.
     facet_code TEXT NOT NULL,                  -- "E1", "E2", ..., "N6"
     facet_name TEXT NOT NULL,                  -- "Warmth", "Gregariousness", etc.
@@ -220,6 +232,10 @@ CREATE TABLE IF NOT EXISTS facet_scores (
 CREATE INDEX IF NOT EXISTS idx_facets_user_domain ON facet_scores(user_id, domain);
 CREATE INDEX IF NOT EXISTS idx_facets_code ON facet_scores(facet_code);
 CREATE INDEX IF NOT EXISTS idx_facets_user ON facet_scores(user_id);
+CREATE INDEX IF NOT EXISTS idx_facets_user_instance ON facet_scores(user_id, agent_instance);
+-- C12c3: escores de faceta particionados por instancia.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_facets_user_code_instance
+    ON facet_scores(user_id, facet_code, agent_instance);
 
 
 -- ============================================
@@ -231,6 +247,7 @@ CREATE INDEX IF NOT EXISTS idx_facets_user ON facet_scores(user_id);
 CREATE TABLE IF NOT EXISTS psychometric_quality_checks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL,
+    agent_instance TEXT,                       -- C12c3: particao cognitiva
     domain TEXT NOT NULL,
     check_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
@@ -264,6 +281,7 @@ CREATE TABLE IF NOT EXISTS psychometric_quality_checks (
 CREATE INDEX IF NOT EXISTS idx_quality_user_domain ON psychometric_quality_checks(user_id, domain);
 CREATE INDEX IF NOT EXISTS idx_quality_level ON psychometric_quality_checks(quality_level);
 CREATE INDEX IF NOT EXISTS idx_quality_date ON psychometric_quality_checks(check_date);
+CREATE INDEX IF NOT EXISTS idx_quality_user_instance ON psychometric_quality_checks(user_id, agent_instance);
 
 
 -- ============================================

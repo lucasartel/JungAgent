@@ -21,6 +21,9 @@ async def memory_metrics_dashboard(
     request: Request,
     format: Optional[str] = None,
     user_id: Optional[str] = None,
+    # C12c3 (revisão 2): a lista é nominal (atividade e contagens de memória
+    # por pessoa) — master-only. Vínculo de org não comprova autorização
+    # específica para dados individuais.
     admin: Dict = Depends(require_master),
 ):
     return await research_lab_dashboards.memory_metrics_dashboard(request, format, user_id, admin)
@@ -99,4 +102,3 @@ async def jung_mind_data(admin: Dict = Depends(require_master)):
 @router.get("/api/symbolic-graph-data")
 async def symbolic_graph_data(admin: Dict = Depends(require_master)):
     return await research_lab_mind.symbolic_graph_data(admin)
-
