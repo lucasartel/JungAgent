@@ -25,7 +25,7 @@ import json
 # Importar middleware de autenticação
 # C12c3: leituras abrem para org_admin com visão restrita à própria org;
 # operações de schema (migração/seed) seguem master-only.
-from admin_web.auth.middleware import require_master, require_org_admin, verify_user_access
+from admin_web.auth.middleware import require_master
 from admin_web.auth.org_scope import org_user_scope_clause
 
 router = APIRouter(prefix="/admin/irt", tags=["irt"])
@@ -62,7 +62,7 @@ def init_irt_routes(db_manager):
 @router.get("/dashboard", response_class=HTMLResponse)
 async def irt_dashboard(
     request: Request,
-    admin: Dict = Depends(require_org_admin)
+    admin: Dict = Depends(require_master)
 ):
     """
     Dashboard principal do sistema TRI.
@@ -78,8 +78,11 @@ async def irt_dashboard(
 
     try:
         cursor = _db_manager.conn.cursor()
-        # C12c3: org_admin vê apenas as detecções dos usuários da própria org.
-        # C12c3: escopos qualificados — queries com JOIN precisam do alias
+        # C12c3 (revisão 3): superfície TRI master-only até cada registro ter
+        # origem atribuível (org/Relation/instância) e o filtro poder ser
+        # aplicado por organização e instância. O escopo abaixo fica
+        # estruturado para quando essa origem existir (master → sem corte).
+        # Escopos qualificados — queries com JOIN precisam do alias
         # (user_id ambíguo com users); tabelas únicas usam o escopo plano.
         scope_df, params_df = org_user_scope_clause(admin, table_alias="df")
         scope_sql, scope_params = org_user_scope_clause(admin)
@@ -176,8 +179,8 @@ async def irt_dashboard(
         logger.info(f"   → by_domain = {stats['by_domain']}")
 
         # Top 10 usuários por fragmentos
-        # C12c3 (revisão 2): lista nominal de pessoas — só master. Org_admin
-        # fica com os agregados sem nominalidade.
+        # C12c3 (revisão 2/3): lista nominal de pessoas. A rota inteira é
+        # master-only; a checagem abaixo é defesa em profundidade.
         stats["top_users"] = []
         if admin.get("role") == "master":
             logger.info("🔍 [IRT Dashboard] Query 5: top_users")
@@ -762,7 +765,7 @@ async def get_migration_status(
 
 @router.get("/fragments/stats")
 async def get_fragment_stats(
-    admin: Dict = Depends(require_org_admin)
+    admin: Dict = Depends(require_master)
 ):
     """
     Estatísticas detalhadas dos fragmentos comportamentais.
@@ -772,7 +775,8 @@ async def get_fragment_stats(
 
     try:
         cursor = _db_manager.conn.cursor()
-        # C12c3: org_admin vê apenas as detecções dos usuários da própria org.
+        # C12c3 (revisão 3): master-only até haver origem por registro (ver
+        # nota do dashboard); escopo estruturado para o filtro por origem.
         scope_sql, scope_params = org_user_scope_clause(admin, table_alias="df")
 
         stats = {
@@ -873,7 +877,7 @@ async def get_fragment_stats(
 
 @router.get("/api/domain-distribution")
 async def get_domain_distribution(
-    admin: Dict = Depends(require_org_admin)
+    admin: Dict = Depends(require_master)
 ):
     """
     Distribuição de detecções por domínio Big Five.
@@ -919,7 +923,7 @@ async def get_domain_distribution(
 @router.get("/api/detection-timeline")
 async def get_detection_timeline(
     days: int = 30,
-    admin: Dict = Depends(require_org_admin)
+    admin: Dict = Depends(require_master)
 ):
     """
     Timeline de detecções nos últimos N dias.

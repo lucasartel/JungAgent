@@ -482,7 +482,7 @@
     "path": "/user/{user_id}",
     "full_path": "/admin/irt/user/{user_id}",
     "endpoint": "get_user_tri_profile",
-    "line": 266,
+    "line": 269,
     "migration_bucket": "irt_routes"
   },
   {
@@ -491,7 +491,7 @@
     "path": "/comparison/{user_id}",
     "full_path": "/admin/irt/comparison/{user_id}",
     "endpoint": "compare_tri_legacy",
-    "line": 416,
+    "line": 419,
     "migration_bucket": "irt_routes"
   },
   {
@@ -500,7 +500,7 @@
     "path": "/migration/run",
     "full_path": "/admin/irt/migration/run",
     "endpoint": "run_tri_migration",
-    "line": 545,
+    "line": 548,
     "migration_bucket": "irt_routes"
   },
   {
@@ -509,7 +509,7 @@
     "path": "/seed/fragments",
     "full_path": "/admin/irt/seed/fragments",
     "endpoint": "seed_tri_fragments",
-    "line": 580,
+    "line": 583,
     "migration_bucket": "irt_routes"
   },
   {
@@ -518,7 +518,7 @@
     "path": "/migration/status",
     "full_path": "/admin/irt/migration/status",
     "endpoint": "get_migration_status",
-    "line": 706,
+    "line": 709,
     "migration_bucket": "irt_routes"
   },
   {
@@ -527,7 +527,7 @@
     "path": "/fragments/stats",
     "full_path": "/admin/irt/fragments/stats",
     "endpoint": "get_fragment_stats",
-    "line": 764,
+    "line": 767,
     "migration_bucket": "irt_routes"
   },
   {
@@ -536,7 +536,7 @@
     "path": "/api/domain-distribution",
     "full_path": "/admin/irt/api/domain-distribution",
     "endpoint": "get_domain_distribution",
-    "line": 875,
+    "line": 879,
     "migration_bucket": "irt_routes"
   },
   {
@@ -545,7 +545,7 @@
     "path": "/api/detection-timeline",
     "full_path": "/admin/irt/api/detection-timeline",
     "endpoint": "get_detection_timeline",
-    "line": 920,
+    "line": 924,
     "migration_bucket": "irt_routes"
   },
   {

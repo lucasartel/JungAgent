@@ -4,7 +4,7 @@ from typing import Dict, Optional
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 
-from admin_web.auth.middleware import require_master, require_org_admin
+from admin_web.auth.middleware import require_master
 from admin_web.routes import research_lab_dashboards, research_lab_debug, research_lab_exports, research_lab_mind, research_lab_rumination
 from admin_web.routes.research_lab_context import init_research_lab_context
 

@@ -104,12 +104,9 @@ def test_can_access_user_matches_org_policy():
 def test_irt_routes_are_gated_and_sliced():
     source = open("admin_web/routes/irt_routes.py", encoding="utf-8").read()
     assert "from admin_web.auth.org_scope import org_user_scope_clause" in source
-    assert "require_org_admin" in source, "rotas de leitura abrem para org_admin"
-    assert "org_user_scope_clause(admin)" in source, "consultas agregadas fatiam por org"
-    # C12c3 revisão 2: rotas por user_id (dado nominal individual) são
-    # master-only — o recorte por vínculo não distingue a origem dos registros.
-    user_route = source.split('"/user/{user_id}"')[1].split("@router")[0]
-    assert "require_master" in user_route and "require_org_admin" not in user_route
-    comparison_route = source.split('"/comparison/{user_id}"')[1].split("@router")[0]
-    assert "require_master" in comparison_route
-    assert "require_org_admin" not in comparison_route
+    assert "org_user_scope_clause(admin)" in source, "escopo estruturado p/ filtro por origem"
+    # C12c3 revisão 3: TODA superfície TRI é master-only até cada registro ter
+    # origem atribuível (org/Relation/instância). Um agregado não pertence à
+    # org só porque um de seus participantes está vinculado a ela.
+    assert "require_org_admin" not in source
+    assert "Depends(require_master)" in source

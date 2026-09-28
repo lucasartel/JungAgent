@@ -248,7 +248,12 @@ def test_same_participant_two_orgs_individual_surfaces_are_master_only():
     assert "require_master" in metrics_route
     assert "require_org_admin" not in metrics_route
 
-    # top_users do dashboard é nominal: só master (payload vazio p/ org_admin).
+    # Revisão 3: agregados TRI também master-only — o filtro por vínculo de
+    # usuário não isola agregados entre orgs (participante em duas orgs).
+    assert "require_org_admin" not in routes
+    assert "require_org_admin" not in lab_routes
+
+    # top_users do dashboard é nominal: checagem de defesa em profundidade.
     assert 'if admin.get("role") == "master":' in routes
 
 
@@ -279,8 +284,8 @@ def test_org_slice_follows_membership_not_record_origin():
         ).fetchall()
         assert "uab" in [row["user_id"] for row in rows], org_id
 
-    # As superfícies individuais não dependem desse helper: são master-only
-    # (assertado em test_same_participant_two_orgs_individual_surfaces...).
+    # Nenhuma superfície TRI abre por esse helper: todas são master-only até
+    # existir origem por registro (assertado em test_same_participant...).
 
 
 def test_upsert_partitions_by_agent_instance():
