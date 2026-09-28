@@ -5,6 +5,7 @@ import sqlite3
 from typing import Any, Dict
 
 from work.delivery import WorkDeliveryMixin
+from work.tenancy import apply_work_tenancy
 
 
 class _DB:
@@ -118,6 +119,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    apply_work_tenancy(conn)
     conn.commit()
 
 

@@ -1256,6 +1256,9 @@ class SchemaDatabaseMixin:
         if hasattr(self, "_init_will_scope_schema"):
             self._init_will_scope_schema()
 
+        if hasattr(self, "_init_work_tenancy_schema"):
+            self._init_work_tenancy_schema()
+
         if hasattr(self, "_init_will_expression_schema"):
             self._init_will_expression_schema()
 

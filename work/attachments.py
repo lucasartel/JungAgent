@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from work.common import _now_iso
+from work.tenancy import tenancy_insert_columns, tenancy_insert_placeholders, tenancy_insert_values
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +70,14 @@ class WorkAttachmentMixin:
 
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             INSERT INTO work_project_attachments (
                 project_id, filename, stored_path, size_bytes, mime_type,
-                uploaded_by, extraction_status, uploaded_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+                uploaded_by, extraction_status, {tenancy_insert_columns()}, uploaded_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', {tenancy_insert_placeholders()}, ?)
             """,
             (project_id, safe_name, str(stored_path), size_bytes, mime_type,
-             uploaded_by, _now_iso()),
+             uploaded_by, *tenancy_insert_values(self.db), _now_iso()),
         )
         self.db.conn.commit()
         attachment_id = cursor.lastrowid

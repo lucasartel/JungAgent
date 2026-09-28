@@ -17,6 +17,7 @@ from work.common import (
     _truncate,
     _validate_destination_url,
 )
+from work.tenancy import tenancy_insert_columns, tenancy_insert_placeholders, tenancy_insert_values
 
 logger = logging.getLogger(__name__)
 
@@ -405,12 +406,12 @@ Responda APENAS em JSON com:
     ) -> Dict[str, Any]:
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             INSERT INTO work_briefs (
                 origin, status, trigger_source, priority, destination_id, project_id, action_type, voice_mode,
                 delivery_mode, content_type, objective, source_seed, admin_telegram_id,
-                title_hint, notes, raw_input, extracted_json, created_at, updated_at
-            ) VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                title_hint, notes, raw_input, extracted_json, {tenancy_insert_columns()}, created_at, updated_at
+            ) VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {tenancy_insert_placeholders()}, ?, ?)
             """,
             (
                 origin,
@@ -429,6 +430,7 @@ Responda APENAS em JSON com:
                 notes,
                 raw_input,
                 json.dumps(extracted or {}, ensure_ascii=False),
+                *tenancy_insert_values(self.db),
                 _now_iso(),
                 _now_iso(),
             ),

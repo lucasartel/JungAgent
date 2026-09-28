@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from integration_secrets import IntegrationSecretsError, IntegrationSecretsManager
 from work.providers import _json_loads_maybe, _slugify
+from work.tenancy import tenancy_insert_columns, tenancy_insert_placeholders, tenancy_insert_values
 
 
 def _now_iso() -> str:
@@ -286,12 +287,12 @@ class WorkDestinationRegistry:
 
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             INSERT INTO work_destinations (
                 destination_key, provider_key, label, base_url, username, secret_ciphertext,
                 default_voice_mode, default_delivery_mode, last_test_status, last_test_message,
-                last_tested_at, config_json, is_active, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'success', ?, ?, ?, 1, ?, ?)
+                last_tested_at, config_json, is_active, {tenancy_insert_columns()}, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'success', ?, ?, ?, 1, {tenancy_insert_placeholders()}, ?, ?)
             """,
             (
                 destination_key,
@@ -305,6 +306,7 @@ class WorkDestinationRegistry:
                 test_result.get("message") or f"{spec.get('display_name') or provider_key} conectado",
                 _now_iso(),
                 config_json,
+                *tenancy_insert_values(self.db),
                 _now_iso(),
                 _now_iso(),
             ),

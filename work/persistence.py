@@ -12,6 +12,11 @@ from work.common import (
     _slugify,
     _truncate,
 )
+from work.tenancy import (
+    tenancy_insert_columns,
+    tenancy_insert_placeholders,
+    tenancy_insert_values,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +25,12 @@ class WorkPersistenceMixin:
     def _create_run(self, brief: Dict[str, Any], trigger_source: str, cycle_id: Optional[str]) -> int:
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             INSERT INTO work_runs (
                 cycle_id, phase, trigger_source, selected_brief_id, destination_id, project_id,
                 status, input_summary, output_summary, metrics_json, errors_json,
-                autonomy_decision_json, created_at, updated_at
-            ) VALUES (?, 'work', ?, ?, ?, ?, 'running', ?, '', '{}', '[]', ?, ?, ?)
+                autonomy_decision_json, {tenancy_insert_columns()}, created_at, updated_at
+            ) VALUES (?, 'work', ?, ?, ?, ?, 'running', ?, '', '{{}}', '[]', ?, {tenancy_insert_placeholders()}, ?, ?)
             """,
             (
                 cycle_id,
@@ -42,6 +47,7 @@ class WorkPersistenceMixin:
                     },
                     ensure_ascii=False,
                 ),
+                *tenancy_insert_values(self.db),
                 _now_iso(),
                 _now_iso(),
             ),
@@ -89,12 +95,12 @@ class WorkPersistenceMixin:
         artifact_status = "assimilated" if verified else "blocked"
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             INSERT INTO work_artifacts (
                 brief_id, run_id, destination_id, project_id, status, title, excerpt, body, slug,
                 tags_json, categories_json, cta, editorial_note, voice_mode, content_type,
-                provider_payload_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                provider_payload_json, {tenancy_insert_columns()}, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {tenancy_insert_placeholders()}, ?, ?)
             """,
             (
                 brief["id"], run_id, brief.get("destination_id"), brief.get("project_id"),
@@ -103,6 +109,7 @@ class WorkPersistenceMixin:
                 json.dumps(package["categories"], ensure_ascii=False), package["cta"],
                 package["editorial_note"], brief["voice_mode"], brief["content_type"],
                 json.dumps({"provider_key": None, "action_type": "reading", "package": package}, ensure_ascii=False),
+                *tenancy_insert_values(self.db),
                 _now_iso(), _now_iso(),
             ),
         )
@@ -276,12 +283,12 @@ class WorkPersistenceMixin:
 
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             INSERT INTO work_artifacts (
                 brief_id, run_id, destination_id, project_id, status, title, excerpt, body, slug,
                 tags_json, categories_json, cta, editorial_note, voice_mode, content_type,
-                provider_payload_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, 'composed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                provider_payload_json, {tenancy_insert_columns()}, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'composed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {tenancy_insert_placeholders()}, ?, ?)
             """,
             (
                 brief["id"],
@@ -306,6 +313,7 @@ class WorkPersistenceMixin:
                     },
                     ensure_ascii=False,
                 ),
+                *tenancy_insert_values(self.db),
                 _now_iso(),
                 _now_iso(),
             ),
@@ -416,12 +424,17 @@ class WorkPersistenceMixin:
         project_id = brief.get("project_id") if brief else None
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             INSERT INTO work_approval_tickets (
-                brief_id, artifact_id, destination_id, project_id, action, status, requested_by, created_at
-            ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+                brief_id, artifact_id, destination_id, project_id, action, status, requested_by,
+                {tenancy_insert_columns()}, created_at
+            ) VALUES (?, ?, ?, ?, ?, 'pending', ?, {tenancy_insert_placeholders()}, ?)
             """,
-            (brief_id, artifact_id, destination_id, project_id, action, requested_by, _now_iso()),
+            (
+                brief_id, artifact_id, destination_id, project_id, action, requested_by,
+                *tenancy_insert_values(self.db),
+                _now_iso(),
+            ),
         )
         self.db.conn.commit()
         ticket = self.get_ticket(cursor.lastrowid)

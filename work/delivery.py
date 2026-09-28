@@ -4,6 +4,7 @@ import json
 from typing import Any, Dict, Optional
 
 from work.common import _json_loads_maybe, _now_iso, _slugify
+from work.tenancy import tenancy_insert_columns, tenancy_insert_placeholders, tenancy_insert_values
 
 
 class WorkDeliveryMixin:
@@ -23,11 +24,11 @@ class WorkDeliveryMixin:
     ):
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             INSERT INTO work_delivery_events (
                 ticket_id, artifact_id, destination_id, project_id, provider_key, action, status,
-                external_id, external_url, response_json, error_message, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                external_id, external_url, response_json, error_message, {tenancy_insert_columns()}, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {tenancy_insert_placeholders()}, ?)
             """,
             (
                 ticket_id,
@@ -41,6 +42,7 @@ class WorkDeliveryMixin:
                 external_url,
                 json.dumps(response or {}, ensure_ascii=False),
                 error_message,
+                *tenancy_insert_values(self.db),
                 _now_iso(),
             ),
         )

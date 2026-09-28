@@ -9,6 +9,8 @@ Covers:
 """
 from __future__ import annotations
 
+from work.tenancy import apply_work_tenancy
+
 import importlib.util
 import sqlite3
 import sys
@@ -130,6 +132,7 @@ class _ProjectDB(WorkProjectMixin):
             );
             """
         )
+        apply_work_tenancy(self.conn)
         self.conn.commit()
 
     def record_work_experience(self, **kwargs):

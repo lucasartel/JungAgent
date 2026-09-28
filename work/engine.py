@@ -28,6 +28,7 @@ from work.destinations import WorkDestinationRegistry
 from work.github_work import GitHubWorkMixin
 from work.package_builder import WorkPackageBuilderMixin
 from work.persistence import WorkPersistenceMixin
+from work.tenancy import tenancy_insert_columns, tenancy_insert_placeholders, tenancy_insert_values
 from work.projects import WorkProjectMixin
 from work.providers import DEFAULT_PROVIDER_SPECS, GitHubSkill, WordPressSkill
 
@@ -159,11 +160,11 @@ class WorkEngine(
         cursor = self.db.conn.cursor()
         try:
             cursor.execute(
-                """
+                f"""
                 INSERT OR IGNORE INTO work_experience_events (
                     event_key, project_id, event_type, summary, source_table, source_id,
-                    source_kind, metadata_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    source_kind, metadata_json, {tenancy_insert_columns()}, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, {tenancy_insert_placeholders()}, ?)
                 """,
                 (
                     event_key,
@@ -174,6 +175,7 @@ class WorkEngine(
                     str(source_id) if source_id is not None else None,
                     source_kind,
                     metadata_json,
+                    *tenancy_insert_values(self.db),
                     _now_iso(),
                 ),
             )
