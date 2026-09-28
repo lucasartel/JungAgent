@@ -138,6 +138,10 @@ CREATE INDEX IF NOT EXISTS idx_detected_timestamp ON detected_fragments(detected
 CREATE INDEX IF NOT EXISTS idx_detected_conversation ON detected_fragments(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_detected_user_fragment ON detected_fragments(user_id, fragment_id);
 CREATE INDEX IF NOT EXISTS idx_detected_user_instance ON detected_fragments(user_id, agent_instance);
+-- C12c3: particao por instancia no UPSERT (uma pessoa em duas instancias
+-- nao pode sobrescrever as deteccoes da outra).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_detected_user_fragment_instance
+    ON detected_fragments(user_id, fragment_id, agent_instance);
 
 
 -- ============================================
@@ -190,6 +194,9 @@ CREATE INDEX IF NOT EXISTS idx_estimates_theta ON irt_trait_estimates(theta);
 CREATE INDEX IF NOT EXISTS idx_estimates_date ON irt_trait_estimates(estimated_at);
 CREATE INDEX IF NOT EXISTS idx_estimates_user ON irt_trait_estimates(user_id);
 CREATE INDEX IF NOT EXISTS idx_estimates_user_instance ON irt_trait_estimates(user_id, agent_instance);
+-- C12c3: estimativas particionadas por instancia.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_estimates_user_domain_instance
+    ON irt_trait_estimates(user_id, domain, agent_instance);
 
 
 -- ============================================
@@ -226,6 +233,9 @@ CREATE INDEX IF NOT EXISTS idx_facets_user_domain ON facet_scores(user_id, domai
 CREATE INDEX IF NOT EXISTS idx_facets_code ON facet_scores(facet_code);
 CREATE INDEX IF NOT EXISTS idx_facets_user ON facet_scores(user_id);
 CREATE INDEX IF NOT EXISTS idx_facets_user_instance ON facet_scores(user_id, agent_instance);
+-- C12c3: escores de faceta particionados por instancia.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_facets_user_code_instance
+    ON facet_scores(user_id, facet_code, agent_instance);
 
 
 -- ============================================

@@ -176,29 +176,32 @@ async def irt_dashboard(
         logger.info(f"   → by_domain = {stats['by_domain']}")
 
         # Top 10 usuários por fragmentos
-        logger.info("🔍 [IRT Dashboard] Query 5: top_users")
-        cursor.execute(f"""
-            SELECT
-                df.user_id,
-                u.user_name,
-                COUNT(*) as fragment_count,
-                AVG(df.intensity) as avg_intensity
-            FROM detected_fragments df
-            LEFT JOIN users u ON df.user_id = u.user_id
-            WHERE 1=1{scope_df}
-            GROUP BY df.user_id
-            ORDER BY fragment_count DESC
-            LIMIT 10
-        """, params_df)
+        # C12c3 (revisão 2): lista nominal de pessoas — só master. Org_admin
+        # fica com os agregados sem nominalidade.
         stats["top_users"] = []
-        for row in cursor.fetchall():
-            stats["top_users"].append({
-                "user_id": row[0],
-                "user_name": row[1] or "Unknown",
-                "fragment_count": row[2],
-                "avg_intensity": round(row[3], 2) if row[3] else 0
-            })
-        logger.info(f"   → top_users count = {len(stats['top_users'])}")
+        if admin.get("role") == "master":
+            logger.info("🔍 [IRT Dashboard] Query 5: top_users")
+            cursor.execute(f"""
+                SELECT
+                    df.user_id,
+                    u.user_name,
+                    COUNT(*) as fragment_count,
+                    AVG(df.intensity) as avg_intensity
+                FROM detected_fragments df
+                LEFT JOIN users u ON df.user_id = u.user_id
+                WHERE 1=1{scope_df}
+                GROUP BY df.user_id
+                ORDER BY fragment_count DESC
+                LIMIT 10
+            """, params_df)
+            for row in cursor.fetchall():
+                stats["top_users"].append({
+                    "user_id": row[0],
+                    "user_name": row[1] or "Unknown",
+                    "fragment_count": row[2],
+                    "avg_intensity": round(row[3], 2) if row[3] else 0
+                })
+            logger.info(f"   → top_users count = {len(stats['top_users'])}")
 
         # Estimativas de traço salvas
         logger.info("🔍 [IRT Dashboard] Query 6: COUNT irt_trait_estimates")
@@ -262,7 +265,7 @@ async def irt_dashboard(
 @router.get("/user/{user_id}")
 async def get_user_tri_profile(
     user_id: str,
-    admin: Dict = Depends(require_org_admin)
+    admin: Dict = Depends(require_master)
 ):
     """
     Retorna perfil TRI completo de um usuário.
@@ -273,8 +276,10 @@ async def get_user_tri_profile(
     - Fragmentos detectados
     - Histórico de qualidade
     """
-    # C12c3: org_admin só acessa usuários da própria org.
-    verify_user_access(admin, user_id)
+    # C12c3 (revisão 2): dado individual nominal exige master. O vínculo de
+    # org não comprova autorização para perfil/escores/fragmentos, e o
+    # recorte por user_id não distingue a origem (org/Relation/instância)
+    # dos registros — superfície master-only até existir origem por registro.
     if not _db_manager:
         raise HTTPException(503, "DatabaseManager não disponível")
 
@@ -410,15 +415,15 @@ async def get_user_tri_profile(
 @router.get("/comparison/{user_id}")
 async def compare_tri_legacy(
     user_id: str,
-    admin: Dict = Depends(require_org_admin)
+    admin: Dict = Depends(require_master)
 ):
     """
     Compara scores TRI com scores do sistema legado (user_psychometrics).
 
     Útil para validação do sistema TRI.
     """
-    # C12c3: org_admin só acessa usuários da própria org.
-    verify_user_access(admin, user_id)
+    # C12c3 (revisão 2): dado individual nominal — master-only (mesmo
+    # limite de /user/{user_id}: origem dos registros indistinguível).
     if not _db_manager:
         raise HTTPException(503, "DatabaseManager não disponível")
 

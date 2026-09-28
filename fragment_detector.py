@@ -489,7 +489,7 @@ class FragmentDetector:
                         (user_id, agent_instance, fragment_id, intensity, confidence,
                          source_text, detected_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    ON CONFLICT (user_id, fragment_id)
+                    ON CONFLICT (user_id, fragment_id, agent_instance)
                     DO UPDATE SET
                         intensity = EXCLUDED.intensity,
                         confidence = EXCLUDED.confidence,

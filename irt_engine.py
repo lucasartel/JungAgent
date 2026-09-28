@@ -724,7 +724,7 @@ class IRTEngine:
                 INSERT INTO irt_trait_estimates
                     (user_id, domain, theta, standard_error, n_items, updated_at, agent_instance)
                 VALUES ($1, $2, $3, $4, $5, NOW(), $6)
-                ON CONFLICT (user_id, domain)
+                ON CONFLICT (user_id, domain, agent_instance)
                 DO UPDATE SET
                     theta = EXCLUDED.theta,
                     standard_error = EXCLUDED.standard_error,
@@ -758,7 +758,7 @@ class IRTEngine:
                 INSERT INTO facet_scores
                     (user_id, facet_code, theta, standard_error, n_items, updated_at, agent_instance)
                 VALUES ($1, $2, $3, $4, $5, NOW(), $6)
-                ON CONFLICT (user_id, facet_code)
+                ON CONFLICT (user_id, facet_code, agent_instance)
                 DO UPDATE SET
                     theta = EXCLUDED.theta,
                     standard_error = EXCLUDED.standard_error,

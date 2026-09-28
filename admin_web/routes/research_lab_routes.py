@@ -21,9 +21,10 @@ async def memory_metrics_dashboard(
     request: Request,
     format: Optional[str] = None,
     user_id: Optional[str] = None,
-    # C12c3: org_admin com visão restrita à própria org (fatia por
-    # user_organization_mapping); master vê tudo.
-    admin: Dict = Depends(require_org_admin),
+    # C12c3 (revisão 2): a lista é nominal (atividade e contagens de memória
+    # por pessoa) — master-only. Vínculo de org não comprova autorização
+    # específica para dados individuais.
+    admin: Dict = Depends(require_master),
 ):
     return await research_lab_dashboards.memory_metrics_dashboard(request, format, user_id, admin)
 
