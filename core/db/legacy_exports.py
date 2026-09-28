@@ -13,9 +13,10 @@ Politica (decisoes do C12c2 revisadas pelo P1/P2 do revisor):
   (``count_out_of_personal_scope``).
 - UNESCO: totais corretos (todas as escopas — subcontar mostrava zero falso)
   mais colunas explicitas por escopo. ``no_relation`` nao e "global classificado".
-- linhas com ``relation_id IS NULL`` tem origem NAO classificada — hoje
-  material work_reading/work, cuja classificacao real chega no C4.
-"""
+- linhas com ``relation_id IS NULL`` tem origem NAO classificada
+  (material work_reading/work): desde o C12c4 a experience Work carrega
+  ``origin_class`` e o fragmento deriva herda a Relation quando explicita.
+ """
 from typing import List, Optional, Tuple
 
 from core.db.relation_scope import personal_scope_clause
@@ -64,7 +65,7 @@ def source_kind_counts(rows: List[dict]) -> dict:
     """Contagem por origem do material (P2: NULL nao certifica origem global)."""
     counts: dict = {}
     for row in rows:
-        kind = row.get("source_kind") or "desconhecido"
+        kind = row.get("source_kind") or "origem_nao_classificada"
         counts[kind] = counts.get(kind, 0) + 1
     return counts
 

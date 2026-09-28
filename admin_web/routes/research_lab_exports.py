@@ -244,7 +244,7 @@ async def export_fragments(
                 "status": scope.status,
                 "counts": scope_counts(fragments),
                 "source_kind_counts": source_kind_counts(fragments),
-                "note": "scope=no_relation não certifica origem global (ex.: work_reading/work, classificação real no C4)",
+                "note": "scope=no_relation não certifica origem global: work_reading/work carrega origin_class na experience desde o C12c4; NULL = origem não classificada",
             },
             "fragments": fragments
         })

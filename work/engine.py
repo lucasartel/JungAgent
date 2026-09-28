@@ -28,7 +28,7 @@ from work.destinations import WorkDestinationRegistry
 from work.github_work import GitHubWorkMixin
 from work.package_builder import WorkPackageBuilderMixin
 from work.persistence import WorkPersistenceMixin
-from work.tenancy import tenancy_insert_columns, tenancy_insert_placeholders, tenancy_insert_values
+from work.tenancy import resolve_work_tenancy, tenancy_insert_columns, tenancy_insert_placeholders
 from work.projects import WorkProjectMixin
 from work.providers import DEFAULT_PROVIDER_SPECS, GitHubSkill, WordPressSkill
 
@@ -150,6 +150,7 @@ class WorkEngine(
         metadata: Optional[Dict[str, Any]] = None,
         emotional_weight: float = 0.55,
         tension_level: float = 0.35,
+        origin_relation_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         summary = (summary or "").strip()
         if not summary:
@@ -157,6 +158,9 @@ class WorkEngine(
 
         event_key = f"{event_type}:{source_table}:{source_id}:{project_id or ''}"
         metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
+        # Classificacao real de origem (C12c4): nasce da Relation explicita
+        # (se houver) e jamais do admin que disparou o run.
+        tenancy = resolve_work_tenancy(self.db, origin_relation_id=origin_relation_id)
         cursor = self.db.conn.cursor()
         try:
             cursor.execute(
@@ -175,7 +179,10 @@ class WorkEngine(
                     str(source_id) if source_id is not None else None,
                     source_kind,
                     metadata_json,
-                    *tenancy_insert_values(self.db),
+                    tenancy["org_id"],
+                    tenancy["agent_instance"],
+                    tenancy["origin_class"],
+                    tenancy["origin_relation_id"],
                     _now_iso(),
                 ),
             )
@@ -188,17 +195,22 @@ class WorkEngine(
             event_id = cursor.lastrowid
             fragment_id = None
             try:
+                fragment_metadata = dict(metadata or {})
+                if tenancy.get("origin_class"):
+                    fragment_metadata["work_origin_class"] = tenancy["origin_class"]
+                fragment_metadata_json = json.dumps(fragment_metadata, ensure_ascii=False)
                 cursor.execute(
                     """
                     INSERT INTO rumination_fragments (
                         user_id, agent_instance, relation_id, fragment_type, content, context,
                         source_conversation_id, source_quote, emotional_weight, tension_level,
                         source_kind, source_table, source_id, source_metadata_json
-                    ) VALUES (?, ?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         self.admin_user_id,
                         getattr(self.db, "agent_instance", None) or AGENT_INSTANCE,
+                        tenancy["origin_relation_id"],
                         self._fragment_type_for_work_event(event_type),
                         summary,
                         f"Experiencia de trabalho: {event_type}",
@@ -208,7 +220,7 @@ class WorkEngine(
                         source_kind,
                         source_table or "work_experience_events",
                         str(source_id) if source_id is not None else str(event_id),
-                        metadata_json,
+                        fragment_metadata_json,
                     ),
                 )
                 fragment_id = cursor.lastrowid

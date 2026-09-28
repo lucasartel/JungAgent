@@ -121,7 +121,7 @@ def build_endojung_snapshot(
                 "Vector stores such as ChromaDB and Qdrant/mem0 are not included in this archive.",
                 "C12c2 scope: relation-stamped rows are excluded (strict quarantine).",
                 "Rows without a relation stamp have UNCLASSIFIED origin — NOT certified global "
-                "(e.g. work_reading/work material; real Work classification arrives in C4). "
+                "(work_reading/work material carries Work origin_class since C12c4; NULL stays unclassified). "
                 "See included_source_kind_counts for what is actually inside.",
             ],
         },
