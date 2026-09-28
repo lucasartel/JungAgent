@@ -473,7 +473,7 @@
     "path": "/dashboard",
     "full_path": "/admin/irt/dashboard",
     "endpoint": "irt_dashboard",
-    "line": 60,
+    "line": 63,
     "migration_bucket": "irt_routes"
   },
   {
@@ -482,7 +482,7 @@
     "path": "/user/{user_id}",
     "full_path": "/admin/irt/user/{user_id}",
     "endpoint": "get_user_tri_profile",
-    "line": 240,
+    "line": 260,
     "migration_bucket": "irt_routes"
   },
   {
@@ -491,7 +491,7 @@
     "path": "/comparison/{user_id}",
     "full_path": "/admin/irt/comparison/{user_id}",
     "endpoint": "compare_tri_legacy",
-    "line": 386,
+    "line": 408,
     "migration_bucket": "irt_routes"
   },
   {
@@ -500,7 +500,7 @@
     "path": "/migration/run",
     "full_path": "/admin/irt/migration/run",
     "endpoint": "run_tri_migration",
-    "line": 513,
+    "line": 537,
     "migration_bucket": "irt_routes"
   },
   {
@@ -509,7 +509,7 @@
     "path": "/seed/fragments",
     "full_path": "/admin/irt/seed/fragments",
     "endpoint": "seed_tri_fragments",
-    "line": 548,
+    "line": 572,
     "migration_bucket": "irt_routes"
   },
   {
@@ -518,7 +518,7 @@
     "path": "/migration/status",
     "full_path": "/admin/irt/migration/status",
     "endpoint": "get_migration_status",
-    "line": 674,
+    "line": 698,
     "migration_bucket": "irt_routes"
   },
   {
@@ -527,7 +527,7 @@
     "path": "/fragments/stats",
     "full_path": "/admin/irt/fragments/stats",
     "endpoint": "get_fragment_stats",
-    "line": 732,
+    "line": 756,
     "migration_bucket": "irt_routes"
   },
   {
@@ -536,7 +536,7 @@
     "path": "/api/domain-distribution",
     "full_path": "/admin/irt/api/domain-distribution",
     "endpoint": "get_domain_distribution",
-    "line": 838,
+    "line": 867,
     "migration_bucket": "irt_routes"
   },
   {
@@ -545,7 +545,7 @@
     "path": "/api/detection-timeline",
     "full_path": "/admin/irt/api/detection-timeline",
     "endpoint": "get_detection_timeline",
-    "line": 881,
+    "line": 912,
     "migration_bucket": "irt_routes"
   },
   {
@@ -698,7 +698,7 @@
     "path": "/dreams",
     "full_path": "/admin/dreams",
     "endpoint": "dreams_dashboard",
-    "line": 30,
+    "line": 32,
     "migration_bucket": "research_lab_routes"
   },
   {
@@ -707,7 +707,7 @@
     "path": "/research",
     "full_path": "/admin/research",
     "endpoint": "research_dashboard",
-    "line": 35,
+    "line": 37,
     "migration_bucket": "research_lab_routes"
   },
   {
@@ -716,7 +716,7 @@
     "path": "/jung-lab",
     "full_path": "/admin/jung-lab",
     "endpoint": "jung_lab_dashboard",
-    "line": 40,
+    "line": 42,
     "migration_bucket": "research_lab_routes"
   },
   {
@@ -725,7 +725,7 @@
     "path": "/api/jung-lab/digest",
     "full_path": "/admin/api/jung-lab/digest",
     "endpoint": "run_manual_digest",
-    "line": 45,
+    "line": 47,
     "migration_bucket": "research_lab_routes"
   },
   {
@@ -734,7 +734,7 @@
     "path": "/api/jung-lab/scheduler/{action}",
     "full_path": "/admin/api/jung-lab/scheduler/{action}",
     "endpoint": "control_scheduler",
-    "line": 50,
+    "line": 52,
     "migration_bucket": "research_lab_routes"
   },
   {
@@ -743,7 +743,7 @@
     "path": "/api/jung-lab/diagnose",
     "full_path": "/admin/api/jung-lab/diagnose",
     "endpoint": "diagnose_rumination",
-    "line": 55,
+    "line": 57,
     "migration_bucket": "research_lab_routes"
   },
   {
@@ -752,7 +752,7 @@
     "path": "/api/jung-lab/fix-platform",
     "full_path": "/admin/api/jung-lab/fix-platform",
     "endpoint": "fix_platform_issue",
-    "line": 60,
+    "line": 62,
     "migration_bucket": "research_lab_routes"
   },
   {
@@ -761,7 +761,7 @@
     "path": "/api/jung-lab/debug-full",
     "full_path": "/admin/api/jung-lab/debug-full",
     "endpoint": "debug_rumination_full",
-    "line": 65,
+    "line": 67,
     "migration_bucket": "research_lab_routes"
   },
   {
@@ -770,7 +770,7 @@
     "path": "/api/jung-lab/why-no-insights",
     "full_path": "/admin/api/jung-lab/why-no-insights",
     "endpoint": "why_no_insights",
-    "line": 70,
+    "line": 72,
     "migration_bucket": "research_lab_routes"
   },
   {
@@ -779,7 +779,7 @@
     "path": "/api/jung-lab/export-fragments",
     "full_path": "/admin/api/jung-lab/export-fragments",
     "endpoint": "export_fragments",
-    "line": 75,
+    "line": 77,
     "migration_bucket": "research_lab_routes"
   },
   {
@@ -788,7 +788,7 @@
     "path": "/api/jung-lab/export-tensions",
     "full_path": "/admin/api/jung-lab/export-tensions",
     "endpoint": "export_tensions",
-    "line": 80,
+    "line": 82,
     "migration_bucket": "research_lab_routes"
   },
   {
@@ -797,7 +797,7 @@
     "path": "/api/jung-lab/export-insights",
     "full_path": "/admin/api/jung-lab/export-insights",
     "endpoint": "export_insights",
-    "line": 85,
+    "line": 87,
     "migration_bucket": "research_lab_routes"
   },
   {
@@ -806,7 +806,7 @@
     "path": "/jung-mind",
     "full_path": "/admin/jung-mind",
     "endpoint": "jung_mind_page",
-    "line": 90,
+    "line": 92,
     "migration_bucket": "research_lab_routes"
   },
   {
@@ -815,7 +815,7 @@
     "path": "/api/jung-mind-data",
     "full_path": "/admin/api/jung-mind-data",
     "endpoint": "jung_mind_data",
-    "line": 95,
+    "line": 97,
     "migration_bucket": "research_lab_routes"
   },
   {
@@ -824,7 +824,7 @@
     "path": "/api/symbolic-graph-data",
     "full_path": "/admin/api/symbolic-graph-data",
     "endpoint": "symbolic_graph_data",
-    "line": 100,
+    "line": 102,
     "migration_bucket": "research_lab_routes"
   },
   {

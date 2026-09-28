@@ -176,10 +176,14 @@ def _fetch_user_memory_detail(db, user_id: str) -> Dict[str, object]:
     }
 
 
-def _build_memory_metrics_payload(db) -> Dict[str, object]:
+def _build_memory_metrics_payload(db, admin=None) -> Dict[str, object]:
     cursor = db.conn.cursor()
 
-    cursor.execute("""
+    # C12c3: org_admin vê apenas os usuários da própria org.
+    from admin_web.auth.org_scope import org_user_scope_clause
+
+    scope_sql, scope_params = org_user_scope_clause(admin, table_alias="u")
+    cursor.execute(f"""
         SELECT
             u.user_id,
             COALESCE(NULLIF(u.user_name, ''), NULLIF(u.first_name, ''), 'Sem nome') AS user_name,
@@ -190,9 +194,10 @@ def _build_memory_metrics_payload(db) -> Dict[str, object]:
             SUM(CASE WHEN c.chroma_id IS NOT NULL AND c.chroma_id != '' THEN 1 ELSE 0 END) AS chroma_linked_conversations
         FROM users u
         LEFT JOIN conversations c ON c.user_id = u.user_id
+        WHERE 1=1{scope_sql}
         GROUP BY u.user_id, u.user_name, u.first_name, u.platform, u.last_seen
         ORDER BY conversation_count DESC, COALESCE(MAX(c.timestamp), u.last_seen) DESC, user_name ASC
-    """)
+    """, scope_params)
     users = []
     for row in cursor.fetchall():
         user = {
@@ -314,5 +319,4 @@ def _build_memory_metrics_payload(db) -> Dict[str, object]:
         },
         "users": users,
     }
-
 

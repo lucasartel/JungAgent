@@ -14,6 +14,8 @@ from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
 
+from irt_scope import instance_scope_sql, resolve_irt_instance
+
 # Configurar logger
 logger = logging.getLogger(__name__)
 
@@ -569,6 +571,10 @@ class IRTEngine:
             """
             params = [user_id]
 
+            # C12c3: particao cognitiva (dados legados sem instancia seguem visíveis).
+            query += instance_scope_sql("df", len(params) + 1)
+            params.append(resolve_irt_instance())
+
             if domain:
                 query += " AND f.domain = $2"
                 params.append(domain.value)
@@ -716,8 +722,8 @@ class IRTEngine:
         try:
             query = """
                 INSERT INTO irt_trait_estimates
-                    (user_id, domain, theta, standard_error, n_items, updated_at)
-                VALUES ($1, $2, $3, $4, $5, NOW())
+                    (user_id, domain, theta, standard_error, n_items, updated_at, agent_instance)
+                VALUES ($1, $2, $3, $4, $5, NOW(), $6)
                 ON CONFLICT (user_id, domain)
                 DO UPDATE SET
                     theta = EXCLUDED.theta,
@@ -731,7 +737,8 @@ class IRTEngine:
                 estimate.domain.value,
                 estimate.theta,
                 estimate.standard_error,
-                estimate.n_responses
+                estimate.n_responses,
+                resolve_irt_instance()
             )
             logger.info(f"Estimativa salva: {user_id}/{estimate.domain.value}")
             return True
@@ -749,8 +756,8 @@ class IRTEngine:
         try:
             query = """
                 INSERT INTO facet_scores
-                    (user_id, facet_code, theta, standard_error, n_items, updated_at)
-                VALUES ($1, $2, $3, $4, $5, NOW())
+                    (user_id, facet_code, theta, standard_error, n_items, updated_at, agent_instance)
+                VALUES ($1, $2, $3, $4, $5, NOW(), $6)
                 ON CONFLICT (user_id, facet_code)
                 DO UPDATE SET
                     theta = EXCLUDED.theta,
@@ -764,7 +771,8 @@ class IRTEngine:
                 estimate.facet_code,
                 estimate.theta,
                 estimate.standard_error,
-                estimate.n_responses
+                estimate.n_responses,
+                resolve_irt_instance()
             )
             return True
 

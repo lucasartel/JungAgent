@@ -112,6 +112,23 @@ def execute_schema(conn, ctx: MigrationContext):
         log_error("Erro ao executar schema", e)
         raise
 
+    # C12c3: adaptar bancos existentes — coluna de particao agent_instance
+    # (CREATE IF NOT EXISTS nao altera tabelas ja criadas).
+    for table_name in (
+        "detected_fragments",
+        "irt_trait_estimates",
+        "facet_scores",
+        "psychometric_quality_checks",
+    ):
+        columns = {
+            row[1]
+            for row in cursor.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        if "agent_instance" not in columns:
+            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN agent_instance TEXT")
+            log_info(f"C12c3: coluna agent_instance adicionada a {table_name}")
+    conn.commit()
+
     # Verificar estado depois
     for table_name, col_count in tables:
         if table_name not in existing_tables:

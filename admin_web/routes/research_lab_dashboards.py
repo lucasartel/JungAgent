@@ -27,14 +27,18 @@ async def memory_metrics_dashboard(
     db = get_db()
 
     if format == "json":
-        return JSONResponse(_build_memory_metrics_payload(db))
+        return JSONResponse(_build_memory_metrics_payload(db, admin))
 
     if format == "facts":
         if not user_id:
             return JSONResponse({"error": "user_id é obrigatório"}, status_code=400)
+        # C12c3: org_admin só acessa usuários da própria org.
+        from admin_web.auth.middleware import verify_user_access
+
+        verify_user_access(admin or {}, user_id)
         return JSONResponse(_fetch_user_memory_detail(db, user_id))
 
-    initial_data = _build_memory_metrics_payload(db)
+    initial_data = _build_memory_metrics_payload(db, admin)
     return templates.TemplateResponse("memory_metrics.html", {
         "request": request,
         "unsafe_admin_endpoints_enabled": UNSAFE_ADMIN_ENDPOINTS_ENABLED,

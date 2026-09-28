@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
+from irt_scope import instance_scope_sql, resolve_irt_instance
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -431,21 +433,23 @@ class PsychometricValidator:
 
             # Query base para fragmentos detectados
             if domain:
-                query = """
+                query = f"""
                     SELECT df.intensity, f.facet_code
                     FROM detected_fragments df
                     JOIN irt_fragments f ON df.fragment_id = f.fragment_id
                     WHERE df.user_id = $1 AND f.domain = $2
+                    {instance_scope_sql('df', 3)}
                 """
-                params = [user_id, domain]
+                params = [user_id, domain, resolve_irt_instance()]
             else:
-                query = """
+                query = f"""
                     SELECT df.intensity, f.facet_code, f.domain
                     FROM detected_fragments df
                     JOIN irt_fragments f ON df.fragment_id = f.fragment_id
                     WHERE df.user_id = $1
+                    {instance_scope_sql('df', 2)}
                 """
-                params = [user_id]
+                params = [user_id, resolve_irt_instance()]
 
             rows = await self.db.fetch(query, *params)
 
@@ -464,30 +468,35 @@ class PsychometricValidator:
 
             # Obter erro padrão da estimativa
             if domain:
-                se_query = """
+                se_query = f"""
                     SELECT standard_error
                     FROM irt_trait_estimates
                     WHERE user_id = $1 AND domain = $2
+                    {instance_scope_sql('', 3)}
                 """
-                se_row = await self.db.fetchrow(se_query, user_id, domain)
+                se_row = await self.db.fetchrow(
+                    se_query, user_id, domain, resolve_irt_instance()
+                )
             else:
-                se_query = """
+                se_query = f"""
                     SELECT AVG(standard_error) as avg_se
                     FROM irt_trait_estimates
                     WHERE user_id = $1
+                    {instance_scope_sql('', 2)}
                 """
-                se_row = await self.db.fetchrow(se_query, user_id)
+                se_row = await self.db.fetchrow(se_query, user_id, resolve_irt_instance())
 
             if se_row:
                 data["standard_error"] = se_row.get("standard_error") or se_row.get("avg_se") or float('inf')
 
             # Obter scores de facetas
-            facet_query = """
+            facet_query = f"""
                 SELECT facet_code, theta
                 FROM facet_scores
                 WHERE user_id = $1
+                {instance_scope_sql('', 2)}
             """
-            facet_rows = await self.db.fetch(facet_query, user_id)
+            facet_rows = await self.db.fetch(facet_query, user_id, resolve_irt_instance())
 
             for row in facet_rows:
                 # Converter theta para score 0-100
@@ -520,8 +529,8 @@ class PsychometricValidator:
                 query = """
                     INSERT INTO psychometric_quality_checks
                         (user_id, domain, check_type, check_value, threshold,
-                         passed, checked_at, details)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                         passed, checked_at, details, agent_instance)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 """
                 await self.db.execute(
                     query,
@@ -532,7 +541,8 @@ class PsychometricValidator:
                     check.threshold,
                     check.passed,
                     datetime.now(),
-                    check.message
+                    check.message,
+                    resolve_irt_instance()
                 )
 
             logger.debug(f"Salvos {len(checks)} quality checks para {user_id}")
@@ -551,9 +561,15 @@ class QualityMetrics:
     def __init__(self, db_connection=None):
         self.db = db_connection
 
-    async def get_system_quality_report(self) -> Dict[str, Any]:
+    async def get_system_quality_report(
+        self, agent_instance: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Gera relatório de qualidade do sistema TRI como um todo.
+
+        Agregado de pesquisa, sem identificáveis por usuário (C12c3). Com
+        ``agent_instance``, o relatório é particionado por instância cognitiva;
+        sem ela, cobre todas as partições — uso de pesquisa/master.
 
         Returns:
             Dict com métricas agregadas

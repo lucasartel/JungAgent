@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
+from irt_scope import instance_scope_sql, resolve_irt_instance
+
 # Importar fragmentos e engine
 try:
     from irt_fragments_seed import (
@@ -484,9 +486,9 @@ class FragmentDetector:
             for match in result.matches:
                 query = """
                     INSERT INTO detected_fragments
-                        (user_id, fragment_id, intensity, confidence,
+                        (user_id, agent_instance, fragment_id, intensity, confidence,
                          source_text, detected_at)
-                    VALUES ($1, $2, $3, $4, $5, $6)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
                     ON CONFLICT (user_id, fragment_id)
                     DO UPDATE SET
                         intensity = EXCLUDED.intensity,
@@ -499,6 +501,7 @@ class FragmentDetector:
                 await self.db.execute(
                     query,
                     result.user_id,
+                    resolve_irt_instance(),
                     match.fragment_id,
                     match.intensity,
                     match.confidence,
@@ -529,7 +532,7 @@ class FragmentDetector:
             return {"error": "Database not connected"}
 
         try:
-            query = """
+            query = f"""
                 SELECT
                     f.domain,
                     f.facet_code,
@@ -540,11 +543,12 @@ class FragmentDetector:
                 FROM detected_fragments df
                 JOIN irt_fragments f ON df.fragment_id = f.fragment_id
                 WHERE df.user_id = $1
+                {instance_scope_sql('df', 2)}
                 GROUP BY f.domain, f.facet_code
                 ORDER BY f.domain, f.facet_code
             """
 
-            rows = await self.db.fetch(query, user_id)
+            rows = await self.db.fetch(query, user_id, resolve_irt_instance())
 
             summary = {
                 "user_id": user_id,

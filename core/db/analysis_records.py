@@ -33,6 +33,27 @@ class AnalysisRecordsDatabaseMixin:
             require_eligible_relation(self, relation_id)
         return relation_id
 
+    def _analysis_scope_clause(self, table: str, relation_id: Optional[str]):
+        """Filtro de escopo cognitivo com presence-check (bancos pré-Relations)."""
+        cursor = self.conn.cursor()
+        columns = {
+            row[1] for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        clause = ""
+        params: list = []
+        if "agent_instance" in columns:
+            try:
+                from instance_config import AGENT_INSTANCE
+            except ImportError:
+                AGENT_INSTANCE = None
+            instance = (getattr(self, "agent_instance", None) or AGENT_INSTANCE or "").strip() or None
+            clause += " AND (agent_instance = ? OR agent_instance IS NULL)"
+            params.append(instance)
+        if "relation_id" in columns:
+            clause += " AND COALESCE(relation_id, '') = COALESCE(?, '')"
+            params.append(relation_id)
+        return clause, tuple(params)
+
     def detect_and_save_patterns(self, user_id: str, relation_id=None):
         """
         Analisa conversas do usuÃ¡rio e detecta padrÃµes recorrentes
@@ -183,15 +204,17 @@ class AnalysisRecordsDatabaseMixin:
     # CONFLITOS
     # ========================================
     
-    def get_user_conflicts(self, user_id: str, limit: int = 10) -> List[Dict]:
-        """Busca conflitos do usuÃ¡rio"""
+    def get_user_conflicts(self, user_id: str, limit: int = 10, *, relation_id: Optional[str] = None) -> List[Dict]:
+        """Busca conflitos do usuÃ¡rio no escopo cognitivo resolvido."""
+        relation_id = self._pattern_scope(user_id, relation_id)
+        scope_sql, scope_params = self._analysis_scope_clause("archetype_conflicts", relation_id)
         cursor = self.conn.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT * FROM archetype_conflicts
-            WHERE user_id = ?
+            WHERE user_id = ?{scope_sql}
             ORDER BY timestamp DESC
             LIMIT ?
-        """, (user_id, limit))
+        """, (user_id, *scope_params, limit))
         return [dict(row) for row in cursor.fetchall()]
     
     # ========================================
@@ -199,35 +222,66 @@ class AnalysisRecordsDatabaseMixin:
     # ========================================
     
     def save_full_analysis(self, user_id: str, user_name: str,
-                          analysis: Dict, platform: str = "telegram") -> int:
-        """Salva anÃ¡lise completa"""
+                          analysis: Dict, platform: str = "telegram",
+                          *, relation_id: Optional[str] = None) -> int:
+        """Salva anÃ¡lise completa carimbada no escopo cognitivo resolvido."""
+        relation_id = self._pattern_scope(user_id, relation_id)
         with self._lock:
             cursor = self.conn.cursor()
 
-            cursor.execute("""
-                INSERT INTO full_analyses
-                (user_id, user_name, mbti, dominant_archetypes, phase, full_analysis, platform)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
+            columns = {
+                row[1] for row in cursor.execute("PRAGMA table_info(full_analyses)").fetchall()
+            }
+            insert_columns = [
+                "user_id", "user_name", "mbti", "dominant_archetypes",
+                "phase", "full_analysis", "platform",
+            ]
+            insert_values = [
                 user_id, user_name,
                 analysis.get('mbti', 'N/A'),
                 json.dumps(analysis.get('archetypes', [])),
                 analysis.get('phase', 1),
                 analysis.get('insights', ''),
-                platform
-            ))
+                platform,
+            ]
+            for column, value in (("agent_instance", None), ("relation_id", relation_id)):
+                if column in columns:
+                    if column == "agent_instance":
+                        try:
+                            from instance_config import AGENT_INSTANCE
+                        except ImportError:
+                            AGENT_INSTANCE = None
+                        value = (
+                            getattr(self, "agent_instance", None) or AGENT_INSTANCE or ""
+                        ).strip() or None
+                    if value is not None:
+                        insert_columns.append(column)
+                        insert_values.append(value)
+            if "ownership_class" in columns:
+                insert_columns.append("ownership_class")
+                insert_values.append(
+                    "relation_private" if relation_id else "legacy_unscoped"
+                )
+            placeholders = ", ".join("?" for _ in insert_values)
+            cursor.execute(
+                f"INSERT INTO full_analyses ({', '.join(insert_columns)}) "
+                f"VALUES ({placeholders})",
+                tuple(insert_values),
+            )
 
             self.conn.commit()
             return cursor.lastrowid
-    
-    def get_user_analyses(self, user_id: str) -> List[Dict]:
-        """Retorna anÃ¡lises completas do usuÃ¡rio"""
+
+    def get_user_analyses(self, user_id: str, *, relation_id: Optional[str] = None) -> List[Dict]:
+        """Retorna anÃ¡lises completas do usuÃ¡rio no escopo cognitivo resolvido."""
+        relation_id = self._pattern_scope(user_id, relation_id)
+        scope_sql, scope_params = self._analysis_scope_clause("full_analyses", relation_id)
         cursor = self.conn.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT * FROM full_analyses
-            WHERE user_id = ?
+            WHERE user_id = ?{scope_sql}
             ORDER BY timestamp DESC
-        """, (user_id,))
+        """, (user_id, *scope_params))
         return [dict(row) for row in cursor.fetchall()]
 
     # ========================================

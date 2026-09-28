@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from enum import Enum
 from instance_settings import get_setting_value
 from security_config import proactive_messages_enabled
+from irt_scope import resolve_irt_instance
 
 # ✅ IMPORTS HÍBRIDOS v4.0
 from jung_core import (
@@ -451,10 +452,11 @@ class ProactiveAdvancedSystem:
                 try:
                     cursor.execute("""
                         INSERT INTO detected_fragments
-                            (user_id, fragment_id, intensity, detection_confidence, source_quote, detected_at)
-                        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                            (user_id, agent_instance, fragment_id, intensity, detection_confidence, source_quote, detected_at)
+                        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     """, (
                         user_id,
+                        resolve_irt_instance(),
                         match.fragment_id,
                         match.intensity,
                         match.confidence,
@@ -522,7 +524,17 @@ class ProactiveAdvancedSystem:
             cursor = self.db.conn.cursor()
 
             # Contar fragmentos por domínio
-            cursor.execute("""
+            # C12c3: particao cognitiva (presence-check para bancos nao migrados).
+            has_instance = any(
+                row[1] == "agent_instance"
+                for row in cursor.execute("PRAGMA table_info(detected_fragments)").fetchall()
+            )
+            scope_sql = (
+                " AND (df.agent_instance = ? OR df.agent_instance IS NULL)"
+                if has_instance
+                else ""
+            )
+            query = f"""
                 SELECT
                     f.domain,
                     COUNT(*) as fragment_count,
@@ -531,8 +543,11 @@ class ProactiveAdvancedSystem:
                 FROM detected_fragments df
                 JOIN irt_fragments f ON df.fragment_id = f.fragment_id
                 WHERE df.user_id = ?
+                {scope_sql}
                 GROUP BY f.domain
-            """, (user_id,))
+            """
+            params = [user_id] + ([resolve_irt_instance()] if has_instance else [])
+            cursor.execute(query, tuple(params))
 
             rows = cursor.fetchall()
 
