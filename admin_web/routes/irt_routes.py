@@ -79,6 +79,9 @@ async def irt_dashboard(
     try:
         cursor = _db_manager.conn.cursor()
         # C12c3: org_admin vê apenas as detecções dos usuários da própria org.
+        # C12c3: escopos qualificados — queries com JOIN precisam do alias
+        # (user_id ambíguo com users); tabelas únicas usam o escopo plano.
+        scope_df, params_df = org_user_scope_clause(admin, table_alias="df")
         scope_sql, scope_params = org_user_scope_clause(admin)
         logger.info("🔍 [IRT Dashboard] Iniciando verificação de tabelas...")
 
@@ -143,7 +146,7 @@ async def irt_dashboard(
         # Total de detecções
         logger.info("🔍 [IRT Dashboard] Query 2: COUNT detected_fragments")
         cursor.execute(
-            f"SELECT COUNT(*) FROM detected_fragments WHERE 1=1{scope_sql}", scope_params
+            f"SELECT COUNT(*) FROM detected_fragments df WHERE 1=1{scope_df}", params_df
         )
         row = cursor.fetchone()
         stats["total_detections"] = row[0] if row else 0
@@ -152,8 +155,8 @@ async def irt_dashboard(
         # Usuários únicos com detecções
         logger.info("🔍 [IRT Dashboard] Query 3: COUNT DISTINCT user_id")
         cursor.execute(
-            f"SELECT COUNT(DISTINCT user_id) FROM detected_fragments WHERE 1=1{scope_sql}",
-            scope_params,
+            f"SELECT COUNT(DISTINCT user_id) FROM detected_fragments df WHERE 1=1{scope_df}",
+            params_df,
         )
         row = cursor.fetchone()
         stats["unique_users_with_detections"] = row[0] if row else 0
@@ -165,10 +168,10 @@ async def irt_dashboard(
             SELECT f.domain, COUNT(*) as count
             FROM detected_fragments df
             JOIN irt_fragments f ON df.fragment_id = f.fragment_id
-            WHERE 1=1{scope_sql}
+            WHERE 1=1{scope_df}
             GROUP BY f.domain
             ORDER BY count DESC
-        """, scope_params)
+        """, params_df)
         stats["by_domain"] = {row[0]: row[1] for row in cursor.fetchall()}
         logger.info(f"   → by_domain = {stats['by_domain']}")
 
@@ -182,11 +185,11 @@ async def irt_dashboard(
                 AVG(df.intensity) as avg_intensity
             FROM detected_fragments df
             LEFT JOIN users u ON df.user_id = u.user_id
-            WHERE 1=1{scope_sql}
+            WHERE 1=1{scope_df}
             GROUP BY df.user_id
             ORDER BY fragment_count DESC
             LIMIT 10
-        """, scope_params)
+        """, params_df)
         stats["top_users"] = []
         for row in cursor.fetchall():
             stats["top_users"].append({
@@ -876,7 +879,7 @@ async def get_domain_distribution(
 
     try:
         cursor = _db_manager.conn.cursor()
-        scope_sql, scope_params = org_user_scope_clause(admin)
+        scope_sql, scope_params = org_user_scope_clause(admin, table_alias="df")
 
         cursor.execute(f"""
             SELECT f.domain, COUNT(*) as count

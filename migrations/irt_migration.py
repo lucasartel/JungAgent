@@ -103,23 +103,17 @@ def execute_schema(conn, ctx: MigrationContext):
     if existing_tables:
         log_warning(f"Tabelas já existentes: {', '.join(existing_tables)}")
 
-    # Executar schema (CREATE IF NOT EXISTS é idempotente)
-    try:
-        cursor.executescript(schema_sql)
-        conn.commit()
-        log_info("✅ Schema executado com sucesso")
-    except sqlite3.Error as e:
-        log_error("Erro ao executar schema", e)
-        raise
-
-    # C12c3: adaptar bancos existentes — coluna de particao agent_instance
-    # (CREATE IF NOT EXISTS nao altera tabelas ja criadas).
+    # C12c3: adaptar bancos existentes ANTES do schema — CREATE INDEX do
+    # schema novo referencia agent_instance e falha em tabelas antigas
+    # (CREATE TABLE IF NOT EXISTS nao altera tabelas ja criadas).
     for table_name in (
         "detected_fragments",
         "irt_trait_estimates",
         "facet_scores",
         "psychometric_quality_checks",
     ):
+        if not table_exists(conn, table_name):
+            continue
         columns = {
             row[1]
             for row in cursor.execute(f"PRAGMA table_info({table_name})").fetchall()
@@ -128,6 +122,15 @@ def execute_schema(conn, ctx: MigrationContext):
             cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN agent_instance TEXT")
             log_info(f"C12c3: coluna agent_instance adicionada a {table_name}")
     conn.commit()
+
+    # Executar schema (CREATE IF NOT EXISTS é idempotente)
+    try:
+        cursor.executescript(schema_sql)
+        conn.commit()
+        log_info("✅ Schema executado com sucesso")
+    except sqlite3.Error as e:
+        log_error("Erro ao executar schema", e)
+        raise
 
     # Verificar estado depois
     for table_name, col_count in tables:

@@ -576,7 +576,7 @@ class IRTEngine:
             params.append(resolve_irt_instance())
 
             if domain:
-                query += " AND f.domain = $2"
+                query += f" AND f.domain = ${len(params) + 1}"
                 params.append(domain.value)
 
             if facet_code:

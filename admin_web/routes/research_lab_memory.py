@@ -262,11 +262,13 @@ def _build_memory_metrics_payload(db, admin=None) -> Dict[str, object]:
 
     recent_conversations_30d = 0
     if _sqlite_table_exists(cursor, "conversations"):
-        cursor.execute("""
+        # C12c3: métrica fatiada pela org (não é global).
+        scope_c, params_c = org_user_scope_clause(admin, table_alias="c")
+        cursor.execute(f"""
             SELECT COUNT(*)
-            FROM conversations
-            WHERE timestamp >= datetime('now', '-30 day')
-        """)
+            FROM conversations c
+            WHERE c.timestamp >= datetime('now', '-30 day'){scope_c}
+        """, params_c)
         recent_conversations_30d = int(cursor.fetchone()[0] or 0)
 
     chroma_documents = None
@@ -319,4 +321,3 @@ def _build_memory_metrics_payload(db, admin=None) -> Dict[str, object]:
         },
         "users": users,
     }
-

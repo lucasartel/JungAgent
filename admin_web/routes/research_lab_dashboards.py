@@ -32,10 +32,15 @@ async def memory_metrics_dashboard(
     if format == "facts":
         if not user_id:
             return JSONResponse({"error": "user_id é obrigatório"}, status_code=400)
-        # C12c3: org_admin só acessa usuários da própria org.
+        # C12c3: fatos pessoais individuais (incluindo memórias) exigem visão
+        # master — o vínculo de org não comprova autorização para esse conteúdo.
+        if (admin or {}).get("role") != "master":
+            return JSONResponse(
+                {"error": "personal_facts_require_master"}, status_code=403
+            )
         from admin_web.auth.middleware import verify_user_access
 
-        verify_user_access(admin or {}, user_id)
+        verify_user_access(admin, user_id)
         return JSONResponse(_fetch_user_memory_detail(db, user_id))
 
     initial_data = _build_memory_metrics_payload(db, admin)
