@@ -21,53 +21,59 @@ from typing import Dict, Optional, Tuple
 
 PURGE_RELATION_COLUMN = "origin_relation_id"
 
-# Campos de conteudo por tabela. ``''`` aparece apenas onde a coluna e
-# NOT NULL (attachments), em que NULL nao e aceito pelo schema.
-_PURGE_FIELDS: Dict[str, Dict[str, str]] = {
-    "work_briefs": {
-        "objective": "NULL",
-        "raw_input": "NULL",
-        "extracted_json": "NULL",
-        "source_seed": "NULL",
-        "title_hint": "NULL",
-        "notes": "NULL",
-    },
-    "work_runs": {
-        "input_summary": "NULL",
-        "output_summary": "NULL",
-    },
-    "work_artifacts": {
-        "title": "NULL",
-        "excerpt": "NULL",
-        "body": "NULL",
-        "provider_payload_json": "NULL",
-        "editorial_note": "NULL",
-    },
-    "work_delivery_events": {
-        "response_json": "NULL",
-        "error_message": "NULL",
-    },
-    "work_experience_events": {
-        "summary": "NULL",
-        "metadata_json": "NULL",
-    },
-    "work_projects": {
-        "description": "NULL",
-        "directive": "NULL",
-        "editorial_policy": "NULL",
-        "seo_policy": "NULL",
-    },
-    "work_project_attachments": {
-        "filename": "''",
-        "stored_path": "''",
-        "extracted_text": "NULL",
-    },
+# Campos de conteudo por tabela. O substituto e calculado por PRAGMA
+# ``notnull``: coluna NOT NULL recebe ``''`` (o schema real exige em
+# work_briefs.objective e work_experience_events.summary — NULL dava
+# IntegrityError, P1 da revisao do PR #48); as demais recebem NULL.
+_PURGE_FIELDS: Dict[str, list] = {
+    "work_briefs": [
+        "objective",
+        "raw_input",
+        "extracted_json",
+        "source_seed",
+        "title_hint",
+        "notes",
+        "admin_telegram_id",
+    ],
+    "work_runs": [
+        "input_summary",
+        "output_summary",
+        "metrics_json",
+        "errors_json",
+        "autonomy_decision_json",
+    ],
+    "work_artifacts": [
+        "title",
+        "excerpt",
+        "body",
+        "slug",
+        "tags_json",
+        "categories_json",
+        "cta",
+        "editorial_note",
+        "provider_payload_json",
+    ],
+    "work_delivery_events": ["response_json", "error_message"],
+    "work_experience_events": ["summary", "metadata_json"],
+    "work_projects": ["description", "directive", "editorial_policy", "seo_policy"],
+    "work_project_attachments": ["filename", "stored_path", "extracted_text"],
 }
 
 
 def _table_columns(cursor: sqlite3.Cursor, table: str) -> set:
     cursor.execute(f"PRAGMA table_info({table})")
     return {row[1] for row in cursor.fetchall()}
+
+
+def _notnull_columns(cursor: sqlite3.Cursor, table: str) -> set:
+    """Colunas NOT NULL do schema real (row[3] do PRAGMA table_info)."""
+    cursor.execute(f"PRAGMA table_info({table})")
+    return {row[1] for row in cursor.fetchall() if row[3]}
+
+
+def _replacement_for(field: str, notnull: set) -> str:
+    # NOT NULL nao aceita NULL: redige para string vazia.
+    return "''" if field in notnull else "NULL"
 
 
 def _table_exists(cursor: sqlite3.Cursor, table: str) -> bool:
@@ -82,16 +88,42 @@ def _data_root() -> Path:
     return Path(__file__).resolve().parents[1] / "data"
 
 
+def _allowed_file_roots() -> list:
+    """Raizes de anexo conhecidas onde o expurgo pode apagar (C12c4).
+
+    O Work grava em ``$RAILWAY_VOLUME_MOUNT_PATH/work_attachments`` (ou
+    ``/data/work_attachments``) em producao — aceitar apenas ``data/`` do
+    repo deixava o arquivo fisico de pe apos o expurgo (P1 do PR #48).
+    Qualquer outro caminho continua bloqueado.
+    """
+    roots = [_data_root()]
+    volume = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+    if volume:
+        roots.append(Path(volume) / "work_attachments")
+    if Path("/data").exists():
+        roots.append(Path("/data/work_attachments"))
+    resolved = []
+    for root in roots:
+        try:
+            resolved.append(root.resolve())
+        except OSError:
+            continue
+    return resolved
+
+
 def _remove_attached_files(paths) -> int:
-    """Remove arquivos fisicos SOB data/ (guarda contra path arbitrario)."""
+    """Remove arquivos fisicos sob raizes conhecidas do Work (guarda contra
+    path arbitrario mantida: nada fora de data/ ou do volume de anexos)."""
     removed = 0
-    root = _data_root().resolve()
+    roots = _allowed_file_roots()
     for raw in paths:
         if not raw:
             continue
         try:
             candidate = Path(raw).resolve()
-            if candidate != root and root not in candidate.parents:
+            if not any(
+                candidate == root or root in candidate.parents for root in roots
+            ):
                 continue
             if candidate.is_file():
                 candidate.unlink()
@@ -139,10 +171,12 @@ def purge_work_for_relation(
         columns = _table_columns(cursor, table)
         if PURGE_RELATION_COLUMN not in columns:
             continue
+        notnull = _notnull_columns(cursor, table)
         table_changes = 0
-        for field, replacement in fields.items():
+        for field in fields:
             if field not in columns:
                 continue
+            replacement = _replacement_for(field, notnull)
             if replacement == "NULL":
                 predicate = f"{field} IS NOT NULL"
             else:
@@ -156,6 +190,13 @@ def purge_work_for_relation(
         if table_changes:
             counts[table] = counts.get(table, 0) + table_changes
 
+    # Fragmentos ruminares derivados das experiences expurgadas: o
+    # record_work_experience copia o summary para rumination_fragments —
+    # redigir so a experience deixaria o conteudo vivo em outra tabela.
+    fragment_changes = _purge_linked_fragments(cursor, relation_id)
+    if fragment_changes:
+        counts["rumination_fragments"] = fragment_changes
+
     files_removed = _remove_attached_files(file_paths) if remove_files else 0
     if files_removed:
         counts["files_removed"] = files_removed
@@ -163,6 +204,44 @@ def purge_work_for_relation(
     _audit_purge(conn, relation_id, counts)
     conn.commit()
     return counts
+
+
+def _linked_fragment_ids(cursor: sqlite3.Cursor, relation_id: str) -> bool:
+    """True quando ha ligacao experience -> fragmento para expurgar."""
+    if not _table_exists(cursor, "work_experience_events"):
+        return False
+    exp_cols = _table_columns(cursor, "work_experience_events")
+    if PURGE_RELATION_COLUMN not in exp_cols or "rumination_fragment_id" not in exp_cols:
+        return False
+    if not _table_exists(cursor, "rumination_fragments"):
+        return False
+    return "content" in _table_columns(cursor, "rumination_fragments")
+
+
+def _purge_linked_fragments(cursor: sqlite3.Cursor, relation_id: str) -> int:
+    if not _linked_fragment_ids(cursor, relation_id):
+        return 0
+    cursor.execute(
+        "UPDATE rumination_fragments SET content = '' "
+        "WHERE content IS NOT NULL AND content <> '' AND id IN ("
+        "SELECT rumination_fragment_id FROM work_experience_events "
+        "WHERE origin_relation_id = ? AND rumination_fragment_id IS NOT NULL)",
+        (relation_id,),
+    )
+    return cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+
+
+def _count_linked_fragments(cursor: sqlite3.Cursor, relation_id: str) -> int:
+    if not _linked_fragment_ids(cursor, relation_id):
+        return 0
+    cursor.execute(
+        "SELECT COUNT(*) FROM rumination_fragments "
+        "WHERE content IS NOT NULL AND content <> '' AND id IN ("
+        "SELECT rumination_fragment_id FROM work_experience_events "
+        "WHERE origin_relation_id = ? AND rumination_fragment_id IS NOT NULL)",
+        (relation_id,),
+    )
+    return int(cursor.fetchone()[0])
 
 
 def _audit_purge(conn: sqlite3.Connection, relation_id: str, counts: Dict[str, int]) -> None:
@@ -221,10 +300,12 @@ def verify_work_purge(conn: sqlite3.Connection, relation_id: str) -> Dict[str, D
         columns = _table_columns(cursor, table)
         if PURGE_RELATION_COLUMN not in columns:
             continue
+        notnull = _notnull_columns(cursor, table)
         table_remaining: Dict[str, int] = {}
-        for field, replacement in fields.items():
+        for field in fields:
             if field not in columns:
                 continue
+            replacement = _replacement_for(field, notnull)
             if replacement == "NULL":
                 predicate = f"{field} IS NOT NULL"
             else:
@@ -235,8 +316,13 @@ def verify_work_purge(conn: sqlite3.Connection, relation_id: str) -> Dict[str, D
                 (relation_id,),
             )
             table_remaining[field] = int(cursor.fetchone()[0])
-        if table_remaining:
+        # So tabelas com alguma conteudo remanescente entram no resultado
+        # ({campo: 0} nao conta — schema completo teria todas as tabelas).
+        if any(table_remaining.values()):
             remaining[table] = table_remaining
+    fragment_remaining = _count_linked_fragments(cursor, relation_id)
+    if fragment_remaining:
+        remaining["rumination_fragments"] = {"content": fragment_remaining}
     return remaining
 
 

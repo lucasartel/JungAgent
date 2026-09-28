@@ -403,6 +403,7 @@ Responda APENAS em JSON com:
         extracted: Optional[Dict[str, Any]] = None,
         project_id: Optional[int] = None,
         action_type: str = "create_content",
+        origin_relation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         cursor = self.db.conn.cursor()
         cursor.execute(
@@ -430,7 +431,7 @@ Responda APENAS em JSON com:
                 notes,
                 raw_input,
                 json.dumps(extracted or {}, ensure_ascii=False),
-                *tenancy_insert_values(self.db),
+                *tenancy_insert_values(self.db, origin_relation_id=origin_relation_id),
                 _now_iso(),
                 _now_iso(),
             ),

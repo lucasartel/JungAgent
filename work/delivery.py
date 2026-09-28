@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any, Dict, Optional
 
 from work.common import _json_loads_maybe, _now_iso, _slugify
@@ -23,6 +24,30 @@ class WorkDeliveryMixin:
         error_message: str = "",
     ):
         cursor = self.db.conn.cursor()
+        # Heranca de origem (C12c4): a entrega deriva do artifact/brief —
+        # a Relation do brief propagada sem depender de cada chamador.
+        origin_relation_id = None
+        try:
+            cursor.execute("PRAGMA table_info(work_artifacts)")
+            artifact_cols = {row[1] for row in cursor.fetchall()}
+            if "origin_relation_id" in artifact_cols and artifact_id:
+                row = cursor.execute(
+                    "SELECT origin_relation_id FROM work_artifacts WHERE id = ?",
+                    (artifact_id,),
+                ).fetchone()
+                origin_relation_id = row[0] if row else None
+            if origin_relation_id is None and ticket_id:
+                cursor.execute("PRAGMA table_info(work_approval_tickets)")
+                ticket_cols = {row[1] for row in cursor.fetchall()}
+                if "origin_relation_id" in ticket_cols:
+                    row = cursor.execute(
+                        "SELECT origin_relation_id FROM work_approval_tickets "
+                        "WHERE id = ?",
+                        (ticket_id,),
+                    ).fetchone()
+                    origin_relation_id = row[0] if row else None
+        except sqlite3.Error:
+            origin_relation_id = None
         cursor.execute(
             f"""
             INSERT INTO work_delivery_events (
@@ -42,7 +67,9 @@ class WorkDeliveryMixin:
                 external_url,
                 json.dumps(response or {}, ensure_ascii=False),
                 error_message,
-                *tenancy_insert_values(self.db),
+                *tenancy_insert_values(
+                    self.db, origin_relation_id=origin_relation_id
+                ),
                 _now_iso(),
             ),
         )

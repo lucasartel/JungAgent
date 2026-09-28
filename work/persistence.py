@@ -47,7 +47,9 @@ class WorkPersistenceMixin:
                     },
                     ensure_ascii=False,
                 ),
-                *tenancy_insert_values(self.db),
+                *tenancy_insert_values(
+                    self.db, origin_relation_id=brief.get("origin_relation_id")
+                ),
                 _now_iso(),
                 _now_iso(),
             ),
@@ -109,7 +111,9 @@ class WorkPersistenceMixin:
                 json.dumps(package["categories"], ensure_ascii=False), package["cta"],
                 package["editorial_note"], brief["voice_mode"], brief["content_type"],
                 json.dumps({"provider_key": None, "action_type": "reading", "package": package}, ensure_ascii=False),
-                *tenancy_insert_values(self.db),
+                *tenancy_insert_values(
+                    self.db, origin_relation_id=brief.get("origin_relation_id")
+                ),
                 _now_iso(), _now_iso(),
             ),
         )
@@ -313,7 +317,9 @@ class WorkPersistenceMixin:
                     },
                     ensure_ascii=False,
                 ),
-                *tenancy_insert_values(self.db),
+                *tenancy_insert_values(
+                    self.db, origin_relation_id=brief.get("origin_relation_id")
+                ),
                 _now_iso(),
                 _now_iso(),
             ),
@@ -432,7 +438,10 @@ class WorkPersistenceMixin:
             """,
             (
                 brief_id, artifact_id, destination_id, project_id, action, requested_by,
-                *tenancy_insert_values(self.db),
+                *tenancy_insert_values(
+                    self.db,
+                    origin_relation_id=brief.get("origin_relation_id") if brief else None,
+                ),
                 _now_iso(),
             ),
         )
