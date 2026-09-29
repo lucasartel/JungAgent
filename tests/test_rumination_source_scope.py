@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from instance_config import AGENT_INSTANCE
 from work.engine import WorkEngine
+from work.tenancy import apply_work_tenancy
 
 
 def _connection():
@@ -28,6 +29,7 @@ def _connection():
             source_table TEXT, source_id TEXT, source_metadata_json TEXT
         );
     """)
+    apply_work_tenancy(conn)
     return conn
 
 

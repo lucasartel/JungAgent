@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 from typing import Any, Dict, List, Optional
 
@@ -28,6 +29,7 @@ from work.destinations import WorkDestinationRegistry
 from work.github_work import GitHubWorkMixin
 from work.package_builder import WorkPackageBuilderMixin
 from work.persistence import WorkPersistenceMixin
+from work.tenancy import resolve_work_tenancy, tenancy_insert_columns, tenancy_insert_placeholders
 from work.projects import WorkProjectMixin
 from work.providers import DEFAULT_PROVIDER_SPECS, GitHubSkill, WordPressSkill
 
@@ -138,6 +140,45 @@ class WorkEngine(
         }
         return mapping.get(event_type, "work_experience")
 
+    def _origin_relation_from_source(
+        self, source_table: str, source_id: Any
+    ) -> Optional[str]:
+        """Heranca de origem do registro fonte (brief/artifact/...) (C12c4).
+
+        Sem isto, o evento de experiencia nascia sem escopo quando o chamador
+        esquecia o `origin_relation_id` — o resumo (que pode conter o
+        objective) escapava do expurgo por Relation (P1 da revisao do PR #48).
+        Fail-closed: tabela desconhecida, coluna ausente ou linha sem carimbo
+        -> None (origem nao classificada).
+        """
+        if source_id is None or not source_table:
+            return None
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(source_table)):
+            return None
+        # `source_id` pode ser composto (ex.: "42:idea:1" em eventos de
+        # leitura, persistence.py) — a raiz numerica e o id do artefato pai.
+        candidates = [str(source_id)]
+        root = re.match(r"^(\d+)(?::|$)", str(source_id))
+        if root and root.group(1) != candidates[0]:
+            candidates.append(root.group(1))
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute(f"PRAGMA table_info({source_table})")
+            columns = {row[1] for row in cursor.fetchall()}
+            if "origin_relation_id" not in columns:
+                return None
+            for candidate in candidates:
+                cursor.execute(
+                    f"SELECT origin_relation_id FROM {source_table} WHERE id = ?",
+                    (candidate,),
+                )
+                row = cursor.fetchone()
+                if row is not None:
+                    return row[0] if row[0] else None
+            return None
+        except sqlite3.Error:
+            return None
+
     def record_work_experience(
         self,
         event_type: str,
@@ -149,6 +190,7 @@ class WorkEngine(
         metadata: Optional[Dict[str, Any]] = None,
         emotional_weight: float = 0.55,
         tension_level: float = 0.35,
+        origin_relation_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         summary = (summary or "").strip()
         if not summary:
@@ -156,14 +198,21 @@ class WorkEngine(
 
         event_key = f"{event_type}:{source_table}:{source_id}:{project_id or ''}"
         metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
+        if not origin_relation_id:
+            origin_relation_id = self._origin_relation_from_source(
+                source_table, source_id
+            )
+        # Classificacao real de origem (C12c4): nasce da Relation explicita
+        # (se houver) e jamais do admin que disparou o run.
+        tenancy = resolve_work_tenancy(self.db, origin_relation_id=origin_relation_id)
         cursor = self.db.conn.cursor()
         try:
             cursor.execute(
-                """
+                f"""
                 INSERT OR IGNORE INTO work_experience_events (
                     event_key, project_id, event_type, summary, source_table, source_id,
-                    source_kind, metadata_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    source_kind, metadata_json, {tenancy_insert_columns()}, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, {tenancy_insert_placeholders()}, ?)
                 """,
                 (
                     event_key,
@@ -174,6 +223,10 @@ class WorkEngine(
                     str(source_id) if source_id is not None else None,
                     source_kind,
                     metadata_json,
+                    tenancy["org_id"],
+                    tenancy["agent_instance"],
+                    tenancy["origin_class"],
+                    tenancy["origin_relation_id"],
                     _now_iso(),
                 ),
             )
@@ -186,17 +239,22 @@ class WorkEngine(
             event_id = cursor.lastrowid
             fragment_id = None
             try:
+                fragment_metadata = dict(metadata or {})
+                if tenancy.get("origin_class"):
+                    fragment_metadata["work_origin_class"] = tenancy["origin_class"]
+                fragment_metadata_json = json.dumps(fragment_metadata, ensure_ascii=False)
                 cursor.execute(
                     """
                     INSERT INTO rumination_fragments (
                         user_id, agent_instance, relation_id, fragment_type, content, context,
                         source_conversation_id, source_quote, emotional_weight, tension_level,
                         source_kind, source_table, source_id, source_metadata_json
-                    ) VALUES (?, ?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         self.admin_user_id,
                         getattr(self.db, "agent_instance", None) or AGENT_INSTANCE,
+                        tenancy["origin_relation_id"],
                         self._fragment_type_for_work_event(event_type),
                         summary,
                         f"Experiencia de trabalho: {event_type}",
@@ -206,7 +264,7 @@ class WorkEngine(
                         source_kind,
                         source_table or "work_experience_events",
                         str(source_id) if source_id is not None else str(event_id),
-                        metadata_json,
+                        fragment_metadata_json,
                     ),
                 )
                 fragment_id = cursor.lastrowid

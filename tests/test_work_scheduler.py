@@ -11,6 +11,8 @@ Covers:
 """
 from __future__ import annotations
 
+from work.tenancy import apply_work_tenancy
+
 import importlib.util
 import json
 import sqlite3
@@ -153,6 +155,7 @@ class _WorkTestDB:
             );
             """
         )
+        apply_work_tenancy(self.conn)
         self.conn.commit()
 
     # --- WorkProjectMixin methods (minimal stubs) ---

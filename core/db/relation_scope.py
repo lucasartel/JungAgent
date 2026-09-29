@@ -238,8 +238,9 @@ def personal_scope_clause(
     (diagnosticos e exports do research lab, diario/entrega). Cada linha
     retornada DEVE ser rotulada com o escopo real (``relation`` /
     ``no_relation``): ``relation_id IS NULL`` nao comprova origem global —
-    pode ser material de origem nao classificada (work_reading/work, cuja
-    classificacao real chega no C4). Nunca use em fluxos cross-Relation
+    pode ser material de origem nao classificada (work_reading/work — o
+    origin_class do tenancy Work existe desde o C12c4; NULL segue sem
+    classificar). Nunca use em fluxos cross-Relation
     (blog, Will, consolidacao de identidade) — ai vale a quarentena estrita.
 
     ``relation_id`` deve vir ja verificado (ex. ``resolve_relation_query_scope``);

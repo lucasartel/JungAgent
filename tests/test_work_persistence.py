@@ -179,6 +179,17 @@ def _create_schema(conn: sqlite3.Connection) -> None:
     )
     conn.commit()
 
+    # C12c4: schema legado passa pela migracao aditiva de tenancy, como um
+    # banco de producao anterior as colunas de origem.
+    from work.tenancy import WorkTenancyDatabaseMixin
+
+    class _TenancyHolder(WorkTenancyDatabaseMixin):
+        def __init__(self, connection: sqlite3.Connection) -> None:
+            self.conn = connection
+
+    _TenancyHolder(conn)._init_work_tenancy_schema()
+    conn.commit()
+
 
 def _seed_brief(conn: sqlite3.Connection) -> None:
     conn.execute("INSERT INTO work_projects (id, name) VALUES (10, 'Projeto')")

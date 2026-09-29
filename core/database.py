@@ -35,6 +35,7 @@ from core.db.semantic_memory import SemanticMemoryDatabaseMixin
 from core.db.users import UserDatabaseMixin
 from core.db.working_memory import WorkingMemoryDatabaseMixin
 from core.db.work_tasks import WorkTaskDatabaseMixin
+from work.tenancy import WorkTenancyDatabaseMixin
 from core.db.meta_cognition import MetaCognitionDatabaseMixin
 from core.db.symbolic_graph import SymbolicGraphDatabaseMixin
 from core.db.theory_of_mind import TheoryOfMindDatabaseMixin
@@ -71,6 +72,7 @@ class HybridDatabaseManager(
     WillPhaseArbitrationDatabaseMixin,
     ActionProposalDatabaseMixin,
     WorkTaskDatabaseMixin,
+    WorkTenancyDatabaseMixin,
     PsychometricsDatabaseMixin,
     MetaCognitionDatabaseMixin,
     SymbolicGraphDatabaseMixin,

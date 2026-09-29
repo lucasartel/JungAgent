@@ -4,6 +4,7 @@ import sqlite3
 from typing import Any, Dict, List
 
 from work.autonomy import WorkAutonomyMixin
+from work.tenancy import apply_work_tenancy
 
 
 class _DB:
@@ -111,6 +112,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    apply_work_tenancy(conn)
     conn.commit()
 
 

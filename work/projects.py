@@ -13,6 +13,7 @@ from work.common import (
     _now_iso,
     _slugify,
 )
+from work.tenancy import tenancy_insert_columns, tenancy_insert_placeholders, tenancy_insert_values
 
 
 class WorkProjectMixin:
@@ -130,12 +131,13 @@ class WorkProjectMixin:
         project_key = self._unique_project_key(name)
         cursor = self.db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             INSERT INTO work_projects (
                 project_key, name, description, directive, status, priority,
                 default_destination_id, allowed_skills_json, editorial_policy,
-                seo_policy, autonomy_policy_json, daily_action_limit, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                seo_policy, autonomy_policy_json, daily_action_limit,
+                {tenancy_insert_columns()}, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {tenancy_insert_placeholders()}, ?, ?)
             """,
             (
                 project_key,
@@ -156,6 +158,7 @@ class WorkProjectMixin:
                     ensure_ascii=False,
                 ),
                 int(daily_action_limit or 3),
+                *tenancy_insert_values(self.db),
                 _now_iso(),
                 _now_iso(),
             ),

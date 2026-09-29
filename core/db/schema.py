@@ -1433,5 +1433,12 @@ class SchemaDatabaseMixin:
             "ON work_project_attachments(project_id)"
         )
 
+        # C12c4: a migracao de tenancy DEPOIS de TODAS as tabelas work —
+        # work_project_attachments e criada aqui embaixo; aplicada antes,
+        # um banco novo ficaria sem as colunas de origem nos anexos e o
+        # INSERT carimbado falharia (P1 da revisao do PR #48).
+        if hasattr(self, "_init_work_tenancy_schema"):
+            self._init_work_tenancy_schema()
+
         self.conn.commit()
         logger.info("âœ… Schema SQLite criado/verificado com Ã­ndices de performance")
