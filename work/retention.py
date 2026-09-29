@@ -206,42 +206,72 @@ def purge_work_for_relation(
     return counts
 
 
-def _linked_fragment_ids(cursor: sqlite3.Cursor, relation_id: str) -> bool:
-    """True quando ha ligacao experience -> fragmento para expurgar."""
+# Campos de conteudo do fragmento ruminal ligado a experiences expurgadas.
+# O engine grava o summary em `content` E em `source_quote` ([:500]) —
+# limpar so `content` deixava texto relacional vivo com verify reportando
+# sucesso (P1 da revisao do PR #48). `source_metadata_json` pode carregar
+# titulo/payload derivados.
+_FRAGMENT_CONTENT_FIELDS = ("content", "source_quote", "source_metadata_json")
+
+
+def _fragment_content_fields(cursor: sqlite3.Cursor) -> list:
+    """Campos de conteudo do fragmento presentes (com ligacao valida)."""
     if not _table_exists(cursor, "work_experience_events"):
-        return False
+        return []
     exp_cols = _table_columns(cursor, "work_experience_events")
     if PURGE_RELATION_COLUMN not in exp_cols or "rumination_fragment_id" not in exp_cols:
-        return False
+        return []
     if not _table_exists(cursor, "rumination_fragments"):
-        return False
-    return "content" in _table_columns(cursor, "rumination_fragments")
+        return []
+    frag_cols = _table_columns(cursor, "rumination_fragments")
+    return [field for field in _FRAGMENT_CONTENT_FIELDS if field in frag_cols]
 
 
 def _purge_linked_fragments(cursor: sqlite3.Cursor, relation_id: str) -> int:
-    if not _linked_fragment_ids(cursor, relation_id):
+    fields = _fragment_content_fields(cursor)
+    if not fields:
         return 0
-    cursor.execute(
-        "UPDATE rumination_fragments SET content = '' "
-        "WHERE content IS NOT NULL AND content <> '' AND id IN ("
-        "SELECT rumination_fragment_id FROM work_experience_events "
-        "WHERE origin_relation_id = ? AND rumination_fragment_id IS NOT NULL)",
-        (relation_id,),
-    )
-    return cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+    notnull = _notnull_columns(cursor, "rumination_fragments")
+    changes = 0
+    for field in fields:
+        replacement = _replacement_for(field, notnull)
+        if replacement == "NULL":
+            predicate = f"{field} IS NOT NULL"
+        else:
+            predicate = f"{field} IS NOT NULL AND {field} <> {replacement}"
+        cursor.execute(
+            f"UPDATE rumination_fragments SET {field} = {replacement} "
+            f"WHERE id IN ("
+            f"SELECT rumination_fragment_id FROM work_experience_events "
+            f"WHERE origin_relation_id = ? AND rumination_fragment_id IS NOT NULL) "
+            f"AND {predicate}",
+            (relation_id,),
+        )
+        changes += cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+    return changes
 
 
-def _count_linked_fragments(cursor: sqlite3.Cursor, relation_id: str) -> int:
-    if not _linked_fragment_ids(cursor, relation_id):
-        return 0
-    cursor.execute(
-        "SELECT COUNT(*) FROM rumination_fragments "
-        "WHERE content IS NOT NULL AND content <> '' AND id IN ("
-        "SELECT rumination_fragment_id FROM work_experience_events "
-        "WHERE origin_relation_id = ? AND rumination_fragment_id IS NOT NULL)",
-        (relation_id,),
-    )
-    return int(cursor.fetchone()[0])
+def _count_linked_fragments(cursor: sqlite3.Cursor, relation_id: str) -> Dict[str, int]:
+    fields = _fragment_content_fields(cursor)
+    if not fields:
+        return {}
+    notnull = _notnull_columns(cursor, "rumination_fragments")
+    remaining: Dict[str, int] = {}
+    for field in fields:
+        replacement = _replacement_for(field, notnull)
+        if replacement == "NULL":
+            predicate = f"{field} IS NOT NULL"
+        else:
+            predicate = f"{field} IS NOT NULL AND {field} <> {replacement}"
+        cursor.execute(
+            f"SELECT COUNT(*) FROM rumination_fragments WHERE id IN ("
+            f"SELECT rumination_fragment_id FROM work_experience_events "
+            f"WHERE origin_relation_id = ? AND rumination_fragment_id IS NOT NULL) "
+            f"AND {predicate}",
+            (relation_id,),
+        )
+        remaining[field] = int(cursor.fetchone()[0])
+    return remaining
 
 
 def _audit_purge(conn: sqlite3.Connection, relation_id: str, counts: Dict[str, int]) -> None:
@@ -321,8 +351,8 @@ def verify_work_purge(conn: sqlite3.Connection, relation_id: str) -> Dict[str, D
         if any(table_remaining.values()):
             remaining[table] = table_remaining
     fragment_remaining = _count_linked_fragments(cursor, relation_id)
-    if fragment_remaining:
-        remaining["rumination_fragments"] = {"content": fragment_remaining}
+    if any(fragment_remaining.values()):
+        remaining["rumination_fragments"] = fragment_remaining
     return remaining
 
 

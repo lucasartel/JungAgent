@@ -246,6 +246,64 @@ def test_anexo_no_volume_do_railway_e_removido(monkeypatch, tmp_path):
     assert verify_work_purge(db.conn, "rel-1") == {}
 
 
+def test_evento_brief_created_e_fragmento_herdam_a_relation():
+    """Evento derivado e fragmento ruminal carimbados e expurgados (P1s)."""
+    from work.retention import purge_work_for_relation, verify_work_purge
+
+    db = _real_schema_db()
+    _ensure_fragment_table(db.conn)
+    engine = _engine(db)
+
+    brief = engine.create_brief(
+        origin="manual",
+        trigger_source="relation_event",
+        destination_id=None,
+        objective="Objetivo sensível que aparece no resumo do evento",
+        voice_mode="endojung",
+        delivery_mode="draft",
+        origin_relation_id="rel-1",
+    )
+
+    # P1-A: o evento brief_created nasce com o carimbo da Relation.
+    event = db.conn.execute(
+        "SELECT * FROM work_experience_events "
+        "WHERE event_type = 'brief_created' AND source_id = ?",
+        (str(brief["id"]),),
+    ).fetchone()
+    assert event is not None
+    assert event["origin_relation_id"] == "rel-1"
+    assert event["origin_class"] == "relation_scoped"
+    assert "Objetivo sensível" in (event["summary"] or "")
+
+    # P1-B: o fragmento recebe o MESMO texto em content e source_quote.
+    fragment = db.conn.execute(
+        "SELECT * FROM rumination_fragments WHERE id = ?",
+        (event["rumination_fragment_id"],),
+    ).fetchone()
+    assert fragment is not None
+    assert fragment["relation_id"] == "rel-1"
+    assert "Objetivo sensível" in (fragment["content"] or "")
+    assert "Objetivo sensível" in (fragment["source_quote"] or "")
+
+    counts = purge_work_for_relation(db.conn, "rel-1")
+    assert counts.get("work_briefs", 0) >= 1
+    assert counts.get("rumination_fragments", 0) >= 1
+    assert verify_work_purge(db.conn, "rel-1") == {}
+
+    event_after = db.conn.execute(
+        "SELECT summary FROM work_experience_events WHERE id = ?", (event["id"],)
+    ).fetchone()
+    assert (event_after["summary"] or "") == ""
+    fragment_after = db.conn.execute(
+        "SELECT content, source_quote, source_metadata_json "
+        "FROM rumination_fragments WHERE id = ?",
+        (fragment["id"],),
+    ).fetchone()
+    assert (fragment_after["content"] or "") == ""
+    assert (fragment_after["source_quote"] or "") == ""
+    assert (fragment_after["source_metadata_json"] or "") == ""
+
+
 def test_fluxo_relation_brief_run_artifact_expurgo():
     """Fluxo completo: origem propagada do brief ao artifact e limpa depois."""
     from work.retention import purge_work_for_relation, verify_work_purge
@@ -334,18 +392,22 @@ def test_fluxo_relation_brief_run_artifact_expurgo():
     ).fetchone()
     assert row["objective"] == ""
     assert row["origin_relation_id"] == "rel-1"
-    fragments_alive = db.conn.execute(
+    copies_alive = db.conn.execute(
         """
         SELECT COUNT(*) FROM rumination_fragments
-        WHERE content IS NOT NULL AND content <> ''
-          AND id IN (
+        WHERE id IN (
               SELECT rumination_fragment_id FROM work_experience_events
               WHERE origin_relation_id = ? AND rumination_fragment_id IS NOT NULL
+          )
+          AND (
+              (content IS NOT NULL AND content <> '')
+              OR (source_quote IS NOT NULL AND source_quote <> '')
+              OR (source_metadata_json IS NOT NULL AND source_metadata_json <> '')
           )
         """,
         ("rel-1",),
     ).fetchone()[0]
-    assert fragments_alive == 0
+    assert copies_alive == 0
 
     control_row = db.conn.execute(
         "SELECT objective FROM work_briefs WHERE id = ?", (control["id"],)

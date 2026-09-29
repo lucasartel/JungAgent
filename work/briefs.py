@@ -447,6 +447,7 @@ Responda APENAS em JSON com:
             metadata={"origin": origin, "action_type": action_type, "destination_id": destination_id},
             emotional_weight=0.5,
             tension_level=0.35,
+            origin_relation_id=origin_relation_id,
         )
         return brief
 
