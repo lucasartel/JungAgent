@@ -1453,9 +1453,20 @@ class AgentIdentityContextBuilder:
 
     def _get_work_autobiography(self, cursor) -> Optional[Dict[str, Any]]:
         try:
+            from core.db.relation_scope import legacy_quarantine_clause
+
+            project_scope, project_scope_params = legacy_quarantine_clause(
+                cursor, table="work_projects", relation_column="origin_relation_id", prefix="p."
+            )
+            artifact_scope, artifact_scope_params = legacy_quarantine_clause(
+                cursor, table="work_artifacts", relation_column="origin_relation_id", prefix="a."
+            )
+            event_scope, event_scope_params = legacy_quarantine_clause(
+                cursor, table="work_experience_events", relation_column="origin_relation_id", prefix="e."
+            )
             projects = self._fetch_dict_rows(
                 cursor,
-                """
+                f"""
                 SELECT
                     p.id,
                     p.name,
@@ -1467,14 +1478,15 @@ class AgentIdentityContextBuilder:
                     d.base_url
                 FROM work_projects p
                 LEFT JOIN work_destinations d ON d.id = p.default_destination_id
-                WHERE p.status = 'active'
+                WHERE p.status = 'active'{project_scope}
                 ORDER BY p.priority DESC, p.updated_at DESC, p.id DESC
                 LIMIT 6
                 """,
+                (*project_scope_params,),
             )
             recent_artifacts = self._fetch_dict_rows(
                 cursor,
-                """
+                f"""
                 SELECT
                     a.title,
                     a.status,
@@ -1487,14 +1499,15 @@ class AgentIdentityContextBuilder:
                 FROM work_artifacts a
                 LEFT JOIN work_projects p ON p.id = a.project_id
                 LEFT JOIN work_destinations d ON d.id = a.destination_id
-                WHERE a.status IN ('draft_created', 'published', 'composed')
+                WHERE a.status IN ('draft_created', 'published', 'composed'){artifact_scope}
                 ORDER BY a.updated_at DESC, a.id DESC
                 LIMIT 5
                 """,
+                (*artifact_scope_params,),
             )
             recent_events = self._fetch_dict_rows(
                 cursor,
-                """
+                f"""
                 SELECT
                     e.event_type,
                     e.summary,
@@ -1508,10 +1521,11 @@ class AgentIdentityContextBuilder:
                     'artifact_composed',
                     'github_pr_opened_expression',
                     'github_pr_opened_responsibility'
-                )
+                ){event_scope}
                 ORDER BY e.created_at DESC, e.id DESC
                 LIMIT 5
                 """,
+                (*event_scope_params,),
             )
         except Exception:
             return None

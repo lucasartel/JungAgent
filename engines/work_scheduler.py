@@ -327,16 +327,21 @@ class WorkScheduler:
     def get_assimilated_reading_context(self, limit: int = 3) -> str:
         """Return recent source-grounded knowledge for the agent's live context."""
         cursor = self.db.conn.cursor()
+        from core.db.relation_scope import legacy_quarantine_clause
+
+        artifact_scope, artifact_scope_params = legacy_quarantine_clause(
+            cursor, table="work_artifacts", relation_column="origin_relation_id", prefix="a."
+        )
         cursor.execute(
-            """
+            f"""
             SELECT a.provider_payload_json, p.name AS project_name
             FROM work_artifacts a
             LEFT JOIN work_projects p ON p.id = a.project_id
-            WHERE a.status = 'assimilated' AND a.content_type = 'reading_note'
+            WHERE a.status = 'assimilated' AND a.content_type = 'reading_note'{artifact_scope}
             ORDER BY a.updated_at DESC, a.id DESC
             LIMIT ?
             """,
-            (max(1, min(int(limit), 6)),),
+            (*artifact_scope_params, max(1, min(int(limit), 6))),
         )
         readings: List[Dict[str, Any]] = []
         import json
