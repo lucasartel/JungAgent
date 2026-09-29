@@ -155,20 +155,27 @@ class WorkEngine(
             return None
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(source_table)):
             return None
+        # `source_id` pode ser composto (ex.: "42:idea:1" em eventos de
+        # leitura, persistence.py) — a raiz numerica e o id do artefato pai.
+        candidates = [str(source_id)]
+        root = re.match(r"^(\d+)(?::|$)", str(source_id))
+        if root and root.group(1) != candidates[0]:
+            candidates.append(root.group(1))
         try:
             cursor = self.db.conn.cursor()
             cursor.execute(f"PRAGMA table_info({source_table})")
             columns = {row[1] for row in cursor.fetchall()}
             if "origin_relation_id" not in columns:
                 return None
-            cursor.execute(
-                f"SELECT origin_relation_id FROM {source_table} WHERE id = ?",
-                (source_id,),
-            )
-            row = cursor.fetchone()
-            if row is None:
-                return None
-            return row[0] if row[0] else None
+            for candidate in candidates:
+                cursor.execute(
+                    f"SELECT origin_relation_id FROM {source_table} WHERE id = ?",
+                    (candidate,),
+                )
+                row = cursor.fetchone()
+                if row is not None:
+                    return row[0] if row[0] else None
+            return None
         except sqlite3.Error:
             return None
 

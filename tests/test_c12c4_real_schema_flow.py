@@ -304,6 +304,79 @@ def test_evento_brief_created_e_fragmento_herdam_a_relation():
     assert (fragment_after["source_metadata_json"] or "") == ""
 
 
+def test_fluxo_leitura_id_composto_herda_e_expurgo():
+    """Eventos de leitura com source_id '42:idea:1' herdam a Relation (P1)."""
+    from work.retention import purge_work_for_relation, verify_work_purge
+
+    db = _real_schema_db()
+    _ensure_fragment_table(db.conn)
+    engine = _engine(db)
+
+    brief = engine.create_brief(
+        origin="manual",
+        trigger_source="relation_event",
+        destination_id=None,
+        action_type="reading",
+        objective="Objetivo da leitura sensível",
+        voice_mode="endojung",
+        delivery_mode="draft",
+        origin_relation_id="rel-1",
+    )
+    run_id = engine._create_run(brief, "manual_admin_trigger", None)
+    package = {
+        "title": "Título sensível da leitura",
+        "excerpt": "Excerpt",
+        "body": "Corpo",
+        "slug": "slug-leitura",
+        "tags": [],
+        "categories": [],
+        "cta": "",
+        "editorial_note": "",
+        "generation_mode": "reading_assimilation",
+        "reading_assimilation": {
+            "verified": True,
+            "end_page": 10,
+            "key_ideas": [
+                {"idea": "Ideia sensível da leitura que não pode vazar", "pages": 1, "significance": 2}
+            ],
+            "tensions": [],
+            "open_questions": [],
+        },
+    }
+    artifact = engine._persist_reading_package(brief, run_id, package)
+    artifact_id = artifact["artifact_id"]
+
+    # O source_id composto aponta para o artefato pai — a herança precisa
+    # resolver pela raiz numerica ("42" de "42:idea:1").
+    event = db.conn.execute(
+        "SELECT * FROM work_experience_events "
+        "WHERE event_type = 'reading_idea' AND source_id = ?",
+        (f"{artifact_id}:idea:1",),
+    ).fetchone()
+    assert event is not None
+    assert event["origin_relation_id"] == "rel-1"
+    assert event["origin_class"] == "relation_scoped"
+    assert "Ideia sensível" in (event["summary"] or "")
+
+    counts = purge_work_for_relation(db.conn, "rel-1")
+    assert counts.get("work_artifacts", 0) >= 1
+    assert verify_work_purge(db.conn, "rel-1") == {}
+
+    event_after = db.conn.execute(
+        "SELECT summary FROM work_experience_events WHERE id = ?", (event["id"],)
+    ).fetchone()
+    assert (event_after["summary"] or "") == ""
+    fragment_after = db.conn.execute(
+        "SELECT f.content, f.source_quote FROM rumination_fragments f "
+        "WHERE f.id = (SELECT rumination_fragment_id FROM work_experience_events "
+        "WHERE id = ?)",
+        (event["id"],),
+    ).fetchone()
+    if fragment_after is not None:
+        assert (fragment_after["content"] or "") == ""
+        assert (fragment_after["source_quote"] or "") == ""
+
+
 def test_fluxo_relation_brief_run_artifact_expurgo():
     """Fluxo completo: origem propagada do brief ao artifact e limpa depois."""
     from work.retention import purge_work_for_relation, verify_work_purge
