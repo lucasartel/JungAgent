@@ -81,10 +81,16 @@ def main() -> int:
     )
 
     print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
-    if report["mode"] == "apply" and not report["clean"]:
-        # Expurgo aplicado mas conteudo sobreviveu: erro ruidoso.
-        return 1
-    return 0
+    return exit_code_for(report)
+
+
+def exit_code_for(report: dict) -> int:
+    """clean: false é sempre falha (verify, dry-run ou apply).
+
+    Revisão C5 (P2): --verify retornava 0 com clean: false e impedia a
+    checagem automatizada de sinalizar sujeira sobrevivente.
+    """
+    return 0 if report.get("clean") else 1
 
 
 if __name__ == "__main__":

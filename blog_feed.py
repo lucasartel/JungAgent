@@ -194,11 +194,11 @@ def _load_blog_living_state(
             f"""
             SELECT winning_will, action_attempted, status, updated_at
             FROM agent_will_pulse_events
-            WHERE 1 = 1{pulse_clause}
+            WHERE user_id = ?{pulse_clause}
             ORDER BY updated_at DESC, id DESC
             LIMIT 1
             """,
-            (*pulse_params,),
+            (ADMIN_USER_ID, *pulse_params),
         )
         event_row = cursor.fetchone()
         if event_row:
@@ -388,10 +388,10 @@ def _load_blogdojung_entries(conn: Optional[sqlite3.Connection], limit_days: int
         f"""
         SELECT created_at, symbolic_theme, extracted_insight, dream_content, image_url
         FROM agent_dreams
-        WHERE datetime(created_at) >= datetime(?){blog_clause}
+        WHERE user_id = ? AND datetime(created_at) >= datetime(?){blog_clause}
         ORDER BY datetime(created_at) DESC
         """,
-        (start_iso, *blog_clause_params),
+        (ADMIN_USER_ID, start_iso, *blog_clause_params),
     )
     for created_at, symbolic_theme, extracted_insight, dream_content, image_url in cursor.fetchall():
         entries.append(
@@ -490,4 +490,3 @@ def _load_blogdojung_entries(conn: Optional[sqlite3.Connection], limit_days: int
 
     entries.sort(key=lambda item: item["created_at"], reverse=True)
     return entries
-

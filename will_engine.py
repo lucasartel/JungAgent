@@ -547,6 +547,11 @@ class WillEngine:
                 # Escopo global estrito (C12c5): sem Relation resolvida só o
                 # material legado sem classificação de origem é visível.
                 query += " AND relation_id IS NULL"
+        if "agent_instance" in table_columns(cursor, "conversations"):
+            # Revisão C5: mesma Relation pode existir em outra instância —
+            # o Will nunca mistura conversas de agentes diferentes.
+            query += " AND agent_instance = ?"
+            params.append(self.agent_instance)
         query += " ORDER BY timestamp DESC LIMIT ?"
         params.append(limit)
         cursor.execute(query, tuple(params))
@@ -614,6 +619,9 @@ class WillEngine:
                 params.append(relation_id)
             else:
                 query += " AND relation_id IS NULL"
+        if "agent_instance" in table_columns(cursor, "rumination_insights"):
+            query += " AND agent_instance = ?"
+            params.append(self.agent_instance)
         query += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
         cursor.execute(query, tuple(params))
@@ -641,6 +649,9 @@ class WillEngine:
                     params.append(relation_id)
                 else:
                     query += " AND relation_id IS NULL"
+                if "agent_instance" in table_columns(cursor, "rumination_tensions"):
+                    query += " AND agent_instance = ?"
+                    params.append(self.agent_instance)
             query += " ORDER BY maturity_score DESC, intensity DESC, id DESC LIMIT ?"
             params.append(limit)
             cursor.execute(query, tuple(params))

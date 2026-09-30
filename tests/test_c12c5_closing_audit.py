@@ -45,6 +45,7 @@ def _blog_living_db() -> sqlite3.Connection:
         """
         CREATE TABLE agent_will_pulse_events (
             id INTEGER PRIMARY KEY,
+            user_id TEXT,
             relation_id TEXT,
             agent_instance TEXT,
             winning_will TEXT,
@@ -92,11 +93,14 @@ def _blog_living_db() -> sqlite3.Connection:
         """
     )
     conn.executemany(
-        "INSERT INTO agent_will_pulse_events (relation_id, agent_instance, "
-        "winning_will, action_attempted, status, updated_at) VALUES (?,?,?,?,?,?)",
+        "INSERT INTO agent_will_pulse_events (user_id, relation_id, agent_instance, "
+        "winning_will, action_attempted, status, updated_at) VALUES (?,?,?,?,?,?,?)",
         [
-            (None, inst, "saber", "PUBLIC RELEASE", "released", "2026-09-28 10:00:00"),
-            ("rel-1", inst, "saber", "SECRET RELEASE", "released", "2026-09-28 11:00:00"),
+            (str(ADMIN_USER_ID), None, inst, "saber", "PUBLIC RELEASE", "released", "2026-09-28 10:00:00"),
+            (str(ADMIN_USER_ID), "rel-1", inst, "saber", "SECRET RELEASE", "released", "2026-09-28 11:00:00"),
+            # Legado de OUTRO usuario, mais recente: nao pode aparecer no
+            # blog (revisao C5, P1 — quarentena por Relation nao basta).
+            ("outra_pessoa", None, inst, "saber", "ALIEN RELEASE", "released", "2026-09-28 11:30:00"),
         ],
     )
     conn.executemany(
@@ -155,6 +159,7 @@ def test_blog_living_state_quarantines_classified_content():
 
     assert state["will"]["last_release"]["action"] == "PUBLIC RELEASE"
     assert "SECRET RELEASE" not in dumped
+    assert "ALIEN RELEASE" not in dumped
 
 
 def test_blog_entries_quarantine_dreams_and_filter_hobby_owner():
@@ -166,6 +171,7 @@ def test_blog_entries_quarantine_dreams_and_filter_hobby_owner():
         """
         CREATE TABLE agent_dreams (
             id INTEGER PRIMARY KEY,
+            user_id TEXT,
             created_at TEXT,
             origin_relation_id TEXT,
             agent_instance TEXT,
@@ -198,11 +204,13 @@ def test_blog_entries_quarantine_dreams_and_filter_hobby_owner():
         """
     )
     conn.executemany(
-        "INSERT INTO agent_dreams (created_at, origin_relation_id, agent_instance, "
-        "symbolic_theme, extracted_insight, dream_content) VALUES (?,?,?,?,?,?)",
+        "INSERT INTO agent_dreams (created_at, user_id, origin_relation_id, agent_instance, "
+        "symbolic_theme, extracted_insight, dream_content) VALUES (?,?,?,?,?,?,?)",
         [
-            ("2026-09-28 05:00:00", None, inst, "SONHO_LEGADO", "insight legado", "corpo legado"),
-            ("2026-09-28 05:30:00", "rel-1", inst, "SONHO_PRIVADO", "insight privado", "corpo privado"),
+            ("2026-09-28 05:00:00", str(ADMIN_USER_ID), None, inst, "SONHO_LEGADO", "insight legado", "corpo legado"),
+            ("2026-09-28 05:30:00", str(ADMIN_USER_ID), "rel-1", inst, "SONHO_PRIVADO", "insight privado", "corpo privado"),
+            # Sonho legado de OUTRO participante, mais recente (revisao C5, P1).
+            ("2026-09-28 05:45:00", "outra_pessoa", None, inst, "SONHO DE OUTRO", "insight de outro", "corpo de outro"),
         ],
     )
     conn.executemany(
@@ -221,6 +229,7 @@ def test_blog_entries_quarantine_dreams_and_filter_hobby_owner():
     titles = {entry["title"] for entry in entries}
     assert "SONHO_LEGADO" in titles
     assert "ART_ADMIN" in titles
+    assert "SONHO DE OUTRO" not in dumped
     assert "SONHO_PRIVADO" not in dumped
     assert "ART_PRIVADO" not in dumped
 
@@ -237,12 +246,14 @@ class _StubDB:
 
 def _will_db() -> sqlite3.Connection:
     conn = _conn()
+    inst = instance_config.AGENT_INSTANCE
     conn.executescript(
         """
         CREATE TABLE conversations (
             id INTEGER PRIMARY KEY,
             user_id TEXT,
             relation_id TEXT,
+            agent_instance TEXT,
             user_input TEXT,
             ai_response TEXT,
             timestamp TEXT
@@ -251,6 +262,7 @@ def _will_db() -> sqlite3.Connection:
             id INTEGER PRIMARY KEY,
             user_id TEXT,
             relation_id TEXT,
+            agent_instance TEXT,
             tension_type TEXT,
             pole_a_content TEXT,
             pole_b_content TEXT,
@@ -263,6 +275,7 @@ def _will_db() -> sqlite3.Connection:
             id INTEGER PRIMARY KEY,
             user_id TEXT,
             relation_id TEXT,
+            agent_instance TEXT,
             symbol_content TEXT,
             question_content TEXT,
             full_message TEXT,
@@ -271,29 +284,33 @@ def _will_db() -> sqlite3.Connection:
         """
     )
     conn.executemany(
-        "INSERT INTO conversations (user_id, relation_id, user_input, ai_response, timestamp) "
-        "VALUES (?,?,?,?,?)",
+        "INSERT INTO conversations (user_id, relation_id, agent_instance, user_input, "
+        "ai_response, timestamp) VALUES (?,?,?,?,?,?)",
         [
-            ("u1", None, "MSG LEGADA", "R1", "2026-09-28 10:00:00"),
-            ("u1", "rel-1", "MSG R1", "R2", "2026-09-28 11:00:00"),
-            ("u1", "rel-2", "MSG R2", "R3", "2026-09-28 12:00:00"),
+            ("u1", None, inst, "MSG LEGADA", "R1", "2026-09-28 10:00:00"),
+            ("u1", "rel-1", inst, "MSG R1", "R2", "2026-09-28 11:00:00"),
+            ("u1", "rel-2", inst, "MSG R2", "R3", "2026-09-28 12:00:00"),
+            # Outra instancia, mesmo usuario, mais recente (revisao C5, P1).
+            ("u1", None, "inst-outra", "MSG DE OUTRA INSTANCIA", "R4", "2026-09-28 13:00:00"),
         ],
     )
     conn.executemany(
-        "INSERT INTO rumination_tensions (user_id, relation_id, tension_type, pole_a_content, "
-        "pole_b_content, tension_description, intensity, maturity_score, status) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO rumination_tensions (user_id, relation_id, agent_instance, tension_type, "
+        "pole_a_content, pole_b_content, tension_description, intensity, maturity_score, status) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
         [
-            ("u1", None, "t", "TENSAO_LEGADA", "b", "d", 1.0, 1.0, "open"),
-            ("u1", "rel-1", "t", "TENSAO_R1", "b", "d", 9.0, 9.0, "open"),
+            ("u1", None, inst, "t", "TENSAO_LEGADA", "b", "d", 1.0, 1.0, "open"),
+            ("u1", "rel-1", inst, "t", "TENSAO_R1", "b", "d", 9.0, 9.0, "open"),
+            ("u1", None, "inst-outra", "t", "TENSAO DE OUTRA INSTANCIA", "b", "d", 9.0, 9.0, "open"),
         ],
     )
     conn.executemany(
-        "INSERT INTO rumination_insights (user_id, relation_id, symbol_content, "
-        "question_content, full_message, crystallized_at) VALUES (?,?,?,?,?,?)",
+        "INSERT INTO rumination_insights (user_id, relation_id, agent_instance, symbol_content, "
+        "question_content, full_message, crystallized_at) VALUES (?,?,?,?,?,?,?)",
         [
-            ("u1", None, "SIMBOLO LEGADO", "q", "m", "2026-09-28 10:00:00"),
-            ("u1", "rel-1", "SIMBOLO R1", "q", "m", "2026-09-28 11:00:00"),
+            ("u1", None, inst, "SIMBOLO LEGADO", "q", "m", "2026-09-28 10:00:00"),
+            ("u1", "rel-1", inst, "SIMBOLO R1", "q", "m", "2026-09-28 11:00:00"),
+            ("u1", None, "inst-outra", "SIMBOLO DE OUTRA INSTANCIA", "q", "m", "2026-09-28 13:00:00"),
         ],
     )
     conn.commit()
@@ -317,6 +334,14 @@ def test_will_global_scope_reads_only_quarantined_rows():
 
     tensions = eng._active_rumination_tensions("u1")
     assert [row["pole_a_content"] for row in tensions] == ["TENSAO_LEGADA"]
+
+    # Outra instancia nunca aparece, mesmo sendo a linha mais recente.
+    assert not any(
+        "OUTRA INSTANCIA" in json.dumps(row, ensure_ascii=False, default=str)
+        for row in list(rows) + list(tensions)
+    )
+    all_conv = eng._recent_conversations("u1", limit=10)
+    assert "MSG DE OUTRA INSTANCIA" not in json.dumps(all_conv, ensure_ascii=False)
 
     # Com Relation: ve apenas o material daquela Relation.
     rows = eng._recent_conversations("u1", relation_id="rel-1")
@@ -537,7 +562,7 @@ def _real_schema_db():
 
 
 def test_run_purge_reports_clean_after_apply_and_fails_when_dirty():
-    from scripts.purge_work_relation import run_purge
+    from scripts.purge_work_relation import exit_code_for, run_purge
 
     db = _real_schema_db()
     conn = db.conn
@@ -557,6 +582,13 @@ def test_run_purge_reports_clean_after_apply_and_fails_when_dirty():
     applied = run_purge(conn, "rel-1", apply=True)
     assert applied["mode"] == "apply"
     assert applied["clean"] is True
+    assert exit_code_for(applied) == 0
+
+    # Revisao C5 (P2): clean: false precisa derrubar o exit code em qualquer
+    # modo — senao a verificacao automatizada nao sinaliza sujeira.
+    assert exit_code_for({"mode": "verify", "clean": False}) == 1
+    assert exit_code_for({"mode": "apply", "clean": False}) == 1
+    assert exit_code_for(dry) == 1
 
     # Idempotencia: segunda aplicacao continua limpa.
     again = run_purge(conn, "rel-1", apply=True)
