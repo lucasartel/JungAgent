@@ -219,16 +219,41 @@ class AgentIdentityContextBuilder:
                         )
 
             if user_id and self._identity_table_exists(cursor, "agent_will_states"):
+                # T2-04 (C6): esta leitura alimenta o prompt de autoconsciência —
+                # mesmo escopo da irmã _get_latest_will_signal (instância +
+                # Relation), com agent_instance NULL visível para legado
+                # migrado sem carimbo (legacy_quarantine_clause).
+                will_columns = {
+                    row[1]
+                    for row in cursor.execute("PRAGMA table_info(agent_will_states)")
+                }
+                will_clauses = ["user_id = ?"]
+                will_params: List[Any] = [user_id]
+                if "agent_instance" in will_columns:
+                    will_clauses.append("(agent_instance = ? OR agent_instance IS NULL)")
+                    will_params.append(self.agent_instance)
+                will_relation = self._resolve_identity_relation(user_id)
+                if {"scope_kind", "relation_id"}.issubset(will_columns):
+                    if will_relation:
+                        will_clauses.append(
+                            "((scope_kind = 'relation' AND relation_id = ?) "
+                            "OR (scope_kind = 'global' AND relation_id IS NULL))"
+                        )
+                        will_params.append(will_relation)
+                    else:
+                        will_clauses.append(
+                            "scope_kind = 'global' AND relation_id IS NULL"
+                        )
                 cursor.execute(
-                    """
+                    f"""
                     SELECT id, dominant_will, secondary_will, constrained_will,
                            will_conflict, attention_bias_note, created_at
                     FROM agent_will_states
-                    WHERE user_id = ?
+                    WHERE {' AND '.join(will_clauses)}
                     ORDER BY created_at DESC, id DESC
                     LIMIT 1
                     """,
-                    (user_id,),
+                    tuple(will_params),
                 )
                 row = cursor.fetchone()
                 if row:

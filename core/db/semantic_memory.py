@@ -54,6 +54,17 @@ class SemanticMemoryDatabaseMixin:
             """)
             use_v2 = cursor.fetchone() is not None
 
+            # T2-07 (C6): fatos citados vão para a query de recuperação —
+            # escopo de Relation no mesmo helper de facts.py/context_builder
+            # (fail-closed quando a tabela não tem coluna de escopo).
+            fact_scope = getattr(self, "_fact_relation_scope", None)
+            if callable(fact_scope):
+                fact_scope_sql, fact_scope_params = fact_scope(
+                    "user_facts_v2" if use_v2 else "user_facts", user_id
+                )
+            else:
+                fact_scope_sql, fact_scope_params = "", []
+
             relevant_facts = []
             for name in mentioned_names:
                 try:
@@ -61,16 +72,18 @@ class SemanticMemoryDatabaseMixin:
                         cursor.execute("""
                             SELECT fact_type, fact_attribute, fact_value
                             FROM user_facts_v2
-                            WHERE user_id = ? AND fact_value LIKE ? AND is_current = 1
+                            WHERE user_id = ? AND fact_value LIKE ? AND is_current = 1{fact_scope_sql}
                             LIMIT 3
-                        """, (user_id, f"%{name}%"))
+                        """.format(fact_scope_sql=fact_scope_sql),
+                            (user_id, f"%{name}%", *fact_scope_params))
                     else:
                         cursor.execute("""
                             SELECT fact_key, fact_value
                             FROM user_facts
-                            WHERE user_id = ? AND fact_value LIKE ? AND is_current = 1
+                            WHERE user_id = ? AND fact_value LIKE ? AND is_current = 1{fact_scope_sql}
                             LIMIT 3
-                        """, (user_id, f"%{name}%"))
+                        """.format(fact_scope_sql=fact_scope_sql),
+                            (user_id, f"%{name}%", *fact_scope_params))
 
                     facts = cursor.fetchall()
                     relevant_facts.extend([
