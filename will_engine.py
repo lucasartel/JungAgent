@@ -539,9 +539,21 @@ class WillEngine:
             WHERE user_id = ?
         """
         params: List[Any] = [user_id]
-        if relation_id and "relation_id" in table_columns(cursor, "conversations"):
-            query += " AND relation_id = ?"
-            params.append(relation_id)
+        if "relation_id" in table_columns(cursor, "conversations"):
+            if relation_id:
+                query += " AND relation_id = ?"
+                params.append(relation_id)
+            else:
+                # Escopo global estrito (C12c5): sem Relation resolvida só o
+                # material legado sem classificação de origem é visível.
+                query += " AND relation_id IS NULL"
+        if "agent_instance" in table_columns(cursor, "conversations"):
+            # Revisão C5: mesma Relation pode existir em outra instância —
+            # o Will nunca mistura conversas de agentes diferentes. NULL =
+            # migração sem carimbo continua visível (mesma política do
+            # legacy_quarantine_clause: bloqueia só a outra instância).
+            query += " AND (agent_instance = ? OR agent_instance IS NULL)"
+            params.append(self.agent_instance)
         query += " ORDER BY timestamp DESC LIMIT ?"
         params.append(limit)
         cursor.execute(query, tuple(params))
@@ -603,9 +615,15 @@ class WillEngine:
             WHERE user_id = ?
         """
         params: List[Any] = [user_id]
-        if relation_id and "relation_id" in table_columns(cursor, "rumination_insights"):
-            query += " AND relation_id = ?"
-            params.append(relation_id)
+        if "relation_id" in table_columns(cursor, "rumination_insights"):
+            if relation_id:
+                query += " AND relation_id = ?"
+                params.append(relation_id)
+            else:
+                query += " AND relation_id IS NULL"
+        if "agent_instance" in table_columns(cursor, "rumination_insights"):
+            query += " AND (agent_instance = ? OR agent_instance IS NULL)"
+            params.append(self.agent_instance)
         query += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
         cursor.execute(query, tuple(params))
@@ -627,9 +645,15 @@ class WillEngine:
                   AND status IN ('open', 'maturing', 'ready_for_synthesis')
             """
             params: List[Any] = [user_id]
-            if relation_id and "relation_id" in table_columns(cursor, "rumination_tensions"):
-                query += " AND relation_id = ?"
-                params.append(relation_id)
+            if "relation_id" in table_columns(cursor, "rumination_tensions"):
+                if relation_id:
+                    query += " AND relation_id = ?"
+                    params.append(relation_id)
+                else:
+                    query += " AND relation_id IS NULL"
+                if "agent_instance" in table_columns(cursor, "rumination_tensions"):
+                    query += " AND (agent_instance = ? OR agent_instance IS NULL)"
+                    params.append(self.agent_instance)
             query += " ORDER BY maturity_score DESC, intensity DESC, id DESC LIMIT ?"
             params.append(limit)
             cursor.execute(query, tuple(params))
@@ -720,6 +744,7 @@ class WillEngine:
             agent_instance=agent_instance or self.agent_instance,
             relation_id=relation_id,
             scope_kind=scope_kind,
+            resolve_participant_user_id=user_id,
         )
         scoped_relation_id = scope.get("relation_id")
         dream = self._latest_dream(
@@ -727,16 +752,8 @@ class WillEngine:
             relation_id=scoped_relation_id,
             agent_instance=scope.get("agent_instance"),
         )
-        rumination = (
-            self._recent_rumination(user_id, relation_id=scoped_relation_id)
-            if scoped_relation_id
-            else self._recent_rumination(user_id)
-        )
-        active_tensions = (
-            self._active_rumination_tensions(user_id, relation_id=scoped_relation_id)
-            if scoped_relation_id
-            else self._active_rumination_tensions(user_id)
-        )
+        rumination = self._recent_rumination(user_id, relation_id=scoped_relation_id)
+        active_tensions = self._active_rumination_tensions(user_id, relation_id=scoped_relation_id)
         meta = self._latest_meta_consciousness(user_id)
         hobby = self._latest_hobby(user_id)
         world = self._latest_world_state(world_state)
@@ -745,11 +762,7 @@ class WillEngine:
             if scoped_relation_id
             else self._latest_relational_state(user_id)
         )
-        conversations = (
-            self._recent_conversations(user_id, relation_id=scoped_relation_id)
-            if scoped_relation_id
-            else self._recent_conversations(user_id)
-        )
+        conversations = self._recent_conversations(user_id, relation_id=scoped_relation_id)
         pressure_state = None
         try:
             from will_pressure import load_latest_pressure_state
@@ -1253,6 +1266,7 @@ Material do ciclo:
             agent_instance=agent_instance or self.agent_instance,
             relation_id=relation_id,
             scope_kind=scope_kind,
+            resolve_participant_user_id=user_id,
         )
 
         payload = self._build_source_payload(

@@ -118,16 +118,21 @@ def admin_reading_awareness(
         _columns(cursor, "work_artifacts")
     ) or not {"id", "name"}.issubset(_columns(cursor, "work_projects")):
         return "", ()
+    from core.db.relation_scope import legacy_quarantine_clause
+
+    artifact_scope, artifact_scope_params = legacy_quarantine_clause(
+        cursor, table="work_artifacts", relation_column="origin_relation_id", prefix="a."
+    )
     cursor.execute(
-        """
+        f"""
         SELECT a.id, a.project_id, p.name, a.provider_payload_json
         FROM work_artifacts a
         JOIN work_projects p ON p.id = a.project_id
-        WHERE a.status = 'assimilated' AND a.content_type = 'reading_note'
+        WHERE a.status = 'assimilated' AND a.content_type = 'reading_note'{artifact_scope}
         ORDER BY a.updated_at DESC, a.id DESC
         LIMIT ?
         """,
-        (max(1, min(int(limit), 12)),),
+        (*artifact_scope_params, max(1, min(int(limit), 12))),
     )
     lines = ["### Leituras verificadas no Work (contexto privado do operador)"]
     refs: list[str] = []
