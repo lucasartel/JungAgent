@@ -292,6 +292,10 @@ def _will_db() -> sqlite3.Connection:
             ("u1", "rel-2", inst, "MSG R2", "R3", "2026-09-28 12:00:00"),
             # Outra instancia, mesmo usuario, mais recente (revisao C5, P1).
             ("u1", None, "inst-outra", "MSG DE OUTRA INSTANCIA", "R4", "2026-09-28 13:00:00"),
+            # Migracao que adicionou agent_instance sem preencher (revisao C5,
+            # regressao P2): legado NULL continua alimentando o WILL.
+            ("u1", None, None, "MSG LEGADA SEM INSTANCIA", "R0", "2026-09-28 09:00:00"),
+            ("u1", "rel-1", None, "MSG R1 SEM INSTANCIA", "R2b", "2026-09-28 11:30:00"),
         ],
     )
     conn.executemany(
@@ -302,6 +306,8 @@ def _will_db() -> sqlite3.Connection:
             ("u1", None, inst, "t", "TENSAO_LEGADA", "b", "d", 1.0, 1.0, "open"),
             ("u1", "rel-1", inst, "t", "TENSAO_R1", "b", "d", 9.0, 9.0, "open"),
             ("u1", None, "inst-outra", "t", "TENSAO DE OUTRA INSTANCIA", "b", "d", 9.0, 9.0, "open"),
+            ("u1", None, None, "t", "TENSAO SEM INSTANCIA", "b", "d", 1.0, 1.0, "open"),
+            ("u1", "rel-1", None, "t", "TENSAO R1 SEM INSTANCIA", "b", "d", 9.0, 9.0, "open"),
         ],
     )
     conn.executemany(
@@ -311,6 +317,8 @@ def _will_db() -> sqlite3.Connection:
             ("u1", None, inst, "SIMBOLO LEGADO", "q", "m", "2026-09-28 10:00:00"),
             ("u1", "rel-1", inst, "SIMBOLO R1", "q", "m", "2026-09-28 11:00:00"),
             ("u1", None, "inst-outra", "SIMBOLO DE OUTRA INSTANCIA", "q", "m", "2026-09-28 13:00:00"),
+            ("u1", None, None, "SIMBOLO SEM INSTANCIA", "q", "m", "2026-09-28 09:00:00"),
+            ("u1", "rel-1", None, "SIMBOLO R1 SEM INSTANCIA", "q", "m", "2026-09-28 11:30:00"),
         ],
     )
     conn.commit()
@@ -324,16 +332,28 @@ def test_will_global_scope_reads_only_quarantined_rows():
 
     # Sem Relation: escopo global estrito — so material sem classificacao.
     rows = eng._recent_conversations("u1")
-    assert [row["participant_input"] for row in rows] == ["MSG LEGADA"]
+    assert [row["participant_input"] for row in rows] == [
+        "MSG LEGADA SEM INSTANCIA",
+        "MSG LEGADA",
+    ]
 
     rows = eng._recent_rumination("u1")
-    assert [row["symbol_content"] for row in rows] == ["SIMBOLO LEGADO"]
+    assert [row["symbol_content"] for row in rows] == [
+        "SIMBOLO SEM INSTANCIA",
+        "SIMBOLO LEGADO",
+    ]
 
     rows = eng._recent_rumination("u1", relation_id="rel-1")
-    assert [row["symbol_content"] for row in rows] == ["SIMBOLO R1"]
+    assert [row["symbol_content"] for row in rows] == [
+        "SIMBOLO R1 SEM INSTANCIA",
+        "SIMBOLO R1",
+    ]
 
     tensions = eng._active_rumination_tensions("u1")
-    assert [row["pole_a_content"] for row in tensions] == ["TENSAO_LEGADA"]
+    assert [row["pole_a_content"] for row in tensions] == [
+        "TENSAO SEM INSTANCIA",
+        "TENSAO_LEGADA",
+    ]
 
     # Outra instancia nunca aparece, mesmo sendo a linha mais recente.
     assert not any(
@@ -345,10 +365,19 @@ def test_will_global_scope_reads_only_quarantined_rows():
 
     # Com Relation: ve apenas o material daquela Relation.
     rows = eng._recent_conversations("u1", relation_id="rel-1")
-    assert [row["participant_input"] for row in rows] == ["MSG R1"]
+    assert [row["participant_input"] for row in rows] == [
+        "MSG R1",
+        "MSG R1 SEM INSTANCIA",
+    ]
 
     tensions = eng._active_rumination_tensions("u1", relation_id="rel-2")
     assert tensions == []
+
+    # Legado com agent_instance NULL (migracao sem carimbo) alimenta o WILL
+    # no escopo global — a revisao de 9aa75a0 o apagava da leitura.
+    # (No escopo de Relation, o assert acima de "MSG R1 SEM INSTANCIA" cobre.)
+    rows = eng._recent_conversations("u1", limit=10)
+    assert any(row["participant_input"] == "MSG LEGADA SEM INSTANCIA" for row in rows)
 
 
 def test_will_source_payload_resolves_participant_relation(monkeypatch):
@@ -383,7 +412,10 @@ def test_will_source_payload_resolves_participant_relation(monkeypatch):
     # O user da conversa vai para o resolvedor de Relation (C12c5 P1).
     assert scope_calls.get("resolve_participant_user_id") == "u1"
     # E as leituras de conversa seguem a Relation resolvida.
-    assert [row["participant_input"] for row in payload["recent_conversations"]] == ["MSG R1"]
+    assert [row["participant_input"] for row in payload["recent_conversations"]] == [
+        "MSG R1",
+        "MSG R1 SEM INSTANCIA",
+    ]
 
 
 # ------------------------------------------------------------------
