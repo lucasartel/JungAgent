@@ -455,7 +455,7 @@
     "path": "/api/diagnose-chromadb",
     "full_path": "/admin/api/diagnose-chromadb",
     "endpoint": "diagnose_chromadb",
-    "line": 216,
+    "line": 228,
     "migration_bucket": "diagnostics_routes"
   },
   {
@@ -464,7 +464,7 @@
     "path": "/api/conversation/{conversation_id}",
     "full_path": "/admin/api/conversation/{conversation_id}",
     "endpoint": "get_conversation_detail",
-    "line": 313,
+    "line": 325,
     "migration_bucket": "diagnostics_routes"
   },
   {
@@ -923,7 +923,7 @@
     "path": "/user/{user_id}/agent-data",
     "full_path": "/admin/user/{user_id}/agent-data",
     "endpoint": "user_agent_data_page",
-    "line": 112,
+    "line": 119,
     "migration_bucket": "user_analysis_routes"
   },
   {

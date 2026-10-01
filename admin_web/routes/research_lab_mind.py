@@ -96,14 +96,37 @@ async def jung_mind_data(admin=None):
             "size": 40
         })
 
+        # ===== ESCOPO PESSOAL (C12c2/P1, C12c6) =====
+        # Visibilidade pessoal do admin fail-CLOSED: Relation elegível →
+        # (relation_id IS NULL OR = R) + instância; revogada/não
+        # verificável ⇒ 403 com sentinela canônica, nunca degrada ao legado.
+        from core.db.relation_scope import (
+            personal_scope_clause,
+            resolve_personal_export_scope,
+        )
+
+        try:
+            mind_scope = resolve_personal_export_scope(db, ADMIN_USER_ID)
+        except ValueError as exc:
+            raise HTTPException(403, str(exc))
+        frag_sql, frag_params = personal_scope_clause(
+            cursor, table="rumination_fragments", relation_id=mind_scope.relation_id
+        )
+        tens_sql, tens_params = personal_scope_clause(
+            cursor, table="rumination_tensions", relation_id=mind_scope.relation_id
+        )
+        insi_sql, insi_params = personal_scope_clause(
+            cursor, table="rumination_insights", relation_id=mind_scope.relation_id
+        )
+
         # ===== FRAGMENTOS =====
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT id, fragment_type, content, emotional_weight, created_at, context
             FROM rumination_fragments
-            WHERE user_id = ?
+            WHERE user_id = ?{frag_sql}
             ORDER BY created_at DESC
             LIMIT 200
-        """, (ADMIN_USER_ID,))
+        """, (ADMIN_USER_ID, *frag_params))
 
         fragments = cursor.fetchall()
         logger.info(f"📊 Fragmentos encontrados: {len(fragments)}")
@@ -160,15 +183,15 @@ async def jung_mind_data(admin=None):
             })
 
         # ===== TENSÕES =====
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT id, tension_type, pole_a_content, pole_b_content,
                    intensity, maturity_score, status, first_detected_at, last_evidence_at,
                    pole_a_fragment_ids, pole_b_fragment_ids
             FROM rumination_tensions
-            WHERE user_id = ?
+            WHERE user_id = ?{tens_sql}
             ORDER BY maturity_score DESC, first_detected_at DESC
             LIMIT 100
-        """, (ADMIN_USER_ID,))
+        """, (ADMIN_USER_ID, *tens_params))
 
         tensions = cursor.fetchall()
         logger.info(f"📊 Tensões encontradas: {len(tensions)}")
@@ -231,14 +254,14 @@ async def jung_mind_data(admin=None):
                 })
 
         # ===== INSIGHTS =====
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT id, source_tension_id, symbol_content, question_content,
                    full_message, depth_score, status, crystallized_at
             FROM rumination_insights
-            WHERE user_id = ?
+            WHERE user_id = ?{insi_sql}
             ORDER BY crystallized_at DESC
             LIMIT 50
-        """, (ADMIN_USER_ID,))
+        """, (ADMIN_USER_ID, *insi_params))
 
         insights = cursor.fetchall()
         logger.info(f"📊 Insights encontrados: {len(insights)}")

@@ -71,6 +71,13 @@ class AgentIdentityContextBuilder:
             agent_instance=self.agent_instance,
             participant_user_id=str(user_id),
         )
+        if relation_id:
+            # C6 (P1): revogação C12g — prompt de identidade não lê material
+            # de Relation sem consentimento concedido; mesma sentinel
+            # relation_not_eligible das irmãs (_pattern_scope, facts.py).
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self.db, relation_id)
         if not relation_id and str(user_id) != str(ADMIN_USER_ID):
             raise ValueError("relation_required_for_identity_context")
         return relation_id
@@ -145,6 +152,13 @@ class AgentIdentityContextBuilder:
         }
 
         try:
+            # C6/P1 (revisão do PR #50): elegibilidade da Relation ANTES
+            # de qualquer leitura pessoal — consentimento revogado não pode
+            # deixar material parcial (dream#…) num contexto degradado pelo
+            # wrapper. A sentinela relation_not_eligible sobe aqui e nada
+            # pessoal é lido.
+            self._resolve_identity_relation(user_id)
+
             cursor = self.db.conn.cursor()
 
             if self._identity_table_exists(cursor, "consciousness_loop_state"):
@@ -219,16 +233,41 @@ class AgentIdentityContextBuilder:
                         )
 
             if user_id and self._identity_table_exists(cursor, "agent_will_states"):
+                # T2-04 (C6): esta leitura alimenta o prompt de autoconsciência —
+                # mesmo escopo da irmã _get_latest_will_signal (instância +
+                # Relation), com agent_instance NULL visível para legado
+                # migrado sem carimbo (legacy_quarantine_clause).
+                will_columns = {
+                    row[1]
+                    for row in cursor.execute("PRAGMA table_info(agent_will_states)")
+                }
+                will_clauses = ["user_id = ?"]
+                will_params: List[Any] = [user_id]
+                if "agent_instance" in will_columns:
+                    will_clauses.append("(agent_instance = ? OR agent_instance IS NULL)")
+                    will_params.append(self.agent_instance)
+                will_relation = self._resolve_identity_relation(user_id)
+                if {"scope_kind", "relation_id"}.issubset(will_columns):
+                    if will_relation:
+                        will_clauses.append(
+                            "((scope_kind = 'relation' AND relation_id = ?) "
+                            "OR (scope_kind = 'global' AND relation_id IS NULL))"
+                        )
+                        will_params.append(will_relation)
+                    else:
+                        will_clauses.append(
+                            "scope_kind = 'global' AND relation_id IS NULL"
+                        )
                 cursor.execute(
-                    """
+                    f"""
                     SELECT id, dominant_will, secondary_will, constrained_will,
                            will_conflict, attention_bias_note, created_at
                     FROM agent_will_states
-                    WHERE user_id = ?
+                    WHERE {' AND '.join(will_clauses)}
                     ORDER BY created_at DESC, id DESC
                     LIMIT 1
                     """,
-                    (user_id,),
+                    tuple(will_params),
                 )
                 row = cursor.fetchone()
                 if row:

@@ -214,7 +214,7 @@ OWNERSHIP_CONTRACTS: Tuple[CognitiveOwnershipContract, ...] = (
        "Compliance and configuration-history policy.", "Explicit organization roles.", NEVER,
        "Map the original admin and singleton instance; never use tenant defaults.", READY, "none",
        "Control-plane scope exists; C12 must prove cognitive stores honor it."),
-    _c("generated_artifacts", ("agent_hobby_artifacts", "output/", "image_url fields"),
+    _c("generated_artifacts", ("agent_hobby_artifacts", "proactive_approaches", "output/", "image_url fields"),
        LEGACY_UNSCOPED, INSTANCE_GLOBAL, ("user_id_or_path",), _GLOBAL,
        "Expression derived from internal or relational material.", "Artifacts behind WILL gates.",
        "Apply artifact and source-deletion policy; forbid embedded DB payloads.",

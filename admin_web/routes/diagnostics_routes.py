@@ -112,6 +112,15 @@ async def diagnose_facts(admin: Dict = Depends(require_master)):
         db = get_db()
         cursor = db.conn.cursor()
 
+        # C12c6: o detector de vazamento so enxerga legado nao classificado
+        # desta instancia (quarentena C12) — fato vinculado a Relation nunca
+        # trafega por aqui (contrato structured_facts: RELATION_PRIVATE).
+        from core.db.relation_scope import legacy_quarantine_clause
+
+        quarantine_sql, quarantine_params = legacy_quarantine_clause(
+            cursor, table="user_facts"
+        )
+
         cursor.execute("SELECT user_id, user_name, platform FROM users ORDER BY user_name")
         users = cursor.fetchall()
 
@@ -130,14 +139,14 @@ async def diagnose_facts(admin: Dict = Depends(require_master)):
             user_id = user["user_id"]
 
             cursor.execute(
-                """
+                f"""
                 SELECT fact_category, fact_key, fact_value, is_current, version,
                        source_conversation_id
                 FROM user_facts
-                WHERE user_id = ?
+                WHERE user_id = ?{quarantine_sql}
                 ORDER BY fact_category, fact_key, version DESC
             """,
-                (user_id,),
+                (user_id, *quarantine_params),
             )
 
             facts = cursor.fetchall()
@@ -152,7 +161,7 @@ async def diagnose_facts(admin: Dict = Depends(require_master)):
                     {
                         "category": fact["fact_category"],
                         "key": fact["fact_key"],
-                        "value": fact["fact_value"],
+                        "value": str(fact["fact_value"] or "")[:80],
                         "is_current": bool(fact["is_current"]),
                         "version": fact["version"],
                         "source_conversation_id": fact["source_conversation_id"],
@@ -160,21 +169,24 @@ async def diagnose_facts(admin: Dict = Depends(require_master)):
                 )
 
         cursor.execute(
-            """
-            SELECT COUNT(*) as count FROM user_facts WHERE user_id IS NULL OR user_id = ''
-        """
+            f"""
+            SELECT COUNT(*) as count FROM user_facts
+            WHERE (user_id IS NULL OR user_id = ''){quarantine_sql}
+        """,
+            (*quarantine_params,),
         )
         null_facts_count = cursor.fetchone()["count"]
 
         cursor.execute(
-            """
+            f"""
             SELECT fact_category, fact_key, fact_value, COUNT(DISTINCT user_id) as user_count,
                    GROUP_CONCAT(DISTINCT user_id) as user_ids
             FROM user_facts
-            WHERE is_current = 1
+            WHERE is_current = 1{quarantine_sql}
             GROUP BY fact_category, fact_key, fact_value
             HAVING user_count > 1
-        """
+        """,
+            (*quarantine_params,),
         )
 
         duplicates = cursor.fetchall()
@@ -184,7 +196,7 @@ async def diagnose_facts(admin: Dict = Depends(require_master)):
                 {
                     "category": dup["fact_category"],
                     "key": dup["fact_key"],
-                    "value": dup["fact_value"],
+                    "value": str(dup["fact_value"] or "")[:80],
                     "user_count": dup["user_count"],
                     "user_ids": dup["user_ids"].split(",") if dup["user_ids"] else [],
                 }

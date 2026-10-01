@@ -81,6 +81,16 @@ async def debug_rumination_full(
         db = get_db()
         cursor = db.conn.cursor()
 
+        # C12c6: quarentena legado nas leituras de conteúdo — o debug não
+        # mistura Relations do próprio admin (mesma semântica do dashboard
+        # em research_lab_dashboards: relation_id IS NULL + instância).
+        from core.db.relation_scope import legacy_quarantine_clause
+
+        conv_sql, conv_params = legacy_quarantine_clause(cursor, table="conversations")
+        frag_sql, frag_params = legacy_quarantine_clause(
+            cursor, table="rumination_fragments"
+        )
+
         debug_result = {
             "config": {},
             "tables": {},
@@ -123,30 +133,33 @@ async def debug_rumination_full(
                 debug_result["problems"].append(f"Tabela {table} não existe")
 
         # TESTE 3: Conversas do admin
-        cursor.execute('SELECT COUNT(*) FROM conversations WHERE user_id = ?', (ADMIN_USER_ID,))
+        cursor.execute(
+            f'SELECT COUNT(*) FROM conversations WHERE user_id = ?{conv_sql}',
+            (ADMIN_USER_ID, *conv_params),
+        )
         total_convs = cursor.fetchone()[0]
 
         debug_result["conversations"]["total"] = total_convs
 
         if total_convs > 0:
-            cursor.execute('''
+            cursor.execute(f'''
                 SELECT platform, COUNT(*) as count
                 FROM conversations
-                WHERE user_id = ?
+                WHERE user_id = ?{conv_sql}
                 GROUP BY platform
-            ''', (ADMIN_USER_ID,))
+            ''', (ADMIN_USER_ID, *conv_params))
 
             by_platform = {(row[0] or 'NULL'): row[1] for row in cursor.fetchall()}
             debug_result["conversations"]["by_platform"] = by_platform
 
             # Últimas 3
-            cursor.execute('''
+            cursor.execute(f'''
                 SELECT id, timestamp, platform, user_input
                 FROM conversations
-                WHERE user_id = ?
+                WHERE user_id = ?{conv_sql}
                 ORDER BY timestamp DESC
                 LIMIT 3
-            ''', (ADMIN_USER_ID,))
+            ''', (ADMIN_USER_ID, *conv_params))
 
             debug_result["conversations"]["recent"] = [
                 {
@@ -159,22 +172,22 @@ async def debug_rumination_full(
             ]
 
         # TESTE 4: Conversas telegram
-        cursor.execute('''
+        cursor.execute(f'''
             SELECT COUNT(*) FROM conversations
-            WHERE user_id = ? AND platform = 'telegram'
-        ''', (ADMIN_USER_ID,))
+            WHERE user_id = ? AND platform = 'telegram'{conv_sql}
+        ''', (ADMIN_USER_ID, *conv_params))
         telegram_count = cursor.fetchone()[0]
 
         debug_result["telegram_conversations"]["count"] = telegram_count
 
         if telegram_count > 0:
-            cursor.execute('''
+            cursor.execute(f'''
                 SELECT id, timestamp, user_input
                 FROM conversations
-                WHERE user_id = ? AND platform = 'telegram'
+                WHERE user_id = ? AND platform = 'telegram'{conv_sql}
                 ORDER BY timestamp DESC
                 LIMIT 3
-            ''', (ADMIN_USER_ID,))
+            ''', (ADMIN_USER_ID, *conv_params))
 
             debug_result["telegram_conversations"]["recent"] = [
                 {
@@ -186,19 +199,22 @@ async def debug_rumination_full(
             ]
 
         # TESTE 5: Fragmentos
-        cursor.execute('SELECT COUNT(*) FROM rumination_fragments WHERE user_id = ?', (ADMIN_USER_ID,))
+        cursor.execute(
+            f'SELECT COUNT(*) FROM rumination_fragments WHERE user_id = ?{frag_sql}',
+            (ADMIN_USER_ID, *frag_params),
+        )
         frag_count = cursor.fetchone()[0]
 
         debug_result["fragments"]["count"] = frag_count
 
         if frag_count > 0:
-            cursor.execute('''
+            cursor.execute(f'''
                 SELECT id, fragment_type, content, emotional_weight, created_at
                 FROM rumination_fragments
-                WHERE user_id = ?
+                WHERE user_id = ?{frag_sql}
                 ORDER BY created_at DESC
                 LIMIT 3
-            ''', (ADMIN_USER_ID,))
+            ''', (ADMIN_USER_ID, *frag_params))
 
             debug_result["fragments"]["recent"] = [
                 {

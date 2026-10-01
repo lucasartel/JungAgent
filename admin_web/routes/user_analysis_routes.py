@@ -87,11 +87,18 @@ async def user_analysis_page(request: Request, user_id: str, admin: Dict = Depen
     total_conversations = db.count_conversations(user_id)
 
     cursor = db.conn.cursor()
+    # C12c6: contagem de conflitos no escopo cognitivo (mesmo fail-closed
+    # do leitor canonico get_user_conflicts) — nunca somar Relations.
+    try:
+        relation_id = db._pattern_scope(user_id)
+        scope_sql, scope_params = db._analysis_scope_clause(
+            "archetype_conflicts", relation_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     cursor.execute(
-        """
-        SELECT COUNT(*) as count FROM archetype_conflicts WHERE user_id = ?
-    """,
-        (user_id,),
+        f"SELECT COUNT(*) as count FROM archetype_conflicts WHERE user_id = ?{scope_sql}",
+        (user_id, *scope_params),
     )
     total_conflicts = cursor.fetchone()[0]
 
@@ -112,6 +119,11 @@ async def user_analysis_page(request: Request, user_id: str, admin: Dict = Depen
 async def user_agent_data_page(request: Request, user_id: str, admin: Dict = Depends(require_master)):
     """Pagina de dados do agente para um usuario."""
     db = get_db()
+    # C12c6: trinca do leitor canônico (padrão psychometrics_routes) —
+    # require_master já veio do decorator; alvo de wellness e acesso do admin
+    # são verificados antes de qualquer leitura.
+    verify_admin_wellness_target(user_id)
+    verify_user_access(admin, user_id, db)
 
     user = db.get_user(user_id)
     if not user:
@@ -120,18 +132,53 @@ async def user_agent_data_page(request: Request, user_id: str, admin: Dict = Dep
     cursor = db.conn.cursor()
     cursor.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
 
-    cursor.execute("SELECT COUNT(*) as count FROM conversations WHERE user_id = ?", (user_id,))
+    # C12c6: estatísticas no escopo do leitor canônico
+    # (get_user_conversations): Relation elegível → instância → fail-closed
+    # 1 = 0 para participante sem Relation; revogada ⇒ 403 com sentinela.
+    scope_cursor = db.conn.cursor()
+    conv_columns = {
+        row[1] for row in scope_cursor.execute("PRAGMA table_info(conversations)")
+    }
+    try:
+        conv_relation = db._resolve_relation_id(user_id, None)
+        if conv_relation:
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(db, conv_relation)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    conv_instance = db._conversation_agent_instance()
+    conv_clauses = ["user_id = ?"]
+    conv_params: list = [user_id]
+    if conv_relation and "relation_id" in conv_columns:
+        conv_clauses.append("relation_id = ?")
+        conv_params.append(conv_relation)
+    elif conv_relation or db._legacy_admin_conversation_allowed(user_id):
+        if conv_instance and "agent_instance" in conv_columns:
+            conv_clauses.append("agent_instance = ?")
+            conv_params.append(conv_instance)
+    else:
+        conv_clauses.append("1 = 0")
+    conv_scope_sql = " AND ".join(conv_clauses)
+
+    cursor.execute(
+        f"SELECT COUNT(*) as count FROM conversations WHERE {conv_scope_sql}",
+        conv_params,
+    )
     total_conversations = cursor.fetchone()["count"]
 
     cursor.execute(
-        """
+        f"""
         SELECT COUNT(*) as count FROM conversations
-        WHERE user_id = ? AND platform != 'proactive'
+        WHERE {conv_scope_sql} AND platform != 'proactive'
     """,
-        (user_id,),
+        conv_params,
     )
     reactive_count = cursor.fetchone()["count"]
 
+    # C12c6: proactive_approaches não tem colunas de escopo — segue atrás da
+    # trinca acima e é registrado como contrato BLOCKED/C12g em
+    # core/db/cognitive_ownership.py (domínio generated_artifacts).
     cursor.execute(
         """
         SELECT COUNT(*) as count FROM proactive_approaches
@@ -142,18 +189,18 @@ async def user_agent_data_page(request: Request, user_id: str, admin: Dict = Dep
     proactive_count = cursor.fetchone()["count"]
 
     cursor.execute(
-        """
-        SELECT MIN(timestamp) as first_ts FROM conversations WHERE user_id = ?
+        f"""
+        SELECT MIN(timestamp) as first_ts FROM conversations WHERE {conv_scope_sql}
     """,
-        (user_id,),
+        conv_params,
     )
     first_interaction = cursor.fetchone()["first_ts"] or "N/A"
 
     cursor.execute(
-        """
-        SELECT MAX(timestamp) as last_ts FROM conversations WHERE user_id = ?
+        f"""
+        SELECT MAX(timestamp) as last_ts FROM conversations WHERE {conv_scope_sql}
     """,
-        (user_id,),
+        conv_params,
     )
     last_activity = cursor.fetchone()["last_ts"] or "N/A"
 
@@ -194,23 +241,16 @@ async def user_agent_data_page(request: Request, user_id: str, admin: Dict = Dep
         "response_rate": response_rate,
     }
 
-    cursor.execute(
-        """
-        SELECT
-            user_input,
-            ai_response,
-            timestamp,
-            keywords
-        FROM conversations
-        WHERE user_id = ? AND platform != 'proactive'
-        ORDER BY timestamp DESC
-        LIMIT 10
-    """,
-        (user_id,),
-    )
-
+    # C12c6: mensagens via leitor canônico com escopo interno (Relation
+    # elegível → instância → fail-closed) em vez de SQL cru por usuário.
+    try:
+        reactive_rows = db.get_user_conversations(
+            user_id, limit=10, include_proactive=False
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     reactive_messages = []
-    for row in cursor.fetchall():
+    for row in reactive_rows:
         reactive_messages.append(
             {
                 "user_input": row.get("user_input", "") or "",

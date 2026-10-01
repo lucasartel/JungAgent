@@ -32,13 +32,30 @@ class FactLookupDatabaseMixin:
         except Exception as exc:
             logger.warning("Could not inspect fact table %s: %s", table, exc)
             columns = set()
+        # C6 (P1): instância entra na cláusula de fato — o mesmo usuário em
+        # OUTRO agente nunca alimenta o recall desta instância. Linha com
+        # agent_instance NULL (legado sem carimbo) segue visível, mesma
+        # semântica do legacy_quarantine_clause (C5/PR #49).
+        instance_sql = ""
+        instance_params: List[str] = []
+        if "agent_instance" in columns:
+            agent_instance = getattr(self, "agent_instance", None)
+            try:
+                from engines.will_scope import resolve_instance
+
+                instance = resolve_instance(agent_instance)
+            except ImportError:
+                instance = (agent_instance or "").strip()
+            if instance:
+                instance_sql = " AND (agent_instance = ? OR agent_instance IS NULL)"
+                instance_params = [instance]
         if relation_id and "relation_id" in columns:
-            return " AND relation_id = ?", [str(relation_id)]
+            return " AND relation_id = ?" + instance_sql, [str(relation_id), *instance_params]
         if callable(resolver) and not self._legacy_admin_fact_scope_allowed(user_id):
             return " AND 1 = 0", []
         if callable(resolver) and "relation_id" in columns:
-            return " AND relation_id IS NULL", []
-        return "", []
+            return " AND relation_id IS NULL" + instance_sql, [*instance_params]
+        return instance_sql, [*instance_params]
 
     def _is_factual_memory_query(self, text: str) -> bool:
         """
