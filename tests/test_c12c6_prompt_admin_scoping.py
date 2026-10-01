@@ -274,8 +274,24 @@ def test_enriched_query_blocks_facts_of_other_agent_instance():
 
 def test_architectural_context_refuses_will_of_revoked_relation():
     """C6/P1: consentimento revoked ⇒ sentinel relation_not_eligible no
-    resolver do builder e NENHUMA evidência will# chega ao contexto."""
+    resolver do builder e NENHUM material pessoal (will# nem dream#)
+    chega ao contexto — o gate roda antes de qualquer leitura pessoal."""
     conn = _will_conn()
+    conn.execute(
+        """
+        CREATE TABLE agent_dreams (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            symbolic_theme TEXT,
+            extracted_insight TEXT,
+            dream_mood TEXT,
+            created_at TEXT,
+            agent_instance TEXT,
+            origin_relation_id TEXT,
+            origin_class TEXT
+        )
+        """
+    )
     _insert_will(
         conn,
         11,
@@ -284,6 +300,19 @@ def test_architectural_context_refuses_will_of_revoked_relation():
         scope="relation",
         relation="rel-1",
     )
+    conn.execute(
+        """
+        INSERT INTO agent_dreams (
+            id, user_id, symbolic_theme, extracted_insight, dream_mood,
+            created_at, agent_instance, origin_relation_id, origin_class
+        ) VALUES (
+            1, ?, 'tema privado', 'sonho da relacao revogada', 'claro',
+            '2026-09-30 08:00:00', ?, 'rel-1', 'relation'
+        )
+        """,
+        (ADMIN_USER_ID, AGENT_INSTANCE),
+    )
+    conn.commit()
     db = _BuilderDb(
         conn,
         relation_id="rel-1",
@@ -297,11 +326,13 @@ def test_architectural_context_refuses_will_of_revoked_relation():
         builder._resolve_identity_relation(ADMIN_USER_ID)
 
     # 2) O wrapper captura a sentinela e devolve contexto degradado — o
-    #    will#11 da Relation revogada jamais entra nas evidências do prompt.
+    #    dream#1 (lido ANTES do gate no código antigo) e o will#11 da
+    #    Relation revogada jamais entram nas evidências do prompt.
     context = builder.build_architectural_self_awareness_context(ADMIN_USER_ID)
     refs = _will_refs(context)
     assert "will#11" not in refs
-    assert not [ref for ref in refs if ref.startswith("will#")]
+    assert "dream#1" not in refs
+    assert not [ref for ref in refs if ref.startswith(("will#", "dream#"))]
 
 
 def test_diagnose_facts_route_executes_scoped_sql():
@@ -386,6 +417,94 @@ def test_diagnose_facts_route_executes_scoped_sql():
     values = [f["value"] for f in payload["facts_by_user"]["admin"]["facts"]]
     assert "Ana desta instancia" in values
     assert "Ana de outra instancia" not in values
+
+
+def test_diagnose_rumination_scope_covers_last_and_recent_samples():
+    """C6/P1: no diagnóstico da ruminação, last e recent_samples aplicam a
+    MESMA quarentena das contagens (revisão do PR #50)."""
+    import ast
+    import asyncio
+
+    route_file = (
+        Path(__file__).resolve().parents[1]
+        / "admin_web" / "routes" / "research_lab_rumination.py"
+    )
+    route = next(
+        node
+        for node in ast.parse(route_file.read_text(encoding="utf-8")).body
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+        and node.name == "diagnose_rumination"
+    )
+
+    # Módulo importado dentro da função — stub sem carga pesada.
+    jung_stub = sys.modules.get("jung_rumination") or types.ModuleType(
+        "jung_rumination"
+    )
+    if not getattr(jung_stub, "RuminationEngine", None):
+        jung_stub.RuminationEngine = object
+    sys.modules["jung_rumination"] = jung_stub
+
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT, timestamp TEXT, platform TEXT,
+            user_input TEXT, ai_response TEXT,
+            relation_id TEXT, agent_instance TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO conversations "
+        "(user_id, timestamp, platform, user_input, relation_id, agent_instance) "
+        "VALUES (?, '2026-09-30 09:00', 'web', 'mensagem desta instancia legada', NULL, NULL)",
+        (ADMIN_USER_ID,),
+    )
+    conn.execute(
+        "INSERT INTO conversations "
+        "(user_id, timestamp, platform, user_input, relation_id, agent_instance) "
+        "VALUES (?, '2026-09-30 12:00', 'telegram', 'mensagem de OUTRA instancia', "
+        "'outra-rel', 'outra-instancia')",
+        (ADMIN_USER_ID,),
+    )
+    conn.commit()
+
+    class _LoggerStub:
+        def error(self, *args, **kwargs):
+            pass
+
+        def warning(self, *args, **kwargs):
+            pass
+
+    namespace = {
+        "Dict": dict,
+        "UNSAFE_ADMIN_ENDPOINTS_ENABLED": True,
+        "get_db": lambda: types.SimpleNamespace(conn=conn),
+        "JSONResponse": lambda payload, *args, **kwargs: payload,
+        "internal_error_response": lambda detail, *args, **kwargs: {
+            "success": False,
+            "detail": detail,
+        },
+        "logger": _LoggerStub(),
+    }
+    exec(
+        compile(ast.Module(body=[route], type_ignores=[]), str(route_file), "exec"),
+        namespace,
+    )
+    payload = asyncio.run(namespace["diagnose_rumination"]())
+
+    conversations = payload["conversations"]
+    # A contagem já excluía a outra instância…
+    assert conversations["admin_total"] == 1
+    # …e last/recent_samples agora também (P1 da revisão):
+    assert "OUTRA instancia" not in str(conversations.get("last"))
+    previews = [
+        sample.get("preview") or ""
+        for sample in conversations.get("recent_samples", [])
+    ]
+    assert any("desta instancia legada" in preview for preview in previews)
+    assert not any("OUTRA instancia" in preview for preview in previews)
 
 
 def test_admin_block_routes_use_scoped_readers_at_source_level():

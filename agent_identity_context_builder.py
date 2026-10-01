@@ -152,6 +152,13 @@ class AgentIdentityContextBuilder:
         }
 
         try:
+            # C6/P1 (revisão do PR #50): elegibilidade da Relation ANTES
+            # de qualquer leitura pessoal — consentimento revogado não pode
+            # deixar material parcial (dream#…) num contexto degradado pelo
+            # wrapper. A sentinela relation_not_eligible sobe aqui e nada
+            # pessoal é lido.
+            self._resolve_identity_relation(user_id)
+
             cursor = self.db.conn.cursor()
 
             if self._identity_table_exists(cursor, "consciousness_loop_state"):

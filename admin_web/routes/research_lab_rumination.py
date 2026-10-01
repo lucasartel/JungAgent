@@ -299,14 +299,16 @@ async def diagnose_rumination(
                 row[0] or "NULL": row[1] for row in cursor.fetchall()
             }
 
-            # Última conversa
-            cursor.execute('''
+            # Última conversa (mesma quarentena das contagens — P1 da
+            # revisão do PR #50: last/recent_samples não podiam ficar só
+            # filtrados por user_id)
+            cursor.execute(f'''
                 SELECT timestamp, platform, user_input
                 FROM conversations
-                WHERE user_id = ?
+                WHERE user_id = ?{conv_sql}
                 ORDER BY timestamp DESC
                 LIMIT 1
-            ''', (ADMIN_USER_ID,))
+            ''', (ADMIN_USER_ID, *conv_params))
             last = cursor.fetchone()
             if last:
                 diagnosis["conversations"]["last"] = {
@@ -316,13 +318,13 @@ async def diagnose_rumination(
                 }
 
             # Últimas 5 conversas com plataforma (para debug)
-            cursor.execute('''
+            cursor.execute(f'''
                 SELECT timestamp, platform, user_input
                 FROM conversations
-                WHERE user_id = ?
+                WHERE user_id = ?{conv_sql}
                 ORDER BY timestamp DESC
                 LIMIT 5
-            ''', (ADMIN_USER_ID,))
+            ''', (ADMIN_USER_ID, *conv_params))
             diagnosis["conversations"]["recent_samples"] = [
                 {
                     "timestamp": row[0],
