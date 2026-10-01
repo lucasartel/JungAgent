@@ -13,6 +13,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 # Mesmo padrao do C12c1/C5: openai e stubado pela suíte (sem atributos),
 # e core/__init__ importa `from openai import OpenAI`.
 _openai_stub = sys.modules.get("openai") or types.ModuleType("openai")
@@ -41,11 +43,19 @@ FactLookupDatabaseMixin = _load_class("core/db/facts.py", "FactLookupDatabaseMix
 class _BuilderDb:
     """Conn do builder; ``resolve_relation_id`` só existe quando ativado."""
 
-    def __init__(self, conn, relation_id=None, *, with_resolver=False):
+    def __init__(
+        self, conn, relation_id=None, *, with_resolver=False, relation_record=None
+    ):
         self.conn = conn
         self._relation_id = relation_id
         if with_resolver:
             self.resolve_relation_id = self._resolve_relation_id
+            # Gate C12g do builder (C6): exige leitor de Relation, como o
+            # HybridDatabaseManager real; elegível por padrão (revogável).
+            self.get_agent_relation = lambda relation_id: (
+                relation_record
+                or {"status": "active", "consent_status": "granted"}
+            )
 
     def _resolve_relation_id(self, agent_instance=None, participant_user_id=None, relation_id=None):
         return self._relation_id
@@ -168,20 +178,23 @@ def _facts_v2_conn() -> sqlite3.Connection:
             fact_attribute TEXT,
             fact_value TEXT,
             is_current INTEGER DEFAULT 1,
-            relation_id TEXT
+            relation_id TEXT,
+            agent_instance TEXT
         )
         """
     )
     return conn
 
 
-def _insert_fact_v2(conn, attribute: str, value: str, relation_id=None) -> None:
+def _insert_fact_v2(
+    conn, attribute: str, value: str, relation_id=None, instance=None
+) -> None:
     conn.execute(
         """
-        INSERT INTO user_facts_v2 (user_id, fact_type, fact_attribute, fact_value, is_current, relation_id)
-        VALUES (?, 'pessoa', ?, ?, 1, ?)
+        INSERT INTO user_facts_v2 (user_id, fact_type, fact_attribute, fact_value, is_current, relation_id, agent_instance)
+        VALUES (?, 'pessoa', ?, ?, 1, ?, ?)
         """,
-        (ADMIN_USER_ID, attribute, value, relation_id),
+        (ADMIN_USER_ID, attribute, value, relation_id, instance),
     )
     conn.commit()
 
@@ -242,3 +255,166 @@ def test_enriched_query_legacy_v1_without_scope_column_is_fail_closed():
     enriched = engine._build_enriched_query("u-outro", "Como esta Ana?")
 
     assert "Ana mora em Lisboa" not in enriched
+
+
+def test_enriched_query_blocks_facts_of_other_agent_instance():
+    """C6/P1: fato do mesmo usuário em OUTRA instância não entra no recall."""
+    conn = _facts_v2_conn()
+    _insert_fact_v2(conn, "fato_nesta_instancia", "Ana nesta instancia", instance=None)
+    _insert_fact_v2(
+        conn, "fato_de_outro_agente", "Ana de outro agente", instance="outra-instancia"
+    )
+
+    engine = _ScopedSemanticEngine(conn, relation_id=None)
+    enriched = engine._build_enriched_query(ADMIN_USER_ID, "Como esta Ana?")
+
+    assert "pessoa:fato_nesta_instancia" in enriched
+    assert "pessoa:fato_de_outro_agente" not in enriched
+
+
+def test_architectural_context_refuses_will_of_revoked_relation():
+    """C6/P1: consentimento revoked ⇒ sentinel relation_not_eligible no
+    resolver do builder e NENHUMA evidência will# chega ao contexto."""
+    conn = _will_conn()
+    _insert_will(
+        conn,
+        11,
+        "da relacao revogada",
+        "2026-09-30T10:00:00",
+        scope="relation",
+        relation="rel-1",
+    )
+    db = _BuilderDb(
+        conn,
+        relation_id="rel-1",
+        with_resolver=True,
+        relation_record={"status": "active", "consent_status": "revoked"},
+    )
+    builder = AgentIdentityContextBuilder(db)
+
+    # 1) O gate C12g levanta a sentinela canônica direto no resolver.
+    with pytest.raises(ValueError, match="relation_not_eligible"):
+        builder._resolve_identity_relation(ADMIN_USER_ID)
+
+    # 2) O wrapper captura a sentinela e devolve contexto degradado — o
+    #    will#11 da Relation revogada jamais entra nas evidências do prompt.
+    context = builder.build_architectural_self_awareness_context(ADMIN_USER_ID)
+    refs = _will_refs(context)
+    assert "will#11" not in refs
+    assert not [ref for ref in refs if ref.startswith("will#")]
+
+
+def test_diagnose_facts_route_executes_scoped_sql():
+    """C6/P2: a rota de diagnóstico executa de verdade (sem '{quarantine_sql}'
+    literal) e só devolve fatos legados SEM carimbo desta instância."""
+    import ast
+    import asyncio
+
+    route_file = (
+        Path(__file__).resolve().parents[1]
+        / "admin_web" / "routes" / "diagnostics_routes.py"
+    )
+    route = next(
+        node
+        for node in ast.parse(route_file.read_text(encoding="utf-8")).body
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+        and node.name == "diagnose_facts"
+    )
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE users (
+            user_id TEXT PRIMARY KEY, user_name TEXT, platform TEXT,
+            platform_id TEXT, last_seen TEXT
+        );
+        CREATE TABLE user_facts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT, fact_category TEXT, fact_key TEXT, fact_value TEXT,
+            is_current INTEGER DEFAULT 1, version INTEGER DEFAULT 1,
+            source_conversation_id TEXT, relation_id TEXT, agent_instance TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO users (user_id, user_name, platform) "
+        "VALUES ('admin', 'Admin', 'telegram')"
+    )
+    conn.execute(
+        "INSERT INTO user_facts (user_id, fact_category, fact_key, fact_value, agent_instance) "
+        "VALUES ('admin', 'pessoa', 'nome', 'Ana desta instancia', NULL)"
+    )
+    conn.execute(
+        "INSERT INTO user_facts (user_id, fact_category, fact_key, fact_value, agent_instance) "
+        "VALUES ('admin', 'pessoa', 'nome', 'Ana de outra instancia', 'outra-instancia')"
+    )
+    conn.commit()
+
+    class _RouterStub:
+        def get(self, *args, **kwargs):
+            return lambda fn: fn
+
+    class _LoggerStub:
+        def error(self, *args, **kwargs):
+            pass
+
+        def warning(self, *args, **kwargs):
+            pass
+
+    namespace = {
+        "Dict": dict,
+        "Depends": lambda *args, **kwargs: None,
+        "require_master": lambda *args, **kwargs: None,
+        "router": _RouterStub(),
+        "UNSAFE_ADMIN_ENDPOINTS_ENABLED": True,
+        "get_db": lambda: types.SimpleNamespace(conn=conn),
+        "JSONResponse": lambda payload, *args, **kwargs: payload,
+        "internal_error_response": lambda detail, *args, **kwargs: {
+            "success": False,
+            "detail": detail,
+        },
+        "logger": _LoggerStub(),
+    }
+    exec(
+        compile(ast.Module(body=[route], type_ignores=[]), str(route_file), "exec"),
+        namespace,
+    )
+    payload = asyncio.run(namespace["diagnose_facts"](admin={"role": "master"}))
+
+    assert payload["success"] is True
+    values = [f["value"] for f in payload["facts_by_user"]["admin"]["facts"]]
+    assert "Ana desta instancia" in values
+    assert "Ana de outra instancia" not in values
+
+
+def test_admin_block_routes_use_scoped_readers_at_source_level():
+    """Escape C6: cada rota do bloco admin marca o leitor escopado canônico."""
+    root = Path(__file__).resolve().parents[1]
+    required = {
+        "admin_web/routes/research_lab_debug.py": [
+            'legacy_quarantine_clause(cursor, table="conversations")',
+            'table="rumination_fragments"',
+        ],
+        "admin_web/routes/research_lab_mind.py": [
+            "resolve_personal_export_scope(db, ADMIN_USER_ID)",
+            "personal_scope_clause",
+        ],
+        "admin_web/routes/research_lab_rumination.py": [
+            "resolve_personal_export_scope(db, ADMIN_USER_ID)",
+            "allowed_rumination_tables",
+        ],
+        "admin_web/routes/research_lab_memory.py": [
+            "resolve_personal_export_scope(db, user_id)",
+            '"_fact_relation_scope"',
+        ],
+        "admin_web/routes/user_analysis_routes.py": [
+            "verify_admin_wellness_target(user_id)",
+            "verify_user_access(admin, user_id, db)",
+            "get_user_conversations(",
+        ],
+    }
+    for relative, markers in required.items():
+        source = (root / relative).read_text(encoding="utf-8")
+        for marker in markers:
+            assert marker in source, f"{relative}: marcador ausente: {marker}"

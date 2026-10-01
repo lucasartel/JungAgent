@@ -1,7 +1,7 @@
 """Rumination dashboard and control handlers for legacy research lab routes."""
 from typing import Dict
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from admin_web.routes.research_lab_context import (
@@ -27,42 +27,80 @@ async def jung_lab_dashboard(
     # Buscar estatísticas gerais
     stats = rumination.get_stats(ADMIN_USER_ID)
 
-    # Buscar últimos fragmentos
+    # C12c6: visibilidade pessoal fail-CLOSED do admin (C12c2/P1) —
+    # Relation elegível ⇒ (relation_id IS NULL OR = R) + instância;
+    # revogada/não verificável ⇒ 403 com sentinela canônica.
     cursor = db.conn.cursor()
-    cursor.execute("""
+    from core.db.legacy_exports import (
+        _col_or_null,
+        _table_columns,
+        _tag_scope,
+        scope_counts,
+    )
+    from core.db.relation_scope import (
+        personal_scope_clause,
+        resolve_personal_export_scope,
+    )
+
+    try:
+        dash_scope = resolve_personal_export_scope(db, ADMIN_USER_ID)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    frag_sql, frag_params = personal_scope_clause(
+        cursor, table="rumination_fragments", relation_id=dash_scope.relation_id
+    )
+    tens_sql, tens_params = personal_scope_clause(
+        cursor, table="rumination_tensions", relation_id=dash_scope.relation_id
+    )
+    insi_sql, insi_params = personal_scope_clause(
+        cursor, table="rumination_insights", relation_id=dash_scope.relation_id
+    )
+    frag_rel = _col_or_null(_table_columns(cursor, "rumination_fragments"), "relation_id")
+    tens_rel = _col_or_null(_table_columns(cursor, "rumination_tensions"), "relation_id")
+    insi_rel = _col_or_null(_table_columns(cursor, "rumination_insights"), "relation_id")
+
+    # Buscar últimos fragmentos (rotulados: NULL de relation_id não comprova
+    # origem global — labeling C12c2).
+    cursor.execute(f"""
         SELECT id, fragment_type, content, source_quote, emotional_weight,
-               datetime(created_at, 'localtime') as created_at
+               datetime(created_at, 'localtime') as created_at, {frag_rel}
         FROM rumination_fragments
-        WHERE user_id = ?
+        WHERE user_id = ?{frag_sql}
         ORDER BY created_at DESC
         LIMIT 10
-    """, (ADMIN_USER_ID,))
-    fragments = [dict(row) for row in cursor.fetchall()]
+    """, (ADMIN_USER_ID, *frag_params))
+    fragments = _tag_scope([dict(row) for row in cursor.fetchall()])
 
     # Buscar tensões ativas
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT id, tension_type, pole_a_content, pole_b_content,
                tension_description, intensity, maturity_score, status,
                datetime(first_detected_at, 'localtime') as created_at,
-               datetime(last_revisited_at, 'localtime') as last_revisit
+               datetime(last_revisited_at, 'localtime') as last_revisit, {tens_rel}
         FROM rumination_tensions
-        WHERE user_id = ? AND status != 'archived'
+        WHERE user_id = ? AND status != 'archived'{tens_sql}
         ORDER BY maturity_score DESC, first_detected_at DESC
         LIMIT 10
-    """, (ADMIN_USER_ID,))
-    tensions = [dict(row) for row in cursor.fetchall()]
+    """, (ADMIN_USER_ID, *tens_params))
+    tensions = _tag_scope([dict(row) for row in cursor.fetchall()])
 
     # Buscar insights (ready e delivered)
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT id, symbol_content, question_content, full_message, depth_score, status,
                datetime(crystallized_at, 'localtime') as created_at,
-               datetime(delivered_at, 'localtime') as delivered_at
+               datetime(delivered_at, 'localtime') as delivered_at, {insi_rel}
         FROM rumination_insights
-        WHERE user_id = ?
+        WHERE user_id = ?{insi_sql}
         ORDER BY crystallized_at DESC
         LIMIT 10
-    """, (ADMIN_USER_ID,))
-    insights = [dict(row) for row in cursor.fetchall()]
+    """, (ADMIN_USER_ID, *insi_params))
+    insights = _tag_scope([dict(row) for row in cursor.fetchall()])
+
+    scope_summary = {
+        "fragments": scope_counts(fragments),
+        "tensions": scope_counts(tensions),
+        "insights": scope_counts(insights),
+    }
 
     # Verificar se scheduler está rodando
     scheduler_running = os.path.exists("rumination_scheduler.pid")
@@ -84,6 +122,7 @@ async def jung_lab_dashboard(
             "fragments": fragments,
             "tensions": tensions,
             "insights": insights,
+            "scope_counts": scope_summary,
             "unsafe_admin_endpoints_enabled": UNSAFE_ADMIN_ENDPOINTS_ENABLED,
             "scheduler_running": scheduler_running,
             "scheduler_pid": scheduler_pid,
@@ -211,12 +250,22 @@ async def diagnose_rumination(
     Diagnóstico completo do sistema de ruminação
     Verifica conversas, fragmentos, tensões e possíveis problemas
     """
+    if not UNSAFE_ADMIN_ENDPOINTS_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+
     from instance_config import ADMIN_USER_ID
     from jung_rumination import RuminationEngine
 
     try:
         db = get_db()
         cursor = db.conn.cursor()
+
+        # C12c6: quarentena legado nas leituras de conteúdo do diagnóstico.
+        from core.db.relation_scope import legacy_quarantine_clause
+
+        conv_sql, conv_params = legacy_quarantine_clause(
+            cursor, table="conversations"
+        )
 
         diagnosis = {
             "admin_user_id": ADMIN_USER_ID,
@@ -227,22 +276,25 @@ async def diagnose_rumination(
         }
 
         # 1. VERIFICAR CONVERSAS
-        cursor.execute('SELECT COUNT(*) FROM conversations')
+        cursor.execute(f'SELECT COUNT(*) FROM conversations WHERE 1=1{conv_sql}', conv_params)
         total_conversations = cursor.fetchone()[0]
         diagnosis["conversations"]["total"] = total_conversations
 
-        cursor.execute('SELECT COUNT(*) FROM conversations WHERE user_id = ?', (ADMIN_USER_ID,))
+        cursor.execute(
+            f'SELECT COUNT(*) FROM conversations WHERE user_id = ?{conv_sql}',
+            (ADMIN_USER_ID, *conv_params),
+        )
         admin_conversations = cursor.fetchone()[0]
         diagnosis["conversations"]["admin_total"] = admin_conversations
 
         if admin_conversations > 0:
             # Conversas por plataforma
-            cursor.execute('''
+            cursor.execute(f'''
                 SELECT platform, COUNT(*) as count
                 FROM conversations
-                WHERE user_id = ?
+                WHERE user_id = ?{conv_sql}
                 GROUP BY platform
-            ''', (ADMIN_USER_ID,))
+            ''', (ADMIN_USER_ID, *conv_params))
             diagnosis["conversations"]["by_platform"] = {
                 row[0] or "NULL": row[1] for row in cursor.fetchall()
             }
@@ -297,7 +349,19 @@ async def diagnose_rumination(
 
         # 2. VERIFICAR TABELAS DE RUMINAÇÃO
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%rumination%'")
-        tables = [row[0] for row in cursor.fetchall()]
+        # C12c6: whitelist literal (mesma lista de research_lab_debug) —
+        # nomes vindos do sqlite_master nunca entram em f-string sem checagem.
+        allowed_rumination_tables = (
+            "rumination_fragments",
+            "rumination_tensions",
+            "rumination_insights",
+            "rumination_log",
+        )
+        tables = [
+            row[0]
+            for row in cursor.fetchall()
+            if row[0] in allowed_rumination_tables
+        ]
 
         if not tables:
             diagnosis["problems"].append({
@@ -317,7 +381,11 @@ async def diagnose_rumination(
             diagnosis["rumination_tables"]["found"] = tables
 
             for table in tables:
-                cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE user_id = ?', (ADMIN_USER_ID,))
+                table_sql, table_params = legacy_quarantine_clause(cursor, table=table)
+                cursor.execute(
+                    f'SELECT COUNT(*) FROM {table} WHERE user_id = ?{table_sql}',
+                    (ADMIN_USER_ID, *table_params),
+                )
                 count = cursor.fetchone()[0]
                 diagnosis["rumination_tables"][table] = {
                     "count": count
@@ -325,7 +393,10 @@ async def diagnose_rumination(
 
                 if count > 0:
                     # Get sample
-                    cursor.execute(f'SELECT * FROM {table} WHERE user_id = ? LIMIT 1', (ADMIN_USER_ID,))
+                    cursor.execute(
+                        f'SELECT * FROM {table} WHERE user_id = ?{table_sql} LIMIT 1',
+                        (ADMIN_USER_ID, *table_params),
+                    )
                     diagnosis["rumination_tables"][table]["has_data"] = True
 
             # Verificar problemas específicos
@@ -334,10 +405,10 @@ async def diagnose_rumination(
 
             if admin_conversations > 0 and frag_count == 0:
                 # Verificar se tem conversas telegram
-                cursor.execute('''
+                cursor.execute(f'''
                     SELECT COUNT(*) FROM conversations
-                    WHERE user_id = ? AND platform = 'telegram'
-                ''', (ADMIN_USER_ID,))
+                    WHERE user_id = ? AND platform = 'telegram'{conv_sql}
+                ''', (ADMIN_USER_ID, *conv_params))
                 telegram_count = cursor.fetchone()[0]
 
                 if telegram_count == 0:

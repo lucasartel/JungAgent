@@ -71,6 +71,13 @@ class AgentIdentityContextBuilder:
             agent_instance=self.agent_instance,
             participant_user_id=str(user_id),
         )
+        if relation_id:
+            # C6 (P1): revogação C12g — prompt de identidade não lê material
+            # de Relation sem consentimento concedido; mesma sentinel
+            # relation_not_eligible das irmãs (_pattern_scope, facts.py).
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(self.db, relation_id)
         if not relation_id and str(user_id) != str(ADMIN_USER_ID):
             raise ValueError("relation_required_for_identity_context")
         return relation_id

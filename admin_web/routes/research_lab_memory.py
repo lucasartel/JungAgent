@@ -27,19 +27,32 @@ def _group_counts(cursor, query: str, params: tuple = ()) -> Dict[str, int]:
     }
 
 
-def _fetch_current_sqlite_facts(cursor, user_id: str) -> Dict[str, object]:
+def _fetch_current_sqlite_facts(db, user_id: str) -> Dict[str, object]:
+    cursor = db.conn.cursor()
     has_v2 = _sqlite_table_exists(cursor, "user_facts_v2")
     has_v1 = _sqlite_table_exists(cursor, "user_facts")
 
+    def _fact_scope(table: str):
+        # C12c6: contrato structured_facts — Relation resolvida/verificada;
+        # usuário sem Relation (não-admin) vira 1 = 0; revogada ⇒ 403.
+        fact_scope = getattr(db, "_fact_relation_scope", None)
+        if not callable(fact_scope):
+            return "", []
+        try:
+            return fact_scope(table, user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+
     facts_v2 = []
     if has_v2:
-        cursor.execute("""
+        scope_sql, scope_params = _fact_scope("user_facts_v2")
+        cursor.execute(f"""
             SELECT fact_category, fact_type, fact_attribute, fact_value,
                    confidence, extraction_method, context, source_conversation_id, version
             FROM user_facts_v2
-            WHERE user_id = ? AND is_current = 1
+            WHERE user_id = ? AND is_current = 1{scope_sql}
             ORDER BY fact_category, fact_type, fact_attribute, confidence DESC, version DESC
-        """, (user_id,))
+        """, (user_id, *scope_params))
         facts_v2 = [
             {
                 "category": row["fact_category"],
@@ -57,13 +70,14 @@ def _fetch_current_sqlite_facts(cursor, user_id: str) -> Dict[str, object]:
 
     facts_v1 = []
     if has_v1:
-        cursor.execute("""
+        scope_sql, scope_params = _fact_scope("user_facts")
+        cursor.execute(f"""
             SELECT fact_category, fact_key, fact_value, confidence,
                    source_conversation_id, version
             FROM user_facts
-            WHERE user_id = ? AND is_current = 1
+            WHERE user_id = ? AND is_current = 1{scope_sql}
             ORDER BY fact_category, fact_key, version DESC
-        """, (user_id,))
+        """, (user_id, *scope_params))
         facts_v1 = [
             {
                 "category": row["fact_category"],
@@ -104,26 +118,69 @@ def _fetch_user_memory_detail(db, user_id: str) -> Dict[str, object]:
     if not user_row:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
-    cursor.execute("""
+    # C12c6: estatísticas no mesmo escopo do leitor canônico
+    # (get_user_conversations/count_conversations): Relation elegível →
+    # instância → fail-closed 1 = 0 para participante sem Relation.
+    conv_columns = {
+        row[1] for row in cursor.execute("PRAGMA table_info(conversations)")
+    }
+    try:
+        conv_relation = db._resolve_relation_id(user_id, None)
+        if conv_relation:
+            from core.db.relations import require_eligible_relation
+
+            require_eligible_relation(db, conv_relation)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    conv_instance = db._conversation_agent_instance()
+    stats_clauses = ["user_id = ?"]
+    stats_params: list = [user_id]
+    if conv_relation and "relation_id" in conv_columns:
+        stats_clauses.append("relation_id = ?")
+        stats_params.append(conv_relation)
+    elif conv_relation or db._legacy_admin_conversation_allowed(user_id):
+        if conv_instance and "agent_instance" in conv_columns:
+            stats_clauses.append("agent_instance = ?")
+            stats_params.append(conv_instance)
+    else:
+        stats_clauses.append("1 = 0")
+    cursor.execute(f"""
         SELECT COUNT(*) AS conversation_count,
                MAX(timestamp) AS last_conversation_at,
                SUM(CASE WHEN chroma_id IS NOT NULL AND chroma_id != '' THEN 1 ELSE 0 END) AS chroma_linked_conversations
         FROM conversations
-        WHERE user_id = ?
-    """, (user_id,))
+        WHERE {' AND '.join(stats_clauses)}
+    """, tuple(stats_params))
     conversation_stats = cursor.fetchone()
 
-    sqlite_facts = _fetch_current_sqlite_facts(cursor, user_id)
+    sqlite_facts = _fetch_current_sqlite_facts(db, user_id)
 
     knowledge_gaps = []
     if _sqlite_table_exists(cursor, "knowledge_gaps"):
-        cursor.execute("""
+        from core.db.relation_scope import (
+            personal_scope_clause,
+            resolve_personal_export_scope,
+        )
+
+        # C12c6: visibilidade pessoal fail-CLOSED do dono dos dados —
+        # Relation revogada/não verificável ⇒ 403 com sentinel canônica.
+        try:
+            gap_scope = resolve_personal_export_scope(db, user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        gap_sql, gap_params = personal_scope_clause(
+            cursor,
+            table="knowledge_gaps",
+            relation_column="origin_relation_id",
+            relation_id=gap_scope.relation_id,
+        )
+        cursor.execute(f"""
             SELECT topic, the_gap, importance_score, status, created_at
             FROM knowledge_gaps
-            WHERE user_id = ? AND status = 'open'
+            WHERE user_id = ? AND status = 'open'{gap_sql}
             ORDER BY importance_score DESC, created_at DESC
             LIMIT 20
-        """, (user_id,))
+        """, (user_id, *gap_params))
         knowledge_gaps = [
             {
                 "topic": row["topic"],
