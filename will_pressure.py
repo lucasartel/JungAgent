@@ -425,13 +425,14 @@ class WillPressureEngine:
         self,
         user_id: str,
         relation_id: Optional[str] = None,
+        agent_instance: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
         scope_sql, scope_params = will_visibility_scope(
             cursor,
             "conversations",
             relation_id=relation_id,
-            agent_instance=self._scope_instance(),
+            agent_instance=agent_instance or self._scope_instance(),
         )
         query = f"""
             SELECT id, user_input, ai_response, tension_level, affective_charge, existential_depth, timestamp, platform
@@ -449,13 +450,14 @@ class WillPressureEngine:
         user_id: str,
         hours: int = 12,
         relation_id: Optional[str] = None,
+        agent_instance: Optional[str] = None,
     ) -> int:
         cursor = self.db.conn.cursor()
         scope_sql, scope_params = will_visibility_scope(
             cursor,
             "conversations",
             relation_id=relation_id,
-            agent_instance=self._scope_instance(),
+            agent_instance=agent_instance or self._scope_instance(),
         )
         query = f"""
             SELECT COUNT(*)
@@ -474,8 +476,12 @@ class WillPressureEngine:
         cycle_id: str,
         state: Dict[str, Any],
         relation_id: Optional[str] = None,
+        agent_instance: Optional[str] = None,
     ) -> Tuple[Dict[str, float], Dict[str, Any], List[str], List[str]]:
         cursor = self.db.conn.cursor()
+        # A instancia vem do escopo do chamador (recalculate_pressure pode
+        # operar outra instancia que nao a do motor); fallback = motor.
+        scope_instance = agent_instance or self._scope_instance()
         markers = {**self._default_markers(), **(state.get("source_markers") or {})}
         gains = {key: 0.0 for key in PRESSURE_ORDER}
         reductions = {key: 0.0 for key in PRESSURE_ORDER}
@@ -491,7 +497,7 @@ class WillPressureEngine:
             cursor,
             "rumination_tensions",
             relation_id=relation_id,
-            agent_instance=self._scope_instance(),
+            agent_instance=scope_instance,
         )
         cursor.execute(
             f"""
@@ -512,7 +518,11 @@ class WillPressureEngine:
             markers["last_contradictory_tension_id"] = latest_tension_id
             reasons.append("saber subiu porque surgiu tensao contraditoria ainda sem sintese")
 
-        latest_conversation = self._latest_conversation(user_id, relation_id=relation_id)
+        latest_conversation = self._latest_conversation(
+            user_id,
+            relation_id=relation_id,
+            agent_instance=scope_instance,
+        )
         latest_conversation_id = int((latest_conversation or {}).get("id") or 0)
         try:
             active_gaps = self.db.get_active_knowledge_gaps(user_id, limit=1)
@@ -551,7 +561,7 @@ class WillPressureEngine:
             self.db,
             user_id=user_id,
             relation_id=relation_id,
-            agent_instance=self._scope_instance(),
+            agent_instance=scope_instance,
         )
         dream_params.extend(dream_clause_params)
         cursor.execute(
@@ -648,7 +658,12 @@ class WillPressureEngine:
                 markers["last_abrupt_conversation_id"] = latest_conversation_id
                 reasons.append("relacionar subiu porque a ultima conversa teve alta carga e fim abrupto")
 
-        recent_count = self._recent_real_conversation_count(user_id, hours=12, relation_id=relation_id)
+        recent_count = self._recent_real_conversation_count(
+            user_id,
+            hours=12,
+            relation_id=relation_id,
+            agent_instance=scope_instance,
+        )
         if silence_hours <= 3.0:
             reductions["relacionar"] += 8.0
         if recent_count >= 4:
@@ -699,6 +714,7 @@ class WillPressureEngine:
             resolved_cycle_id,
             state,
             relation_id=scope.get("relation_id"),
+            agent_instance=scope.get("agent_instance"),
         )
         dominant = self._dominant_pressure(pressures)
         refreshed = self._update_state(

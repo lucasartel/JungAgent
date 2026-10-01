@@ -123,6 +123,45 @@ def test_t2_17_global_reads_only_legacy_residue_without_relation():
     assert markers["last_contradictory_tension_id"] == 7
 
 
+def _recalculate_fixture() -> sqlite3.Connection:
+    conn = _pressure_fixture()
+    conn.execute(
+        "CREATE TABLE agent_will_pressure_state ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, cycle_id TEXT,"
+        " saber_pressure REAL, relacionar_pressure REAL,"
+        " expressar_pressure REAL, dominant_pressure TEXT,"
+        " threshold_crossed INTEGER, source_markers_json TEXT,"
+        " updated_at TEXT, created_at TEXT, relation_id TEXT,"
+        " agent_instance TEXT, scope_kind TEXT)"
+    )
+    # Tensao da instancia do MOTOR com id maior: sem propagar a instancia
+    # pedida, ela vaza para a instancia B (divergencia apontada na revisao).
+    conn.execute(
+        "INSERT INTO rumination_tensions VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (99, ADMIN_USER, None, TEST_INSTANCE, "open", 0.9, "2026-10-01"),
+    )
+    conn.execute(
+        "INSERT INTO rumination_tensions VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (10, ADMIN_USER, None, "inst_b", "open", 0.8, "2026-10-01"),
+    )
+    return conn
+
+
+def test_recalculate_pressure_uses_requested_instance():
+    """P1 da revisao do PR #52: recalculate_pressure(agent_instance=X)
+    alimenta a acumulacao com dados da instancia X, nao a do motor."""
+    conn = _recalculate_fixture()
+    engine = _pressure_engine(conn)  # motor = TEST_INSTANCE
+    engine.threshold = 0.6
+
+    refreshed = engine.recalculate_pressure(
+        ADMIN_USER, cycle_id="cycle-x", agent_instance="inst_b"
+    )
+
+    markers = refreshed.get("source_markers") or {}
+    assert markers["last_contradictory_tension_id"] == 10
+
+
 def test_t2_18_conversation_reads_scope_relation_and_instance():
     """T2-18: _latest_conversation e o contador filtram Relation e instancia."""
     conn = _pressure_fixture()
