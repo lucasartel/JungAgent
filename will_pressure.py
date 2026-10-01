@@ -19,6 +19,7 @@ from engines.will_scope import (
     scope_where_clause,
     scoped_insert_columns,
     table_columns,
+    will_visibility_scope,
 )
 from engines.will_expression import WillExpressionEngine
 from instance_settings import get_setting_value
@@ -426,15 +427,18 @@ class WillPressureEngine:
         relation_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
-        query = """
+        scope_sql, scope_params = will_visibility_scope(
+            cursor,
+            "conversations",
+            relation_id=relation_id,
+            agent_instance=self._scope_instance(),
+        )
+        query = f"""
             SELECT id, user_input, ai_response, tension_level, affective_charge, existential_depth, timestamp, platform
             FROM conversations
-            WHERE user_id = ? AND platform != 'proactive'
+            WHERE user_id = ? {scope_sql} AND platform != 'proactive'
         """
-        params: List[Any] = [user_id]
-        if relation_id and "relation_id" in table_columns(cursor, "conversations"):
-            query += " AND relation_id = ?"
-            params.append(relation_id)
+        params: List[Any] = [user_id, *scope_params]
         query += " ORDER BY timestamp DESC, id DESC LIMIT 1"
         cursor.execute(query, tuple(params))
         row = cursor.fetchone()
@@ -447,17 +451,20 @@ class WillPressureEngine:
         relation_id: Optional[str] = None,
     ) -> int:
         cursor = self.db.conn.cursor()
-        query = """
+        scope_sql, scope_params = will_visibility_scope(
+            cursor,
+            "conversations",
+            relation_id=relation_id,
+            agent_instance=self._scope_instance(),
+        )
+        query = f"""
             SELECT COUNT(*)
             FROM conversations
-            WHERE user_id = ?
+            WHERE user_id = ? {scope_sql}
               AND platform != 'proactive'
               AND datetime(timestamp) >= datetime('now', ?)
         """
-        params: List[Any] = [user_id, f"-{hours} hours"]
-        if relation_id and "relation_id" in table_columns(cursor, "conversations"):
-            query += " AND relation_id = ?"
-            params.append(relation_id)
+        params: List[Any] = [user_id, *scope_params, f"-{hours} hours"]
         cursor.execute(query, tuple(params))
         return int(cursor.fetchone()[0] or 0)
 
@@ -480,17 +487,23 @@ class WillPressureEngine:
         }
         now = self._utcnow()
 
+        tension_scope_sql, tension_scope_params = will_visibility_scope(
+            cursor,
+            "rumination_tensions",
+            relation_id=relation_id,
+            agent_instance=self._scope_instance(),
+        )
         cursor.execute(
-            """
+            f"""
             SELECT id
             FROM rumination_tensions
-            WHERE user_id = ?
+            WHERE user_id = ? {tension_scope_sql}
               AND status IN ('open', 'maturing', 'ready_for_synthesis')
               AND intensity >= 0.65
             ORDER BY id DESC
             LIMIT 1
             """,
-            (user_id,),
+            (user_id, *tension_scope_params),
         )
         row = cursor.fetchone()
         latest_tension_id = int(row["id"]) if row else 0
@@ -564,13 +577,13 @@ class WillPressureEngine:
             markers["last_dream_id"] = latest_dream_id
 
         cursor.execute(
-            """
+            f"""
             SELECT COUNT(*)
             FROM rumination_tensions
-            WHERE user_id = ?
+            WHERE user_id = ? {tension_scope_sql}
               AND status IN ('open', 'maturing', 'ready_for_synthesis')
             """,
-            (user_id,),
+            (user_id, *tension_scope_params),
         )
         backlog_count = int(cursor.fetchone()[0] or 0)
         backlog_bucket = backlog_count // 8

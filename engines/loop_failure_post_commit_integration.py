@@ -44,6 +44,24 @@ def _validate(manager, conn, phase_result_id):
     return queue, result
 
 
+def _existing_failure_fragment(manager, conn, phase_result_id, *, has_fragments):
+    """T2-30 (C12c8): idempotencia espelha o escritor — mesma Relation e
+    instancia que ``_feed_loop_failure_to_rumination`` carimba. Sem o
+    ownership, um fragmento de outra Relation passava por "ja integrado"
+    (falso positivo que derruba a transacao com "partial_effects") e o
+    fragmento proprio podia ser perdido sob a leitura cruza-escopo."""
+    if not has_fragments:
+        return None
+    _, _, ownership_sql, ownership_params = manager._rumination_ownership_scope(
+        conn.cursor(), "rumination_fragments"
+    )
+    return conn.execute(
+        f"""SELECT id FROM rumination_fragments WHERE user_id = ? AND source_kind = 'loop_failure'
+            AND source_table = 'consciousness_loop_phase_results' AND source_id = ?{ownership_sql} LIMIT 1""",
+        (manager.admin_user_id, str(phase_result_id), *ownership_params),
+    ).fetchone()
+
+
 def integrate(manager, phase_result_id):
     """Observe, broadcast, add a failure fragment, audit and mark together."""
     from consciousness_loop import PHASE_BY_KEY
@@ -62,8 +80,9 @@ def integrate(manager, phase_result_id):
             AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(source_refs_json) THEN source_refs_json ELSE '[]' END) WHERE value = ?) LIMIT 1""", (manager.agent_instance, source_ref)).fetchone()
         audit = conn.execute("SELECT id FROM consciousness_loop_events WHERE phase_result_id = ?", (result["id"],)).fetchone()
         has_fragments = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'rumination_fragments'").fetchone()
-        fragment = None if not has_fragments else conn.execute("""SELECT id FROM rumination_fragments WHERE user_id = ? AND source_kind = 'loop_failure'
-            AND source_table = 'consciousness_loop_phase_results' AND source_id = ? LIMIT 1""", (manager.admin_user_id, str(result["id"]))).fetchone()
+        fragment = _existing_failure_fragment(
+            manager, conn, result["id"], has_fragments=has_fragments
+        )
         if previous or audit or fragment:
             raise ValueError("loop_failure_post_commit_partial_effects_require_review")
         memory_db = manager.db.working_memory_transaction(conn)
