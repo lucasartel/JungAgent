@@ -15,6 +15,10 @@ Usage:
         --target-samples 18 \
         --out-dir tests/blind_samples/run-$(date +%Y%m%d)
 
+The argument parser/`--help` is stdlib-only and runs in a bare interpreter;
+the actual export imports `core` at runtime (production deps per
+requirements.txt — openai etc.).
+
 The script balances samples across the distinct phases observed in
 agent_development_reviews so the evaluator faces real variability.
 
@@ -35,13 +39,10 @@ import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from core.db.relation_scope import (
-    PersonalExportScope,
-    personal_scope_clause,
-    resolve_personal_export_scope,
-)
+if TYPE_CHECKING:
+    from core.db.relation_scope import PersonalExportScope
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,10 @@ def _scope_clause(
     """Escopo pessoal do export (C12c7/T2-16): linhas sem Relation + da
     Relation verificada do usuario, sempre na instancia canonica. O helper
     checa as colunas por PRAGMA — dumps pre-migracao continuam funcionando."""
+    # Import lazy: o parser/`--help` da CLI permanece stdlib puro e roda
+    # em subprocesso sem as dependencias de producao (openai etc.).
+    from core.db.relation_scope import personal_scope_clause
+
     return personal_scope_clause(
         cursor,
         table=table,
@@ -438,6 +443,8 @@ def extract(
         # Gate de consentimento/escopo ANTES de qualquer leitura pessoal
         # (C12c7/T2-16): recusa explicita quando a elegibilidade nao for
         # verificavel — dump sem a API de Relations ou Relation inelegivel.
+        from core.db.relation_scope import resolve_personal_export_scope
+
         scope = resolve_personal_export_scope(
             conn, user_id, agent_instance=agent_instance
         )

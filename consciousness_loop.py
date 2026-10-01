@@ -980,7 +980,9 @@ class ConsciousnessLoopManager:
 
         cursor = self.db.conn.cursor()
         quarantine_sql, quarantine_params = legacy_quarantine_clause(
-            cursor, table="conversations"
+            cursor,
+            table="conversations",
+            agent_instance=self.agent_instance,
         )
         cursor.execute(
             f"""

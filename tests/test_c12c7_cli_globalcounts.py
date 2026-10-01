@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import subprocess
 import sqlite3
 import sys
 import types
@@ -221,6 +222,21 @@ def test_cli_refuses_ineligible_relation(tmp_path: Path) -> None:
         )
 
 
+def test_cli_help_runs_in_real_subprocess() -> None:
+    """P2 da revisão: o parser precisa ser stdlib puro — subprocesso real,
+    sem os stubs do conftest, num ambiente sem openai instalado."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.blind.extract_samples", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=Path(__file__).resolve().parents[1],
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "--target-samples" in proc.stdout
+    assert "--agent-instance" in proc.stdout
+
+
 def _extract_method(source: Path, name: str):
     """Extrai um método via AST (harness padrão C12c6)."""
     tree = ast.parse(source.read_text(encoding="utf-8"))
@@ -259,6 +275,40 @@ def test_phase_input_summary_counts_only_legacy_instance(tmp_path: Path) -> None
     # (rel-2 e outra_instancia ficam de fora da quarentena).
     assert "conversas_admin=1" in summary
     assert "conversas_admin=4" not in summary
+
+
+def test_phase_input_summary_uses_manager_instance(tmp_path: Path) -> None:
+    """P2 da revisão: o manager de outra instância deve contar as conversas
+    DA SUA instância (não a do ambiente) — `self.agent_instance` explícito."""
+    db_path = tmp_path / "loop_other.db"
+    _make_cli_dump(db_path, with_relations=False)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    # Linha legada de verdade (sem carimbo) + 2 conversas da outra instância.
+    for row_id, inst, ts in (
+        (5, None, "2026-01-05"),
+        (6, "outra_instancia", "2026-01-06"),
+        (7, "outra_instancia", "2026-01-07"),
+    ):
+        conn.execute(
+            "INSERT INTO conversations"
+            " (id, user_id, agent_instance, relation_id, ai_response, user_input, timestamp)"
+            " VALUES (?, 'user_a', ?, NULL, ?, ?, ?)",
+            (row_id, inst, LONG + " extra", "user disse: ola", ts),
+        )
+    conn.commit()
+    method = _extract_method(Path("consciousness_loop.py"), "_phase_input_summary")
+    self = SimpleNamespace(
+        db=SimpleNamespace(conn=conn),
+        admin_user_id="user_a",
+        agent_instance="outra_instancia",
+    )
+    summary = method(self, "2026-01-01", "will")
+    conn.close()
+    # Com `self.agent_instance`: legada (NULL) + 2 da outra_instancia = 3.
+    # Sem o fix (resolver do ambiente): só a legada + a row de env = 2.
+    assert "conversas_admin=3" in summary
+    assert "conversas_admin=2" not in summary
 
 
 def test_trigger_research_scopes_loop_state_by_instance() -> None:
