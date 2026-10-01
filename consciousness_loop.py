@@ -976,14 +976,21 @@ class ConsciousnessLoopManager:
             connection.commit()
 
     def _phase_input_summary(self, cycle_id: str, phase_key: str) -> str:
+        from core.db.relation_scope import legacy_quarantine_clause
+
         cursor = self.db.conn.cursor()
+        quarantine_sql, quarantine_params = legacy_quarantine_clause(
+            cursor,
+            table="conversations",
+            agent_instance=self.agent_instance,
+        )
         cursor.execute(
-            """
+            f"""
             SELECT COUNT(*)
             FROM conversations
-            WHERE user_id = ?
+            WHERE user_id = ?{quarantine_sql}
             """,
-            (self.admin_user_id,),
+            (self.admin_user_id, *quarantine_params),
         )
         total_conversations = cursor.fetchone()[0]
 

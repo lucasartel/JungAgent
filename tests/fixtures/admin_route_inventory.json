@@ -851,7 +851,7 @@
     "path": "/identity-consolidation",
     "full_path": "/admin/triggers/identity-consolidation",
     "endpoint": "trigger_identity_consolidation",
-    "line": 92,
+    "line": 98,
     "migration_bucket": "trigger_routes"
   },
   {
@@ -860,7 +860,7 @@
     "path": "/identity-bridge",
     "full_path": "/admin/triggers/identity-bridge",
     "endpoint": "trigger_identity_bridge",
-    "line": 116,
+    "line": 122,
     "migration_bucket": "trigger_routes"
   },
   {
@@ -869,7 +869,7 @@
     "path": "/memory-metrics",
     "full_path": "/admin/triggers/memory-metrics",
     "endpoint": "trigger_memory_metrics",
-    "line": 128,
+    "line": 134,
     "migration_bucket": "trigger_routes"
   },
   {
@@ -878,7 +878,7 @@
     "path": "/proactive-messages",
     "full_path": "/admin/triggers/proactive-messages",
     "endpoint": "trigger_proactive_messages",
-    "line": 141,
+    "line": 147,
     "migration_bucket": "trigger_routes"
   },
   {
