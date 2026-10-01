@@ -121,6 +121,43 @@ def instance_where_clause(
     )
 
 
+def will_visibility_scope(
+    cursor: sqlite3.Cursor,
+    table: str,
+    *,
+    relation_id: Optional[str] = None,
+    agent_instance: Optional[str] = None,
+    relation_column: str = "relation_id",
+    prefix: str = "",
+) -> Tuple[str, list[Any]]:
+    """Escopo de leitura do Will (C12c8): quarentena legacy quando global
+    (somente residuos sem Relation — nunca recai na Relation privada),
+    Relation ESTRITA quando o caller ja normalizou o escopo relacional
+    (mesma semantica do `_dream_read_scope`), instancia canonica sempre
+    (linhas legadas sem carimbo ficam visiveis). PRAGMA-aware: tabelas sem
+    as colunas continuam funcionando em bancos pre-migracao.
+
+    Retorno no formato ``" AND ..."`` para composicao em queries existentes.
+    """
+    columns = table_columns(cursor, table)
+    clauses: list[str] = []
+    params: list[Any] = []
+    if relation_column in columns:
+        if relation_id:
+            clauses.append(f"{prefix}{relation_column} = ?")
+            params.append(str(relation_id))
+        else:
+            clauses.append(f"{prefix}{relation_column} IS NULL")
+    if "agent_instance" in columns:
+        clauses.append(
+            f"({prefix}agent_instance = ? OR {prefix}agent_instance IS NULL)"
+        )
+        params.append(resolve_instance(agent_instance))
+    if not clauses:
+        return "", []
+    return " AND " + " AND ".join(clauses), params
+
+
 def scoped_insert_columns(
     cursor: sqlite3.Cursor,
     table: str,

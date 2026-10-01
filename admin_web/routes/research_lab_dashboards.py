@@ -105,8 +105,23 @@ async def research_dashboard(
     db = get_db()
     cursor = db.conn.cursor()
 
+    # Escopo de leitura (C12c8/T2-20): somente residuos sem Relation da
+    # instancia canonica — material derivado de Relations privadas nao entra
+    # no dashboard de pesquisa (mesmo criterio do dreams_dashboard acima).
+    from core.db.relation_scope import legacy_quarantine_clause
+
+    will_clause, will_clause_params = legacy_quarantine_clause(
+        cursor, table="agent_will_states"
+    )
+    pressure_clause, pressure_clause_params = legacy_quarantine_clause(
+        cursor, table="agent_will_pressure_state"
+    )
+    pulse_clause, pulse_clause_params = legacy_quarantine_clause(
+        cursor, table="agent_will_pulse_events"
+    )
+
     cursor.execute(
-        """
+        f"""
         SELECT
             id,
             cycle_id,
@@ -126,9 +141,11 @@ async def research_dashboard(
             datetime(created_at, 'localtime') as created_at,
             datetime(updated_at, 'localtime') as updated_at
         FROM agent_will_states
+        WHERE 1 = 1{will_clause}
         ORDER BY created_at DESC, id DESC
         LIMIT 30
-        """
+        """,
+        will_clause_params,
     )
     will_states = [dict(row) for row in cursor.fetchall()]
 
@@ -147,13 +164,25 @@ async def research_dashboard(
         "preliminary_states": 0,
         "distinct_cycles": 0,
     }
-    cursor.execute("SELECT COUNT(*) FROM agent_will_states")
+    cursor.execute(
+        f"SELECT COUNT(*) FROM agent_will_states WHERE 1 = 1{will_clause}",
+        will_clause_params,
+    )
     will_stats["total_states"] = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM agent_will_states WHERE status = 'generated'")
+    cursor.execute(
+        f"SELECT COUNT(*) FROM agent_will_states WHERE 1 = 1{will_clause} AND status = 'generated'",
+        will_clause_params,
+    )
     will_stats["generated_states"] = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM agent_will_states WHERE status = 'preliminary_generated'")
+    cursor.execute(
+        f"SELECT COUNT(*) FROM agent_will_states WHERE 1 = 1{will_clause} AND status = 'preliminary_generated'",
+        will_clause_params,
+    )
     will_stats["preliminary_states"] = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(DISTINCT cycle_id) FROM agent_will_states")
+    cursor.execute(
+        f"SELECT COUNT(DISTINCT cycle_id) FROM agent_will_states WHERE 1 = 1{will_clause}",
+        will_clause_params,
+    )
     will_stats["distinct_cycles"] = cursor.fetchone()[0]
 
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_will_pressure_state'")
@@ -170,7 +199,7 @@ async def research_dashboard(
     pulse_events = []
 
     if has_pressure_state:
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT
                 id,
                 cycle_id,
@@ -190,9 +219,10 @@ async def research_dashboard(
                 datetime(updated_at, 'localtime') as updated_at,
                 datetime(created_at, 'localtime') as created_at
             FROM agent_will_pressure_state
+            WHERE 1 = 1{pressure_clause}
             ORDER BY updated_at DESC, id DESC
             LIMIT 1
-        """)
+        """, pressure_clause_params)
         pressure_row = cursor.fetchone()
         latest_pressure = dict(pressure_row) if pressure_row else None
         if latest_pressure:
@@ -202,7 +232,7 @@ async def research_dashboard(
             except Exception:
                 latest_pressure["source_markers"] = {}
 
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT
                 id,
                 cycle_id,
@@ -218,18 +248,31 @@ async def research_dashboard(
                 datetime(created_at, 'localtime') as created_at,
                 datetime(updated_at, 'localtime') as updated_at
             FROM agent_will_pulse_events
+            WHERE 1 = 1{pulse_clause}
             ORDER BY created_at DESC, id DESC
             LIMIT 16
-        """)
+        """, pulse_clause_params)
         pulse_events = [dict(row) for row in cursor.fetchall()]
 
-        cursor.execute("SELECT COUNT(*) FROM agent_will_pulse_events")
+        cursor.execute(
+            f"SELECT COUNT(*) FROM agent_will_pulse_events WHERE 1 = 1{pulse_clause}",
+            pulse_clause_params,
+        )
         pressure_stats["total_pulse_events"] = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM agent_will_pulse_events WHERE status = 'completed'")
+        cursor.execute(
+            f"SELECT COUNT(*) FROM agent_will_pulse_events WHERE 1 = 1{pulse_clause} AND status = 'completed'",
+            pulse_clause_params,
+        )
         pressure_stats["completed_actions"] = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM agent_will_pulse_events WHERE status = 'failed'")
+        cursor.execute(
+            f"SELECT COUNT(*) FROM agent_will_pulse_events WHERE 1 = 1{pulse_clause} AND status = 'failed'",
+            pulse_clause_params,
+        )
         pressure_stats["failed_actions"] = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM agent_will_pulse_events WHERE status = 'refractory_blocked'")
+        cursor.execute(
+            f"SELECT COUNT(*) FROM agent_will_pulse_events WHERE 1 = 1{pulse_clause} AND status = 'refractory_blocked'",
+            pulse_clause_params,
+        )
         pressure_stats["refractory_blocks"] = cursor.fetchone()[0]
 
         if pulse_events:
