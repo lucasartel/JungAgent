@@ -100,6 +100,44 @@ def _extract_world_knowledge_trace(raw_result_json: str | None) -> Dict[str, Any
     }
 
 
+def _blog_public_scope(
+    cursor: sqlite3.Cursor,
+    *,
+    table: str,
+    relation_column: str = "relation_id",
+) -> tuple:
+    """Escopo unico de visibilidade publica do /blogdojung (P1/P2, revisao do PR #53).
+
+    Usado pela ancora E por todos os leitores de conteudo da pagina, para
+    que conteudo e janela compartilhem o mesmo criterio:
+
+    - ``user_id`` do usuario canonico, quando a coluna existe;
+    - quarentena C5 de Relation/instancia (``legacy_quarantine_clause``);
+    - ``finding_scope = 'instance_global'`` quando a coluna existe —
+      ausencia de Relation NAO comprova autorizacao publica (P2): historico
+      ``quarantined`` permanece no banco sem ser publicado automaticamente.
+    """
+    from core.db.relation_scope import legacy_quarantine_clause
+    from instance_config import ADMIN_USER_ID
+
+    cursor.execute(f"PRAGMA table_info({table})")
+    cols = {row[1] for row in cursor.fetchall()}
+
+    parts: List[str] = []
+    params: List[Any] = []
+    if "user_id" in cols:
+        parts.append("user_id = ?")
+        params.append(ADMIN_USER_ID)
+    if "finding_scope" in cols:
+        parts.append("finding_scope = 'instance_global'")
+
+    clause = (" AND " + " AND ".join(parts)) if parts else ""
+    quarantine_clause, quarantine_params = legacy_quarantine_clause(
+        cursor, table=table, relation_column=relation_column
+    )
+    return clause + quarantine_clause, [*params, *quarantine_params]
+
+
 def _load_blog_living_state(
     conn: Optional[sqlite3.Connection],
     entry_count: int = 0,
@@ -120,7 +158,6 @@ def _load_blog_living_state(
         }
 
     cursor = conn.cursor()
-    from core.db.relation_scope import legacy_quarantine_clause
 
     living_state: Dict[str, Any] = {
         "slice": {
@@ -141,7 +178,7 @@ def _load_blog_living_state(
         # T2-19: estado do loop visivel ao blog segue o MESMO escopo publico
         # do resto da pagina (instancia canonica) — outra instancia nunca
         # alimenta a fase exibida.
-        loop_clause, loop_params = legacy_quarantine_clause(
+        loop_clause, loop_params = _blog_public_scope(
             cursor, table="consciousness_loop_state"
         )
         cursor.execute(
@@ -195,18 +232,18 @@ def _load_blog_living_state(
     # Evento do ultimo release: leitura pura (quarentena de Relation),
     # independente de o estado de pressao estar disponivel.
     try:
-        pulse_clause, pulse_params = legacy_quarantine_clause(
+        pulse_clause, pulse_params = _blog_public_scope(
             cursor, table="agent_will_pulse_events", relation_column="relation_id"
         )
         cursor.execute(
             f"""
             SELECT winning_will, action_attempted, status, updated_at
             FROM agent_will_pulse_events
-            WHERE user_id = ?{pulse_clause}
+            WHERE 1 = 1{pulse_clause}
             ORDER BY updated_at DESC, id DESC
             LIMIT 1
             """,
-            (ADMIN_USER_ID, *pulse_params),
+            (*pulse_params,),
         )
         event_row = cursor.fetchone()
         if event_row:
@@ -220,7 +257,7 @@ def _load_blog_living_state(
         pass
 
     try:
-        ident_clause, ident_params = legacy_quarantine_clause(
+        ident_clause, ident_params = _blog_public_scope(
             cursor, table="agent_identity_core", relation_column="origin_relation_id"
         )
         cursor.execute(
@@ -242,7 +279,7 @@ def _load_blog_living_state(
         logger.debug("Living state identity traits unavailable: %s", exc)
 
     try:
-        contradict_clause, contradict_params = legacy_quarantine_clause(
+        contradict_clause, contradict_params = _blog_public_scope(
             cursor, table="agent_identity_contradictions", relation_column="origin_relation_id"
         )
         cursor.execute(
@@ -266,7 +303,7 @@ def _load_blog_living_state(
         logger.debug("Living state contradiction unavailable: %s", exc)
 
     try:
-        selves_clause, selves_params = legacy_quarantine_clause(
+        selves_clause, selves_params = _blog_public_scope(
             cursor, table="agent_possible_selves", relation_column="origin_relation_id"
         )
         cursor.execute(
@@ -292,11 +329,9 @@ def _load_blog_living_state(
         logger.debug("Living state selves unavailable: %s", exc)
 
     try:
-        from instance_config import ADMIN_USER_ID
-
         # T2-19: metricas de rumination seguem o escopo publico (instancia
         # canonica) — mesmas tabelas das contagens abaixo.
-        phase_clause, phase_params = legacy_quarantine_clause(
+        phase_clause, phase_params = _blog_public_scope(
             cursor, table="consciousness_loop_phase_results"
         )
         cursor.execute(
@@ -312,31 +347,31 @@ def _load_blog_living_state(
         row = cursor.fetchone()
         metrics = json.loads(row[0]) if row and row[0] else {}
 
-        tension_clause, tension_params = legacy_quarantine_clause(
+        tension_clause, tension_params = _blog_public_scope(
             cursor, table="rumination_tensions"
         )
         cursor.execute(
             f"""
             SELECT COUNT(*) FROM rumination_tensions
-            WHERE user_id = ? AND status = 'maturing'{tension_clause}
+            WHERE 1 = 1{tension_clause} AND status = 'maturing'
             """,
-            (ADMIN_USER_ID, *tension_params),
+            (*tension_params,),
         )
         maturing = cursor.fetchone()[0] or 0
 
-        fragment_clause, fragment_params = legacy_quarantine_clause(
+        fragment_clause, fragment_params = _blog_public_scope(
             cursor, table="rumination_fragments"
         )
         cursor.execute(
             f"""
             SELECT fragment_type, COUNT(*) AS count
             FROM rumination_fragments
-            WHERE user_id = ?{fragment_clause}
+            WHERE 1 = 1{fragment_clause}
             GROUP BY fragment_type
             ORDER BY count DESC
             LIMIT 3
             """,
-            (ADMIN_USER_ID, *fragment_params),
+            (*fragment_params,),
         )
         fragment_mix = [f"{fragment_type} {count}" for fragment_type, count in cursor.fetchall()]
 
@@ -350,7 +385,7 @@ def _load_blog_living_state(
         logger.debug("Living state rumination unavailable: %s", exc)
 
     try:
-        relational_clause, relational_params = legacy_quarantine_clause(
+        relational_clause, relational_params = _blog_public_scope(
             cursor, table="agent_relational_identity", relation_column="origin_relation_id"
         )
         cursor.execute(
@@ -375,51 +410,40 @@ def _load_blog_living_state(
 def _blog_anchor_value(cursor: sqlite3.Cursor) -> Optional[str]:
     """B01: ancora temporal do feed /blogdojung restrita ao escopo publico.
 
-    Considera APENAS material da instancia canonica (e do usuario canonico)
-    sem Relation carimbada — mesmo criterio das entries. Um registro
-    privado mais recente (outra Relation/instancia) nao puxa a janela do
-    feed. Nenhum registro legado e reclassificado: a visibilidade segue a
-    regra oficial do blog (quarentena C5).
+    Usa _blog_public_scope nas quatro fontes — o mesmo criterio dos
+    leitores de conteudo (P1): usuario canonico, quarentena C5 e, em
+    external_research, autorizacao positiva ``finding_scope =
+    'instance_global'`` (P2: ausencia de Relation nao comprova publico;
+    historico quarantined permanece no banco sem ser publicado).
+    Um registro privado mais recente nao puxa a janela do feed.
     """
-    from core.db.relation_scope import legacy_quarantine_clause
-    from engines.will_scope import resolve_instance
-    from instance_config import ADMIN_USER_ID
-
-    dream_clause, dream_params = legacy_quarantine_clause(
-        cursor,
-        table="agent_dreams",
-        relation_column="origin_relation_id",
+    dream_clause, dream_params = _blog_public_scope(
+        cursor, table="agent_dreams", relation_column="origin_relation_id"
     )
-    research_clause, research_params = legacy_quarantine_clause(
-        cursor,
-        table="external_research",
-        relation_column="origin_relation_id",
+    hobby_clause, hobby_params = _blog_public_scope(cursor, table="agent_hobby_artifacts")
+    world_clause, world_params = _blog_public_scope(
+        cursor, table="consciousness_loop_phase_results"
     )
-    instance = resolve_instance(None)
+    research_clause, research_params = _blog_public_scope(
+        cursor, table="external_research", relation_column="origin_relation_id"
+    )
     cursor.execute(
         f"""
         SELECT MAX(created_at) FROM (
             SELECT MAX(created_at) AS created_at FROM agent_dreams
-            WHERE user_id = ?{dream_clause}
+            WHERE 1 = 1{dream_clause}
             UNION ALL
             SELECT MAX(created_at) AS created_at FROM agent_hobby_artifacts
-            WHERE user_id = ?
+            WHERE 1 = 1{hobby_clause}
             UNION ALL
             SELECT MAX(created_at) AS created_at FROM consciousness_loop_phase_results
-            WHERE phase = 'world' AND (agent_instance = ? OR agent_instance IS NULL)
+            WHERE 1 = 1{world_clause} AND phase = 'world'
             UNION ALL
             SELECT MAX(created_at) AS created_at FROM external_research
-            WHERE user_id = ?{research_clause}
+            WHERE 1 = 1{research_clause}
         )
         """,
-        (
-            ADMIN_USER_ID,
-            *dream_params,
-            ADMIN_USER_ID,
-            instance,
-            ADMIN_USER_ID,
-            *research_params,
-        ),
+        (*dream_params, *hobby_params, *world_params, *research_params),
     )
     anchor_row = cursor.fetchone()
     return anchor_row[0] if anchor_row else None
@@ -430,10 +454,6 @@ def _load_blogdojung_entries(conn: Optional[sqlite3.Connection], limit_days: int
         return []
 
     cursor = conn.cursor()
-    from instance_config import ADMIN_USER_ID
-
-    from core.db.relation_scope import legacy_quarantine_clause
-
     anchor_value = _blog_anchor_value(cursor)
     if not anchor_value:
         return []
@@ -448,19 +468,26 @@ def _load_blogdojung_entries(conn: Optional[sqlite3.Connection], limit_days: int
 
     entries: List[Dict] = []
 
-    blog_clause, blog_clause_params = legacy_quarantine_clause(
+    blog_clause, blog_clause_params = _blog_public_scope(
         cursor,
         table="agent_dreams",
         relation_column="origin_relation_id",
+    )
+    hobby_clause, hobby_clause_params = _blog_public_scope(cursor, table="agent_hobby_artifacts")
+    world_clause, world_clause_params = _blog_public_scope(
+        cursor, table="consciousness_loop_phase_results"
+    )
+    research_clause, research_clause_params = _blog_public_scope(
+        cursor, table="external_research", relation_column="origin_relation_id"
     )
     cursor.execute(
         f"""
         SELECT created_at, symbolic_theme, extracted_insight, dream_content, image_url
         FROM agent_dreams
-        WHERE user_id = ? AND datetime(created_at) >= datetime(?){blog_clause}
+        WHERE 1 = 1{blog_clause} AND datetime(created_at) >= datetime(?)
         ORDER BY datetime(created_at) DESC
         """,
-        (ADMIN_USER_ID, start_iso, *blog_clause_params),
+        (*blog_clause_params, start_iso),
     )
     for created_at, symbolic_theme, extracted_insight, dream_content, image_url in cursor.fetchall():
         entries.append(
@@ -478,13 +505,13 @@ def _load_blogdojung_entries(conn: Optional[sqlite3.Connection], limit_days: int
         )
 
     cursor.execute(
-        """
+        f"""
         SELECT created_at, title, summary, image_url
         FROM agent_hobby_artifacts
-        WHERE user_id = ? AND datetime(created_at) >= datetime(?)
+        WHERE 1 = 1{hobby_clause} AND datetime(created_at) >= datetime(?)
         ORDER BY datetime(created_at) DESC
         """,
-        (ADMIN_USER_ID, start_iso),
+        (*hobby_clause_params, start_iso),
     )
     for created_at, title, summary, image_url in cursor.fetchall():
         entries.append(
@@ -503,15 +530,16 @@ def _load_blogdojung_entries(conn: Optional[sqlite3.Connection], limit_days: int
 
     knowledge_entries_added = 0
     cursor.execute(
-        """
+        f"""
         SELECT created_at, raw_result_json
         FROM consciousness_loop_phase_results
-        WHERE phase = 'world'
+        WHERE 1 = 1{world_clause}
+          AND phase = 'world'
           AND datetime(created_at) >= datetime(?)
           AND raw_result_json IS NOT NULL
         ORDER BY datetime(created_at) DESC
         """,
-        (start_iso,),
+        (*world_clause_params, start_iso),
     )
     for created_at, raw_result_json in cursor.fetchall():
         trace = _extract_world_knowledge_trace(raw_result_json)
@@ -534,13 +562,13 @@ def _load_blogdojung_entries(conn: Optional[sqlite3.Connection], limit_days: int
 
     if knowledge_entries_added == 0:
         cursor.execute(
-            """
+            f"""
             SELECT created_at, topic, synthesized_insight, source_url
             FROM external_research
-            WHERE datetime(created_at) >= datetime(?)
+            WHERE 1 = 1{research_clause} AND datetime(created_at) >= datetime(?)
             ORDER BY datetime(created_at) DESC
             """,
-            (start_iso,),
+            (*research_clause_params, start_iso),
         )
         for created_at, topic, synthesized_insight, source_url in cursor.fetchall():
             entries.append(

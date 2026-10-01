@@ -268,3 +268,169 @@ def test_blog_anchor_keeps_legacy_relationless_history():
     anchor = _blog_anchor_value(conn.cursor())
 
     assert anchor == "2026-09-24 08:00:00"
+
+
+def _world_trace(seed: str, journal: str) -> str:
+    import json
+
+    return json.dumps({"world_state": {"knowledge_seed": seed, "knowledge_journal_entry": journal}})
+
+
+# ---------------------------------------------------------------------------
+# P1 da revisao do PR #53 — testes pelo FLUXO COMPLETO
+# (_load_blogdojung_entries), não apenas pelo helper da âncora.
+# ---------------------------------------------------------------------------
+def test_feed_world_result_excludes_other_instance():
+    from blog_feed import _load_blogdojung_entries
+
+    conn = _conn()
+    conn.executescript(
+        """
+        CREATE TABLE agent_dreams (
+            id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
+            origin_relation_id TEXT, agent_instance TEXT,
+            symbolic_theme TEXT, extracted_insight TEXT, dream_content TEXT, image_url TEXT
+        );
+        CREATE TABLE agent_hobby_artifacts (
+            id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
+            title TEXT, summary TEXT, image_url TEXT
+        );
+        CREATE TABLE consciousness_loop_phase_results (
+            id INTEGER PRIMARY KEY, created_at TEXT, phase TEXT,
+            agent_instance TEXT, raw_result_json TEXT
+        );
+        CREATE TABLE external_research (
+            id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
+            origin_relation_id TEXT, agent_instance TEXT, finding_scope TEXT,
+            topic TEXT, synthesized_insight TEXT, source_url TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO consciousness_loop_phase_results "
+        "(created_at, phase, agent_instance, raw_result_json) VALUES (?,?,?,?)",
+        ("2026-09-27 10:00:00", "world", CANON, _world_trace("Semente publica", "Jornada publica")),
+    )
+    # Outra instancia, MAIS RECENTE: texto privado não pode aparecer.
+    conn.execute(
+        "INSERT INTO consciousness_loop_phase_results "
+        "(created_at, phase, agent_instance, raw_result_json) VALUES (?,?,?,?)",
+        ("2026-09-30 10:00:00", "world", OTHER_INST, _world_trace("Semente privada", "Jornada privada")),
+    )
+    conn.commit()
+
+    entries = _load_blogdojung_entries(conn, limit_days=3)
+    titles = [e["title"] for e in entries]
+    bodies = [e.get("body") or "" for e in entries]
+
+    assert "Semente publica" in titles
+    assert "Semente privada" not in titles
+    assert all("Jornada privada" not in body for body in bodies)
+
+
+def test_feed_research_fallback_excludes_private_and_other_instance():
+    from blog_feed import _load_blogdojung_entries
+
+    conn = _conn()
+    conn.executescript(
+        """
+        CREATE TABLE agent_dreams (
+            id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
+            origin_relation_id TEXT, agent_instance TEXT,
+            symbolic_theme TEXT, extracted_insight TEXT, dream_content TEXT, image_url TEXT
+        );
+        CREATE TABLE agent_hobby_artifacts (
+            id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
+            title TEXT, summary TEXT, image_url TEXT
+        );
+        CREATE TABLE consciousness_loop_phase_results (
+            id INTEGER PRIMARY KEY, created_at TEXT, phase TEXT,
+            agent_instance TEXT, raw_result_json TEXT
+        );
+        CREATE TABLE external_research (
+            id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
+            origin_relation_id TEXT, agent_instance TEXT, finding_scope TEXT,
+            topic TEXT, synthesized_insight TEXT, source_url TEXT
+        );
+        """
+    )
+    # Sem trace valido no phase=world -> o fallback de research roda.
+    conn.execute(
+        "INSERT INTO consciousness_loop_phase_results "
+        "(created_at, phase, agent_instance, raw_result_json) VALUES (?,?,?,?)",
+        ("2026-09-27 00:00:00", "world", CANON, None),
+    )
+    conn.executemany(
+        "INSERT INTO external_research "
+        "(user_id, created_at, origin_relation_id, agent_instance, finding_scope, topic) "
+        "VALUES (?,?,?,?,?,?)",
+        [
+            # Publica: instanciada, sem Relation, autorizada.
+            (str(ADMIN_USER_ID), "2026-09-27 12:00:00", None, CANON, "instance_global", "pesquisa publica"),
+            # Privada (Relation distinta), DENTRO da janela.
+            (str(ADMIN_USER_ID), "2026-09-26 12:00:00", "rel-privada", CANON, "instance_global", "pesquisa privada"),
+            # Outra instancia, sem Relation.
+            (str(ADMIN_USER_ID), "2026-09-26 13:00:00", None, OTHER_INST, "instance_global", "pesquisa de outra instancia"),
+        ],
+    )
+    conn.commit()
+
+    entries = _load_blogdojung_entries(conn, limit_days=3)
+    titles = [e["title"] for e in entries]
+
+    assert "pesquisa publica" in titles
+    assert "pesquisa privada" not in titles
+    assert "pesquisa de outra instancia" not in titles
+
+
+def test_feed_quarantined_research_does_not_shift_window():
+    from blog_feed import _load_blogdojung_entries
+
+    conn = _conn()
+    conn.executescript(
+        """
+        CREATE TABLE agent_dreams (
+            id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
+            origin_relation_id TEXT, agent_instance TEXT,
+            symbolic_theme TEXT, extracted_insight TEXT, dream_content TEXT, image_url TEXT
+        );
+        CREATE TABLE agent_hobby_artifacts (
+            id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
+            title TEXT, summary TEXT, image_url TEXT
+        );
+        CREATE TABLE consciousness_loop_phase_results (
+            id INTEGER PRIMARY KEY, created_at TEXT, phase TEXT,
+            agent_instance TEXT, raw_result_json TEXT
+        );
+        CREATE TABLE external_research (
+            id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
+            origin_relation_id TEXT, agent_instance TEXT, finding_scope TEXT,
+            topic TEXT, synthesized_insight TEXT, source_url TEXT
+        );
+        """
+    )
+    # Unico material publico: dream legado sem origem (28/09).
+    conn.execute(
+        "INSERT INTO agent_dreams "
+        "(user_id, created_at, origin_relation_id, agent_instance, symbolic_theme) "
+        "VALUES (?,?,?,?,?)",
+        (str(ADMIN_USER_ID), "2026-09-28 05:00:00", None, CANON, "Dream publico"),
+    )
+    # Pesquisa SEM Relation mas finding_scope='quarantined' (default) em
+    # 04/10: ausência de Relation não comprova autorização pública (P2).
+    # Se deslocasse a âncora, a janela (02/10..04/10) excluiria o dream de 28/09.
+    conn.execute(
+        "INSERT INTO external_research "
+        "(user_id, created_at, origin_relation_id, agent_instance, finding_scope, topic) "
+        "VALUES (?,?,?,?,?,?)",
+        (str(ADMIN_USER_ID), "2026-10-04 09:00:00", None, CANON, "quarantined", "pesquisa em quarentena"),
+    )
+    conn.commit()
+
+    entries = _load_blogdojung_entries(conn, limit_days=3)
+    titles = [e["title"] for e in entries]
+
+    # Janela ancorada no material público: o dream de 28/09 segue presente.
+    assert "Dream publico" in titles
+    # E a pesquisa em quarentena não é publicada.
+    assert "pesquisa em quarentena" not in titles
