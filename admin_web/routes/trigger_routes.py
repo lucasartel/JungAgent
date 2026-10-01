@@ -42,16 +42,22 @@ async def trigger_research(admin: Dict = Depends(require_master)):
         def run_will():
             db = HybridDatabaseManager()
             try:
+                from engines.will_scope import resolve_instance
+
                 cursor = db.conn.cursor()
+                # T2-29 (C7): a tabela nao tem coluna user_id — a query
+                # antiga ("WHERE user_id = ?") quebrava com "no such column";
+                # a chave real da tabela e a instancia (UNIQUE por instancia).
+                loop_instance = resolve_instance(None)
                 cursor.execute(
                     """
                     SELECT cycle_id
                     FROM consciousness_loop_state
-                    WHERE user_id = ?
+                    WHERE agent_instance = ?
                     ORDER BY id DESC
                     LIMIT 1
                     """,
-                    (ADMIN_USER_ID,),
+                    (loop_instance,),
                 )
                 cycle_row = cursor.fetchone()
                 current_state = AgentIdentityContextBuilder(db).build_current_mind_state(

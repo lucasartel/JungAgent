@@ -17,6 +17,13 @@ Usage:
 
 The script balances samples across the distinct phases observed in
 agent_development_reviews so the evaluator faces real variability.
+
+Scoped export (C12c7/T2-16): the consent/eligibility gate
+``resolve_personal_export_scope`` runs BEFORE any personal read and refuses
+the run when the relations API is unavailable or the relation is not
+eligible. Every query is then limited to relation-less rows plus the
+resolved relation, on the canonical instance (columns checked per table so
+pre-migration dumps keep working).
 """
 from __future__ import annotations
 
@@ -29,6 +36,12 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from core.db.relation_scope import (
+    PersonalExportScope,
+    personal_scope_clause,
+    resolve_personal_export_scope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,17 +90,46 @@ def _sanitize(text: str) -> str:
     return text
 
 
-def _phase_map(conn: sqlite3.Connection, user_id: str) -> Dict[str, int]:
+def _scope_clause(
+    cursor: sqlite3.Cursor,
+    table: str,
+    scope: PersonalExportScope,
+    *,
+    relation_column: str = "relation_id",
+    agent_instance: Optional[str] = None,
+) -> tuple[str, list[Any]]:
+    """Escopo pessoal do export (C12c7/T2-16): linhas sem Relation + da
+    Relation verificada do usuario, sempre na instancia canonica. O helper
+    checa as colunas por PRAGMA — dumps pre-migracao continuam funcionando."""
+    return personal_scope_clause(
+        cursor,
+        table=table,
+        relation_column=relation_column,
+        relation_id=scope.relation_id,
+        agent_instance=agent_instance,
+    )
+
+
+def _phase_map(
+    conn: sqlite3.Connection,
+    user_id: str,
+    scope: PersonalExportScope,
+    agent_instance: Optional[str] = None,
+) -> Dict[str, int]:
     """cycle_id -> final_phase (latest review wins)."""
     cur = conn.cursor()
+    scope_sql, scope_params = _scope_clause(
+        cur, "agent_development_reviews", scope, agent_instance=agent_instance
+    )
     cur.execute(
-        """
+        f"""
         SELECT cycle_id, final_phase
         FROM agent_development_reviews
-        WHERE user_id = ? AND cycle_id IS NOT NULL AND final_phase IS NOT NULL
+        WHERE user_id = ?{scope_sql} AND cycle_id IS NOT NULL
+          AND final_phase IS NOT NULL
         ORDER BY created_at ASC
         """,
-        (user_id,),
+        (user_id, *scope_params),
     )
     mapping: Dict[str, int] = {}
     for cycle_id, phase in cur.fetchall():
@@ -98,17 +140,24 @@ def _phase_map(conn: sqlite3.Connection, user_id: str) -> Dict[str, int]:
 
 
 def _candidates_from_conversations(
-    conn: sqlite3.Connection, user_id: str
+    conn: sqlite3.Connection,
+    user_id: str,
+    scope: PersonalExportScope,
+    agent_instance: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     cur = conn.cursor()
+    scope_sql, scope_params = _scope_clause(
+        cur, "conversations", scope, agent_instance=agent_instance
+    )
     cur.execute(
-        """
+        f"""
         SELECT id, ai_response, user_input, timestamp
         FROM conversations
-        WHERE user_id = ? AND ai_response IS NOT NULL AND length(ai_response) > 120
+        WHERE user_id = ?{scope_sql} AND ai_response IS NOT NULL
+          AND length(ai_response) > 120
         ORDER BY timestamp ASC
         """,
-        (user_id,),
+        (user_id, *scope_params),
     )
     out: List[Dict[str, Any]] = []
     for row in cur.fetchall():
@@ -126,18 +175,24 @@ def _candidates_from_conversations(
 
 
 def _candidates_from_rumination(
-    conn: sqlite3.Connection, user_id: str
+    conn: sqlite3.Connection,
+    user_id: str,
+    scope: PersonalExportScope,
+    agent_instance: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     cur = conn.cursor()
+    scope_sql, scope_params = _scope_clause(
+        cur, "rumination_insights", scope, agent_instance=agent_instance
+    )
     cur.execute(
-        """
+        f"""
         SELECT id, full_message, question_content, symbol_content, crystallized_at
         FROM rumination_insights
-        WHERE user_id = ? AND full_message IS NOT NULL
+        WHERE user_id = ?{scope_sql} AND full_message IS NOT NULL
           AND length(full_message) > 120
         ORDER BY crystallized_at ASC
         """,
-        (user_id,),
+        (user_id, *scope_params),
     )
     out: List[Dict[str, Any]] = []
     for row in cur.fetchall():
@@ -160,17 +215,24 @@ def _candidates_from_rumination(
 
 
 def _candidates_from_will(
-    conn: sqlite3.Connection, user_id: str
+    conn: sqlite3.Connection,
+    user_id: str,
+    scope: PersonalExportScope,
+    agent_instance: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     cur = conn.cursor()
+    scope_sql, scope_params = _scope_clause(
+        cur, "agent_will_states", scope, agent_instance=agent_instance
+    )
     cur.execute(
-        """
+        f"""
         SELECT id, cycle_id, daily_text, will_conflict, attention_bias_note, created_at
         FROM agent_will_states
-        WHERE user_id = ? AND daily_text IS NOT NULL AND length(daily_text) > 80
+        WHERE user_id = ?{scope_sql} AND daily_text IS NOT NULL
+          AND length(daily_text) > 80
         ORDER BY created_at ASC
         """,
-        (user_id,),
+        (user_id, *scope_params),
     )
     out: List[Dict[str, Any]] = []
     for row in cur.fetchall():
@@ -193,18 +255,28 @@ def _candidates_from_will(
 
 
 def _candidates_from_dreams(
-    conn: sqlite3.Connection, user_id: str
+    conn: sqlite3.Connection,
+    user_id: str,
+    scope: PersonalExportScope,
+    agent_instance: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     cur = conn.cursor()
+    scope_sql, scope_params = _scope_clause(
+        cur,
+        "agent_dreams",
+        scope,
+        relation_column="origin_relation_id",
+        agent_instance=agent_instance,
+    )
     cur.execute(
-        """
+        f"""
         SELECT id, dream_content, symbolic_theme, extracted_insight, created_at
         FROM agent_dreams
-        WHERE user_id = ? AND dream_content IS NOT NULL
+        WHERE user_id = ?{scope_sql} AND dream_content IS NOT NULL
           AND length(dream_content) > 120
         ORDER BY created_at ASC
         """,
-        (user_id,),
+        (user_id, *scope_params),
     )
     out: List[Dict[str, Any]] = []
     for row in cur.fetchall():
@@ -227,19 +299,25 @@ def _candidates_from_dreams(
 
 
 def _candidates_from_meta(
-    conn: sqlite3.Connection, user_id: str
+    conn: sqlite3.Connection,
+    user_id: str,
+    scope: PersonalExportScope,
+    agent_instance: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     cur = conn.cursor()
+    scope_sql, scope_params = _scope_clause(
+        cur, "agent_meta_consciousness", scope, agent_instance=agent_instance
+    )
     cur.execute(
-        """
+        f"""
         SELECT id, cycle_id, integration_note, dominant_form, emergent_shift,
                blind_spot, created_at
         FROM agent_meta_consciousness
-        WHERE user_id = ? AND integration_note IS NOT NULL
+        WHERE user_id = ?{scope_sql} AND integration_note IS NOT NULL
           AND length(integration_note) > 80
         ORDER BY created_at ASC
         """,
-        (user_id,),
+        (user_id, *scope_params),
     )
     out: List[Dict[str, Any]] = []
     for row in cur.fetchall():
@@ -264,15 +342,18 @@ def _candidates_from_meta(
 
 
 def _collect_candidates(
-    conn: sqlite3.Connection, user_id: str
+    conn: sqlite3.Connection,
+    user_id: str,
+    scope: PersonalExportScope,
+    agent_instance: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """All candidate rows, tagged with cycle_id when available."""
     candidates: List[Dict[str, Any]] = []
-    candidates.extend(_candidates_from_conversations(conn, user_id))
-    candidates.extend(_candidates_from_rumination(conn, user_id))
-    candidates.extend(_candidates_from_will(conn, user_id))
-    candidates.extend(_candidates_from_dreams(conn, user_id))
-    candidates.extend(_candidates_from_meta(conn, user_id))
+    candidates.extend(_candidates_from_conversations(conn, user_id, scope, agent_instance))
+    candidates.extend(_candidates_from_rumination(conn, user_id, scope, agent_instance))
+    candidates.extend(_candidates_from_will(conn, user_id, scope, agent_instance))
+    candidates.extend(_candidates_from_dreams(conn, user_id, scope, agent_instance))
+    candidates.extend(_candidates_from_meta(conn, user_id, scope, agent_instance))
     logger.info(
         "candidates collected: %d (conversation/rumination/will/dream/meta mixed)",
         len(candidates),
@@ -349,11 +430,23 @@ def extract(
     user_id: str,
     target_samples: int,
     out_dir: Path,
+    agent_instance: Optional[str] = None,
 ) -> Dict[str, Any]:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     try:
-        phase_map = _phase_map(conn, user_id)
+        # Gate de consentimento/escopo ANTES de qualquer leitura pessoal
+        # (C12c7/T2-16): recusa explicita quando a elegibilidade nao for
+        # verificavel — dump sem a API de Relations ou Relation inelegivel.
+        scope = resolve_personal_export_scope(
+            conn, user_id, agent_instance=agent_instance
+        )
+        logger.info(
+            "export scope: status=%s relation_id=%s",
+            scope.status,
+            scope.relation_id,
+        )
+        phase_map = _phase_map(conn, user_id, scope, agent_instance)
         if not phase_map:
             raise RuntimeError(
                 f"no agent_development_reviews found for user_id={user_id}"
@@ -366,7 +459,7 @@ def extract(
             distinct_phases,
         )
 
-        candidates = _collect_candidates(conn, user_id)
+        candidates = _collect_candidates(conn, user_id, scope, agent_instance)
 
         # Pair each candidate with its phase (by cycle_id when present,
         # otherwise by timestamp proximity).
@@ -444,6 +537,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--user-id", default=ADMIN_USER_ID_FALLBACK)
     parser.add_argument("--target-samples", type=int, default=18)
     parser.add_argument("--out-dir", required=True, type=Path)
+    parser.add_argument(
+        "--agent-instance",
+        default=None,
+        help="Canonical instance for scoping (defaults to the env chain).",
+    )
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
 
@@ -451,12 +549,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         level=args.log_level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    result = extract(
-        db_path=args.db_path,
-        user_id=args.user_id,
-        target_samples=args.target_samples,
-        out_dir=args.out_dir,
-    )
+    try:
+        result = extract(
+            db_path=args.db_path,
+            user_id=args.user_id,
+            target_samples=args.target_samples,
+            out_dir=args.out_dir,
+            agent_instance=args.agent_instance,
+        )
+    except ValueError as exc:
+        logger.error("export refused by consent/scope gate: %s", exc)
+        return 2
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
