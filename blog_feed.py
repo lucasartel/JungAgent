@@ -138,13 +138,21 @@ def _load_blog_living_state(
     }
 
     try:
+        # T2-19: estado do loop visivel ao blog segue o MESMO escopo publico
+        # do resto da pagina (instancia canonica) — outra instancia nunca
+        # alimenta a fase exibida.
+        loop_clause, loop_params = legacy_quarantine_clause(
+            cursor, table="consciousness_loop_state"
+        )
         cursor.execute(
-            """
+            f"""
             SELECT cycle_id, current_phase, next_phase, last_completed_phase, updated_at
             FROM consciousness_loop_state
+            WHERE 1 = 1{loop_clause}
             ORDER BY id DESC
             LIMIT 1
-            """
+            """,
+            (*loop_params,),
         )
         row = cursor.fetchone()
         if row:
@@ -284,29 +292,51 @@ def _load_blog_living_state(
         logger.debug("Living state selves unavailable: %s", exc)
 
     try:
+        from instance_config import ADMIN_USER_ID
+
+        # T2-19: metricas de rumination seguem o escopo publico (instancia
+        # canonica) — mesmas tabelas das contagens abaixo.
+        phase_clause, phase_params = legacy_quarantine_clause(
+            cursor, table="consciousness_loop_phase_results"
+        )
         cursor.execute(
-            """
+            f"""
             SELECT metrics_json
             FROM consciousness_loop_phase_results
-            WHERE phase IN ('rumination_intro', 'rumination_extro')
+            WHERE phase IN ('rumination_intro', 'rumination_extro'){phase_clause}
             ORDER BY datetime(created_at) DESC
             LIMIT 1
-            """
+            """,
+            (*phase_params,),
         )
         row = cursor.fetchone()
         metrics = json.loads(row[0]) if row and row[0] else {}
 
-        cursor.execute("SELECT COUNT(*) FROM rumination_tensions WHERE status = 'maturing'")
+        tension_clause, tension_params = legacy_quarantine_clause(
+            cursor, table="rumination_tensions"
+        )
+        cursor.execute(
+            f"""
+            SELECT COUNT(*) FROM rumination_tensions
+            WHERE user_id = ? AND status = 'maturing'{tension_clause}
+            """,
+            (ADMIN_USER_ID, *tension_params),
+        )
         maturing = cursor.fetchone()[0] or 0
 
+        fragment_clause, fragment_params = legacy_quarantine_clause(
+            cursor, table="rumination_fragments"
+        )
         cursor.execute(
-            """
+            f"""
             SELECT fragment_type, COUNT(*) AS count
             FROM rumination_fragments
+            WHERE user_id = ?{fragment_clause}
             GROUP BY fragment_type
             ORDER BY count DESC
             LIMIT 3
-            """
+            """,
+            (ADMIN_USER_ID, *fragment_params),
         )
         fragment_mix = [f"{fragment_type} {count}" for fragment_type, count in cursor.fetchall()]
 
@@ -342,6 +372,59 @@ def _load_blog_living_state(
     return living_state
 
 
+def _blog_anchor_value(cursor: sqlite3.Cursor) -> Optional[str]:
+    """B01: ancora temporal do feed /blogdojung restrita ao escopo publico.
+
+    Considera APENAS material da instancia canonica (e do usuario canonico)
+    sem Relation carimbada — mesmo criterio das entries. Um registro
+    privado mais recente (outra Relation/instancia) nao puxa a janela do
+    feed. Nenhum registro legado e reclassificado: a visibilidade segue a
+    regra oficial do blog (quarentena C5).
+    """
+    from core.db.relation_scope import legacy_quarantine_clause
+    from engines.will_scope import resolve_instance
+    from instance_config import ADMIN_USER_ID
+
+    dream_clause, dream_params = legacy_quarantine_clause(
+        cursor,
+        table="agent_dreams",
+        relation_column="origin_relation_id",
+    )
+    research_clause, research_params = legacy_quarantine_clause(
+        cursor,
+        table="external_research",
+        relation_column="origin_relation_id",
+    )
+    instance = resolve_instance(None)
+    cursor.execute(
+        f"""
+        SELECT MAX(created_at) FROM (
+            SELECT MAX(created_at) AS created_at FROM agent_dreams
+            WHERE user_id = ?{dream_clause}
+            UNION ALL
+            SELECT MAX(created_at) AS created_at FROM agent_hobby_artifacts
+            WHERE user_id = ?
+            UNION ALL
+            SELECT MAX(created_at) AS created_at FROM consciousness_loop_phase_results
+            WHERE phase = 'world' AND (agent_instance = ? OR agent_instance IS NULL)
+            UNION ALL
+            SELECT MAX(created_at) AS created_at FROM external_research
+            WHERE user_id = ?{research_clause}
+        )
+        """,
+        (
+            ADMIN_USER_ID,
+            *dream_params,
+            ADMIN_USER_ID,
+            instance,
+            ADMIN_USER_ID,
+            *research_params,
+        ),
+    )
+    anchor_row = cursor.fetchone()
+    return anchor_row[0] if anchor_row else None
+
+
 def _load_blogdojung_entries(conn: Optional[sqlite3.Connection], limit_days: int = 3) -> List[Dict]:
     if conn is None:
         return []
@@ -349,21 +432,9 @@ def _load_blogdojung_entries(conn: Optional[sqlite3.Connection], limit_days: int
     cursor = conn.cursor()
     from instance_config import ADMIN_USER_ID
 
-    cursor.execute(
-        """
-        SELECT MAX(created_at) FROM (
-            SELECT MAX(created_at) AS created_at FROM agent_dreams
-            UNION ALL
-            SELECT MAX(created_at) AS created_at FROM agent_hobby_artifacts
-            UNION ALL
-            SELECT MAX(created_at) AS created_at FROM consciousness_loop_phase_results WHERE phase = 'world'
-            UNION ALL
-            SELECT MAX(created_at) AS created_at FROM external_research
-        )
-        """
-    )
-    anchor_row = cursor.fetchone()
-    anchor_value = anchor_row[0] if anchor_row else None
+    from core.db.relation_scope import legacy_quarantine_clause
+
+    anchor_value = _blog_anchor_value(cursor)
     if not anchor_value:
         return []
 
@@ -376,8 +447,6 @@ def _load_blogdojung_entries(conn: Optional[sqlite3.Connection], limit_days: int
     start_iso = start_dt.strftime("%Y-%m-%d %H:%M:%S")
 
     entries: List[Dict] = []
-
-    from core.db.relation_scope import legacy_quarantine_clause
 
     blog_clause, blog_clause_params = legacy_quarantine_clause(
         cursor,
