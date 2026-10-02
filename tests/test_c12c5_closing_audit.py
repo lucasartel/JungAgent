@@ -192,13 +192,19 @@ def test_blog_entries_quarantine_dreams_and_filter_hobby_owner():
             id INTEGER PRIMARY KEY,
             created_at TEXT,
             phase TEXT,
+            agent_instance TEXT,
             raw_result_json TEXT
         );
         CREATE TABLE external_research (
             id INTEGER PRIMARY KEY,
             created_at TEXT,
+            user_id TEXT,
+            agent_instance TEXT,
+            origin_relation_id TEXT,
             topic TEXT,
             synthesized_insight TEXT,
+            finding_scope TEXT DEFAULT 'quarantined',
+            public_finding TEXT,
             source_url TEXT
         );
         """
