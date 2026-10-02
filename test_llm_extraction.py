@@ -9,7 +9,7 @@ sys.path.insert(0, '.')
 
 from jung_core import HybridDatabaseManager
 from jung_rumination import RuminationEngine
-from instance_config import ADMIN_USER_ID
+from instance_config import ADMIN_USER_ID, AGENT_INSTANCE
 import logging
 
 logging.basicConfig(level=logging.DEBUG, format='%(message)s')
@@ -25,13 +25,14 @@ def main():
 
     # Buscar uma conversa telegram real do admin
     cursor = db.conn.cursor()
+    # T2-28 (corte E): escopo por instância junto do user_id.
     cursor.execute('''
         SELECT id, user_input, ai_response, tension_level, affective_charge, timestamp
         FROM conversations
-        WHERE user_id = ? AND platform = 'telegram'
+        WHERE user_id = ? AND agent_instance = ? AND platform = 'telegram'
         ORDER BY timestamp DESC
         LIMIT 1
-    ''', (ADMIN_USER_ID,))
+    ''', (ADMIN_USER_ID, AGENT_INSTANCE))
 
     result = cursor.fetchone()
 
@@ -96,10 +97,10 @@ def main():
             cursor.execute('''
                 SELECT phase, status, details
                 FROM rumination_log
-                WHERE conversation_id = ?
+                WHERE conversation_id = ? AND agent_instance = ?
                 ORDER BY timestamp DESC
                 LIMIT 5
-            ''', (conv_id,))
+            ''', (conv_id, AGENT_INSTANCE))
 
             logs = cursor.fetchall()
             if logs:

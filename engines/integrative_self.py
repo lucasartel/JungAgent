@@ -220,12 +220,10 @@ class IntegrativeSelfModel:
                 (self.agent_instance, user_id, relation_id, relation_id),
                 ).fetchone()
             else:
-                row = cursor.execute(
-                    """SELECT id, symbolic_theme, extracted_insight, dream_mood, created_at
-                       FROM agent_dreams WHERE user_id = ?
-                       ORDER BY created_at DESC, id DESC LIMIT 1""",
-                    (user_id,),
-                ).fetchone()
+                # T2-26 (corte E): sem colunas de escopo nao ha como autorizar
+                # o material — fail-closed, mesma regra do caminho principal
+                # (core/db/integrative_self.py): nao anexa componente.
+                row = None
             if row:
                 components.append(
                     self._component(
@@ -257,13 +255,9 @@ class IntegrativeSelfModel:
                 (self.agent_instance, user_id, relation_id),
                 ).fetchone()
             else:
-                row = cursor.execute(
-                    """SELECT id, cycle_id, dominant_will, secondary_will,
-                              constrained_will, will_conflict, attention_bias_note, created_at
-                       FROM agent_will_states WHERE user_id = ?
-                       ORDER BY created_at DESC, id DESC LIMIT 1""",
-                    (user_id,),
-                ).fetchone()
+                # T2-26 (corte E): sem colunas de escopo nao ha como autorizar
+                # o material — fail-closed: nao anexa componente.
+                row = None
             if row:
                 summary = (
                     f"dominante={row['dominant_will'] or 'indefinida'}; "

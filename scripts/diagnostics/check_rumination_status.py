@@ -11,6 +11,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT_DIR))
 
 from rumination_config import *
+from instance_config import AGENT_INSTANCE
 
 # Conectar ao banco
 conn = sqlite3.connect(ROOT_DIR / "data" / "jung_hybrid.db")
@@ -24,12 +25,13 @@ print("🔍 DIAGNÓSTICO DO SISTEMA DE RUMINAÇÃO")
 print("=" * 80)
 
 # 1. Fragmentos
+# T2-28 (corte E): escopo por instância junto do user_id.
 cursor.execute("""
     SELECT COUNT(*) as total,
            AVG(emotional_weight) as avg_weight
     FROM rumination_fragments
-    WHERE user_id = ?
-""", (user_id,))
+    WHERE user_id = ? AND agent_instance = ?
+""", (user_id, AGENT_INSTANCE))
 fragments_stats = dict(cursor.fetchone())
 print(f"\n📝 FRAGMENTOS:")
 print(f"   Total: {fragments_stats['total']}")
@@ -41,9 +43,9 @@ cursor.execute("""
            evidence_count, revisit_count, first_detected_at,
            last_revisited_at
     FROM rumination_tensions
-    WHERE user_id = ?
+    WHERE user_id = ? AND agent_instance = ?
     ORDER BY first_detected_at DESC
-""", (user_id,))
+""", (user_id, AGENT_INSTANCE))
 
 tensions = cursor.fetchall()
 print(f"\n⚡ TENSÕES: {len(tensions)} total")
@@ -87,9 +89,9 @@ cursor.execute("""
     SELECT COUNT(*) as total,
            status
     FROM rumination_insights
-    WHERE user_id = ?
+    WHERE user_id = ? AND agent_instance = ?
     GROUP BY status
-""", (user_id,))
+""", (user_id, AGENT_INSTANCE))
 
 insights_stats = cursor.fetchall()
 print(f"\n💡 INSIGHTS:")

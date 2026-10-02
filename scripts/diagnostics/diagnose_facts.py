@@ -10,6 +10,10 @@ from pathlib import Path
 
 # Caminho do banco de dados (ajuste se necessário)
 ROOT_DIR = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT_DIR))
+
+from instance_config import AGENT_INSTANCE
+
 DB_PATH = ROOT_DIR / "data" / "jung_hybrid.db"
 
 # Se estiver rodando no Railway, use o caminho do Railway
@@ -58,13 +62,14 @@ for user in users:
     print(f"\n👤 {user_name} (user_id='{user_id}'):")
     print("-" * 80)
 
+    # T2-28 (corte E): escopo por instância junto do user_id.
     cursor.execute("""
         SELECT fact_category, fact_key, fact_value, is_current, version,
                created_at, source_conversation_id
         FROM user_facts
-        WHERE user_id = ?
+        WHERE user_id = ? AND agent_instance = ?
         ORDER BY fact_category, fact_key, version DESC
-    """, (user_id,))
+    """, (user_id, AGENT_INSTANCE))
 
     facts = cursor.fetchall()
 
