@@ -302,7 +302,7 @@ def test_feed_world_result_excludes_other_instance():
         CREATE TABLE external_research (
             id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
             origin_relation_id TEXT, agent_instance TEXT, finding_scope TEXT,
-            topic TEXT, synthesized_insight TEXT, source_url TEXT
+            topic TEXT, synthesized_insight TEXT, public_finding TEXT, source_url TEXT
         );
         """
     )
@@ -350,7 +350,7 @@ def test_feed_research_fallback_excludes_private_and_other_instance():
         CREATE TABLE external_research (
             id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
             origin_relation_id TEXT, agent_instance TEXT, finding_scope TEXT,
-            topic TEXT, synthesized_insight TEXT, source_url TEXT
+            topic TEXT, synthesized_insight TEXT, public_finding TEXT, source_url TEXT
         );
         """
     )
@@ -362,15 +362,15 @@ def test_feed_research_fallback_excludes_private_and_other_instance():
     )
     conn.executemany(
         "INSERT INTO external_research "
-        "(user_id, created_at, origin_relation_id, agent_instance, finding_scope, topic) "
-        "VALUES (?,?,?,?,?,?)",
+        "(user_id, created_at, origin_relation_id, agent_instance, finding_scope, topic, public_finding) "
+        "VALUES (?,?,?,?,?,?,?)",
         [
             # Publica: instanciada, sem Relation, autorizada.
-            (str(ADMIN_USER_ID), "2026-09-27 12:00:00", None, CANON, "instance_global", "pesquisa publica"),
+            (str(ADMIN_USER_ID), "2026-09-27 12:00:00", None, CANON, "instance_global", "pesquisa publica", "Projecao aprovada"),
             # Privada (Relation distinta), DENTRO da janela.
-            (str(ADMIN_USER_ID), "2026-09-26 12:00:00", "rel-privada", CANON, "instance_global", "pesquisa privada"),
+            (str(ADMIN_USER_ID), "2026-09-26 12:00:00", "rel-privada", CANON, "instance_global", "pesquisa privada", "Projecao aprovada"),
             # Outra instancia, sem Relation.
-            (str(ADMIN_USER_ID), "2026-09-26 13:00:00", None, OTHER_INST, "instance_global", "pesquisa de outra instancia"),
+            (str(ADMIN_USER_ID), "2026-09-26 13:00:00", None, OTHER_INST, "instance_global", "pesquisa de outra instancia", "Projecao aprovada"),
         ],
     )
     conn.commit()
@@ -405,7 +405,7 @@ def test_feed_quarantined_research_does_not_shift_window():
         CREATE TABLE external_research (
             id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
             origin_relation_id TEXT, agent_instance TEXT, finding_scope TEXT,
-            topic TEXT, synthesized_insight TEXT, source_url TEXT
+            topic TEXT, synthesized_insight TEXT, public_finding TEXT, source_url TEXT
         );
         """
     )
@@ -421,9 +421,17 @@ def test_feed_quarantined_research_does_not_shift_window():
     # Se deslocasse a âncora, a janela (02/10..04/10) excluiria o dream de 28/09.
     conn.execute(
         "INSERT INTO external_research "
-        "(user_id, created_at, origin_relation_id, agent_instance, finding_scope, topic) "
-        "VALUES (?,?,?,?,?,?)",
-        (str(ADMIN_USER_ID), "2026-10-04 09:00:00", None, CANON, "quarantined", "pesquisa em quarentena"),
+        "(user_id, created_at, origin_relation_id, agent_instance, finding_scope, topic, public_finding) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            str(ADMIN_USER_ID),
+            "2026-10-04 09:00:00",
+            None,
+            CANON,
+            "quarantined",
+            "pesquisa em quarentena",
+            "Projecao em quarentena",
+        ),
     )
     conn.commit()
 
@@ -434,3 +442,90 @@ def test_feed_quarantined_research_does_not_shift_window():
     assert "Dream publico" in titles
     # E a pesquisa em quarentena não é publicada.
     assert "pesquisa em quarentena" not in titles
+
+
+def test_feed_research_publishes_public_finding_not_internal_synthesis():
+    """Round 2/P1: o feed exibe EXCLUSIVAMENTE public_finding (projeção
+    pública aprovada) — nunca synthesized_insight (síntese interna, que
+    pode conter informação pessoal). Registro sem projeção pública válida
+    também não desloca a âncora."""
+    from blog_feed import _load_blogdojung_entries
+
+    conn = _conn()
+    conn.executescript(
+        """
+        CREATE TABLE agent_dreams (
+            id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
+            origin_relation_id TEXT, agent_instance TEXT,
+            symbolic_theme TEXT, extracted_insight TEXT, dream_content TEXT, image_url TEXT
+        );
+        CREATE TABLE agent_hobby_artifacts (
+            id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
+            title TEXT, summary TEXT, image_url TEXT
+        );
+        CREATE TABLE consciousness_loop_phase_results (
+            id INTEGER PRIMARY KEY, created_at TEXT, phase TEXT,
+            agent_instance TEXT, raw_result_json TEXT
+        );
+        CREATE TABLE external_research (
+            id INTEGER PRIMARY KEY, user_id TEXT, created_at TEXT,
+            origin_relation_id TEXT, agent_instance TEXT, finding_scope TEXT,
+            topic TEXT, synthesized_insight TEXT, public_finding TEXT, source_url TEXT
+        );
+        """
+    )
+    # Sem trace valido no phase=world -> o fallback de research roda.
+    conn.execute(
+        "INSERT INTO consciousness_loop_phase_results "
+        "(created_at, phase, agent_instance, raw_result_json) VALUES (?,?,?,?)",
+        ("2026-09-27 00:00:00", "world", CANON, None),
+    )
+    # Achado publico aprovado: projecao publica E sintese interna DISTINTAS.
+    conn.execute(
+        "INSERT INTO external_research "
+        "(user_id, created_at, origin_relation_id, agent_instance, finding_scope, "
+        "topic, synthesized_insight, public_finding) VALUES (?,?,?,?,?,?,?,?)",
+        (
+            str(ADMIN_USER_ID),
+            "2026-09-27 10:00:00",
+            None,
+            CANON,
+            "instance_global",
+            "topico aprovado",
+            "Sintese interna com informacao pessoal confidencial",
+            "Projecao publica aprovada",
+        ),
+    )
+    # Sem projecao publica valida (public_finding NULL), MAIS RECENTE:
+    # nao pode aparecer nem deslocar a ancora (ancora = 27/09).
+    conn.execute(
+        "INSERT INTO external_research "
+        "(user_id, created_at, origin_relation_id, agent_instance, finding_scope, "
+        "topic, synthesized_insight, public_finding) VALUES (?,?,?,?,?,?,?,?)",
+        (
+            str(ADMIN_USER_ID),
+            "2026-10-05 10:00:00",
+            None,
+            CANON,
+            "instance_global",
+            "topico sem projecao",
+            "Sintese interna recente sem projecao aprovada",
+            None,
+        ),
+    )
+    conn.commit()
+
+    entries = _load_blogdojung_entries(conn, limit_days=3)
+    summaries = [e.get("summary") or "" for e in entries]
+    titles = [e["title"] for e in entries]
+
+    # A projeção pública aprovada é o que aparece.
+    assert any("Projecao publica aprovada" in s for s in summaries)
+    # A síntese interna NUNCA é publicada.
+    assert all("confidencial" not in s for s in summaries)
+    assert all("sem projecao aprovada" not in s for s in summaries)
+    # O registro sem projeção não ancora nem aparece.
+    assert "topico sem projecao" not in titles
+    # Ancora no material público de 27/09: o dream fictício não existe, mas a
+    # janela de 3 dias (25/09..27/09) exclui o registro de 05/10 por date.
+    assert all("2026-10-05" not in e["created_at"] for e in entries)

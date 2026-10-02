@@ -115,7 +115,11 @@ def _blog_public_scope(
     - quarentena C5 de Relation/instancia (``legacy_quarantine_clause``);
     - ``finding_scope = 'instance_global'`` quando a coluna existe —
       ausencia de Relation NAO comprova autorizacao publica (P2): historico
-      ``quarantined`` permanece no banco sem ser publicado automaticamente.
+      ``quarantined`` permanece no banco sem ser publicado automaticamente;
+    - ``public_finding`` nao-vazio quando a coluna existe (round 2/P1): so
+      ha o que publicar/ancorar com a projecao publica aprovada — a
+      sintese interna (``synthesized_insight``) nunca sai pelo blog e um
+      registro sem projecao publica tambem nao desloca a ancora.
     """
     from core.db.relation_scope import legacy_quarantine_clause
     from instance_config import ADMIN_USER_ID
@@ -130,6 +134,8 @@ def _blog_public_scope(
         params.append(ADMIN_USER_ID)
     if "finding_scope" in cols:
         parts.append("finding_scope = 'instance_global'")
+    if "public_finding" in cols:
+        parts.append("public_finding IS NOT NULL AND TRIM(public_finding) <> ''")
 
     clause = (" AND " + " AND ".join(parts)) if parts else ""
     quarantine_clause, quarantine_params = legacy_quarantine_clause(
@@ -561,22 +567,25 @@ def _load_blogdojung_entries(conn: Optional[sqlite3.Connection], limit_days: int
         )
 
     if knowledge_entries_added == 0:
+        # Round 2/P1: o feed exibe EXCLUSIVAMENTE public_finding (a projecao
+        # publica aprovada). synthesized_insight e a sintese interna, pode
+        # conter informacao pessoal e nao tem fallback aqui.
         cursor.execute(
             f"""
-            SELECT created_at, topic, synthesized_insight, source_url
+            SELECT created_at, topic, public_finding, source_url
             FROM external_research
             WHERE 1 = 1{research_clause} AND datetime(created_at) >= datetime(?)
             ORDER BY datetime(created_at) DESC
             """,
             (*research_clause_params, start_iso),
         )
-        for created_at, topic, synthesized_insight, source_url in cursor.fetchall():
+        for created_at, topic, public_finding, source_url in cursor.fetchall():
             entries.append(
                 {
                     "type": "knowledge",
                     "type_label": "Knowledge",
                     "title": topic or "Knowledge synthesis",
-                    "summary": _normalize_blog_text(synthesized_insight, 560),
+                    "summary": _normalize_blog_text(public_finding, 560),
                     "body": "",
                     "image_url": None,
                     "source_url": source_url if source_url and source_url != "LLM Knowledge Base" else None,
