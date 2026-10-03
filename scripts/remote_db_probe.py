@@ -73,6 +73,42 @@ def table_columns(cursor: sqlite3.Cursor, table: str) -> List[str]:
     return [row["name"] for row in cursor.fetchall()]
 
 
+def _relation_scope(
+    columns: Sequence[str],
+    scope_kind: str,
+    relation_id: Optional[str],
+) -> Optional[tuple[List[str], List[Any]]]:
+    """Escopo de Relation adaptado às colunas da própria tabela.
+
+    - A coluna de relação pode ser `relation_id` (ruminação/Will) ou
+      `origin_relation_id` (sonhos, lacunas, identidade) — cada tabela usa a
+      sua; relation pedida sem coluna correspondente é fail-closed (`None`).
+    - Em tabelas **sem** `scope_kind`, o escopo global precisa excluir os
+      registros relacionais (`<col> IS NULL`), senão o global mistura
+      conteúdo privado de relações (P2 da revisão do PR #54).
+    """
+    clauses: List[str] = []
+    params: List[Any] = []
+    if "scope_kind" in columns:
+        clauses.append("scope_kind = ?")
+        params.append(scope_kind)
+    relation_column = (
+        "relation_id"
+        if "relation_id" in columns
+        else "origin_relation_id"
+        if "origin_relation_id" in columns
+        else None
+    )
+    if relation_id:
+        if relation_column is None:
+            return None
+        clauses.append(f"{relation_column} = ?")
+        params.append(relation_id)
+    elif relation_column is not None and "scope_kind" not in columns:
+        clauses.append(f"{relation_column} IS NULL")
+    return clauses, params
+
+
 def _will_scope_filter(
     cursor: sqlite3.Cursor,
     table: str,
@@ -90,14 +126,11 @@ def _will_scope_filter(
     if "agent_instance" in columns:
         clauses.append("agent_instance = ?")
         params.append(getattr(args, "agent_instance", DEFAULT_AGENT_INSTANCE))
-    if "scope_kind" in columns:
-        clauses.append("scope_kind = ?")
-        params.append(scope_kind)
-    if relation_id:
-        if "relation_id" not in columns:
-            return " AND 1 = 0", []
-        clauses.append("relation_id = ?")
-        params.append(relation_id)
+    relation_clauses = _relation_scope(columns, scope_kind, relation_id)
+    if relation_clauses is None:
+        return " AND 1 = 0", []
+    clauses.extend(relation_clauses[0])
+    params.extend(relation_clauses[1])
     return (" AND " + " AND ".join(clauses), params) if clauses else ("", [])
 
 
@@ -170,6 +203,7 @@ def search_terms(
     user_id: Optional[str] = None,
     agent_instance: Optional[str] = None,
     relation_id: Optional[str] = None,
+    scope_kind: str = "global",
     limit: int = 5,
 ) -> Dict[str, Any]:
     available = table_columns(cursor, table)
@@ -179,7 +213,9 @@ def search_terms(
 
     # T2-28 (corte E): escopo fail-closed — coluna de escopo presente exige o
     # valor correspondente; sem valor a busca não retorna nada (mesmo critério
-    # de _will_scope_filter).
+    # de _will_scope_filter). Relation sem id também é fail-closed.
+    if scope_kind == "relation" and not relation_id:
+        return {"count": 0, "rows": []}
     clauses: List[str] = []
     params: List[Any] = []
     if "user_id" in available:
@@ -192,9 +228,11 @@ def search_terms(
             return {"count": 0, "rows": []}
         clauses.append("agent_instance = ?")
         params.append(agent_instance)
-    if relation_id and "relation_id" in available:
-        clauses.append("relation_id = ?")
-        params.append(relation_id)
+    relation_clauses = _relation_scope(available, scope_kind, relation_id)
+    if relation_clauses is None:
+        return {"count": 0, "rows": []}
+    clauses.extend(relation_clauses[0])
+    params.extend(relation_clauses[1])
 
     term_clauses = []
     for term in terms:
@@ -1383,6 +1421,7 @@ def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[s
                 user_id=args.user_id,
                 agent_instance=args.agent_instance,
                 relation_id=args.relation_id,
+                scope_kind=getattr(args, "scope_kind", "global"),
                 limit=args.limit,
             ),
             "tensions": search_terms(
@@ -1393,6 +1432,7 @@ def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[s
                 user_id=args.user_id,
                 agent_instance=args.agent_instance,
                 relation_id=args.relation_id,
+                scope_kind=getattr(args, "scope_kind", "global"),
                 limit=args.limit,
             ),
             "insights": search_terms(
@@ -1403,6 +1443,7 @@ def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[s
                 user_id=args.user_id,
                 agent_instance=args.agent_instance,
                 relation_id=args.relation_id,
+                scope_kind=getattr(args, "scope_kind", "global"),
                 limit=args.limit,
             ),
             "logs": search_terms(
@@ -1413,6 +1454,7 @@ def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[s
                 user_id=args.user_id,
                 agent_instance=args.agent_instance,
                 relation_id=args.relation_id,
+                scope_kind=getattr(args, "scope_kind", "global"),
                 limit=args.limit,
             ),
         },
@@ -1420,16 +1462,28 @@ def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[s
 
 
 def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
-    agent_where = "agent_instance = ?"
-    agent_params = (args.agent_instance,)
+    # T2-28 (rodada 2): escopo por tabela — as tabelas de identidade guardam a
+    # relação em origin_relation_id; o global descarta registros nascidos em
+    # relação e o relation escopa pela coluna da própria tabela (fail-closed).
+    def _scope(table: str) -> tuple[str, List[Any]]:
+        scope_where, scope_params = _will_scope_filter(cursor, table, args)
+        # "1 = 1" permite compor com condições extras (o helper devolve " AND ...").
+        return ("1 = 1" + scope_where, list(scope_params))
+
+    core_where, core_params = _scope("agent_identity_core")
+    contr_where, contr_params = _scope("agent_identity_contradictions")
+    selves_where, selves_params = _scope("agent_possible_selves")
+    meta_where, meta_params = _scope("agent_self_knowledge_meta")
+    narr_where, narr_params = _scope("agent_narrative_chapters")
+    relational_where, relational_params = _scope("agent_relational_identity")
     saber_terms = ("saber", "conhecimento", "epistem", "knowledge", "linguagem", "entender")
 
     bridge_indicators: Dict[str, Any] = {
         "contradictions_fed_to_rumination": count_rows(
             cursor,
             "agent_identity_contradictions",
-            "agent_instance = ? AND fed_to_rumination = 1",
-            agent_params,
+            contr_where + " AND fed_to_rumination = 1",
+            contr_params,
         ),
         "core_from_rumination": 0,
         "active_contradictions_high_tension_not_fed": 0,
@@ -1438,47 +1492,47 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
         bridge_indicators["core_from_rumination"] = count_rows(
             cursor,
             "agent_identity_core",
-            "agent_instance = ? AND LOWER(COALESCE(emerged_in_relation_to, '')) LIKE '%rumina%'",
-            agent_params,
+            core_where + " AND LOWER(COALESCE(emerged_in_relation_to, '')) LIKE '%rumina%'",
+            core_params,
         )
     if table_exists(cursor, "agent_identity_contradictions"):
         bridge_indicators["active_contradictions_high_tension_not_fed"] = count_rows(
             cursor,
             "agent_identity_contradictions",
-            """
-            agent_instance = ?
+            contr_where
+            + """
             AND status IN ('unresolved', 'integrating')
             AND tension_level > 0.55
             AND (fed_to_rumination = 0 OR fed_to_rumination IS NULL)
             """,
-            agent_params,
+            contr_params,
         )
 
     return {
         "probe": "identity",
         "agent_instance": args.agent_instance,
         "stats": {
-            "core_current": count_rows(cursor, "agent_identity_core", "agent_instance = ? AND is_current = 1", agent_params),
-            "core_total": count_rows(cursor, "agent_identity_core", agent_where, agent_params),
+            "core_current": count_rows(cursor, "agent_identity_core", core_where + " AND is_current = 1", core_params),
+            "core_total": count_rows(cursor, "agent_identity_core", core_where, core_params),
             "contradictions_active": count_rows(
                 cursor,
                 "agent_identity_contradictions",
-                "agent_instance = ? AND status IN ('unresolved', 'integrating')",
-                agent_params,
+                contr_where + " AND status IN ('unresolved', 'integrating')",
+                contr_params,
             ),
-            "contradictions_total": count_rows(cursor, "agent_identity_contradictions", agent_where, agent_params),
-            "possible_selves_active": count_rows(cursor, "agent_possible_selves", "agent_instance = ? AND status = 'active'", agent_params),
-            "self_knowledge_meta": count_rows(cursor, "agent_self_knowledge_meta", agent_where, agent_params),
-            "narrative_chapters": count_rows(cursor, "agent_narrative_chapters", agent_where, agent_params),
-            "relational_identity_current": count_rows(cursor, "agent_relational_identity", "agent_instance = ? AND is_current = 1", agent_params),
+            "contradictions_total": count_rows(cursor, "agent_identity_contradictions", contr_where, contr_params),
+            "possible_selves_active": count_rows(cursor, "agent_possible_selves", selves_where + " AND status = 'active'", selves_params),
+            "self_knowledge_meta": count_rows(cursor, "agent_self_knowledge_meta", meta_where, meta_params),
+            "narrative_chapters": count_rows(cursor, "agent_narrative_chapters", narr_where, narr_params),
+            "relational_identity_current": count_rows(cursor, "agent_relational_identity", relational_where + " AND is_current = 1", relational_params),
         },
         "bridge_indicators": bridge_indicators,
         "recent_core": fetch_recent(
             cursor,
             "agent_identity_core",
             ["id", "attribute_type", "content", "certainty", "stability_score", "emerged_in_relation_to", "last_reaffirmed_at", "created_at", "updated_at"],
-            where="agent_instance = ? AND is_current = 1",
-            params=agent_params,
+            where=core_where + " AND is_current = 1",
+            params=core_params,
             order_by="updated_at DESC, id DESC",
             limit=args.limit,
         ),
@@ -1486,8 +1540,8 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
             cursor,
             "agent_identity_contradictions",
             ["id", "pole_a", "pole_b", "contradiction_type", "tension_level", "salience", "status", "fed_to_rumination", "last_activated_at", "updated_at"],
-            where="agent_instance = ?",
-            params=agent_params,
+            where=contr_where,
+            params=contr_params,
             order_by="updated_at DESC, id DESC",
             limit=args.limit,
         ),
@@ -1495,8 +1549,8 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
             cursor,
             "agent_possible_selves",
             ["id", "self_type", "description", "vividness", "likelihood", "motivational_impact", "status", "updated_at"],
-            where="agent_instance = ?",
-            params=agent_params,
+            where=selves_where,
+            params=selves_params,
             order_by="updated_at DESC, id DESC",
             limit=args.limit,
         ),
@@ -1504,8 +1558,8 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
             cursor,
             "agent_self_knowledge_meta",
             ["id", "topic", "knowledge_type", "self_assessment", "confidence", "bias_detected", "evidence", "updated_at"],
-            where=agent_where,
-            params=agent_params,
+            where=meta_where,
+            params=meta_params,
             order_by="updated_at DESC, id DESC",
             limit=args.limit,
         ),
@@ -1516,6 +1570,8 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
                 ["attribute_type", "content", "emerged_in_relation_to"],
                 saber_terms,
                 agent_instance=args.agent_instance,
+                relation_id=getattr(args, "relation_id", None),
+                scope_kind=getattr(args, "scope_kind", "global"),
                 limit=args.limit,
             ),
             "contradictions": search_terms(
@@ -1524,6 +1580,8 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
                 ["pole_a", "pole_b", "contradiction_type", "bias_type", "external_feedback"],
                 saber_terms,
                 agent_instance=args.agent_instance,
+                relation_id=getattr(args, "relation_id", None),
+                scope_kind=getattr(args, "scope_kind", "global"),
                 limit=args.limit,
             ),
             "self_knowledge": search_terms(
@@ -1532,6 +1590,8 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
                 ["topic", "knowledge_type", "self_assessment", "bias_detected", "evidence"],
                 saber_terms,
                 agent_instance=args.agent_instance,
+                relation_id=getattr(args, "relation_id", None),
+                scope_kind=getattr(args, "scope_kind", "global"),
                 limit=args.limit,
             ),
         },
