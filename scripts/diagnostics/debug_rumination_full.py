@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from jung_core import HybridDatabaseManager
 from rumination_config import ADMIN_USER_ID, MIN_TENSION_LEVEL
+from instance_config import AGENT_INSTANCE
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
@@ -64,7 +65,8 @@ def main():
     print("\n📋 TESTE 3: CONVERSAS DO ADMIN")
     print("-" * 80)
 
-    cursor.execute('SELECT COUNT(*) FROM conversations WHERE user_id = ?', (ADMIN_USER_ID,))
+    # T2-28 (corte E): escopo por instância junto do user_id.
+    cursor.execute('SELECT COUNT(*) FROM conversations WHERE user_id = ? AND agent_instance = ?', (ADMIN_USER_ID, AGENT_INSTANCE))
     total = cursor.fetchone()[0]
     print(f"Total de conversas: {total}")
 
@@ -73,9 +75,9 @@ def main():
         cursor.execute('''
             SELECT platform, COUNT(*) as count
             FROM conversations
-            WHERE user_id = ?
+            WHERE user_id = ? AND agent_instance = ?
             GROUP BY platform
-        ''', (ADMIN_USER_ID,))
+        ''', (ADMIN_USER_ID, AGENT_INSTANCE))
 
         print("\nPor plataforma:")
         for row in cursor.fetchall():
@@ -87,10 +89,10 @@ def main():
         cursor.execute('''
             SELECT id, timestamp, platform, user_input, ai_response
             FROM conversations
-            WHERE user_id = ?
+            WHERE user_id = ? AND agent_instance = ?
             ORDER BY timestamp DESC
             LIMIT 5
-        ''', (ADMIN_USER_ID,))
+        ''', (ADMIN_USER_ID, AGENT_INSTANCE))
 
         print("\nÚltimas 5 conversas:")
         for row in cursor.fetchall():
@@ -108,8 +110,8 @@ def main():
 
     cursor.execute('''
         SELECT COUNT(*) FROM conversations
-        WHERE user_id = ? AND platform = 'telegram'
-    ''', (ADMIN_USER_ID,))
+        WHERE user_id = ? AND agent_instance = ? AND platform = 'telegram'
+    ''', (ADMIN_USER_ID, AGENT_INSTANCE))
     telegram_count = cursor.fetchone()[0]
     print(f"Conversas telegram: {telegram_count}")
 
@@ -117,10 +119,10 @@ def main():
         cursor.execute('''
             SELECT id, timestamp, user_input
             FROM conversations
-            WHERE user_id = ? AND platform = 'telegram'
+            WHERE user_id = ? AND agent_instance = ? AND platform = 'telegram'
             ORDER BY timestamp DESC
             LIMIT 3
-        ''', (ADMIN_USER_ID,))
+        ''', (ADMIN_USER_ID, AGENT_INSTANCE))
 
         print("\nÚltimas 3 conversas telegram:")
         for row in cursor.fetchall():
@@ -139,10 +141,10 @@ def main():
                LENGTH(user_input) as input_len,
                LENGTH(ai_response) as response_len
         FROM conversations
-        WHERE user_id = ?
+        WHERE user_id = ? AND agent_instance = ?
         ORDER BY timestamp DESC
         LIMIT 5
-    ''', (ADMIN_USER_ID,))
+    ''', (ADMIN_USER_ID, AGENT_INSTANCE))
 
     print("\nDetalhes das últimas conversas:")
     for row in cursor.fetchall():
@@ -218,10 +220,10 @@ def main():
             cursor.execute('''
                 SELECT id, user_input, ai_response, timestamp
                 FROM conversations
-                WHERE user_id = ? AND platform = 'telegram'
+                WHERE user_id = ? AND agent_instance = ? AND platform = 'telegram'
                 ORDER BY timestamp DESC
                 LIMIT 1
-            ''', (ADMIN_USER_ID,))
+            ''', (ADMIN_USER_ID, AGENT_INSTANCE))
 
             last_conv = cursor.fetchone()
             if last_conv:
@@ -270,7 +272,7 @@ def main():
     print("-" * 80)
 
     try:
-        cursor.execute('SELECT COUNT(*) FROM rumination_fragments WHERE user_id = ?', (ADMIN_USER_ID,))
+        cursor.execute('SELECT COUNT(*) FROM rumination_fragments WHERE user_id = ? AND agent_instance = ?', (ADMIN_USER_ID, AGENT_INSTANCE))
         frag_count = cursor.fetchone()[0]
         print(f"Total de fragmentos: {frag_count}")
 
@@ -278,10 +280,10 @@ def main():
             cursor.execute('''
                 SELECT id, fragment_type, content, emotional_weight, created_at
                 FROM rumination_fragments
-                WHERE user_id = ?
+                WHERE user_id = ? AND agent_instance = ?
                 ORDER BY created_at DESC
                 LIMIT 3
-            ''', (ADMIN_USER_ID,))
+            ''', (ADMIN_USER_ID, AGENT_INSTANCE))
 
             print("\nÚltimos fragmentos:")
             for row in cursor.fetchall():
@@ -301,8 +303,8 @@ def main():
     try:
         cursor.execute('''
             SELECT COUNT(*) FROM rumination_log
-            WHERE user_id = ?
-        ''', (ADMIN_USER_ID,))
+            WHERE user_id = ? AND agent_instance = ?
+        ''', (ADMIN_USER_ID, AGENT_INSTANCE))
         log_count = cursor.fetchone()[0]
         print(f"Total de logs: {log_count}")
 
@@ -310,10 +312,10 @@ def main():
             cursor.execute('''
                 SELECT operation, timestamp, input_summary, output_summary
                 FROM rumination_log
-                WHERE user_id = ?
+                WHERE user_id = ? AND agent_instance = ?
                 ORDER BY timestamp DESC
                 LIMIT 5
-            ''', (ADMIN_USER_ID,))
+            ''', (ADMIN_USER_ID, AGENT_INSTANCE))
 
             print("\nÚltimas operações:")
             for row in cursor.fetchall():
@@ -336,7 +338,7 @@ def main():
     print(f"✓ Conversas telegram: {telegram_count}")
 
     try:
-        cursor.execute('SELECT COUNT(*) FROM rumination_fragments WHERE user_id = ?', (ADMIN_USER_ID,))
+        cursor.execute('SELECT COUNT(*) FROM rumination_fragments WHERE user_id = ? AND agent_instance = ?', (ADMIN_USER_ID, AGENT_INSTANCE))
         final_frag = cursor.fetchone()[0]
         print(f"✓ Fragmentos: {final_frag}")
     except:
@@ -349,7 +351,7 @@ def main():
 
     if total > 0 and telegram_count > 0:
         try:
-            cursor.execute('SELECT COUNT(*) FROM rumination_fragments WHERE user_id = ?', (ADMIN_USER_ID,))
+            cursor.execute('SELECT COUNT(*) FROM rumination_fragments WHERE user_id = ? AND agent_instance = ?', (ADMIN_USER_ID, AGENT_INSTANCE))
             if cursor.fetchone()[0] == 0:
                 print("  ❌ CRÍTICO: Há conversas telegram mas nenhum fragmento")
                 print("     Solução: Hook não está sendo chamado ou LLM não extrai fragmentos")

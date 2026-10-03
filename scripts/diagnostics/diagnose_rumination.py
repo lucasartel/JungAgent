@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from jung_core import HybridDatabaseManager
 from rumination_config import ADMIN_USER_ID
+from instance_config import AGENT_INSTANCE
 from jung_rumination import RuminationEngine
 import logging
 
@@ -34,7 +35,8 @@ def main():
     total_conversations = cursor.fetchone()[0]
     print(f"Total de conversas no banco: {total_conversations}")
 
-    cursor.execute('SELECT COUNT(*) FROM conversations WHERE user_id = ?', (ADMIN_USER_ID,))
+    # T2-28 (corte E): escopo por instância junto do user_id.
+    cursor.execute('SELECT COUNT(*) FROM conversations WHERE user_id = ? AND agent_instance = ?', (ADMIN_USER_ID, AGENT_INSTANCE))
     admin_conversations = cursor.fetchone()[0]
     print(f"Conversas do admin ({ADMIN_USER_ID}): {admin_conversations}")
 
@@ -43,10 +45,10 @@ def main():
         cursor.execute('''
             SELECT id, timestamp, platform, user_input, ai_response
             FROM conversations
-            WHERE user_id = ?
+            WHERE user_id = ? AND agent_instance = ?
             ORDER BY timestamp DESC
             LIMIT 5
-        ''', (ADMIN_USER_ID,))
+        ''', (ADMIN_USER_ID, AGENT_INSTANCE))
 
         print(f"\n📝 Últimas {min(5, admin_conversations)} conversas do admin:")
         for row in cursor.fetchall():
@@ -61,9 +63,9 @@ def main():
         cursor.execute('''
             SELECT platform, COUNT(*) as count
             FROM conversations
-            WHERE user_id = ?
+            WHERE user_id = ? AND agent_instance = ?
             GROUP BY platform
-        ''', (ADMIN_USER_ID,))
+        ''', (ADMIN_USER_ID, AGENT_INSTANCE))
 
         print(f"\n📱 Conversas por plataforma:")
         for platform, count in cursor.fetchall():
@@ -81,12 +83,12 @@ def main():
 
         # Verificar cada tabela
         for table in tables:
-            cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE user_id = ?', (ADMIN_USER_ID,))
+            cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE user_id = ? AND agent_instance = ?', (ADMIN_USER_ID, AGENT_INSTANCE))
             count = cursor.fetchone()[0]
             print(f"  {table}: {count} registros")
 
             if count > 0:
-                cursor.execute(f'SELECT * FROM {table} WHERE user_id = ? LIMIT 1', (ADMIN_USER_ID,))
+                cursor.execute(f'SELECT * FROM {table} WHERE user_id = ? AND agent_instance = ? LIMIT 1', (ADMIN_USER_ID, AGENT_INSTANCE))
                 columns = [desc[0] for desc in cursor.description]
                 row = cursor.fetchone()
                 print(f"    Colunas: {', '.join(columns)}")
@@ -126,11 +128,11 @@ def main():
         cursor.execute('''
             SELECT id, user_input, ai_response, timestamp
             FROM conversations
-            WHERE user_id = ?
+            WHERE user_id = ? AND agent_instance = ?
             AND platform = 'telegram'
             ORDER BY timestamp DESC
             LIMIT 1
-        ''', (ADMIN_USER_ID,))
+        ''', (ADMIN_USER_ID, AGENT_INSTANCE))
 
         last_conv = cursor.fetchone()
         if last_conv:
@@ -156,7 +158,7 @@ def main():
                     print(f"✅ Ingestão bem-sucedida! Fragmentos criados: {len(result)}")
 
                     # Mostrar fragmentos
-                    cursor.execute('SELECT COUNT(*) FROM rumination_fragments WHERE user_id = ?', (ADMIN_USER_ID,))
+                    cursor.execute('SELECT COUNT(*) FROM rumination_fragments WHERE user_id = ? AND agent_instance = ?', (ADMIN_USER_ID, AGENT_INSTANCE))
                     frag_count = cursor.fetchone()[0]
                     print(f"   Total fragmentos agora: {frag_count}")
                 else:
@@ -182,10 +184,10 @@ def main():
         print(f"\n   Para obter seu Telegram ID, envie /start para o bot")
         print(f"   O ID atual configurado é: {ADMIN_USER_ID}")
     elif admin_conversations > 0:
-        cursor.execute('SELECT COUNT(*) FROM rumination_fragments WHERE user_id = ?', (ADMIN_USER_ID,))
+        cursor.execute('SELECT COUNT(*) FROM rumination_fragments WHERE user_id = ? AND agent_instance = ?', (ADMIN_USER_ID, AGENT_INSTANCE))
         frag_count = cursor.fetchone()[0]
 
-        cursor.execute('SELECT COUNT(*) FROM rumination_tensions WHERE user_id = ?', (ADMIN_USER_ID,))
+        cursor.execute('SELECT COUNT(*) FROM rumination_tensions WHERE user_id = ? AND agent_instance = ?', (ADMIN_USER_ID, AGENT_INSTANCE))
         tension_count = cursor.fetchone()[0]
 
         if frag_count == 0:

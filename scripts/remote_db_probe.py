@@ -73,6 +73,42 @@ def table_columns(cursor: sqlite3.Cursor, table: str) -> List[str]:
     return [row["name"] for row in cursor.fetchall()]
 
 
+def _relation_scope(
+    columns: Sequence[str],
+    scope_kind: str,
+    relation_id: Optional[str],
+) -> Optional[tuple[List[str], List[Any]]]:
+    """Escopo de Relation adaptado às colunas da própria tabela.
+
+    - A coluna de relação pode ser `relation_id` (ruminação/Will) ou
+      `origin_relation_id` (sonhos, lacunas, identidade) — cada tabela usa a
+      sua; relation pedida sem coluna correspondente é fail-closed (`None`).
+    - Em tabelas **sem** `scope_kind`, o escopo global precisa excluir os
+      registros relacionais (`<col> IS NULL`), senão o global mistura
+      conteúdo privado de relações (P2 da revisão do PR #54).
+    """
+    clauses: List[str] = []
+    params: List[Any] = []
+    if "scope_kind" in columns:
+        clauses.append("scope_kind = ?")
+        params.append(scope_kind)
+    relation_column = (
+        "relation_id"
+        if "relation_id" in columns
+        else "origin_relation_id"
+        if "origin_relation_id" in columns
+        else None
+    )
+    if relation_id:
+        if relation_column is None:
+            return None
+        clauses.append(f"{relation_column} = ?")
+        params.append(relation_id)
+    elif relation_column is not None and "scope_kind" not in columns:
+        clauses.append(f"{relation_column} IS NULL")
+    return clauses, params
+
+
 def _will_scope_filter(
     cursor: sqlite3.Cursor,
     table: str,
@@ -90,14 +126,11 @@ def _will_scope_filter(
     if "agent_instance" in columns:
         clauses.append("agent_instance = ?")
         params.append(getattr(args, "agent_instance", DEFAULT_AGENT_INSTANCE))
-    if "scope_kind" in columns:
-        clauses.append("scope_kind = ?")
-        params.append(scope_kind)
-    if relation_id:
-        if "relation_id" not in columns:
-            return " AND 1 = 0", []
-        clauses.append("relation_id = ?")
-        params.append(relation_id)
+    relation_clauses = _relation_scope(columns, scope_kind, relation_id)
+    if relation_clauses is None:
+        return " AND 1 = 0", []
+    clauses.extend(relation_clauses[0])
+    params.extend(relation_clauses[1])
     return (" AND " + " AND ".join(clauses), params) if clauses else ("", [])
 
 
@@ -169,6 +202,8 @@ def search_terms(
     *,
     user_id: Optional[str] = None,
     agent_instance: Optional[str] = None,
+    relation_id: Optional[str] = None,
+    scope_kind: str = "global",
     limit: int = 5,
 ) -> Dict[str, Any]:
     available = table_columns(cursor, table)
@@ -176,14 +211,28 @@ def search_terms(
     if not selected_columns:
         return {"count": 0, "rows": []}
 
+    # T2-28 (corte E): escopo fail-closed — coluna de escopo presente exige o
+    # valor correspondente; sem valor a busca não retorna nada (mesmo critério
+    # de _will_scope_filter). Relation sem id também é fail-closed.
+    if scope_kind == "relation" and not relation_id:
+        return {"count": 0, "rows": []}
     clauses: List[str] = []
     params: List[Any] = []
-    if user_id and "user_id" in available:
+    if "user_id" in available:
+        if not user_id:
+            return {"count": 0, "rows": []}
         clauses.append("user_id = ?")
         params.append(user_id)
-    if agent_instance and "agent_instance" in available:
+    if "agent_instance" in available:
+        if not agent_instance:
+            return {"count": 0, "rows": []}
         clauses.append("agent_instance = ?")
         params.append(agent_instance)
+    relation_clauses = _relation_scope(available, scope_kind, relation_id)
+    if relation_clauses is None:
+        return {"count": 0, "rows": []}
+    clauses.extend(relation_clauses[0])
+    params.extend(relation_clauses[1])
 
     term_clauses = []
     for term in terms:
@@ -209,8 +258,11 @@ def search_terms(
 
 
 def query_dreams(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
+    # T2-28 (corte E): sondagem de dreams exige escopo de instância além do
+    # user_id — usa o mesmo helper fail-closed do resto do probe.
+    scope_where, scope_params = _will_scope_filter(cursor, "agent_dreams", args)
     cursor.execute(
-        """
+        f"""
         SELECT
             id,
             user_id,
@@ -222,10 +274,11 @@ def query_dreams(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, 
             image_url
         FROM agent_dreams
         WHERE user_id = ?
+        {scope_where}
         ORDER BY id DESC
         LIMIT ?
         """,
-        (args.user_id, args.limit),
+        (args.user_id, *scope_params, args.limit),
     )
     return {
         "probe": "dreams",
@@ -1047,14 +1100,17 @@ def query_pressure(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
     }
 
 
-def fetch_latest_saber_event(cursor: sqlite3.Cursor, user_id: str) -> Optional[Dict[str, Any]]:
+def fetch_latest_saber_event(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Optional[Dict[str, Any]]:
     if not table_exists(cursor, "agent_will_pulse_events"):
         return None
+    # T2-28: escopo de instância/relation junto com o user_id.
+    scope_where, scope_params = _will_scope_filter(cursor, "agent_will_pulse_events", args)
     columns = table_columns(cursor, "agent_will_pulse_events")
     selected = [
         column
         for column in [
             "id",
+            "agent_instance",
             "cycle_id",
             "trigger_source",
             "saber_pressure",
@@ -1077,11 +1133,12 @@ def fetch_latest_saber_event(cursor: sqlite3.Cursor, user_id: str) -> Optional[D
         SELECT {', '.join(selected)}
         FROM agent_will_pulse_events
         WHERE user_id = ?
+          {scope_where}
           AND (winning_will = 'saber' OR action_attempted = 'saber_release')
         ORDER BY created_at DESC, id DESC
         LIMIT 1
         """,
-        (user_id,),
+        (args.user_id, *scope_params),
     )
     row = cursor.fetchone()
     return dict(row) if row else None
@@ -1090,8 +1147,9 @@ def fetch_latest_saber_event(cursor: sqlite3.Cursor, user_id: str) -> Optional[D
 def query_meta(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
     rows = []
     if table_exists(cursor, "agent_meta_consciousness"):
+        scope_where, scope_params = _will_scope_filter(cursor, "agent_meta_consciousness", args)
         cursor.execute(
-            """
+            f"""
             SELECT
                 id,
                 cycle_id,
@@ -1107,10 +1165,11 @@ def query_meta(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
                 created_at
             FROM agent_meta_consciousness
             WHERE user_id = ?
+            {scope_where}
             ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
-            (args.user_id, args.limit),
+            (args.user_id, *scope_params, args.limit),
         )
         rows = rows_to_dicts(cursor.fetchall())
         for row in rows:
@@ -1199,6 +1258,7 @@ def query_knowledge_gaps(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Di
             "closed": [],
         }
 
+    scope_where, scope_params = _will_scope_filter(cursor, table, args)
     active = fetch_recent(
         cursor,
         table,
@@ -1214,8 +1274,8 @@ def query_knowledge_gaps(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Di
             "status",
             "created_at",
         ],
-        where="user_id = ? AND status = 'open'",
-        params=(args.user_id,),
+        where=f"user_id = ? {scope_where} AND status = 'open'",
+        params=(args.user_id, *scope_params),
         order_by="importance_score DESC, created_at DESC, id DESC",
         limit=args.limit,
     )
@@ -1234,8 +1294,8 @@ def query_knowledge_gaps(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Di
             "closure_evidence_json",
             "resolved_at",
         ],
-        where="user_id = ? AND status = 'resolved'",
-        params=(args.user_id,),
+        where=f"user_id = ? {scope_where} AND status = 'resolved'",
+        params=(args.user_id, *scope_params),
         order_by="resolved_at DESC, id DESC",
         limit=args.limit,
     )
@@ -1251,58 +1311,66 @@ def query_knowledge_gaps(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Di
 
 
 def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
-    user_where = "user_id = ?"
-    user_params = (args.user_id,)
+    # T2-28 (corte E): escopo por tabela — user_id + instância + relation
+    # quando pedida (mesmo helper fail-closed do resto do probe).
+    def _scoped(table: str) -> tuple[str, List[Any]]:
+        scope_where, scope_params = _will_scope_filter(cursor, table, args)
+        return ("user_id = ?" + scope_where, [args.user_id, *scope_params])
+
+    frag_where, frag_params = _scoped("rumination_fragments")
+    tens_where, tens_params = _scoped("rumination_tensions")
+    ins_where, ins_params = _scoped("rumination_insights")
+    log_where, log_params = _scoped("rumination_log")
     saber_terms = ("saber", "conhecimento", "epistem", "knowledge", "fome epistem", "curiosidade")
 
     fragment_stats = {
-        "total": count_rows(cursor, "rumination_fragments", user_where, user_params),
-        "unprocessed": count_rows(cursor, "rumination_fragments", "user_id = ? AND processed = 0", user_params),
-        "by_type": grouped_counts(cursor, "rumination_fragments", "fragment_type", where=user_where, params=user_params),
+        "total": count_rows(cursor, "rumination_fragments", frag_where, frag_params),
+        "unprocessed": count_rows(cursor, "rumination_fragments", frag_where + " AND processed = 0", frag_params),
+        "by_type": grouped_counts(cursor, "rumination_fragments", "fragment_type", where=frag_where, params=frag_params),
     }
     if table_exists(cursor, "rumination_fragments"):
         cursor.execute(
-            """
+            f"""
             SELECT AVG(emotional_weight) AS avg_emotional_weight,
                    AVG(tension_level) AS avg_tension_level
             FROM rumination_fragments
-            WHERE user_id = ?
+            WHERE {frag_where}
             """,
-            user_params,
+            frag_params,
         )
         averages = dict(cursor.fetchone() or {})
         fragment_stats.update(averages)
 
     tension_stats = {
-        "total": count_rows(cursor, "rumination_tensions", user_where, user_params),
-        "by_status": grouped_counts(cursor, "rumination_tensions", "status", where=user_where, params=user_params),
-        "by_type": grouped_counts(cursor, "rumination_tensions", "tension_type", where=user_where, params=user_params),
+        "total": count_rows(cursor, "rumination_tensions", tens_where, tens_params),
+        "by_status": grouped_counts(cursor, "rumination_tensions", "status", where=tens_where, params=tens_params),
+        "by_type": grouped_counts(cursor, "rumination_tensions", "tension_type", where=tens_where, params=tens_params),
     }
     if table_exists(cursor, "rumination_tensions"):
         cursor.execute(
-            """
+            f"""
             SELECT AVG(intensity) AS avg_intensity,
                    AVG(maturity_score) AS avg_maturity_score,
                    MAX(id) AS latest_tension_id
             FROM rumination_tensions
-            WHERE user_id = ?
+            WHERE {tens_where}
             """,
-            user_params,
+            tens_params,
         )
         tension_stats.update(dict(cursor.fetchone() or {}))
 
     insight_stats = {
-        "total": count_rows(cursor, "rumination_insights", user_where, user_params),
-        "by_status": grouped_counts(cursor, "rumination_insights", "status", where=user_where, params=user_params),
-        "by_type": grouped_counts(cursor, "rumination_insights", "insight_type", where=user_where, params=user_params),
+        "total": count_rows(cursor, "rumination_insights", ins_where, ins_params),
+        "by_status": grouped_counts(cursor, "rumination_insights", "status", where=ins_where, params=ins_params),
+        "by_type": grouped_counts(cursor, "rumination_insights", "insight_type", where=ins_where, params=ins_params),
     }
 
     recent_logs = fetch_recent(
         cursor,
         "rumination_log",
         ["id", "phase", "operation", "input_summary", "output_summary", "timestamp"],
-        where=user_where,
-        params=user_params,
+        where=log_where,
+        params=log_params,
         order_by="timestamp DESC, id DESC",
         limit=args.limit,
     )
@@ -1314,14 +1382,14 @@ def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[s
             "fragments": fragment_stats,
             "tensions": tension_stats,
             "insights": insight_stats,
-            "logs": {"total": count_rows(cursor, "rumination_log", user_where, user_params)},
+            "logs": {"total": count_rows(cursor, "rumination_log", log_where, log_params)},
         },
         "recent_fragments": fetch_recent(
             cursor,
             "rumination_fragments",
             ["id", "fragment_type", "content", "context", "source_conversation_id", "emotional_weight", "tension_level", "created_at", "processed"],
-            where=user_where,
-            params=user_params,
+            where=frag_where,
+            params=frag_params,
             order_by="id DESC",
             limit=args.limit,
         ),
@@ -1329,8 +1397,8 @@ def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[s
             cursor,
             "rumination_tensions",
             ["id", "tension_type", "pole_a_content", "pole_b_content", "tension_description", "intensity", "maturity_score", "evidence_count", "revisit_count", "status", "first_detected_at", "last_revisited_at"],
-            where=user_where,
-            params=user_params,
+            where=tens_where,
+            params=tens_params,
             order_by="id DESC",
             limit=args.limit,
         ),
@@ -1338,8 +1406,8 @@ def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[s
             cursor,
             "rumination_insights",
             ["id", "source_tension_id", "insight_type", "symbol_content", "question_content", "full_message", "depth_score", "novelty_score", "status", "crystallized_at", "delivered_at"],
-            where=user_where,
-            params=user_params,
+            where=ins_where,
+            params=ins_params,
             order_by="id DESC",
             limit=args.limit,
         ),
@@ -1351,6 +1419,9 @@ def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[s
                 ["fragment_type", "content", "context", "source_quote"],
                 saber_terms,
                 user_id=args.user_id,
+                agent_instance=args.agent_instance,
+                relation_id=args.relation_id,
+                scope_kind=getattr(args, "scope_kind", "global"),
                 limit=args.limit,
             ),
             "tensions": search_terms(
@@ -1359,6 +1430,9 @@ def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[s
                 ["tension_type", "pole_a_content", "pole_b_content", "tension_description", "synthesis_question"],
                 saber_terms,
                 user_id=args.user_id,
+                agent_instance=args.agent_instance,
+                relation_id=args.relation_id,
+                scope_kind=getattr(args, "scope_kind", "global"),
                 limit=args.limit,
             ),
             "insights": search_terms(
@@ -1367,6 +1441,9 @@ def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[s
                 ["insight_type", "symbol_content", "question_content", "full_message"],
                 saber_terms,
                 user_id=args.user_id,
+                agent_instance=args.agent_instance,
+                relation_id=args.relation_id,
+                scope_kind=getattr(args, "scope_kind", "global"),
                 limit=args.limit,
             ),
             "logs": search_terms(
@@ -1375,6 +1452,9 @@ def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[s
                 ["phase", "operation", "input_summary", "output_summary"],
                 ("saber", "knowledge", "will_pulse", "fome epistem"),
                 user_id=args.user_id,
+                agent_instance=args.agent_instance,
+                relation_id=args.relation_id,
+                scope_kind=getattr(args, "scope_kind", "global"),
                 limit=args.limit,
             ),
         },
@@ -1382,16 +1462,28 @@ def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[s
 
 
 def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
-    agent_where = "agent_instance = ?"
-    agent_params = (args.agent_instance,)
+    # T2-28 (rodada 2): escopo por tabela — as tabelas de identidade guardam a
+    # relação em origin_relation_id; o global descarta registros nascidos em
+    # relação e o relation escopa pela coluna da própria tabela (fail-closed).
+    def _scope(table: str) -> tuple[str, List[Any]]:
+        scope_where, scope_params = _will_scope_filter(cursor, table, args)
+        # "1 = 1" permite compor com condições extras (o helper devolve " AND ...").
+        return ("1 = 1" + scope_where, list(scope_params))
+
+    core_where, core_params = _scope("agent_identity_core")
+    contr_where, contr_params = _scope("agent_identity_contradictions")
+    selves_where, selves_params = _scope("agent_possible_selves")
+    meta_where, meta_params = _scope("agent_self_knowledge_meta")
+    narr_where, narr_params = _scope("agent_narrative_chapters")
+    relational_where, relational_params = _scope("agent_relational_identity")
     saber_terms = ("saber", "conhecimento", "epistem", "knowledge", "linguagem", "entender")
 
     bridge_indicators: Dict[str, Any] = {
         "contradictions_fed_to_rumination": count_rows(
             cursor,
             "agent_identity_contradictions",
-            "agent_instance = ? AND fed_to_rumination = 1",
-            agent_params,
+            contr_where + " AND fed_to_rumination = 1",
+            contr_params,
         ),
         "core_from_rumination": 0,
         "active_contradictions_high_tension_not_fed": 0,
@@ -1400,47 +1492,47 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
         bridge_indicators["core_from_rumination"] = count_rows(
             cursor,
             "agent_identity_core",
-            "agent_instance = ? AND LOWER(COALESCE(emerged_in_relation_to, '')) LIKE '%rumina%'",
-            agent_params,
+            core_where + " AND LOWER(COALESCE(emerged_in_relation_to, '')) LIKE '%rumina%'",
+            core_params,
         )
     if table_exists(cursor, "agent_identity_contradictions"):
         bridge_indicators["active_contradictions_high_tension_not_fed"] = count_rows(
             cursor,
             "agent_identity_contradictions",
-            """
-            agent_instance = ?
+            contr_where
+            + """
             AND status IN ('unresolved', 'integrating')
             AND tension_level > 0.55
             AND (fed_to_rumination = 0 OR fed_to_rumination IS NULL)
             """,
-            agent_params,
+            contr_params,
         )
 
     return {
         "probe": "identity",
         "agent_instance": args.agent_instance,
         "stats": {
-            "core_current": count_rows(cursor, "agent_identity_core", "agent_instance = ? AND is_current = 1", agent_params),
-            "core_total": count_rows(cursor, "agent_identity_core", agent_where, agent_params),
+            "core_current": count_rows(cursor, "agent_identity_core", core_where + " AND is_current = 1", core_params),
+            "core_total": count_rows(cursor, "agent_identity_core", core_where, core_params),
             "contradictions_active": count_rows(
                 cursor,
                 "agent_identity_contradictions",
-                "agent_instance = ? AND status IN ('unresolved', 'integrating')",
-                agent_params,
+                contr_where + " AND status IN ('unresolved', 'integrating')",
+                contr_params,
             ),
-            "contradictions_total": count_rows(cursor, "agent_identity_contradictions", agent_where, agent_params),
-            "possible_selves_active": count_rows(cursor, "agent_possible_selves", "agent_instance = ? AND status = 'active'", agent_params),
-            "self_knowledge_meta": count_rows(cursor, "agent_self_knowledge_meta", agent_where, agent_params),
-            "narrative_chapters": count_rows(cursor, "agent_narrative_chapters", agent_where, agent_params),
-            "relational_identity_current": count_rows(cursor, "agent_relational_identity", "agent_instance = ? AND is_current = 1", agent_params),
+            "contradictions_total": count_rows(cursor, "agent_identity_contradictions", contr_where, contr_params),
+            "possible_selves_active": count_rows(cursor, "agent_possible_selves", selves_where + " AND status = 'active'", selves_params),
+            "self_knowledge_meta": count_rows(cursor, "agent_self_knowledge_meta", meta_where, meta_params),
+            "narrative_chapters": count_rows(cursor, "agent_narrative_chapters", narr_where, narr_params),
+            "relational_identity_current": count_rows(cursor, "agent_relational_identity", relational_where + " AND is_current = 1", relational_params),
         },
         "bridge_indicators": bridge_indicators,
         "recent_core": fetch_recent(
             cursor,
             "agent_identity_core",
             ["id", "attribute_type", "content", "certainty", "stability_score", "emerged_in_relation_to", "last_reaffirmed_at", "created_at", "updated_at"],
-            where="agent_instance = ? AND is_current = 1",
-            params=agent_params,
+            where=core_where + " AND is_current = 1",
+            params=core_params,
             order_by="updated_at DESC, id DESC",
             limit=args.limit,
         ),
@@ -1448,8 +1540,8 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
             cursor,
             "agent_identity_contradictions",
             ["id", "pole_a", "pole_b", "contradiction_type", "tension_level", "salience", "status", "fed_to_rumination", "last_activated_at", "updated_at"],
-            where="agent_instance = ?",
-            params=agent_params,
+            where=contr_where,
+            params=contr_params,
             order_by="updated_at DESC, id DESC",
             limit=args.limit,
         ),
@@ -1457,8 +1549,8 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
             cursor,
             "agent_possible_selves",
             ["id", "self_type", "description", "vividness", "likelihood", "motivational_impact", "status", "updated_at"],
-            where="agent_instance = ?",
-            params=agent_params,
+            where=selves_where,
+            params=selves_params,
             order_by="updated_at DESC, id DESC",
             limit=args.limit,
         ),
@@ -1466,8 +1558,8 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
             cursor,
             "agent_self_knowledge_meta",
             ["id", "topic", "knowledge_type", "self_assessment", "confidence", "bias_detected", "evidence", "updated_at"],
-            where=agent_where,
-            params=agent_params,
+            where=meta_where,
+            params=meta_params,
             order_by="updated_at DESC, id DESC",
             limit=args.limit,
         ),
@@ -1478,6 +1570,8 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
                 ["attribute_type", "content", "emerged_in_relation_to"],
                 saber_terms,
                 agent_instance=args.agent_instance,
+                relation_id=getattr(args, "relation_id", None),
+                scope_kind=getattr(args, "scope_kind", "global"),
                 limit=args.limit,
             ),
             "contradictions": search_terms(
@@ -1486,6 +1580,8 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
                 ["pole_a", "pole_b", "contradiction_type", "bias_type", "external_feedback"],
                 saber_terms,
                 agent_instance=args.agent_instance,
+                relation_id=getattr(args, "relation_id", None),
+                scope_kind=getattr(args, "scope_kind", "global"),
                 limit=args.limit,
             ),
             "self_knowledge": search_terms(
@@ -1494,6 +1590,8 @@ def query_identity(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str
                 ["topic", "knowledge_type", "self_assessment", "bias_detected", "evidence"],
                 saber_terms,
                 agent_instance=args.agent_instance,
+                relation_id=getattr(args, "relation_id", None),
+                scope_kind=getattr(args, "scope_kind", "global"),
                 limit=args.limit,
             ),
         },
@@ -1888,7 +1986,7 @@ def query_integration(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[
     identity_payload = query_identity(cursor, args)
     world_payload = query_world(cursor, args)
 
-    latest_saber_event = fetch_latest_saber_event(cursor, args.user_id)
+    latest_saber_event = fetch_latest_saber_event(cursor, args)
     saber_events = [
         event for event in pressure_payload.get("events", [])
         if event.get("winning_will") == "saber" or event.get("action_attempted") == "saber_release"

@@ -76,6 +76,9 @@ def _create_source_tables(conn: sqlite3.Connection) -> None:
         CREATE TABLE agent_dreams (
             id INTEGER PRIMARY KEY,
             user_id TEXT,
+            agent_instance TEXT,
+            origin_relation_id TEXT,
+            origin_class TEXT,
             symbolic_theme TEXT,
             extracted_insight TEXT,
             dream_mood TEXT,
@@ -84,6 +87,9 @@ def _create_source_tables(conn: sqlite3.Connection) -> None:
         CREATE TABLE agent_will_states (
             id INTEGER PRIMARY KEY,
             user_id TEXT,
+            agent_instance TEXT,
+            relation_id TEXT,
+            scope_kind TEXT,
             cycle_id TEXT,
             dominant_will TEXT,
             secondary_will TEXT,
@@ -167,17 +173,21 @@ def _create_source_tables(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         INSERT INTO agent_dreams (
-            id, user_id, symbolic_theme, extracted_insight, dream_mood, created_at
-        ) VALUES (7, 'u1', 'ponte', 'uma passagem pede forma', 'quieto',
+            id, user_id, agent_instance, origin_relation_id, origin_class,
+            symbolic_theme, extracted_insight, dream_mood, created_at
+        ) VALUES (7, 'u1', 'jung_v1', NULL, 'instance_global',
+                  'ponte', 'uma passagem pede forma', 'quieto',
                   '2026-07-01T07:00:00')
         """
     )
     conn.execute(
         """
         INSERT INTO agent_will_states (
-            id, user_id, cycle_id, dominant_will, secondary_will,
+            id, user_id, agent_instance, relation_id, scope_kind,
+            cycle_id, dominant_will, secondary_will,
             constrained_will, will_conflict, attention_bias_note, created_at
-        ) VALUES (3, 'u1', '2026-07-01', 'expressar', 'saber',
+        ) VALUES (3, 'u1', 'jung_v1', NULL, 'global',
+                  '2026-07-01', 'expressar', 'saber',
                   'relacionar', 'dar forma sem perder vinculo', NULL,
                   '2026-07-01T08:20:00')
         """

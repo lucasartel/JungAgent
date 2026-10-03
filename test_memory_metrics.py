@@ -7,6 +7,7 @@ Script de teste para validar Memory Quality Metrics (Fase 6)
 import logging
 from jung_core import HybridDatabaseManager, Config
 from jung_memory_metrics import MemoryQualityMetrics, generate_formatted_system_report
+from instance_config import AGENT_INSTANCE
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -27,7 +28,8 @@ def test_metrics_class():
 
     # Buscar um user_id de teste
     cursor = db.conn.cursor()
-    cursor.execute("SELECT DISTINCT user_id FROM conversations LIMIT 1")
+    # T2-28 (corte E): escopo por instância junto do user_id.
+    cursor.execute("SELECT DISTINCT user_id FROM conversations WHERE agent_instance = ? LIMIT 1", (AGENT_INSTANCE,))
     row = cursor.fetchone()
 
     if not row:
@@ -90,7 +92,7 @@ def test_user_report():
 
     # Buscar um user_id de teste
     cursor = db.conn.cursor()
-    cursor.execute("SELECT DISTINCT user_id FROM conversations LIMIT 1")
+    cursor.execute("SELECT DISTINCT user_id FROM conversations WHERE agent_instance = ? LIMIT 1", (AGENT_INSTANCE,))
     row = cursor.fetchone()
 
     if not row:
