@@ -69,14 +69,15 @@ class MemoryQualityMetrics:
         """
         logger.info(f"📊 Calculando cobertura de memória para user_id={user_id}")
 
-        # Total de conversas no SQLite
+        # Conversas visíveis no SQLite (escopo pessoal do usuário)
         cursor = self.db.conn.cursor()
         scope_sql, scope_params = self._personal_scope(cursor, user_id)
         cursor.execute(f"""
-            SELECT COUNT(*) FROM conversations WHERE user_id = ?
+            SELECT id FROM conversations WHERE user_id = ?
         {scope_sql}
         """, (user_id, *scope_params))
-        total_conversations = cursor.fetchone()[0]
+        scoped_ids = {str(row[0]) for row in cursor.fetchall()}
+        total_conversations = len(scoped_ids)
 
         if total_conversations == 0:
             return {
@@ -85,20 +86,23 @@ class MemoryQualityMetrics:
                 "coverage_percentage": 0.0
             }
 
-        # Conversas no ChromaDB
+        # Conversas embutidas no ChromaDB: numerador com a MESMA unidade
+        # (conversas distintas, não docs) e o MESMO escopo do denominador
+        # (P2 da revisão da PR #55). Docs de outras Relations/instâncias ou
+        # sem conversation_id não são atribuíveis e ficam fora.
         embedded_conversations = 0
         if self.db.chroma_enabled:
             try:
-                # Buscar todos os docs do usuário (exceto consolidados)
                 results = self.db.vectorstore._collection.get(
-                    where={
-                        "$and": [
-                            {"user_id": {"$eq": user_id}},
-                            {"type": {"$ne": "consolidated"}}
-                        ]
-                    }
+                    where={"user_id": {"$eq": user_id}}
                 )
-                embedded_conversations = len(results.get('ids', []))
+                embedded_ids = {
+                    str(meta.get("conversation_id"))
+                    for meta in (results.get("metadatas") or [])
+                    if meta.get("type") != "consolidated"
+                    and meta.get("conversation_id") is not None
+                }
+                embedded_conversations = len(embedded_ids & scoped_ids)
             except Exception as e:
                 logger.warning(f"Erro ao contar docs no ChromaDB: {e}")
 
@@ -325,12 +329,13 @@ Tópicos mais frequentes:
         )
         total_users = cursor.fetchone()[0]
 
-        # Total de conversas
+        # Conversas da quarentena (escopo do relatório global)
         cursor.execute(
-            f"SELECT COUNT(*) FROM conversations WHERE 1 = 1{scope_sql}",
+            f"SELECT id FROM conversations WHERE 1 = 1{scope_sql}",
             scope_params,
         )
-        total_conversations = cursor.fetchone()[0]
+        quarantined_ids = {str(row[0]) for row in cursor.fetchall()}
+        total_conversations = len(quarantined_ids)
 
         # Conversas nos últimos 30 dias
         thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
@@ -372,8 +377,17 @@ Tópicos mais frequentes:
                 )
                 consolidated_count = len(consolidated_docs.get('ids', []))
 
-                # Cobertura global
-                embedded_conversations = total_docs - consolidated_count
+                # Cobertura global: o numerador precisa estar na MESMA
+                # quarentena do denominador (P2 da revisão da PR #55).
+                # Contamos conversas distintas representadas por docs não
+                # consolidados que pertencem às conversas da quarentena.
+                embedded_ids = {
+                    str(meta.get("conversation_id"))
+                    for meta in (all_docs.get("metadatas") or [])
+                    if meta.get("type") != "consolidated"
+                    and meta.get("conversation_id") is not None
+                }
+                embedded_conversations = len(embedded_ids & quarantined_ids)
                 global_coverage = (embedded_conversations / total_conversations) * 100 if total_conversations > 0 else 0.0
 
                 chroma_metrics = {

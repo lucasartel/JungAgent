@@ -254,3 +254,117 @@ def test_system_metrics_quarantine_scope_and_ranking(tmp_path):
     # O ranking global não pode expor usuários de outras Relations.
     assert top_ids == [ADMIN_USER_ID]
     conn.close()
+
+
+# --------------------------------------------- P2 da revisão (round 1 da PR #55)
+# A cobertura misturava escopos: o SQLite filtrava por Relation/instância, mas o
+# Chroma contava "docs por usuário" — 1 conversa permitida com 3 docs virava
+# 300% de cobertura, e o relatório global dividia TODOS os documentos da
+# coleção pelas conversas da quarentena (saúde "excellent" incorreta).
+# Numerador e denominador precisam da mesma unidade (conversas embutidas) e do
+# mesmo escopo (ids das conversas visíveis).
+
+
+class _FakeCollection:
+    """Coleção Chroma mínima: get() com os where-shapes usados pela métrica."""
+
+    def __init__(self, docs):
+        self._docs = docs
+
+    def get(self, where=None, **_):
+        docs = self._docs
+        if where is not None:
+            docs = [d for d in docs if self._matches(d.get("metadata", {}), where)]
+        return {
+            "ids": [d["id"] for d in docs],
+            "metadatas": [d.get("metadata", {}) for d in docs],
+        }
+
+    @classmethod
+    def _matches(cls, metadata, where):
+        if "$and" in where:
+            return all(cls._matches(metadata, clause) for clause in where["$and"])
+        for key, expected in where.items():
+            actual = metadata.get(key)
+            if isinstance(expected, dict):
+                if "$eq" in expected and actual != expected["$eq"]:
+                    return False
+                if "$ne" in expected and actual == expected["$ne"]:
+                    return False
+            elif actual != expected:
+                return False
+        return True
+
+
+def _fake_db(conn, docs):
+    return SimpleNamespace(
+        conn=conn,
+        chroma_enabled=True,
+        vectorstore=SimpleNamespace(_collection=_FakeCollection(docs)),
+    )
+
+
+def test_coverage_counts_scoped_conversations_not_docs(tmp_path):
+    conn = _connect(tmp_path)
+    # Escopo do admin (quarentena): só a linha legada da própria instância.
+    _conversation(conn, 1, ADMIN_USER_ID, "Lucas", AGENT_INSTANCE, None, "2025-01-01T00:00:00")
+    _conversation(conn, 2, ADMIN_USER_ID, "Lucas", AGENT_INSTANCE, "rel-1", "2025-01-15T00:00:00")
+    _conversation(conn, 3, ADMIN_USER_ID, "Lucas", OTHER_INSTANCE, None, "2025-02-01T00:00:00")
+    conn.commit()
+
+    docs = [
+        # 3 chunks da MESMA conversa permitida (id 1)
+        {"id": "d1", "metadata": {"user_id": ADMIN_USER_ID, "type": "conversation", "conversation_id": "1"}},
+        {"id": "d2", "metadata": {"user_id": ADMIN_USER_ID, "type": "conversation", "conversation_id": "1"}},
+        {"id": "d3", "metadata": {"user_id": ADMIN_USER_ID, "type": "conversation", "conversation_id": "1"}},
+        # doc da conversa em outra Relation (id 2)
+        {"id": "d4", "metadata": {"user_id": ADMIN_USER_ID, "type": "conversation", "conversation_id": "2"}},
+        # doc legado sem conversation_id (não atribuível a nenhuma conversa)
+        {"id": "d5", "metadata": {"user_id": ADMIN_USER_ID, "type": "conversation"}},
+        # doc consolidado (tema) fica fora do numerador
+        {"id": "d6", "metadata": {"user_id": ADMIN_USER_ID, "type": "consolidated", "conversation_id": "1"}},
+    ]
+    metrics = MemoryQualityMetrics(_fake_db(conn, docs))
+    coverage = metrics.calculate_coverage(ADMIN_USER_ID)
+
+    # 3 chunks da mesma conversa = 1 conversa embutida; docs de Relation/
+    # instância alheia e legados sem conversa não contam. Nunca > 100%.
+    assert coverage["total_conversations"] == 1
+    assert coverage["embedded_conversations"] == 1
+    assert coverage["coverage_percentage"] == 100.0
+    conn.close()
+
+
+def test_system_global_coverage_uses_quarantine_scoped_numerator(tmp_path):
+    conn = _connect(tmp_path)
+    ts = (datetime.now() - timedelta(days=1)).isoformat()
+    # Quarentena da instância: duas conversas legadas.
+    _conversation(conn, 1, ADMIN_USER_ID, "Lucas", AGENT_INSTANCE, None, ts)
+    _conversation(conn, 2, ADMIN_USER_ID, "Lucas", AGENT_INSTANCE, None, ts)
+    # Fora do escopo: outra Relation e outra instância.
+    _conversation(conn, 3, ADMIN_USER_ID, "Lucas", AGENT_INSTANCE, "rel-1", ts)
+    _conversation(conn, 4, ADMIN_USER_ID, "Lucas", OTHER_INSTANCE, None, ts)
+    conn.commit()
+
+    docs = [
+        # Única conversa da quarentena com doc embutido
+        {"id": "d1", "metadata": {"user_id": ADMIN_USER_ID, "type": "conversation", "conversation_id": "1"}},
+        # Docs das conversas fora do escopo
+        {"id": "d2", "metadata": {"user_id": ADMIN_USER_ID, "type": "conversation", "conversation_id": "3"}},
+        {"id": "d3", "metadata": {"user_id": ADMIN_USER_ID, "type": "conversation", "conversation_id": "3"}},
+        {"id": "d4", "metadata": {"user_id": ADMIN_USER_ID, "type": "conversation", "conversation_id": "4"}},
+        {"id": "d5", "metadata": {"user_id": ADMIN_USER_ID, "type": "conversation", "conversation_id": "4"}},
+        {"id": "d6", "metadata": {"user_id": ADMIN_USER_ID, "type": "conversation", "conversation_id": "4"}},
+        # Consolidado sem conversa
+        {"id": "d7", "metadata": {"user_id": ADMIN_USER_ID, "type": "consolidated"}},
+    ]
+    metrics = MemoryQualityMetrics(_fake_db(conn, docs))
+    system = metrics.generate_system_metrics()
+
+    # Numerador da quarentena: só a conversa 1 ⇒ 1/2 = 50% ⇒ saúde crítica.
+    # O cenário antigo (todos os docs / conversas da quarentena) dava 300% e
+    # saúde "excellent" — exatamente o falso positivo apontado na revisão.
+    assert system["conversations"]["total_conversations"] == 2
+    assert system["chromadb"]["global_coverage"] == 50.0
+    assert system["health_status"] == "critical"
+    conn.close()
