@@ -27,6 +27,7 @@ import json
 # operações de schema (migração/seed) seguem master-only.
 from admin_web.auth.middleware import require_master
 from admin_web.auth.org_scope import org_user_scope_clause
+from irt_scope import resolve_irt_instance
 
 router = APIRouter(prefix="/admin/irt", tags=["irt"])
 templates = Jinja2Templates(directory="admin_web/templates")
@@ -445,7 +446,10 @@ async def compare_tri_legacy(
         }
 
         # 1. Obter scores legados
-        cursor.execute("""
+        # C12b (T1-2c2): partição cognitiva (mesma regra do motor IRT) —
+        # legado sem instância permanece visível; instância alheia, não.
+        instance_clause = " AND (agent_instance = ? OR agent_instance IS NULL)"
+        cursor.execute(f"""
             SELECT
                 big_five_extraversion,
                 big_five_openness,
@@ -453,8 +457,8 @@ async def compare_tri_legacy(
                 big_five_agreeableness,
                 big_five_neuroticism
             FROM user_psychometrics
-            WHERE user_id = ?
-        """, (user_id,))
+            WHERE user_id = ?{instance_clause}
+        """, (user_id, resolve_irt_instance()))
 
         legacy_row = cursor.fetchone()
         legacy_scores = {}
@@ -470,11 +474,11 @@ async def compare_tri_legacy(
             }
 
         # 2. Obter scores TRI
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT domain, theta, standard_error
             FROM irt_trait_estimates
-            WHERE user_id = ?
-        """, (user_id,))
+            WHERE user_id = ?{instance_clause}
+        """, (user_id, resolve_irt_instance()))
 
         tri_rows = cursor.fetchall()
         tri_scores = {}

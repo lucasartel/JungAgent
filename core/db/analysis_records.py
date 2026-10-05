@@ -6,6 +6,32 @@ from typing import Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+def analysis_scope_clause(conn, table: str, relation_id, agent_instance=None):
+    """Filtro de escopo cognitivo com presence-check (bancos pré-Relations).
+
+    Função de módulo para uso também com conexões SQLite cruas (CLI
+    ``--db-path``), que não têm os métodos do mixin.
+    """
+    cursor = conn.cursor()
+    columns = {
+        row[1] for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    clause = ""
+    params: list = []
+    if "agent_instance" in columns:
+        try:
+            from instance_config import AGENT_INSTANCE
+        except ImportError:
+            AGENT_INSTANCE = None
+        instance = (agent_instance or AGENT_INSTANCE or "").strip() or None
+        clause += " AND (agent_instance = ? OR agent_instance IS NULL)"
+        params.append(instance)
+    if "relation_id" in columns:
+        clause += " AND COALESCE(relation_id, '') = COALESCE(?, '')"
+        params.append(relation_id)
+    return clause, tuple(params)
+
+
 class AnalysisRecordsDatabaseMixin:
     @staticmethod
     def _legacy_admin_pattern_scope_allowed(user_id: str) -> bool:
@@ -35,24 +61,9 @@ class AnalysisRecordsDatabaseMixin:
 
     def _analysis_scope_clause(self, table: str, relation_id: Optional[str]):
         """Filtro de escopo cognitivo com presence-check (bancos pré-Relations)."""
-        cursor = self.conn.cursor()
-        columns = {
-            row[1] for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()
-        }
-        clause = ""
-        params: list = []
-        if "agent_instance" in columns:
-            try:
-                from instance_config import AGENT_INSTANCE
-            except ImportError:
-                AGENT_INSTANCE = None
-            instance = (getattr(self, "agent_instance", None) or AGENT_INSTANCE or "").strip() or None
-            clause += " AND (agent_instance = ? OR agent_instance IS NULL)"
-            params.append(instance)
-        if "relation_id" in columns:
-            clause += " AND COALESCE(relation_id, '') = COALESCE(?, '')"
-            params.append(relation_id)
-        return clause, tuple(params)
+        return analysis_scope_clause(
+            self.conn, table, relation_id, getattr(self, "agent_instance", None)
+        )
 
     def detect_and_save_patterns(self, user_id: str, relation_id=None):
         """
@@ -175,25 +186,25 @@ class AnalysisRecordsDatabaseMixin:
     # DESENVOLVIMENTO DO AGENTE
     # ========================================
 
-    def _ensure_agent_state(self, user_id: str):
+    def _ensure_agent_state(self, user_id: str, *, relation_id: Optional[str] = None):
         from core.db.agent_development import ensure_agent_state
 
-        return ensure_agent_state(self, user_id)
+        return ensure_agent_state(self, user_id, relation_id=relation_id)
 
-    def _update_agent_development(self, user_id: str):
+    def _update_agent_development(self, user_id: str, *, relation_id: Optional[str] = None):
         from core.db.agent_development import update_agent_development
 
-        return update_agent_development(self, user_id)
+        return update_agent_development(self, user_id, relation_id=relation_id)
 
-    def _check_phase_progression(self, user_id: str):
+    def _check_phase_progression(self, user_id: str, *, relation_id: Optional[str] = None):
         from core.db.agent_development import check_phase_progression
 
-        return check_phase_progression(self, user_id)
+        return check_phase_progression(self, user_id, relation_id=relation_id)
     
-    def get_agent_state(self, user_id: str) -> Optional[Dict]:
+    def get_agent_state(self, user_id: str, *, relation_id: Optional[str] = None) -> Optional[Dict]:
         from core.db.agent_development import get_agent_state
 
-        return get_agent_state(self, user_id)
+        return get_agent_state(self, user_id, relation_id=relation_id)
     
     def get_milestones(self, limit: int = 20) -> List[Dict]:
         from core.db.agent_development import get_milestones

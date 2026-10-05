@@ -578,6 +578,13 @@ class QualityMetrics:
             return {"error": "Database not connected"}
 
         try:
+            # C12b (T1-2c1): a docstring promete partição por instância —
+            # sem o filtro, "com agent_instance" agregava TODAS as partições.
+            instance_clause, instance_params = "", []
+            if agent_instance:
+                instance_clause = instance_scope_sql("", 1)
+                instance_params = [agent_instance]
+
             report = {
                 "timestamp": datetime.now().isoformat(),
                 "total_users_validated": 0,
@@ -592,14 +599,15 @@ class QualityMetrics:
             }
 
             # Contar quality checks
-            cursor = await self.db.fetch("""
+            cursor = await self.db.fetch(f"""
                 SELECT
                     check_type,
                     passed,
                     COUNT(*) as count
                 FROM psychometric_quality_checks
+                WHERE 1=1{instance_clause}
                 GROUP BY check_type, passed
-            """)
+            """, *instance_params)
 
             for row in cursor:
                 check_type = row["check_type"]
@@ -612,21 +620,22 @@ class QualityMetrics:
                     report["quality_distribution"][check_type]["failed"] = row["count"]
 
             # Usuários únicos validados
-            count_row = await self.db.fetchrow("""
+            count_row = await self.db.fetchrow(f"""
                 SELECT COUNT(DISTINCT user_id) as count
                 FROM psychometric_quality_checks
-            """)
+                WHERE 1=1{instance_clause}
+            """, *instance_params)
             report["total_users_validated"] = count_row["count"] if count_row else 0
 
             # Issues mais comuns
-            issues_cursor = await self.db.fetch("""
+            issues_cursor = await self.db.fetch(f"""
                 SELECT check_type, COUNT(*) as fail_count
                 FROM psychometric_quality_checks
-                WHERE passed = 0
+                WHERE passed = 0{instance_clause}
                 GROUP BY check_type
                 ORDER BY fail_count DESC
                 LIMIT 5
-            """)
+            """, *instance_params)
 
             report["common_issues"] = [
                 {"check_type": row["check_type"], "count": row["fail_count"]}
