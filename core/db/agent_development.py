@@ -29,10 +29,14 @@ def _development_scope(manager, user_id: str, relation_id: Optional[str] = None)
                 )
                 or None
             )
+    # C12b r3: conexões SQLite cruas (CLI --db-path) não têm `.conn` — sem
+    # resolver aqui, o PRAGMA falhava e o filtro ficava vazio mesmo em banco
+    # já migrado (sobrescrita entre escopos pela conexão direta).
+    conn = getattr(manager, "conn", manager)
     try:
         columns = {
             row[1]
-            for row in manager.conn.execute(
+            for row in conn.execute(
                 "PRAGMA table_info(agent_development)"
             ).fetchall()
         }
@@ -41,9 +45,15 @@ def _development_scope(manager, user_id: str, relation_id: Optional[str] = None)
     has_columns = "relation_id" in columns and "agent_instance" in columns
     if not has_columns:
         return instance, relation_id, "", [], False
-    clause, params = manager._analysis_scope_clause(
-        "agent_development", relation_id
-    )
+    scope_method = getattr(manager, "_analysis_scope_clause", None)
+    if callable(scope_method):
+        clause, params = scope_method("agent_development", relation_id)
+    else:
+        from core.db.analysis_records import analysis_scope_clause
+
+        clause, params = analysis_scope_clause(
+            conn, "agent_development", relation_id, instance
+        )
     return instance, relation_id, clause, params, True
 
 
@@ -95,16 +105,23 @@ def _adopt_legacy_state(manager, user_id: str, instance, relation) -> bool:
     Chamada quando a leitura por escopo não encontra linha: a linha que
     preexistia à migração guarda fase/interações/scores e pertence ao
     primeiro escopo resolvido do usuário. Retorna True se adotou.
+
+    C12b r3: adota também a linha da PRÓPRIA instância ainda sem Relation
+    (criada antes do cadastro); linhas de outras instâncias nunca são
+    adotadas. Conexões cruas não têm `.conn`.
     """
-    cursor = manager.conn.execute(
+    conn = getattr(manager, "conn", manager)
+    cursor = conn.execute(
         "UPDATE agent_development"
         " SET relation_id = ?, agent_instance = ?"
-        " WHERE user_id = ? AND relation_id IS NULL AND agent_instance IS NULL",
-        (relation, instance, user_id),
+        " WHERE user_id = ?"
+        "   AND relation_id IS NULL"
+        "   AND (agent_instance IS NULL OR agent_instance = ?)",
+        (relation, instance, user_id, instance),
     )
     adopted = bool(cursor.rowcount)
     if adopted:
-        manager.conn.commit()
+        conn.commit()
         logger.info(
             "Agent state legado adotado para user_id=%s (relacao=%s, instancia=%s)",
             user_id,

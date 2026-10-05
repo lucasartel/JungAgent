@@ -79,7 +79,7 @@ def _prepare_psychometric_tables(conn):
     conn.commit()
 
 
-def _make_db():
+def _make_db(path=":memory:"):
     from core.db.analysis_records import AnalysisRecordsDatabaseMixin
     from core.db.conversations import ConversationDatabaseMixin
     from core.db.fact_extraction import FactExtractionDatabaseMixin
@@ -94,7 +94,7 @@ def _make_db():
         PsychometricsDatabaseMixin,
     ):
         def __init__(self):
-            self.conn = sqlite3.connect(":memory:")
+            self.conn = sqlite3.connect(path)
             self.conn.row_factory = sqlite3.Row
             self._lock = threading.RLock()
             self.mem0 = None
@@ -590,3 +590,120 @@ def test_development_transition_adopts_legacy_history():
         "SELECT COUNT(*) FROM agent_development WHERE user_id = 'u_heranca'"
     ).fetchone()[0]
     assert count == 1, "o histórico legado não deve virar linha órfã"
+
+
+def test_direct_connection_keeps_scope_filter(tmp_path):
+    """P2 r3-1: a conexão direta (--db-path) mantém o filtro de escopo.
+
+    O caminho da CLI abre sqlite3.Connection crua: `_development_scope`
+    tentava `manager.conn`, a exceção era silenciada e o filtro ficava vazio
+    mesmo em banco já migrado — a avaliação voltava a sobrescrever três
+    escopos.
+    """
+    from agent_development import NarrativeDevelopmentEvaluator
+
+    db_path = tmp_path / "jung.db"
+    db = _make_db(path=str(db_path))
+    cursor = db.conn.cursor()
+    for relation, instance in (
+        (None, None),  # legado do próprio escopo
+        (FOREIGN_RELATION, AGENT_INSTANCE),  # outra Relation
+        (None, FOREIGN_INSTANCE),  # outra instância
+    ):
+        cursor.execute(
+            """
+            INSERT INTO agent_development (
+                user_id, phase, total_interactions, relation_id, agent_instance
+            ) VALUES ('u_cli', 1, 5, ?, ?)
+            """,
+            (relation, instance),
+        )
+    db.conn.commit()
+
+    raw = sqlite3.connect(str(db_path))
+    raw.row_factory = sqlite3.Row
+    try:
+        cycle = _write_narrative_evidence(tmp_path)
+        evaluator = NarrativeDevelopmentEvaluator(
+            raw, base_dir=tmp_path, user_id="u_cli"
+        )
+        result = evaluator.evaluate(cycle_id=cycle, force=True, use_llm=False)
+        assert result.get("success") is True, result
+
+        rows = {
+            (row["relation_id"], row["agent_instance"]): row
+            for row in raw.execute(
+                "SELECT relation_id, agent_instance, phase, narrative_review_cycle_id"
+                " FROM agent_development WHERE user_id = 'u_cli'"
+            ).fetchall()
+        }
+        assert len(rows) == 3
+        own = rows[(None, None)]
+        assert own["phase"] == 2, "escopo próprio não avançou pela conexão direta"
+        assert own["narrative_review_cycle_id"] == cycle
+        # RED: filtro vazio ⇒ UPDATE sem escopo atinge as três linhas.
+        other_relation = rows[(FOREIGN_RELATION, AGENT_INSTANCE)]
+        assert other_relation["phase"] == 1
+        assert other_relation["narrative_review_cycle_id"] is None
+        other_instance = rows[(None, FOREIGN_INSTANCE)]
+        assert other_instance["phase"] == 1
+        assert other_instance["narrative_review_cycle_id"] is None
+    finally:
+        raw.close()
+        db.conn.close()
+
+
+def test_adoption_takes_current_instance_row_without_relation():
+    """P2 r3-2: linha da própria instância sem Relation é adotada com segurança.
+
+    Linha criada antes do cadastro da Relation guarda fase 4 / 1.000 /
+    autoconsciência 0,8 — `_adopt_legacy_state` exigia agent_instance IS NULL,
+    então não adotava e o get devolvia 0/0/0 de uma linha zerada nova.
+    """
+    from core.db.agent_development import get_agent_state
+
+    db = _make_db()
+    db.resolve_relation_id = lambda **kwargs: "rel-heranca"
+    cursor = db.conn.cursor()
+    # Linha da própria instância, pré-Relation (deve ser adotada).
+    cursor.execute(
+        """
+        INSERT INTO agent_development (
+            user_id, phase, total_interactions, self_awareness_score,
+            relation_id, agent_instance
+        ) VALUES ('u_inst', 4, 1000, 0.8, NULL, ?)
+        """,
+        (AGENT_INSTANCE,),
+    )
+    # Linha de OUTRA instância sem Relation (não pode ser adotada).
+    cursor.execute(
+        """
+        INSERT INTO agent_development (
+            user_id, phase, total_interactions, self_awareness_score,
+            relation_id, agent_instance
+        ) VALUES ('u_inst', 1, 9, 0.1, NULL, ?)
+        """,
+        (FOREIGN_INSTANCE,),
+    )
+    db.conn.commit()
+
+    state = get_agent_state(db, "u_inst")
+    assert state is not None
+    # RED: sem adoção, o ensure cria linha zerada e o get devolve 0/0/0.
+    assert state["phase"] == 4
+    assert state["total_interactions"] == 1000
+    assert state["self_awareness_score"] == pytest.approx(0.8)
+
+    rows = {
+        row["agent_instance"]: row
+        for row in db.conn.execute(
+            "SELECT agent_instance, relation_id, phase FROM agent_development"
+            " WHERE user_id = 'u_inst'"
+        ).fetchall()
+    }
+    # Sem linha órfã zerada: só as duas semeadas.
+    assert len(rows) == 2
+    # Adoção segura: a linha de outra instância permanece intocada.
+    foreign = rows[FOREIGN_INSTANCE]
+    assert foreign["relation_id"] is None
+    assert foreign["phase"] == 1
