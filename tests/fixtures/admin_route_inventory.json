@@ -473,7 +473,7 @@
     "path": "/dashboard",
     "full_path": "/admin/irt/dashboard",
     "endpoint": "irt_dashboard",
-    "line": 63,
+    "line": 64,
     "migration_bucket": "irt_routes"
   },
   {
@@ -482,7 +482,7 @@
     "path": "/user/{user_id}",
     "full_path": "/admin/irt/user/{user_id}",
     "endpoint": "get_user_tri_profile",
-    "line": 269,
+    "line": 270,
     "migration_bucket": "irt_routes"
   },
   {
@@ -491,7 +491,7 @@
     "path": "/comparison/{user_id}",
     "full_path": "/admin/irt/comparison/{user_id}",
     "endpoint": "compare_tri_legacy",
-    "line": 419,
+    "line": 420,
     "migration_bucket": "irt_routes"
   },
   {
@@ -500,7 +500,7 @@
     "path": "/migration/run",
     "full_path": "/admin/irt/migration/run",
     "endpoint": "run_tri_migration",
-    "line": 548,
+    "line": 552,
     "migration_bucket": "irt_routes"
   },
   {
@@ -509,7 +509,7 @@
     "path": "/seed/fragments",
     "full_path": "/admin/irt/seed/fragments",
     "endpoint": "seed_tri_fragments",
-    "line": 583,
+    "line": 587,
     "migration_bucket": "irt_routes"
   },
   {
@@ -518,7 +518,7 @@
     "path": "/migration/status",
     "full_path": "/admin/irt/migration/status",
     "endpoint": "get_migration_status",
-    "line": 709,
+    "line": 713,
     "migration_bucket": "irt_routes"
   },
   {
@@ -527,7 +527,7 @@
     "path": "/fragments/stats",
     "full_path": "/admin/irt/fragments/stats",
     "endpoint": "get_fragment_stats",
-    "line": 767,
+    "line": 771,
     "migration_bucket": "irt_routes"
   },
   {
@@ -536,7 +536,7 @@
     "path": "/api/domain-distribution",
     "full_path": "/admin/irt/api/domain-distribution",
     "endpoint": "get_domain_distribution",
-    "line": 879,
+    "line": 883,
     "migration_bucket": "irt_routes"
   },
   {
@@ -545,7 +545,7 @@
     "path": "/api/detection-timeline",
     "full_path": "/admin/irt/api/detection-timeline",
     "endpoint": "get_detection_timeline",
-    "line": 924,
+    "line": 928,
     "migration_bucket": "irt_routes"
   },
   {

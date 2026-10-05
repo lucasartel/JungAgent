@@ -1283,6 +1283,7 @@ class SchemaDatabaseMixin:
             "user_facts_v2",
             "user_patterns",
             "user_milestones",
+            "agent_development",
         ):
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
             if cursor.fetchone():
@@ -1305,6 +1306,23 @@ class SchemaDatabaseMixin:
                             )
                             WHERE agent_instance IS NULL AND relation_id IS NOT NULL"""
                     )
+
+        # C12b (T1-2a): agent_development é um contador por escopo cognitivo,
+        # não mais um por usuário — o índice único legado bloqueava múltiplas
+        # Relations do mesmo usuário.
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_development'"
+        )
+        if cursor.fetchone():
+            try:
+                cursor.execute("DROP INDEX IF EXISTS idx_agent_dev_user")
+                cursor.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_dev_user"
+                    " ON agent_development(user_id, COALESCE(relation_id, ''),"
+                    " COALESCE(agent_instance, ''))"
+                )
+            except sqlite3.Error as exc:
+                logger.warning("Could not rescope idx_agent_dev_user: %s", exc)
 
         for table in (
             "user_milestones",

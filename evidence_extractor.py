@@ -367,12 +367,18 @@ IMPORTANTE: Retorne APENAS o JSON válido, sem markdown ou texto adicional."""
         self.db.conn.commit()
 
         # Atualizar flag na tabela user_psychometrics
-        cursor.execute("""
+        # C12b (T2-23): flag gravada só na psicometria do escopo.
+        _, relation_id = self.db._psychometric_scope(user_id)
+        scope_sql, scope_params = self.db._analysis_scope_clause(
+            "user_psychometrics", relation_id
+        )
+        cursor.execute(f"""
             UPDATE user_psychometrics
             SET evidence_extracted = 1,
                 evidence_extraction_date = CURRENT_TIMESTAMP
             WHERE user_id = ? AND version = ?
-        """, (user_id, psychometric_version))
+            {scope_sql}
+        """, (user_id, psychometric_version, *scope_params))
 
         self.db.conn.commit()
 
@@ -399,15 +405,29 @@ IMPORTANTE: Retorne APENAS o JSON válido, sem markdown ou texto adicional."""
         """
         cursor = self.db.conn.cursor()
 
+        # C12b (T2-23): versão e evidências no escopo do leitor — MAX(version)
+        # de outra Relation desviava a leitura (a numeração é por escopo).
+        _, relation_id = self.db._psychometric_scope(user_id)
+        scope_sql, scope_params = self.db._analysis_scope_clause(
+            "user_psychometrics", relation_id
+        )
+        conv_sql, conv_params = self.db._analysis_scope_clause(
+            "conversations", relation_id
+        )
+
         if psychometric_version is None:
             # Buscar versão mais recente
-            cursor.execute("""
-                SELECT MAX(version) FROM user_psychometrics WHERE user_id = ?
-            """, (user_id,))
+            cursor.execute(
+                f"""
+                SELECT MAX(version) FROM user_psychometrics
+                WHERE user_id = ?{scope_sql}
+                """,
+                (user_id, *scope_params),
+            )
             result = cursor.fetchone()
             psychometric_version = result[0] if result and result[0] else 1
 
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT
                 id,
                 conversation_id,
@@ -426,8 +446,11 @@ IMPORTANTE: Retorne APENAS o JSON válido, sem markdown ou texto adicional."""
             WHERE user_id = ?
               AND dimension = ?
               AND psychometric_version = ?
+              AND conversation_id IN (
+                  SELECT id FROM conversations WHERE user_id = ?{conv_sql}
+              )
             ORDER BY relevance_score DESC, confidence DESC
-        """, (user_id, dimension, psychometric_version))
+        """, (user_id, dimension, psychometric_version, user_id, *conv_params))
 
         evidence_list = []
         for row in cursor.fetchall():

@@ -175,25 +175,25 @@ class AnalysisRecordsDatabaseMixin:
     # DESENVOLVIMENTO DO AGENTE
     # ========================================
 
-    def _ensure_agent_state(self, user_id: str):
+    def _ensure_agent_state(self, user_id: str, *, relation_id: Optional[str] = None):
         from core.db.agent_development import ensure_agent_state
 
-        return ensure_agent_state(self, user_id)
+        return ensure_agent_state(self, user_id, relation_id=relation_id)
 
-    def _update_agent_development(self, user_id: str):
+    def _update_agent_development(self, user_id: str, *, relation_id: Optional[str] = None):
         from core.db.agent_development import update_agent_development
 
-        return update_agent_development(self, user_id)
+        return update_agent_development(self, user_id, relation_id=relation_id)
 
-    def _check_phase_progression(self, user_id: str):
+    def _check_phase_progression(self, user_id: str, *, relation_id: Optional[str] = None):
         from core.db.agent_development import check_phase_progression
 
-        return check_phase_progression(self, user_id)
+        return check_phase_progression(self, user_id, relation_id=relation_id)
     
-    def get_agent_state(self, user_id: str) -> Optional[Dict]:
+    def get_agent_state(self, user_id: str, *, relation_id: Optional[str] = None) -> Optional[Dict]:
         from core.db.agent_development import get_agent_state
 
-        return get_agent_state(self, user_id)
+        return get_agent_state(self, user_id, relation_id=relation_id)
     
     def get_milestones(self, limit: int = 20) -> List[Dict]:
         from core.db.agent_development import get_milestones

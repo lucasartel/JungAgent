@@ -810,7 +810,12 @@ class IRTEngine:
                 FROM user_psychometrics
                 WHERE user_id = $1
             """
-            legacy_row = await self.db.fetchrow(legacy_query, user_id)
+            # C12b (T1-2c2): partição cognitiva — legado sem instância
+            # permanece visível (presence-check do C12c3).
+            legacy_query += instance_scope_sql("", 2)
+            legacy_row = await self.db.fetchrow(
+                legacy_query, user_id, resolve_irt_instance()
+            )
 
             legacy_scores = {}
             if legacy_row:

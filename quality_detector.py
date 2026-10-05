@@ -121,8 +121,14 @@ class QualityDetector:
         # ============================================================
 
         # Buscar análises anteriores do mesmo usuário
+        # C12b (T2-23): leitura no escopo do leitor — versões de outras
+        # Relations não podem alimentar a checagem temporal.
+        _, relation_id = self.db._psychometric_scope(user_id)
+        scope_sql, scope_params = self.db._analysis_scope_clause(
+            "user_psychometrics", relation_id
+        )
         cursor = self.db.conn.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT
                 version,
                 openness_score,
@@ -132,10 +138,10 @@ class QualityDetector:
                 neuroticism_score,
                 analysis_date
             FROM user_psychometrics
-            WHERE user_id = ?
+            WHERE user_id = ?{scope_sql}
             ORDER BY version DESC
             LIMIT 2
-        """, (user_id,))
+        """, (user_id, *scope_params))
 
         previous_analyses = cursor.fetchall()
 
@@ -324,11 +330,17 @@ class QualityDetector:
         # Atualizar red_flags na tabela user_psychometrics
         red_flags_json = json.dumps(quality_result['red_flags'], ensure_ascii=False)
 
-        cursor.execute("""
+        # C12b (T2-23): a versão pertence ao escopo — não gravar em outra Relation.
+        _, relation_id = self.db._psychometric_scope(user_id)
+        scope_sql, scope_params = self.db._analysis_scope_clause(
+            "user_psychometrics", relation_id
+        )
+        cursor.execute(f"""
             UPDATE user_psychometrics
             SET red_flags = ?
             WHERE user_id = ? AND version = ?
-        """, (red_flags_json, user_id, psychometric_version))
+            {scope_sql}
+        """, (red_flags_json, user_id, psychometric_version, *scope_params))
 
         self.db.conn.commit()
 

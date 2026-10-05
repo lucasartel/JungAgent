@@ -205,7 +205,8 @@ class ConversationDatabaseMixin:
 
                 self.conn.commit()
         
-        # 5. Atualizar desenvolvimento do agente (isolado por usuÃ¡rio)
+        # 5. Atualizar desenvolvimento do agente (C12b: o helper resolve o
+        # escopo cognitivo internamente via resolve_relation_id)
         self._update_agent_development(user_id)
 
         # 6. Extrair fatos do input (V2 com LLM, fallback para V1)
