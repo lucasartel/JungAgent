@@ -14,11 +14,14 @@ verificacao de elegibilidade. A politica e a do gate canonico:
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, List, Optional, Sequence, Tuple
 
 from core.db.relations import RelationsDatabaseMixin, require_eligible_relation
+
+logger = logging.getLogger(__name__)
 
 
 class RawConnectionRelationsAPI(RelationsDatabaseMixin):
@@ -267,3 +270,40 @@ def personal_scope_clause(
             parts.append(f"({prefix}agent_instance = ? OR {prefix}agent_instance IS NULL)")
             params.append(instance)
     return (" AND " + " AND ".join(parts)) if parts else "", params
+
+
+def personal_read_clause(
+    cursor: Any,
+    db: Any,
+    user_id: str,
+    *,
+    table: str = "conversations",
+    relation_column: str = "relation_id",
+    agent_instance: Optional[str] = None,
+    prefix: str = "",
+) -> Tuple[str, List[Any]]:
+    """Visibilidade pessoal pronta para SQL por usuario (C12f).
+
+    Resolve e verifica a Relation do usuario (fail-closed) e devolve a
+    clausula de ``personal_scope_clause`` para a tabela. Recusa de gate ou
+    de escopo vira ``AND 1 = 0``: a leitura nunca derruba o chamador nem
+    enxerga conteudo de outra Relation (nem o legado sem Relation de um
+    participante sem cadastro elegivel).
+    """
+    try:
+        scope = resolve_relation_query_scope(
+            db, user_id, agent_instance=agent_instance
+        )
+    except ValueError as exc:
+        logger.warning("personal_read_clause: escopo recusado para %s: %s", user_id, exc)
+        return " AND 1 = 0", []
+    if not scope.allowed:
+        return " AND 1 = 0", []
+    return personal_scope_clause(
+        cursor,
+        table=table,
+        relation_column=relation_column,
+        relation_id=scope.relation_id,
+        agent_instance=agent_instance,
+        prefix=prefix,
+    )
