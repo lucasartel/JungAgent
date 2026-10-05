@@ -109,14 +109,28 @@ def _adopt_legacy_state(manager, user_id: str, instance, relation) -> bool:
     C12b r3: adota também a linha da PRÓPRIA instância ainda sem Relation
     (criada antes do cadastro); linhas de outras instâncias nunca são
     adotadas. Conexões cruas não têm `.conn`.
+
+    C12b r4: o schema novo permite DUAS candidatas — (agent_instance NULL) e
+    (instância atual), ambas sem Relation. Estampar as duas quebraria o
+    índice único (idx_agent_dev_user), então seleciona UMA linha de forma
+    determinística: a de MAIOR histórico (interações, depois fase, depois a
+    mais antiga). A candidata não escolhida permanece intacta e legível.
     """
     conn = getattr(manager, "conn", manager)
     cursor = conn.execute(
-        "UPDATE agent_development"
-        " SET relation_id = ?, agent_instance = ?"
-        " WHERE user_id = ?"
-        "   AND relation_id IS NULL"
-        "   AND (agent_instance IS NULL OR agent_instance = ?)",
+        """
+        UPDATE agent_development
+        SET relation_id = ?, agent_instance = ?
+        WHERE id = (
+            SELECT id
+            FROM agent_development
+            WHERE user_id = ?
+              AND relation_id IS NULL
+              AND (agent_instance IS NULL OR agent_instance = ?)
+            ORDER BY total_interactions DESC, phase DESC, id ASC
+            LIMIT 1
+        )
+        """,
         (relation, instance, user_id, instance),
     )
     adopted = bool(cursor.rowcount)

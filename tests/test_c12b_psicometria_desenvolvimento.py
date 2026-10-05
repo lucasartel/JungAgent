@@ -707,3 +707,58 @@ def test_adoption_takes_current_instance_row_without_relation():
     foreign = rows[FOREIGN_INSTANCE]
     assert foreign["relation_id"] is None
     assert foreign["phase"] == 1
+
+
+def test_adoption_selects_single_richest_candidate():
+    """P2 r4: adoção com DUAS candidatas não viola o índice único.
+
+    O schema novo permite coexistirem (agent_instance NULL) e (instância
+    atual), ambas sem Relation. Um UPDATE que estampa as duas para o mesmo
+    escopo quebra o índice único (idx_agent_dev_user). A adoção seleciona
+    UMA linha determinística — a de maior histórico (interações, depois
+    fase, depois a mais antiga) — e deixa a outra intacta.
+    """
+    from core.db.agent_development import get_agent_state
+
+    db = _make_db()
+    db.resolve_relation_id = lambda **kwargs: "rel-r4"
+    cursor = db.conn.cursor()
+    # Legado sem instância: histórico completo (deve ser a adotada).
+    cursor.execute(
+        """
+        INSERT INTO agent_development (
+            user_id, phase, total_interactions, self_awareness_score,
+            relation_id, agent_instance
+        ) VALUES ('u_r4', 4, 1000, 0.8, NULL, NULL)
+        """
+    )
+    # Linha da instância atual, pós-migração, quase vazia.
+    cursor.execute(
+        """
+        INSERT INTO agent_development (
+            user_id, phase, total_interactions, self_awareness_score,
+            relation_id, agent_instance
+        ) VALUES ('u_r4', 1, 9, 0.1, NULL, ?)
+        """,
+        (AGENT_INSTANCE,),
+    )
+    db.conn.commit()
+
+    # RED: UPDATE estampa as duas candidatas ⇒ IntegrityError em idx_agent_dev_user.
+    state = get_agent_state(db, "u_r4")
+    assert state is not None
+    assert state["phase"] == 4
+    assert state["total_interactions"] == 1000
+    assert state["self_awareness_score"] == pytest.approx(0.8)
+
+    rows = db.conn.execute(
+        "SELECT relation_id, agent_instance, total_interactions"
+        " FROM agent_development WHERE user_id = 'u_r4' ORDER BY id"
+    ).fetchall()
+    assert len(rows) == 2, "nenhuma linha pode ser destruída pela adoção"
+    adopted = [row for row in rows if row["relation_id"] == "rel-r4"]
+    assert len(adopted) == 1, "adoção deve estampar UMA única linha"
+    assert adopted[0]["total_interactions"] == 1000
+    leftover = [row for row in rows if row["relation_id"] is None]
+    assert len(leftover) == 1
+    assert leftover[0]["total_interactions"] == 9
