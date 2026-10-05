@@ -201,6 +201,10 @@ class NarrativeDevelopmentEvaluator:
         phase_def = PHASES[final_phase]
         confidence = self._coerce_confidence(review.get("confidence"))
 
+        # C12b r2: a avaliação grava só no escopo do leitor — sem cláusula,
+        # o UPDATE atingia TODAS as linhas do usuário (outra Relation e
+        # outra instância levadas à mesma fase).
+        _, _, clause, scope_params, _ = self._scope()
         cursor = self.conn.cursor()
         cursor.execute(
             """
@@ -215,7 +219,7 @@ class NarrativeDevelopmentEvaluator:
                 last_narrative_review_at = CURRENT_TIMESTAMP,
                 last_updated = CURRENT_TIMESTAMP
             WHERE user_id = ?
-            """,
+            """ + clause,
             (
                 final_phase,
                 phase_def.key,
@@ -225,6 +229,7 @@ class NarrativeDevelopmentEvaluator:
                 json.dumps(evidence, ensure_ascii=False),
                 cycle_id,
                 self.user_id,
+                *scope_params,
             ),
         )
         cursor.execute(
@@ -471,15 +476,46 @@ Eventos:
             return previous_phase
         return min(previous_phase + 1, recommended_phase, 5)
 
+    def _scope(self):
+        """Resolve (instância, Relation, cláusula, params, colunas) do leitor.
+
+        Com o manager (produção) devolve a cláusula de escopo; com uma
+        conexão SQLite crua (testes legados) degrada para cláusula vazia.
+        """
+        from core.db.agent_development import _development_scope
+
+        return _development_scope(self.db, self.user_id)
+
     def _get_or_create_state(self) -> Dict[str, Any]:
+        from core.db.agent_development import _adopt_legacy_state
+
+        instance, relation, clause, params, has_columns = self._scope()
+        select_sql = "SELECT * FROM agent_development WHERE user_id = ?" + clause
         cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM agent_development WHERE user_id = ?", (self.user_id,))
+        cursor.execute(select_sql, (self.user_id, *params))
         row = cursor.fetchone()
         if row:
             return self._row_to_dict(cursor, row)
-        cursor.execute("INSERT INTO agent_development (user_id) VALUES (?)", (self.user_id,))
+        # C12b r2: linha legada (relation/instance NULL) é adotada pelo
+        # escopo atual — histórico preservado em vez de linha zerada nova.
+        if has_columns and _adopt_legacy_state(
+            self.db, self.user_id, instance, relation
+        ):
+            cursor.execute(select_sql, (self.user_id, *params))
+            return self._row_to_dict(cursor, cursor.fetchone())
+        if has_columns:
+            cursor.execute(
+                "INSERT INTO agent_development"
+                " (user_id, relation_id, agent_instance) VALUES (?, ?, ?)",
+                (self.user_id, relation, instance),
+            )
+        else:
+            cursor.execute(
+                "INSERT INTO agent_development (user_id) VALUES (?)",
+                (self.user_id,),
+            )
         self.conn.commit()
-        cursor.execute("SELECT * FROM agent_development WHERE user_id = ?", (self.user_id,))
+        cursor.execute(select_sql, (self.user_id, *params))
         return self._row_to_dict(cursor, cursor.fetchone())
 
     def _row_to_dict(self, cursor, row) -> Dict[str, Any]:

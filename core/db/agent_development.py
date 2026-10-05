@@ -62,6 +62,13 @@ def ensure_agent_state(
         )
 
         if not cursor.fetchone():
+            # C12b r2: na transição para Relations, a linha legada
+            # (relation/instance NULL) é VINCULADA ao escopo atual em vez de
+            # deixar o histórico órfão atrás de uma linha nova zerada.
+            if has_columns and _adopt_legacy_state(
+                manager, user_id, instance, resolved
+            ):
+                return
             if has_columns:
                 cursor.execute(
                     "INSERT INTO agent_development"
@@ -80,6 +87,31 @@ def ensure_agent_state(
                 user_id,
                 resolved,
             )
+
+
+def _adopt_legacy_state(manager, user_id: str, instance, relation) -> bool:
+    """Vincula a linha legada (relation/instance NULL) ao escopo atual.
+
+    Chamada quando a leitura por escopo não encontra linha: a linha que
+    preexistia à migração guarda fase/interações/scores e pertence ao
+    primeiro escopo resolvido do usuário. Retorna True se adotou.
+    """
+    cursor = manager.conn.execute(
+        "UPDATE agent_development"
+        " SET relation_id = ?, agent_instance = ?"
+        " WHERE user_id = ? AND relation_id IS NULL AND agent_instance IS NULL",
+        (relation, instance, user_id),
+    )
+    adopted = bool(cursor.rowcount)
+    if adopted:
+        manager.conn.commit()
+        logger.info(
+            "Agent state legado adotado para user_id=%s (relacao=%s, instancia=%s)",
+            user_id,
+            relation,
+            instance,
+        )
+    return adopted
 
 
 def update_agent_development(

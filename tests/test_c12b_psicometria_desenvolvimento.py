@@ -12,6 +12,7 @@ Regras sob teste (auditoria C12, Seção 5):
   partição de instância antes de ler ``user_psychometrics``/``irt_trait_estimates``.
 """
 import asyncio
+import json
 import sqlite3
 import sys
 import threading
@@ -478,3 +479,114 @@ def test_comparison_route_excludes_foreign_instance():
     )
     assert body.count("{instance_clause}") >= 2, "cláusula usada em menos de 2 queries"
     assert "resolve_irt_instance()" in body
+
+
+# ======================= P2s da revisão da PR #56 (r2) =======================
+
+
+def _write_narrative_evidence(base_dir: Path) -> str:
+    """Evidência determinística: o fallback promove Fase 1 → 2 sem LLM."""
+    cycle = "2026-10-05"
+    events = [
+        {"date": cycle, "kind": "dream", "source": f"dream#{i}"}
+        for i in range(7)
+    ]
+    (base_dir / "timeline.json").write_text(
+        json.dumps(events, ensure_ascii=False), encoding="utf-8"
+    )
+    # >= 8 fontes no profile ativa has_autobiography no fallback.
+    (base_dir / "profile.md").write_text(
+        " ".join(f"meta#{i}" for i in range(1, 9)), encoding="utf-8"
+    )
+    sessions = base_dir / "sessions"
+    sessions.mkdir(exist_ok=True)
+    (sessions / f"{cycle}.md").write_text("sessao", encoding="utf-8")
+    return cycle
+
+
+def test_narrative_evaluator_updates_only_own_scope(tmp_path):
+    """P2 r1: o avaliador narrativo lê e grava por escopo, não por user_id puro.
+
+    Reproduz o relato do revisor: uma avaliação alterou três linhas do mesmo
+    usuário (legado, outra Relation, outra instância), levando todas à mesma
+    fase. RED: UPDATE/SELECT sem cláusula em agent_development.py.
+    """
+    from agent_development import NarrativeDevelopmentEvaluator
+
+    db = _make_db()
+    # Escopo do leitor = próprio/legado (relation não resolvida).
+    db.resolve_relation_id = lambda **kwargs: None
+    cursor = db.conn.cursor()
+    for relation, instance in (
+        (None, None),  # linha própria/legada — deve receber a avaliação
+        (FOREIGN_RELATION, AGENT_INSTANCE),  # outra Relation
+        (None, FOREIGN_INSTANCE),  # outra instância
+    ):
+        cursor.execute(
+            """
+            INSERT INTO agent_development (
+                user_id, phase, total_interactions, relation_id, agent_instance
+            ) VALUES ('u_narr', 1, 5, ?, ?)
+            """,
+            (relation, instance),
+        )
+    db.conn.commit()
+
+    cycle = _write_narrative_evidence(tmp_path)
+    evaluator = NarrativeDevelopmentEvaluator(db, base_dir=tmp_path, user_id="u_narr")
+    result = evaluator.evaluate(cycle_id=cycle, force=True, use_llm=False)
+    assert result.get("success") is True, result
+
+    rows = {
+        (row["relation_id"], row["agent_instance"]): row
+        for row in db.conn.execute(
+            "SELECT relation_id, agent_instance, phase, narrative_review_cycle_id"
+            " FROM agent_development WHERE user_id = 'u_narr'"
+        ).fetchall()
+    }
+    assert len(rows) == 3, "o avaliador não deve criar linhas extras"
+
+    own = rows[(None, None)]
+    assert own["phase"] == 2, "escopo próprio não avançou para Fase 2"
+    assert own["narrative_review_cycle_id"] == cycle
+
+    # RED: sem escopo, o UPDATE grava fase e ciclo nas outras linhas.
+    other_relation = rows[(FOREIGN_RELATION, AGENT_INSTANCE)]
+    assert other_relation["phase"] == 1
+    assert other_relation["narrative_review_cycle_id"] is None
+    other_instance = rows[(None, FOREIGN_INSTANCE)]
+    assert other_instance["phase"] == 1
+    assert other_instance["narrative_review_cycle_id"] is None
+
+
+def test_development_transition_adopts_legacy_history():
+    """P2 r2: resolver a Relation preserva o histórico legado em vez de zerar.
+
+    Reproduz o relato do revisor: linha com fase 4, 1.000 interações e
+    autoconsciência 0,8 passa a retornar 0/0/0 porque o ensure cria uma linha
+    nova zerada e a legada fica órfã fora da leitura corrente.
+    """
+    from core.db.agent_development import get_agent_state
+
+    db = _make_db()
+    db.resolve_relation_id = lambda **kwargs: "rel-heranca"
+    db.conn.execute(
+        """
+        INSERT INTO agent_development (
+            user_id, phase, total_interactions, self_awareness_score,
+            relation_id, agent_instance
+        ) VALUES ('u_heranca', 4, 1000, 0.8, NULL, NULL)
+        """
+    )
+    db.conn.commit()
+
+    state = get_agent_state(db, "u_heranca")
+    assert state is not None, "linha legada invisível após resolução da Relation"
+    # RED: sem adoção, o ensure cria linha zerada e o get devolve 0/0/0.
+    assert state["phase"] == 4
+    assert state["total_interactions"] == 1000
+    assert state["self_awareness_score"] == pytest.approx(0.8)
+    count = db.conn.execute(
+        "SELECT COUNT(*) FROM agent_development WHERE user_id = 'u_heranca'"
+    ).fetchone()[0]
+    assert count == 1, "o histórico legado não deve virar linha órfã"
