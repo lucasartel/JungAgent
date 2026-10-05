@@ -112,8 +112,21 @@ class UserDatabaseMixin:
             return None
         
         user = dict(user_row)
-        
-        cursor.execute("SELECT COUNT(*) as count FROM conversations WHERE user_id = ?", (user_id,))
+
+        from core.db.relation_scope import personal_read_clause
+        from instance_config import AGENT_INSTANCE
+
+        scope_sql, scope_params = personal_read_clause(
+            cursor,
+            self,
+            user_id,
+            table="conversations",
+            agent_instance=getattr(self, "agent_instance", None) or AGENT_INSTANCE,
+        )
+        cursor.execute(
+            f"SELECT COUNT(*) as count FROM conversations WHERE user_id = ?{scope_sql}",
+            (user_id, *scope_params),
+        )
         total_messages = cursor.fetchone()['count']
         
         return {

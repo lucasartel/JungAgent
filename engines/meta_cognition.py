@@ -139,15 +139,31 @@ class DoubleLoopMetaCognitionEngine:
 
     def _collect_rumination_stats(self, user_id: str) -> Dict[str, Any]:
         try:
+            from core.db.relation_scope import personal_read_clause
+
             cursor = self.db.conn.cursor()
+            insights_scope, insights_params = personal_read_clause(
+                cursor,
+                self.db,
+                user_id,
+                table="rumination_insights",
+                agent_instance=self.agent_instance,
+            )
             cursor.execute(
-                "SELECT COUNT(*) FROM rumination_insights WHERE user_id = ?",
-                (user_id,),
+                f"SELECT COUNT(*) FROM rumination_insights WHERE user_id = ?{insights_scope}",
+                (user_id, *insights_params),
             )
             insight_count = int(cursor.fetchone()[0])
+            tensions_scope, tensions_params = personal_read_clause(
+                cursor,
+                self.db,
+                user_id,
+                table="rumination_tensions",
+                agent_instance=self.agent_instance,
+            )
             cursor.execute(
-                "SELECT COUNT(*) FROM rumination_tensions WHERE user_id = ? AND status = 'open'",
-                (user_id,),
+                f"SELECT COUNT(*) FROM rumination_tensions WHERE user_id = ? AND status = 'open'{tensions_scope}",
+                (user_id, *tensions_params),
             )
             tension_count = int(cursor.fetchone()[0])
             return {"insights": insight_count, "open_tensions": tension_count}

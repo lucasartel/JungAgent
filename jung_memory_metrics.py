@@ -29,6 +29,30 @@ class MemoryQualityMetrics:
         """
         self.db = db_manager
 
+    def _personal_scope(self, cursor, user_id: str, table: str = "conversations"):
+        """Visibilidade pessoal do usuário (Relation verificada + instância)."""
+        from core.db.relation_scope import personal_read_clause
+        from instance_config import AGENT_INSTANCE
+
+        return personal_read_clause(
+            cursor,
+            self.db,
+            user_id,
+            table=table,
+            agent_instance=getattr(self.db, "agent_instance", None) or AGENT_INSTANCE,
+        )
+
+    def _legacy_quarantine(self, cursor, table: str = "conversations"):
+        """Escopo do relatório global: quarentena legada da instância (C8/C9)."""
+        from core.db.relation_scope import legacy_quarantine_clause
+        from instance_config import AGENT_INSTANCE
+
+        return legacy_quarantine_clause(
+            cursor,
+            table=table,
+            agent_instance=getattr(self.db, "agent_instance", None) or AGENT_INSTANCE,
+        )
+
     def calculate_coverage(self, user_id: str) -> Dict:
         """
         Calcula % de conversas que estão embedadas no ChromaDB
@@ -47,9 +71,11 @@ class MemoryQualityMetrics:
 
         # Total de conversas no SQLite
         cursor = self.db.conn.cursor()
-        cursor.execute("""
+        scope_sql, scope_params = self._personal_scope(cursor, user_id)
+        cursor.execute(f"""
             SELECT COUNT(*) FROM conversations WHERE user_id = ?
-        """, (user_id,))
+        {scope_sql}
+        """, (user_id, *scope_params))
         total_conversations = cursor.fetchone()[0]
 
         if total_conversations == 0:
@@ -101,12 +127,14 @@ class MemoryQualityMetrics:
         logger.info(f"🔍 Detectando gaps de memória para user_id={user_id} (threshold={gap_threshold_days} dias)")
 
         cursor = self.db.conn.cursor()
-        cursor.execute("""
+        scope_sql, scope_params = self._personal_scope(cursor, user_id)
+        cursor.execute(f"""
             SELECT timestamp
             FROM conversations
             WHERE user_id = ?
+            {scope_sql}
             ORDER BY timestamp ASC
-        """, (user_id,))
+        """, (user_id, *scope_params))
 
         timestamps = [datetime.fromisoformat(row[0]) for row in cursor.fetchall()]
 
@@ -214,9 +242,10 @@ class MemoryQualityMetrics:
 
         # Buscar nome do usuário
         cursor = self.db.conn.cursor()
-        cursor.execute("""
-            SELECT user_name FROM conversations WHERE user_id = ? LIMIT 1
-        """, (user_id,))
+        scope_sql, scope_params = self._personal_scope(cursor, user_id)
+        cursor.execute(f"""
+            SELECT user_name FROM conversations WHERE user_id = ?{scope_sql} LIMIT 1
+        """, (user_id, *scope_params))
         row = cursor.fetchone()
         user_name = row[0] if row else "Desconhecido"
 
@@ -287,25 +316,39 @@ Tópicos mais frequentes:
         logger.info("🌍 Gerando métricas globais do sistema")
 
         cursor = self.db.conn.cursor()
+        scope_sql, scope_params = self._legacy_quarantine(cursor)
 
         # Total de usuários
-        cursor.execute("SELECT COUNT(DISTINCT user_id) FROM conversations")
+        cursor.execute(
+            f"SELECT COUNT(DISTINCT user_id) FROM conversations WHERE 1 = 1{scope_sql}",
+            scope_params,
+        )
         total_users = cursor.fetchone()[0]
 
         # Total de conversas
-        cursor.execute("SELECT COUNT(*) FROM conversations")
+        cursor.execute(
+            f"SELECT COUNT(*) FROM conversations WHERE 1 = 1{scope_sql}",
+            scope_params,
+        )
         total_conversations = cursor.fetchone()[0]
 
         # Conversas nos últimos 30 dias
         thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT COUNT(*) FROM conversations WHERE timestamp >= ?
-        """, (thirty_days_ago,))
+        {scope_sql}
+        """, (thirty_days_ago, *scope_params))
         recent_conversations = cursor.fetchone()[0]
 
         # Total de fatos (V2)
         try:
-            cursor.execute("SELECT COUNT(*) FROM user_facts_v2 WHERE is_current = 1")
+            facts_scope_sql, facts_scope_params = self._legacy_quarantine(
+                cursor, table="user_facts_v2"
+            )
+            cursor.execute(
+                f"SELECT COUNT(*) FROM user_facts_v2 WHERE is_current = 1{facts_scope_sql}",
+                facts_scope_params,
+            )
             total_facts = cursor.fetchone()[0]
         except Exception:
             total_facts = 0
@@ -343,13 +386,14 @@ Tópicos mais frequentes:
                 logger.warning(f"Erro ao buscar métricas do ChromaDB: {e}")
 
         # Usuários mais ativos (top 5)
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT user_id, user_name, COUNT(*) as conversation_count
             FROM conversations
+            WHERE 1 = 1{scope_sql}
             GROUP BY user_id
             ORDER BY conversation_count DESC
             LIMIT 5
-        """)
+        """, scope_params)
 
         top_users = [
             {
