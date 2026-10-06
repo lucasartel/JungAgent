@@ -232,7 +232,30 @@ UNESCO_CSV_HEADER = [
 ]
 
 
-def fetch_unesco_participants(conn, agent_instance: Optional[str] = None):
+def resolve_unesco_export_org(admin, requested_org_id: Optional[str] = None) -> Optional[str]:
+    """Org do export UNESCO (T3-1, precedente dashboard_routes:317-330).
+
+    - master: fatia pela ``org_id`` pedida no query param (None/branco =
+      todas as orgs — visão global do master).
+    - org_admin: somente a própria org; pedir outra org recusa (fail-closed)
+      e org_admin sem org também recusa (mesmo "sem organização associada"
+      do dashboard).
+    """
+    if (admin or {}).get("role") == "master":
+        return (requested_org_id or "").strip() or None
+    org = (admin or {}).get("org_id")
+    if not org:
+        raise ValueError("org_admin_sem_organizacao")
+    if (requested_org_id or "").strip() and requested_org_id.strip() != org:
+        raise ValueError("org_alheia_negada")
+    return org
+
+
+def fetch_unesco_participants(
+    conn,
+    agent_instance: Optional[str] = None,
+    org_id: Optional[str] = None,
+):
     """Linhas do piloto UNESCO com totais CORRETOS e quebra explícita por escopo.
 
     Revisão P2 do C12c2: contar só conversas sem Relation mostrava zero falso
@@ -240,8 +263,11 @@ def fetch_unesco_participants(conn, agent_instance: Optional[str] = None):
     voltam a somar todas as escopas; as colunas por escopo trazem a quebra
     explícita. Revisão P2 (round 2): as conversas também são filtradas pela
     instância canônica (+ NULL) — conversa da mesma pessoa em OUTRA instância
-    não entra no piloto. unesco_pilot_data não tem colunas de org/Relation/
-    instância — o fatiamento por org segue como pendência documentada.
+    não entra no piloto. T3-1: ``org_id`` fatia os participantes pela
+    membership ativa em ``user_organization_mapping`` (precedente do
+    dashboard); as 6 subqueries casam por ``user_id`` e acompanham o corte.
+    Sem filtro = sem JOIN (membro de duas orgs não duplica linha). Pedido de
+    org num banco sem mapping é recusado — nunca vaza para "todas".
     """
     cursor = conn.cursor()
     c_cols = _table_columns(cursor, "conversations")
@@ -258,6 +284,17 @@ def fetch_unesco_participants(conn, agent_instance: Optional[str] = None):
         inst_params = [instance]
     rel_null = " AND c.relation_id IS NULL" if "relation_id" in c_cols else ""
     rel_not_null = " AND c.relation_id IS NOT NULL" if "relation_id" in c_cols else " AND 0"
+    org_clause = ""
+    org_params: List[str] = []
+    if org_id:
+        if "user_id" not in _table_columns(cursor, "user_organization_mapping"):
+            raise ValueError("mapping_de_org_ausente")
+        org_clause = (
+            " INNER JOIN user_organization_mapping uom"
+            " ON u.user_id = uom.user_id AND uom.org_id = ?"
+            " AND uom.status = 'active'"
+        )
+        org_params = [org_id]
     cursor.execute(
         f"""
         SELECT
@@ -276,9 +313,11 @@ def fetch_unesco_participants(conn, agent_instance: Optional[str] = None):
             (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id{rel_not_null}{inst_clause}) as days_with_relation,
             u.created_at,
             u.completed_at
-        FROM unesco_pilot_data u
+        FROM unesco_pilot_data u{org_clause}
         """,
-        inst_params * 6,
+        # Ordem dos placeholders: as subqueries (instância) aparecem ANTES do
+        # JOIN da org na string SQL — params na ordem contrária quebra o corte.
+        inst_params * 6 + org_params,
     )
     return cursor.fetchall()
 

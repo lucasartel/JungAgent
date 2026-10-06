@@ -387,6 +387,79 @@ def test_unesco_totals_respect_instance_isolation():
     assert u1[9] == 3 and u1[10] == 2
 
 
+def test_unesco_org_slicing_uses_member_mapping():
+    """T3-1: fatiamento por org via user_organization_mapping (precedente
+    dashboard_routes:317-330). Sem filtro = todos, sem duplicar membro de
+    duas orgs; membro inactive não entra; subqueries amarram por user_id."""
+    from core.db.legacy_exports import fetch_unesco_participants
+
+    conn = _unesco_conn()
+    conn.executescript(
+        """
+        CREATE TABLE user_organization_mapping (
+            user_id TEXT, org_id TEXT, status TEXT DEFAULT 'active');
+        CREATE TABLE organizations (org_id TEXT, org_name TEXT);
+        INSERT INTO organizations VALUES ('org-a', 'Org A'), ('org-b', 'Org B');
+        INSERT INTO user_organization_mapping (user_id, org_id, status)
+        VALUES ('u1', 'org-a', 'active'),
+               ('u2', 'org-b', 'active'),
+               ('u2', 'org-a', 'active'),
+               ('u1', 'org-b', 'inactive');
+        """
+    )
+    conn.commit()
+
+    rows_a = fetch_unesco_participants(conn, org_id="org-a")
+    assert {row[0] for row in rows_a} == {"u1", "u2"}, "org-a: u1 e u2 ativos"
+    u1_a = next(row for row in rows_a if row[0] == "u1")
+    assert u1_a[7] == 4, "subqueries do participante continuam completas"
+
+    rows_b = fetch_unesco_participants(conn, org_id="org-b")
+    assert {row[0] for row in rows_b} == {"u2"}, "membro inactive não entra em org-b"
+
+    rows_all = fetch_unesco_participants(conn)
+    assert len(rows_all) == 2, "sem filtro: sem JOIN, sem duplicação"
+    assert [row[0] for row in rows_all].count("u2") == 1
+
+
+def test_unesco_export_org_resolution_policy():
+    """T3-1: master fatia por org_id opcional (None = todas); org_admin só a
+    própria org; org_admin sem org recusa (fail-closed do dashboard)."""
+    from core.db.legacy_exports import resolve_unesco_export_org
+
+    assert resolve_unesco_export_org({"role": "master"}, None) is None
+    assert resolve_unesco_export_org({"role": "master"}, " org-a ") == "org-a"
+    # org_admin: org própria, pedido de outra org é recusado.
+    assert resolve_unesco_export_org(
+        {"role": "org_admin", "org_id": "org-a"}, None
+    ) == "org-a"
+    assert resolve_unesco_export_org(
+        {"role": "org_admin", "org_id": "org-a"}, "org-a"
+    ) == "org-a"
+    try:
+        resolve_unesco_export_org(
+            {"role": "org_admin", "org_id": "org-a"}, "org-b"
+        )
+        raise AssertionError("org_admin não pode pedir outra org")
+    except ValueError:
+        pass
+    try:
+        resolve_unesco_export_org({"role": "org_admin", "org_id": None}, None)
+        raise AssertionError("org_admin sem org deve ser recusado")
+    except ValueError:
+        pass
+
+
+def test_unesco_export_routes_are_org_gated():
+    """T3-1 (source-level, rotas dependem de fastapi): export UNESCO aberto a
+    org_admin com resolução de org via helper, não mais master-only cru."""
+    source = open("admin_web/routes/unesco_export_routes.py", encoding="utf-8").read()
+    assert "Depends(require_org_admin)" in source, "rotas passam a org gate"
+    assert "Depends(require_master)" not in source
+    assert "resolve_unesco_export_org" in source, "org resolvida pelo helper"
+    assert "org_id: Optional[str] = Query(None)" in source, "query param p/ master"
+
+
 def test_fetches_handle_pre_relation_schema():
     """Bancos anteriores às colunas relation_id/source_kind continuam legíveis."""
     from core.db.legacy_exports import (
