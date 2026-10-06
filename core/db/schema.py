@@ -1442,6 +1442,7 @@ class SchemaDatabaseMixin:
                 extracted_at DATETIME,
                 page_count INTEGER,
                 word_count INTEGER,
+                expires_at DATETIME,
                 FOREIGN KEY (project_id) REFERENCES work_projects(id)
             )
             """
@@ -1450,6 +1451,18 @@ class SchemaDatabaseMixin:
             "CREATE INDEX IF NOT EXISTS idx_work_project_attachments_project "
             "ON work_project_attachments(project_id)"
         )
+        # C12f (T3-2): TTL de anexo — bancos criados antes da coluna ganham
+        # a migração aditiva (CREATE IF NOT EXISTS não altera tabela existente).
+        attachment_columns = {
+            row[1]
+            for row in cursor.execute(
+                "PRAGMA table_info(work_project_attachments)"
+            ).fetchall()
+        }
+        if "expires_at" not in attachment_columns:
+            cursor.execute(
+                "ALTER TABLE work_project_attachments ADD COLUMN expires_at DATETIME"
+            )
 
         # C12c4: a migracao de tenancy DEPOIS de TODAS as tabelas work —
         # work_project_attachments e criada aqui embaixo; aplicada antes,

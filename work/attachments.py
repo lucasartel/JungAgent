@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +17,22 @@ from work.common import _now_iso
 from work.tenancy import tenancy_insert_columns, tenancy_insert_placeholders, tenancy_insert_values
 
 logger = logging.getLogger(__name__)
+
+
+def _attachment_ttl_days() -> int:
+    """TTL do anexo em dias (T3-2). Default 90; env inválida cai no default."""
+    raw = os.getenv("WORK_ATTACHMENT_TTL_DAYS", "90") or "90"
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 90
+
+
+def attachment_expiry_iso() -> str:
+    """``expires_at`` no formato de ``_now_iso`` (UTC `%Y-%m-%d %H:%M:%S` —
+    ordena lexicograficamente, mesmo contrato da comparação do job)."""
+    moment = datetime.utcnow() + timedelta(days=_attachment_ttl_days())
+    return moment.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _guess_mime_type(filename: str) -> str:
@@ -73,11 +90,18 @@ class WorkAttachmentMixin:
             f"""
             INSERT INTO work_project_attachments (
                 project_id, filename, stored_path, size_bytes, mime_type,
-                uploaded_by, extraction_status, {tenancy_insert_columns()}, uploaded_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', {tenancy_insert_placeholders()}, ?)
+                uploaded_by, extraction_status, {tenancy_insert_columns()},
+                uploaded_at, expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', {tenancy_insert_placeholders()}, ?, ?)
             """,
             (project_id, safe_name, str(stored_path), size_bytes, mime_type,
-             uploaded_by, *tenancy_insert_values(self.db), _now_iso()),
+             uploaded_by, *tenancy_insert_values(
+                 self.db,
+                 # C12f (T3-2): o anexo herda a Relation da LINHA DE ORIGEM
+                 # (o projeto) — Seção 4 da auditoria: nunca org inferida do
+                 # admin; sem Relation no projeto a origem fica NULL.
+                 origin_relation_id=(project or {}).get("origin_relation_id"),
+             ), _now_iso(), attachment_expiry_iso()),
         )
         self.db.conn.commit()
         attachment_id = cursor.lastrowid
