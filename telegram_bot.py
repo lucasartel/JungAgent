@@ -1157,18 +1157,17 @@ O que você decide?
             
             # Salvar no DB principal
             try:
-                cursor = bot_state.db.conn.cursor()
-                cursor.execute("""
-                    INSERT OR REPLACE INTO unesco_pilot_data (
-                        user_id, baseline_stress_score, baseline_trait_challenge, baseline_expectation
-                    ) VALUES (?, ?, ?, ?)
-                """, (
-                    user_id, 
-                    context.user_data['baseline_stress_score'],
-                    context.user_data['baseline_trait_challenge'],
-                    context.user_data['baseline_expectation']
-                ))
-                bot_state.db.conn.commit()
+                # C12f (r3): a coleta grava a Relation elegível responsável
+                # por ela em origin_relation_id — o export por org só libera
+                # registros com origem própria (sem relation = NULL/master).
+                from core.db.unesco_pilot import save_unesco_pilot_baseline
+                save_unesco_pilot_baseline(
+                    bot_state.db,
+                    user_id=user_id,
+                    baseline_stress_score=context.user_data['baseline_stress_score'],
+                    baseline_trait_challenge=context.user_data['baseline_trait_challenge'],
+                    baseline_expectation=context.user_data['baseline_expectation'],
+                )
                 logger.info(f"✅ Dados base do piloto salvos para {user_id[:8]}")
             except Exception as e:
                 logger.error(f"❌ Erro ao salvar unesco_pilot_data: {e}")
