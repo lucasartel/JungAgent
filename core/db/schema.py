@@ -1138,10 +1138,25 @@ class SchemaDatabaseMixin:
                 
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 completed_at DATETIME,
+                origin_relation_id TEXT,
                 
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
         """)
+        # C12f (r2): origem verificavel do registro do piloto — sem ela o
+        # escopo por org nao pode liberar o dado (master-only). Bancos
+        # criados antes ganham a coluna com NULL (dados antigos = sem
+        # origem comprovada, por definicao).
+        pilot_columns = {
+            row[1]
+            for row in cursor.execute(
+                "PRAGMA table_info(unesco_pilot_data)"
+            ).fetchall()
+        }
+        if "origin_relation_id" not in pilot_columns:
+            cursor.execute(
+                "ALTER TABLE unesco_pilot_data ADD COLUMN origin_relation_id TEXT"
+            )
 
         # ========== ÃNDICES DE PERFORMANCE ==========
         # Conversas

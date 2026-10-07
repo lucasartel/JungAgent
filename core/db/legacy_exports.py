@@ -263,14 +263,16 @@ def fetch_unesco_participants(
     voltam a somar todas as escopas; as colunas por escopo trazem a quebra
     explícita. Revisão P2 (round 2): as conversas também são filtradas pela
     instância canônica (+ NULL) — conversa da mesma pessoa em OUTRA instância
-    não entra no piloto. T3-1 (r1): ``org_id`` só exporta quando há as DUAS
-    comprovações — membership ativa em ``user_organization_mapping`` E a
-    Relation do participante da própria org com consentimento concedido
-    (gate C12g): origem e autorização do dado pessoal, não só o vínculo do
-    participante. As contagens casam apenas conversas de Relation da org
-    autorizada (conversas sem Relation ou de outra org ficam de fora — no
-    escopo de org ``no_relation`` é sempre 0). Sem filtro = visão global do
-    master, sem JOIN. Banco sem mapping/relations é recusado — nunca vaza.
+    não entra no piloto. T3-1 (r1+r2): ``org_id`` só exporta quando há
+    comprovações — membership ativa em ``user_organization_mapping`` E o
+    REGISTRO com origem própria: ``origin_relation_id`` casando com Relation
+    da própria org, do próprio participante, ativa e consent granted (C12g).
+    A Relation ATUAL do participante não autoriza dado anterior: origem de
+    cada registro é a dele (registros sem origem — dados antigos — são
+    master-only). As contagens casam apenas conversas de Relation da org
+    autorizada (sem Relation ou de outra org ficam fora; ``no_relation`` é 0
+    no escopo de org). Sem filtro = visão global do master. Banco sem
+    mapping/relations/coluna de origem é recusado — nunca vaza.
     """
     cursor = conn.cursor()
     c_cols = _table_columns(cursor, "conversations")
@@ -297,15 +299,20 @@ def fetch_unesco_participants(
         relation_cols = _table_columns(cursor, "agent_relations")
         if not {"relation_id", "org_id", "status", "consent_status"} <= relation_cols:
             raise ValueError("relations_de_org_ausente")
-        # Participante: membro ativo + Relation própria da org autorizada —
-        # membership sozinho não libera dados pessoais (P1-2b, r1).
+        if "origin_relation_id" not in _table_columns(cursor, "unesco_pilot_data"):
+            raise ValueError("origem_de_registro_ausente")
+        # Registro: origem própria verificável — a Relation DE ORIGEM do
+        # registro (não a Relation atual do participante), da org, do próprio
+        # participante e elegível (P1 r2): consentimento de hoje não retroage
+        # a conteúdo anterior. Membership ativa acompanha (fail-closed).
         instance_join = " AND rp.agent_instance = ?" if instance else ""
         org_clause = (
             " INNER JOIN user_organization_mapping uom"
             " ON u.user_id = uom.user_id AND uom.org_id = ?"
             " AND uom.status = 'active'"
             " INNER JOIN agent_relations rp"
-            " ON rp.participant_user_id = u.user_id"
+            " ON rp.relation_id = u.origin_relation_id"
+            " AND rp.participant_user_id = u.user_id"
             f"{instance_join} AND rp.org_id = ?"
             " AND rp.status = 'active' AND rp.consent_status = 'granted'"
         )

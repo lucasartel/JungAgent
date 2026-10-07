@@ -297,7 +297,7 @@ def _unesco_conn():
             baseline_trait_challenge TEXT, baseline_expectation TEXT,
             post_test_stress_score INTEGER, dossier_accuracy_rating INTEGER,
             safety_triggers_count INTEGER DEFAULT 0, created_at DATETIME,
-            completed_at DATETIME);
+            completed_at DATETIME, origin_relation_id TEXT);
         CREATE TABLE conversations (
             id INTEGER PRIMARY KEY, user_id TEXT, timestamp TEXT,
             relation_id TEXT, agent_instance TEXT);
@@ -422,6 +422,10 @@ def _unesco_org_conn():
         VALUES ('rel-jungle', '{instance}', 'org-a', 'u1', 'active', 'granted'),
                ('rel-u2', '{instance}', 'org-b', 'u2', 'active', 'granted'),
                ('rel-outro', '{instance}', 'org-b', 'u1', 'active', 'granted');
+        UPDATE unesco_pilot_data SET origin_relation_id = 'rel-jungle'
+            WHERE user_id = 'u1';
+        UPDATE unesco_pilot_data SET origin_relation_id = 'rel-u2'
+            WHERE user_id = 'u2';
         UPDATE conversations SET relation_id = 'rel-u2' WHERE user_id = 'u2';
         INSERT INTO conversations (id, user_id, timestamp, relation_id, agent_instance)
         VALUES (7, 'u1', '2026-09-08 10:00:00', 'rel-outro', NULL);
@@ -495,6 +499,57 @@ def test_unesco_org_export_requires_authorized_relation():
     assert {
         row[0] for row in fetch_unesco_participants(conn, org_id="org-b")
     } == {"u2"}, "org-b segue intacta (consentimento da rel-u2 concedido)"
+
+
+def test_unesco_org_export_excludes_records_without_origin():
+    """P1 (r2 do revisor): o REGISTRO UNESCO não tem org/relation de origem
+    no dado antigo — a Relation ATUAL do participante (user_id) não comprova
+    autorização para conteúdo anterior. Registro sem origem verificável fica
+    restrito ao master; org_admin só recebe registros com origem própria."""
+    from engines.will_scope import resolve_instance
+    from core.db.legacy_exports import fetch_unesco_participants
+
+    instance = resolve_instance(None)
+    conn = _unesco_org_conn()
+    conn.executescript(
+        f"""
+        -- u3: registro de 2025 SEM origem + Relation ATUAL (2026) da org-a
+        -- e membership ativa — exatamente a reprodução do revisor.
+        INSERT INTO unesco_pilot_data (user_id, baseline_stress_score,
+            baseline_trait_challenge, baseline_expectation,
+            post_test_stress_score, dossier_accuracy_rating,
+            safety_triggers_count, created_at, completed_at,
+            origin_relation_id)
+        VALUES ('u3', 50, 'desafio-privado-2025', 'resposta-privada-2025',
+                10, 2, 0, '2025-03-01', '2025-04-01', NULL);
+        -- u4: registro cuja origem é Relation da org-b, mas membro da org-a.
+        INSERT INTO unesco_pilot_data (user_id, baseline_stress_score,
+            baseline_trait_challenge, baseline_expectation,
+            post_test_stress_score, dossier_accuracy_rating,
+            safety_triggers_count, created_at, completed_at,
+            origin_relation_id)
+        VALUES ('u4', 40, 'desafio-b', 'resposta-b', 9, 3, 0,
+                '2026-01-01', '2026-02-01', 'rel-u2');
+        INSERT INTO user_organization_mapping (user_id, org_id, status)
+        VALUES ('u3', 'org-a', 'active'), ('u4', 'org-a', 'active');
+        INSERT INTO agent_relations
+            (relation_id, agent_instance, org_id, participant_user_id,
+             status, consent_status)
+        VALUES ('rel-u3-2026', '{instance}', 'org-a', 'u3', 'active', 'granted');
+        """
+    )
+    conn.commit()
+
+    org_a_ids = {row[0] for row in fetch_unesco_participants(conn, org_id="org-a")}
+    assert "u3" not in org_a_ids, (
+        "registro sem origem não sai para org_admin mesmo com Relation "
+        "atual concedida — consentimento não retroage"
+    )
+    assert "u4" not in org_a_ids, "origem em Relation da org-b não libera à org-a"
+    assert org_a_ids == {"u1"}, "só u1: origem na org-a e Relation elegível"
+
+    master_ids = {row[0] for row in fetch_unesco_participants(conn)}
+    assert "u3" in master_ids, "master mantém a visão global (registros sem origem)"
 
 
 def test_unesco_export_org_resolution_policy():
