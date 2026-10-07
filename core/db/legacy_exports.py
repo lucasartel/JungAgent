@@ -232,7 +232,30 @@ UNESCO_CSV_HEADER = [
 ]
 
 
-def fetch_unesco_participants(conn, agent_instance: Optional[str] = None):
+def resolve_unesco_export_org(admin, requested_org_id: Optional[str] = None) -> Optional[str]:
+    """Org do export UNESCO (T3-1, precedente dashboard_routes:317-330).
+
+    - master: fatia pela ``org_id`` pedida no query param (None/branco =
+      todas as orgs — visão global do master).
+    - org_admin: somente a própria org; pedir outra org recusa (fail-closed)
+      e org_admin sem org também recusa (mesmo "sem organização associada"
+      do dashboard).
+    """
+    if (admin or {}).get("role") == "master":
+        return (requested_org_id or "").strip() or None
+    org = (admin or {}).get("org_id")
+    if not org:
+        raise ValueError("org_admin_sem_organizacao")
+    if (requested_org_id or "").strip() and requested_org_id.strip() != org:
+        raise ValueError("org_alheia_negada")
+    return org
+
+
+def fetch_unesco_participants(
+    conn,
+    agent_instance: Optional[str] = None,
+    org_id: Optional[str] = None,
+):
     """Linhas do piloto UNESCO com totais CORRETOS e quebra explícita por escopo.
 
     Revisão P2 do C12c2: contar só conversas sem Relation mostrava zero falso
@@ -240,8 +263,16 @@ def fetch_unesco_participants(conn, agent_instance: Optional[str] = None):
     voltam a somar todas as escopas; as colunas por escopo trazem a quebra
     explícita. Revisão P2 (round 2): as conversas também são filtradas pela
     instância canônica (+ NULL) — conversa da mesma pessoa em OUTRA instância
-    não entra no piloto. unesco_pilot_data não tem colunas de org/Relation/
-    instância — o fatiamento por org segue como pendência documentada.
+    não entra no piloto. T3-1 (r1+r2): ``org_id`` só exporta quando há
+    comprovações — membership ativa em ``user_organization_mapping`` E o
+    REGISTRO com origem própria: ``origin_relation_id`` casando com Relation
+    da própria org, do próprio participante, ativa e consent granted (C12g).
+    A Relation ATUAL do participante não autoriza dado anterior: origem de
+    cada registro é a dele (registros sem origem — dados antigos — são
+    master-only). As contagens casam apenas conversas de Relation da org
+    autorizada (sem Relation ou de outra org ficam fora; ``no_relation`` é 0
+    no escopo de org). Sem filtro = visão global do master. Banco sem
+    mapping/relations/coluna de origem é recusado — nunca vaza.
     """
     cursor = conn.cursor()
     c_cols = _table_columns(cursor, "conversations")
@@ -258,6 +289,43 @@ def fetch_unesco_participants(conn, agent_instance: Optional[str] = None):
         inst_params = [instance]
     rel_null = " AND c.relation_id IS NULL" if "relation_id" in c_cols else ""
     rel_not_null = " AND c.relation_id IS NOT NULL" if "relation_id" in c_cols else " AND 0"
+    org_clause = ""
+    org_params: List[str] = []
+    org_rel_join = ""
+    org_rel_params: List[str] = []
+    if org_id:
+        if "user_id" not in _table_columns(cursor, "user_organization_mapping"):
+            raise ValueError("mapping_de_org_ausente")
+        relation_cols = _table_columns(cursor, "agent_relations")
+        if not {"relation_id", "org_id", "status", "consent_status"} <= relation_cols:
+            raise ValueError("relations_de_org_ausente")
+        if "origin_relation_id" not in _table_columns(cursor, "unesco_pilot_data"):
+            raise ValueError("origem_de_registro_ausente")
+        # Registro: origem própria verificável — a Relation DE ORIGEM do
+        # registro (não a Relation atual do participante), da org, do próprio
+        # participante e elegível (P1 r2): consentimento de hoje não retroage
+        # a conteúdo anterior. Membership ativa acompanha (fail-closed).
+        instance_join = " AND rp.agent_instance = ?" if instance else ""
+        org_clause = (
+            " INNER JOIN user_organization_mapping uom"
+            " ON u.user_id = uom.user_id AND uom.org_id = ?"
+            " AND uom.status = 'active'"
+            " INNER JOIN agent_relations rp"
+            " ON rp.relation_id = u.origin_relation_id"
+            " AND rp.participant_user_id = u.user_id"
+            f"{instance_join} AND rp.org_id = ?"
+            " AND rp.status = 'active' AND rp.consent_status = 'granted'"
+        )
+        org_params = [org_id] + ([instance] if instance else []) + [org_id]
+        # Conversas: só as de Relation da org com consentimento concedido
+        # (P1-2a, r1) — origem comprovada por linha.
+        org_rel_join = (
+            " INNER JOIN agent_relations rc"
+            " ON c.relation_id = rc.relation_id"
+            " AND rc.org_id = ?"
+            " AND rc.status = 'active' AND rc.consent_status = 'granted'"
+        )
+        org_rel_params = [org_id]
     cursor.execute(
         f"""
         SELECT
@@ -268,17 +336,20 @@ def fetch_unesco_participants(conn, agent_instance: Optional[str] = None):
             u.post_test_stress_score,
             u.dossier_accuracy_rating,
             u.safety_triggers_count,
-            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id{inst_clause}) as total_messages,
-            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id{inst_clause}) as retention_days,
-            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id{rel_null}{inst_clause}) as messages_no_relation,
-            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id{rel_not_null}{inst_clause}) as messages_with_relation,
-            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id{rel_null}{inst_clause}) as days_no_relation,
-            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id{rel_not_null}{inst_clause}) as days_with_relation,
+            (SELECT COUNT(*) FROM conversations c{org_rel_join} WHERE c.user_id = u.user_id{inst_clause}) as total_messages,
+            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c{org_rel_join} WHERE c.user_id = u.user_id{inst_clause}) as retention_days,
+            (SELECT COUNT(*) FROM conversations c{org_rel_join} WHERE c.user_id = u.user_id{rel_null}{inst_clause}) as messages_no_relation,
+            (SELECT COUNT(*) FROM conversations c{org_rel_join} WHERE c.user_id = u.user_id{rel_not_null}{inst_clause}) as messages_with_relation,
+            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c{org_rel_join} WHERE c.user_id = u.user_id{rel_null}{inst_clause}) as days_no_relation,
+            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c{org_rel_join} WHERE c.user_id = u.user_id{rel_not_null}{inst_clause}) as days_with_relation,
             u.created_at,
             u.completed_at
-        FROM unesco_pilot_data u
+        FROM unesco_pilot_data u{org_clause}
         """,
-        inst_params * 6,
+        # Ordem dos placeholders: em cada subquery o JOIN da Relation da org
+        # (FROM) vem ANTES da cláusula de instância (WHERE) e ambos ANTES do
+        # FROM principal — params fora dessa ordem quebram o corte.
+        (org_rel_params + inst_params) * 6 + org_params,
     )
     return cursor.fetchall()
 

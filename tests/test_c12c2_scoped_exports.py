@@ -297,7 +297,7 @@ def _unesco_conn():
             baseline_trait_challenge TEXT, baseline_expectation TEXT,
             post_test_stress_score INTEGER, dossier_accuracy_rating INTEGER,
             safety_triggers_count INTEGER DEFAULT 0, created_at DATETIME,
-            completed_at DATETIME);
+            completed_at DATETIME, origin_relation_id TEXT);
         CREATE TABLE conversations (
             id INTEGER PRIMARY KEY, user_id TEXT, timestamp TEXT,
             relation_id TEXT, agent_instance TEXT);
@@ -385,6 +385,209 @@ def test_unesco_totals_respect_instance_isolation():
     u1 = next(row for row in rows if row[0] == "u1")
     assert u1[7] == 5, "conversa de outra instância não pode entrar no piloto"
     assert u1[9] == 3 and u1[10] == 2
+
+
+def _unesco_org_conn():
+    """Escopo por org (r1): mapping de membros + Relations autorizadas.
+
+    - u1: Relation da org-a (autoriza os dados pessoais de u1 à org-a);
+      membro inactive em org-b.
+    - u2: Relation da org-b; membro active nas duas orgs (membership sozinho
+      não autoriza export em org-a).
+    - rel-outro: conversa de u1 sob Relation da org-b (vazamento de contagem).
+    """
+    from engines.will_scope import resolve_instance
+
+    instance = resolve_instance(None)
+    conn = _unesco_conn()
+    conn.executescript(
+        f"""
+        CREATE TABLE user_organization_mapping (
+            user_id TEXT, org_id TEXT, status TEXT DEFAULT 'active');
+        CREATE TABLE organizations (org_id TEXT, org_name TEXT);
+        CREATE TABLE agent_relations (
+            relation_id TEXT PRIMARY KEY, agent_instance TEXT NOT NULL,
+            org_id TEXT, participant_user_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            consent_status TEXT NOT NULL DEFAULT 'pending');
+        INSERT INTO organizations VALUES ('org-a', 'Org A'), ('org-b', 'Org B');
+        INSERT INTO user_organization_mapping (user_id, org_id, status)
+        VALUES ('u1', 'org-a', 'active'),
+               ('u2', 'org-a', 'active'),
+               ('u2', 'org-b', 'active'),
+               ('u1', 'org-b', 'inactive');
+        INSERT INTO agent_relations
+            (relation_id, agent_instance, org_id, participant_user_id,
+             status, consent_status)
+        VALUES ('rel-jungle', '{instance}', 'org-a', 'u1', 'active', 'granted'),
+               ('rel-u2', '{instance}', 'org-b', 'u2', 'active', 'granted'),
+               ('rel-outro', '{instance}', 'org-b', 'u1', 'active', 'granted');
+        UPDATE unesco_pilot_data SET origin_relation_id = 'rel-jungle'
+            WHERE user_id = 'u1';
+        UPDATE unesco_pilot_data SET origin_relation_id = 'rel-u2'
+            WHERE user_id = 'u2';
+        UPDATE conversations SET relation_id = 'rel-u2' WHERE user_id = 'u2';
+        INSERT INTO conversations (id, user_id, timestamp, relation_id, agent_instance)
+        VALUES (7, 'u1', '2026-09-08 10:00:00', 'rel-outro', NULL);
+        """
+    )
+    conn.commit()
+    return conn
+
+
+def test_unesco_org_slicing_uses_member_mapping():
+    """T3-1 (r1): a entrada no export da org exige as DUAS comprovações —
+    membro ativo (membership) E Relation do participante da própria org com
+    consentimento concedido. Membership sozinho não libera dados pessoais."""
+    from core.db.legacy_exports import fetch_unesco_participants
+
+    conn = _unesco_org_conn()
+
+    rows_a = fetch_unesco_participants(conn, org_id="org-a")
+    assert {row[0] for row in rows_a} == {
+        "u1"
+    }, "u2 é membro de org-a, mas a Relation de u2 é da org-b"
+    u1_a = next(row for row in rows_a if row[0] == "u1")
+    assert u1_a[7] == 2, "só as conversas da Relation da org-a contam"
+
+    rows_b = fetch_unesco_participants(conn, org_id="org-b")
+    assert {row[0] for row in rows_b} == {
+        "u2"
+    }, "u1 inativo em org-b e sua Relation é da org-a"
+    u2_b = next(row for row in rows_b if row[0] == "u2")
+    assert u2_b[7] == 2, "conversas de u2 sob a Relation org-b"
+
+    rows_all = fetch_unesco_participants(conn)
+    assert len(rows_all) == 2, "sem filtro: sem JOIN, sem duplicação"
+    assert [row[0] for row in rows_all].count("u2") == 1
+
+
+def test_unesco_org_export_counts_only_org_relations():
+    """P1-2a (r1): as contagens não podem incluir conversas de Relation de
+    outra org nem conversas sem Relation — origem não comprovada fica fora."""
+    from core.db.legacy_exports import fetch_unesco_participants
+
+    conn = _unesco_org_conn()
+    u1 = next(
+        row
+        for row in fetch_unesco_participants(conn, org_id="org-a")
+        if row[0] == "u1"
+    )
+    assert u1[7] == 2, (
+        "total org-a de u1: só rel-jungle; a conversa rel-outro (org-b) "
+        "e as 2 sem Relation não entram"
+    )
+    assert u1[9] == 0, "no_relation é sempre 0 no escopo de org (sem origem)"
+
+
+def test_unesco_org_export_requires_authorized_relation():
+    """P1-2b (r1): liberação dos dados pessoais ao org_admin depende da
+    Relation estar ativa E com consentimento concedido (gate C12g) — não
+    apenas do vínculo do participante com a org."""
+    from core.db.legacy_exports import fetch_unesco_participants
+
+    conn = _unesco_org_conn()
+    conn.execute(
+        "UPDATE agent_relations SET consent_status = 'revoked'"
+        " WHERE relation_id = 'rel-jungle'"
+    )
+    conn.commit()
+
+    assert fetch_unesco_participants(conn, org_id="org-a") == [], (
+        "sem consentimento concedido não há export para a org-a"
+    )
+    assert {
+        row[0] for row in fetch_unesco_participants(conn, org_id="org-b")
+    } == {"u2"}, "org-b segue intacta (consentimento da rel-u2 concedido)"
+
+
+def test_unesco_org_export_excludes_records_without_origin():
+    """P1 (r2 do revisor): o REGISTRO UNESCO não tem org/relation de origem
+    no dado antigo — a Relation ATUAL do participante (user_id) não comprova
+    autorização para conteúdo anterior. Registro sem origem verificável fica
+    restrito ao master; org_admin só recebe registros com origem própria."""
+    from engines.will_scope import resolve_instance
+    from core.db.legacy_exports import fetch_unesco_participants
+
+    instance = resolve_instance(None)
+    conn = _unesco_org_conn()
+    conn.executescript(
+        f"""
+        -- u3: registro de 2025 SEM origem + Relation ATUAL (2026) da org-a
+        -- e membership ativa — exatamente a reprodução do revisor.
+        INSERT INTO unesco_pilot_data (user_id, baseline_stress_score,
+            baseline_trait_challenge, baseline_expectation,
+            post_test_stress_score, dossier_accuracy_rating,
+            safety_triggers_count, created_at, completed_at,
+            origin_relation_id)
+        VALUES ('u3', 50, 'desafio-privado-2025', 'resposta-privada-2025',
+                10, 2, 0, '2025-03-01', '2025-04-01', NULL);
+        -- u4: registro cuja origem é Relation da org-b, mas membro da org-a.
+        INSERT INTO unesco_pilot_data (user_id, baseline_stress_score,
+            baseline_trait_challenge, baseline_expectation,
+            post_test_stress_score, dossier_accuracy_rating,
+            safety_triggers_count, created_at, completed_at,
+            origin_relation_id)
+        VALUES ('u4', 40, 'desafio-b', 'resposta-b', 9, 3, 0,
+                '2026-01-01', '2026-02-01', 'rel-u2');
+        INSERT INTO user_organization_mapping (user_id, org_id, status)
+        VALUES ('u3', 'org-a', 'active'), ('u4', 'org-a', 'active');
+        INSERT INTO agent_relations
+            (relation_id, agent_instance, org_id, participant_user_id,
+             status, consent_status)
+        VALUES ('rel-u3-2026', '{instance}', 'org-a', 'u3', 'active', 'granted');
+        """
+    )
+    conn.commit()
+
+    org_a_ids = {row[0] for row in fetch_unesco_participants(conn, org_id="org-a")}
+    assert "u3" not in org_a_ids, (
+        "registro sem origem não sai para org_admin mesmo com Relation "
+        "atual concedida — consentimento não retroage"
+    )
+    assert "u4" not in org_a_ids, "origem em Relation da org-b não libera à org-a"
+    assert org_a_ids == {"u1"}, "só u1: origem na org-a e Relation elegível"
+
+    master_ids = {row[0] for row in fetch_unesco_participants(conn)}
+    assert "u3" in master_ids, "master mantém a visão global (registros sem origem)"
+
+
+def test_unesco_export_org_resolution_policy():
+    """T3-1: master fatia por org_id opcional (None = todas); org_admin só a
+    própria org; org_admin sem org recusa (fail-closed do dashboard)."""
+    from core.db.legacy_exports import resolve_unesco_export_org
+
+    assert resolve_unesco_export_org({"role": "master"}, None) is None
+    assert resolve_unesco_export_org({"role": "master"}, " org-a ") == "org-a"
+    # org_admin: org própria, pedido de outra org é recusado.
+    assert resolve_unesco_export_org(
+        {"role": "org_admin", "org_id": "org-a"}, None
+    ) == "org-a"
+    assert resolve_unesco_export_org(
+        {"role": "org_admin", "org_id": "org-a"}, "org-a"
+    ) == "org-a"
+    try:
+        resolve_unesco_export_org(
+            {"role": "org_admin", "org_id": "org-a"}, "org-b"
+        )
+        raise AssertionError("org_admin não pode pedir outra org")
+    except ValueError:
+        pass
+    try:
+        resolve_unesco_export_org({"role": "org_admin", "org_id": None}, None)
+        raise AssertionError("org_admin sem org deve ser recusado")
+    except ValueError:
+        pass
+
+
+def test_unesco_export_routes_are_org_gated():
+    """T3-1 (source-level, rotas dependem de fastapi): export UNESCO aberto a
+    org_admin com resolução de org via helper, não mais master-only cru."""
+    source = open("admin_web/routes/unesco_export_routes.py", encoding="utf-8").read()
+    assert "Depends(require_org_admin)" in source, "rotas passam a org gate"
+    assert "Depends(require_master)" not in source
+    assert "resolve_unesco_export_org" in source, "org resolvida pelo helper"
+    assert "org_id: Optional[str] = Query(None)" in source, "query param p/ master"
 
 
 def test_fetches_handle_pre_relation_schema():

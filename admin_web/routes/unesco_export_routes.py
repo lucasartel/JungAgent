@@ -2,14 +2,19 @@
 import csv
 import logging
 from io import StringIO
-from typing import Dict
+from typing import Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from admin_web.auth.middleware import require_master
-from core.db.legacy_exports import build_unesco_csv, build_unesco_participants, fetch_unesco_participants
+from admin_web.auth.middleware import require_org_admin
+from core.db.legacy_exports import (
+    build_unesco_csv,
+    build_unesco_participants,
+    fetch_unesco_participants,
+    resolve_unesco_export_org,
+)
 
 router = APIRouter(prefix="/admin", tags=["unesco_export"])
 templates = Jinja2Templates(directory="admin_web/templates")
@@ -32,20 +37,39 @@ def get_db():
 
 
 @router.get("/unesco/export", response_class=HTMLResponse)
-async def view_unesco_data(request: Request, admin: Dict = Depends(require_master)):
+async def view_unesco_data(
+    request: Request,
+    admin: Dict = Depends(require_org_admin),
+    org_id: Optional[str] = Query(None),
+):
     """Pagina visual para ver os dados do Piloto UNESCO antes de exportar."""
     db = get_db()
-    rows = fetch_unesco_participants(db.conn, getattr(db, "agent_instance", None))
+    try:
+        org = resolve_unesco_export_org(admin, org_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    rows = fetch_unesco_participants(
+        db.conn, getattr(db, "agent_instance", None), org_id=org
+    )
     participants = build_unesco_participants(rows)
 
     return templates.TemplateResponse("unesco_export.html", {"request": request, "participants": participants})
 
 
 @router.get("/unesco/export/csv")
-async def export_unesco_csv(admin: Dict = Depends(require_master)):
+async def export_unesco_csv(
+    admin: Dict = Depends(require_org_admin),
+    org_id: Optional[str] = Query(None),
+):
     """Gera CSV anonimizado com os dados quantitativos e qualitativos do Piloto UNESCO."""
     db = get_db()
-    rows = fetch_unesco_participants(db.conn, getattr(db, "agent_instance", None))
+    try:
+        org = resolve_unesco_export_org(admin, org_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    rows = fetch_unesco_participants(
+        db.conn, getattr(db, "agent_instance", None), org_id=org
+    )
     header, data_rows = build_unesco_csv(rows)
 
     f = StringIO()

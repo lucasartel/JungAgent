@@ -1138,10 +1138,25 @@ class SchemaDatabaseMixin:
                 
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 completed_at DATETIME,
+                origin_relation_id TEXT,
                 
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
         """)
+        # C12f (r2): origem verificavel do registro do piloto — sem ela o
+        # escopo por org nao pode liberar o dado (master-only). Bancos
+        # criados antes ganham a coluna com NULL (dados antigos = sem
+        # origem comprovada, por definicao).
+        pilot_columns = {
+            row[1]
+            for row in cursor.execute(
+                "PRAGMA table_info(unesco_pilot_data)"
+            ).fetchall()
+        }
+        if "origin_relation_id" not in pilot_columns:
+            cursor.execute(
+                "ALTER TABLE unesco_pilot_data ADD COLUMN origin_relation_id TEXT"
+            )
 
         # ========== ÃNDICES DE PERFORMANCE ==========
         # Conversas
@@ -1442,6 +1457,7 @@ class SchemaDatabaseMixin:
                 extracted_at DATETIME,
                 page_count INTEGER,
                 word_count INTEGER,
+                expires_at DATETIME,
                 FOREIGN KEY (project_id) REFERENCES work_projects(id)
             )
             """
@@ -1450,6 +1466,18 @@ class SchemaDatabaseMixin:
             "CREATE INDEX IF NOT EXISTS idx_work_project_attachments_project "
             "ON work_project_attachments(project_id)"
         )
+        # C12f (T3-2): TTL de anexo — bancos criados antes da coluna ganham
+        # a migração aditiva (CREATE IF NOT EXISTS não altera tabela existente).
+        attachment_columns = {
+            row[1]
+            for row in cursor.execute(
+                "PRAGMA table_info(work_project_attachments)"
+            ).fetchall()
+        }
+        if "expires_at" not in attachment_columns:
+            cursor.execute(
+                "ALTER TABLE work_project_attachments ADD COLUMN expires_at DATETIME"
+            )
 
         # C12c4: a migracao de tenancy DEPOIS de TODAS as tabelas work —
         # work_project_attachments e criada aqui embaixo; aplicada antes,

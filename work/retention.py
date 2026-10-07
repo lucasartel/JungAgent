@@ -361,3 +361,117 @@ def purge_is_clean(remaining: Dict[str, Dict[str, int]]) -> bool:
     return all(
         count == 0 for fields in remaining.values() for count in fields.values()
     )
+
+
+def cleanup_expired_attachments(db, *, apply: bool = False) -> Dict:
+    """Job de limpeza de anexos vencidos (T3-2). Dry-run por padrão.
+
+    Remove as linhas com ``expires_at`` no passado e os arquivos fisicos
+    (mesmas raizes guardadas do expurgo). Banco sem a coluna de TTL ou sem
+    vencidos: reporta e nao faz nada. Anexos sem ``expires_at`` (anteriores
+    ao TTL) nunca sao tocados — retencao aberta, nao expirada.
+    """
+    conn = getattr(db, "conn", db)
+    cursor = conn.cursor()
+    result: Dict = {"expired": [], "removed_files": 0, "applied": apply}
+    if not _table_exists(cursor, "work_project_attachments"):
+        return result
+    if "expires_at" not in _table_columns(cursor, "work_project_attachments"):
+        return result
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    rows = list(
+        cursor.execute(
+            "SELECT id, stored_path FROM work_project_attachments"
+            " WHERE expires_at IS NOT NULL AND expires_at <> ''"
+            "   AND expires_at <= ?",
+            (now,),
+        ).fetchall()
+    )
+    result["expired"] = [
+        {"id": row[0], "stored_path": row[1]} for row in rows
+    ]
+    if not apply or not rows:
+        return result
+    expired_ids = [row[0] for row in rows]
+    # P1 (r1): reenviar o mesmo nome no mesmo projeto REUSA o stored_path —
+    # capturar as referências que SOBREVIVEM à limpeza antes de apagar; o
+    # arquivo de uma linha vigente nunca sai junto com o registro expirado.
+    survivor_paths = {
+        row[0]
+        for row in cursor.execute(
+            "SELECT DISTINCT stored_path FROM work_project_attachments"
+            f" WHERE id NOT IN ({', '.join('?' * len(expired_ids))})"
+            "   AND stored_path IS NOT NULL AND stored_path <> ''",
+            expired_ids,
+        ).fetchall()
+    }
+    paths_to_remove = []
+    for row in rows:
+        path = row[1]
+        if path and path not in survivor_paths and path not in paths_to_remove:
+            paths_to_remove.append(path)
+    cursor.executemany(
+        "DELETE FROM work_project_attachments WHERE id = ?",
+        [(expired_id,) for expired_id in expired_ids],
+    )
+    conn.commit()
+    result["removed_files"] = _remove_attached_files(paths_to_remove)
+    return result
+
+
+def reconcile_attachment_files(db, *, apply: bool = False) -> Dict:
+    """Reconciliacao arquivo<->linha dos anexos (T3-2). Dry-run por padrao.
+
+    - ``missing_files``: linhas cujo ``stored_path`` nao existe mais — apenas
+      reporta (a linha e dado; nada e ressuscitado nem deletado aqui);
+    - ``orphan_files``: arquivos do diretorio de anexos sem linha
+      correspondente — em ``apply`` sao removidos.
+    """
+    from work.attachments import _resolve_attachment_dir
+
+    conn = getattr(db, "conn", db)
+    cursor = conn.cursor()
+    result: Dict = {
+        "missing_files": [],
+        "orphan_files": [],
+        "removed_orphans": 0,
+        "applied": apply,
+    }
+    if not _table_exists(cursor, "work_project_attachments"):
+        return result
+    referenced = set()
+    for row in cursor.execute(
+        "SELECT id, stored_path FROM work_project_attachments"
+        " WHERE stored_path IS NOT NULL AND stored_path <> ''"
+    ).fetchall():
+        path = Path(row[1])
+        try:
+            referenced.add(path.resolve())
+        except OSError:
+            continue
+        if not path.is_file():
+            result["missing_files"].append(
+                {"id": row[0], "stored_path": row[1]}
+            )
+
+    att_dir = _resolve_attachment_dir()
+    for entry in sorted(att_dir.iterdir()):
+        if not entry.is_file():
+            continue
+        try:
+            if entry.resolve() in referenced:
+                continue
+        except OSError:
+            continue
+        result["orphan_files"].append(str(entry))
+
+    if apply and result["orphan_files"]:
+        removed = 0
+        for raw in result["orphan_files"]:
+            try:
+                Path(raw).unlink()
+                removed += 1
+            except OSError:
+                continue
+        result["removed_orphans"] = removed
+    return result
