@@ -281,3 +281,64 @@ def test_cleanup_script_dry_run_apply_and_exit_codes(monkeypatch, tmp_path):
     final = run_cleanup(db.conn, apply=True)
     assert [item["id"] for item in final["reconcile"]["missing_files"]] == [kept["id"]]
     assert exit_code_for(final) == 0, "missing_files e report-only"
+
+
+def test_cleanup_preserves_file_referenced_by_surviving_record(
+    monkeypatch, tmp_path
+):
+    """P1 (r1 do revisor): reenviar o mesmo nome no mesmo projeto REUSA o
+    stored_path (`project{id}_{filename}`). Expirar o registro antigo não
+    pode apagar o arquivo que o registro vigente ainda referencia."""
+    from work.retention import cleanup_expired_attachments
+
+    monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", str(tmp_path))
+    db = _real_schema_db()
+    engine = _engine(db)
+    project_id = _project_with_relation(engine)
+
+    first = engine.save_project_attachment(
+        project_id=project_id,
+        filename="contrato.pdf",
+        content=b"versao-1",
+        uploaded_by="master@corp",
+        extract_text=False,
+    )
+    second = engine.save_project_attachment(
+        project_id=project_id,
+        filename="contrato.pdf",
+        content=b"versao-2",
+        uploaded_by="master@corp",
+        extract_text=False,
+    )
+    path_first = db.conn.execute(
+        "SELECT stored_path FROM work_project_attachments WHERE id = ?",
+        (first["id"],),
+    ).fetchone()["stored_path"]
+    path_second = db.conn.execute(
+        "SELECT stored_path FROM work_project_attachments WHERE id = ?",
+        (second["id"],),
+    ).fetchone()["stored_path"]
+    assert path_first == path_second, "mesmo nome reusa o caminho físico"
+
+    db.conn.execute(
+        "UPDATE work_project_attachments SET expires_at = ? WHERE id = ?",
+        ("2000-01-01 00:00:00", first["id"]),
+    )
+    db.conn.commit()
+
+    applied = cleanup_expired_attachments(db, apply=True)
+    assert [item["id"] for item in applied["expired"]] == [first["id"]]
+    assert applied["removed_files"] == 0, (
+        "arquivo ainda referenciado pelo registro vigente não pode sair"
+    )
+    surviving = Path(path_second)
+    assert surviving.exists(), "arquivo do registro vigente permanece"
+    assert surviving.read_bytes() == b"versao-2"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM work_project_attachments WHERE id = ?",
+        (second["id"],),
+    ).fetchone()[0] == 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM work_project_attachments WHERE id = ?",
+        (first["id"],),
+    ).fetchone()[0] == 0, "a linha expirada sai"

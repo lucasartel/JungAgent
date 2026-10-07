@@ -392,14 +392,30 @@ def cleanup_expired_attachments(db, *, apply: bool = False) -> Dict:
     ]
     if not apply or not rows:
         return result
-    result["removed_files"] = _remove_attached_files(
-        [row[1] for row in rows]
-    )
+    expired_ids = [row[0] for row in rows]
+    # P1 (r1): reenviar o mesmo nome no mesmo projeto REUSA o stored_path —
+    # capturar as referências que SOBREVIVEM à limpeza antes de apagar; o
+    # arquivo de uma linha vigente nunca sai junto com o registro expirado.
+    survivor_paths = {
+        row[0]
+        for row in cursor.execute(
+            "SELECT DISTINCT stored_path FROM work_project_attachments"
+            f" WHERE id NOT IN ({', '.join('?' * len(expired_ids))})"
+            "   AND stored_path IS NOT NULL AND stored_path <> ''",
+            expired_ids,
+        ).fetchall()
+    }
+    paths_to_remove = []
+    for row in rows:
+        path = row[1]
+        if path and path not in survivor_paths and path not in paths_to_remove:
+            paths_to_remove.append(path)
     cursor.executemany(
         "DELETE FROM work_project_attachments WHERE id = ?",
-        [(row[0],) for row in rows],
+        [(expired_id,) for expired_id in expired_ids],
     )
     conn.commit()
+    result["removed_files"] = _remove_attached_files(paths_to_remove)
     return result
 
 

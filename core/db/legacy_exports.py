@@ -263,11 +263,14 @@ def fetch_unesco_participants(
     voltam a somar todas as escopas; as colunas por escopo trazem a quebra
     explícita. Revisão P2 (round 2): as conversas também são filtradas pela
     instância canônica (+ NULL) — conversa da mesma pessoa em OUTRA instância
-    não entra no piloto. T3-1: ``org_id`` fatia os participantes pela
-    membership ativa em ``user_organization_mapping`` (precedente do
-    dashboard); as 6 subqueries casam por ``user_id`` e acompanham o corte.
-    Sem filtro = sem JOIN (membro de duas orgs não duplica linha). Pedido de
-    org num banco sem mapping é recusado — nunca vaza para "todas".
+    não entra no piloto. T3-1 (r1): ``org_id`` só exporta quando há as DUAS
+    comprovações — membership ativa em ``user_organization_mapping`` E a
+    Relation do participante da própria org com consentimento concedido
+    (gate C12g): origem e autorização do dado pessoal, não só o vínculo do
+    participante. As contagens casam apenas conversas de Relation da org
+    autorizada (conversas sem Relation ou de outra org ficam de fora — no
+    escopo de org ``no_relation`` é sempre 0). Sem filtro = visão global do
+    master, sem JOIN. Banco sem mapping/relations é recusado — nunca vaza.
     """
     cursor = conn.cursor()
     c_cols = _table_columns(cursor, "conversations")
@@ -286,15 +289,36 @@ def fetch_unesco_participants(
     rel_not_null = " AND c.relation_id IS NOT NULL" if "relation_id" in c_cols else " AND 0"
     org_clause = ""
     org_params: List[str] = []
+    org_rel_join = ""
+    org_rel_params: List[str] = []
     if org_id:
         if "user_id" not in _table_columns(cursor, "user_organization_mapping"):
             raise ValueError("mapping_de_org_ausente")
+        relation_cols = _table_columns(cursor, "agent_relations")
+        if not {"relation_id", "org_id", "status", "consent_status"} <= relation_cols:
+            raise ValueError("relations_de_org_ausente")
+        # Participante: membro ativo + Relation própria da org autorizada —
+        # membership sozinho não libera dados pessoais (P1-2b, r1).
+        instance_join = " AND rp.agent_instance = ?" if instance else ""
         org_clause = (
             " INNER JOIN user_organization_mapping uom"
             " ON u.user_id = uom.user_id AND uom.org_id = ?"
             " AND uom.status = 'active'"
+            " INNER JOIN agent_relations rp"
+            " ON rp.participant_user_id = u.user_id"
+            f"{instance_join} AND rp.org_id = ?"
+            " AND rp.status = 'active' AND rp.consent_status = 'granted'"
         )
-        org_params = [org_id]
+        org_params = [org_id] + ([instance] if instance else []) + [org_id]
+        # Conversas: só as de Relation da org com consentimento concedido
+        # (P1-2a, r1) — origem comprovada por linha.
+        org_rel_join = (
+            " INNER JOIN agent_relations rc"
+            " ON c.relation_id = rc.relation_id"
+            " AND rc.org_id = ?"
+            " AND rc.status = 'active' AND rc.consent_status = 'granted'"
+        )
+        org_rel_params = [org_id]
     cursor.execute(
         f"""
         SELECT
@@ -305,19 +329,20 @@ def fetch_unesco_participants(
             u.post_test_stress_score,
             u.dossier_accuracy_rating,
             u.safety_triggers_count,
-            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id{inst_clause}) as total_messages,
-            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id{inst_clause}) as retention_days,
-            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id{rel_null}{inst_clause}) as messages_no_relation,
-            (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.user_id{rel_not_null}{inst_clause}) as messages_with_relation,
-            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id{rel_null}{inst_clause}) as days_no_relation,
-            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c WHERE c.user_id = u.user_id{rel_not_null}{inst_clause}) as days_with_relation,
+            (SELECT COUNT(*) FROM conversations c{org_rel_join} WHERE c.user_id = u.user_id{inst_clause}) as total_messages,
+            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c{org_rel_join} WHERE c.user_id = u.user_id{inst_clause}) as retention_days,
+            (SELECT COUNT(*) FROM conversations c{org_rel_join} WHERE c.user_id = u.user_id{rel_null}{inst_clause}) as messages_no_relation,
+            (SELECT COUNT(*) FROM conversations c{org_rel_join} WHERE c.user_id = u.user_id{rel_not_null}{inst_clause}) as messages_with_relation,
+            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c{org_rel_join} WHERE c.user_id = u.user_id{rel_null}{inst_clause}) as days_no_relation,
+            (SELECT COUNT(DISTINCT date(timestamp)) FROM conversations c{org_rel_join} WHERE c.user_id = u.user_id{rel_not_null}{inst_clause}) as days_with_relation,
             u.created_at,
             u.completed_at
         FROM unesco_pilot_data u{org_clause}
         """,
-        # Ordem dos placeholders: as subqueries (instância) aparecem ANTES do
-        # JOIN da org na string SQL — params na ordem contrária quebra o corte.
-        inst_params * 6 + org_params,
+        # Ordem dos placeholders: em cada subquery o JOIN da Relation da org
+        # (FROM) vem ANTES da cláusula de instância (WHERE) e ambos ANTES do
+        # FROM principal — params fora dessa ordem quebram o corte.
+        (org_rel_params + inst_params) * 6 + org_params,
     )
     return cursor.fetchall()
 
