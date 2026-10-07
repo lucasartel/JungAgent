@@ -8,7 +8,10 @@ permanecem sem origem — nada é atribuído retroativamente.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_collection_origin_relation_id(
@@ -16,25 +19,50 @@ def resolve_collection_origin_relation_id(
 ) -> Optional[str]:
     """Relation elegível (gate C12g) responsável pela coleta, ou ``None``.
 
-    Fail-closed: qualquer falha de lookup ou estado de relation não
-    elegível (status/consentimento) resulta em ``None`` — o registro fica
-    master-only em vez de receber origem não comprovada.
+    Distinção r4: falha TÉCNICA (instância, capability ausente, exceção do
+    lookup) é registrada e PROPAGADA antes de qualquer gravação — nunca
+    vira origem ``NULL`` silenciosa (que apagaria origem existente).
+    Relation realmente ausente ou inelegível (status/consentimento) segue
+    produzindo ``None``: o registro fica master-only (fail-closed).
     """
     try:
         from engines.will_scope import resolve_instance
 
         instance = resolve_instance(getattr(db, "agent_instance", None))
     except Exception:
-        instance = ""
+        logger.exception(
+            "unesco_pilot: falha tecnica ao resolver instancia (user=%s) "
+            "— coleta interrompida antes da gravacao",
+            participant_user_id,
+        )
+        raise
     getter = getattr(db, "get_agent_relation_for_participant", None)
-    if not instance or getter is None:
-        return None
+    if getter is None:
+        logger.error(
+            "unesco_pilot: capability de relations ausente no db (user=%s) "
+            "— coleta interrompida antes da gravacao",
+            participant_user_id,
+        )
+        raise LookupError("relations_capability_ausente")
+    if not instance:
+        logger.error(
+            "unesco_pilot: instancia vazia na coleta (user=%s) "
+            "— coleta interrompida antes da gravacao",
+            participant_user_id,
+        )
+        raise LookupError("agent_instance_ausente")
     try:
         relation = getter(
             agent_instance=instance, participant_user_id=participant_user_id
         )
     except Exception:
-        return None
+        logger.exception(
+            "unesco_pilot: falha no lookup da Relation (user=%s, "
+            "instance=%s) — coleta interrompida antes da gravacao",
+            participant_user_id,
+            instance,
+        )
+        raise
     from core.db.relations import is_relation_eligible
 
     if not is_relation_eligible(relation):

@@ -7,11 +7,14 @@ onboarding apagava uma origem pré-registrada. Sem relação elegível grava
 NULL (master-only); dados antigos não passam por aqui e permanecem sem
 origem — nada é atribuído retroativamente (r2).
 """
+import logging
 import sqlite3
 import sys
 import threading
 import types
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -133,6 +136,74 @@ def test_repeticao_do_onboarding_preserva_origem():
         "origem da coleta elegível permanece na repetição"
     )
     assert len(fetch_unesco_participants(db.conn, org_id="org-a")) == 1
+
+
+def test_falha_de_lookup_propaga_e_preserva_origem(caplog):
+    """P2 (r4): exceção TÉCNICA do lookup não pode virar origem NULL
+    silenciosa — registrar e propagar ANTES da gravação, preservando a
+    origem já registrada."""
+    db = _db_with_org()
+    relation_id = _grant_relation(db, user_id="u1")
+    payload = dict(
+        user_id="u1",
+        baseline_stress_score=3,
+        baseline_trait_challenge="desafio",
+        baseline_expectation="expectativa",
+    )
+    save_unesco_pilot_baseline(db, **payload)
+
+    def _boom(**_kwargs):
+        raise RuntimeError("lookup falhou")
+
+    db.get_agent_relation_for_participant = _boom
+    with caplog.at_level(logging.ERROR, logger="core.db.unesco_pilot"):
+        with pytest.raises(RuntimeError, match="lookup falhou"):
+            save_unesco_pilot_baseline(db, **payload)
+
+    assert caplog.text, "a falha técnica é registrada em log"
+    stored = db.conn.execute(
+        "SELECT origin_relation_id FROM unesco_pilot_data WHERE user_id = 'u1'"
+    ).fetchone()
+    assert stored["origin_relation_id"] == relation_id, (
+        "origem existente preservada — a gravação nunca chega a rodar"
+    )
+
+
+def test_capability_de_relations_ausente_propaga():
+    """Capability ausente é erro técnico (ambiente quebrado), não 'sem
+    relation' — propaga antes de gravar."""
+    db = _db_with_org()
+    db.get_agent_relation_for_participant = None
+
+    with pytest.raises(LookupError, match="relations_capability_ausente"):
+        save_unesco_pilot_baseline(
+            db,
+            user_id="u1",
+            baseline_stress_score=3,
+            baseline_trait_challenge="desafio",
+            baseline_expectation="expectativa",
+        )
+
+
+def test_relation_realmente_ausente_continua_gerando_origem_null():
+    """Distinção da política: ausência de relation (lookup sem exceção)
+    continua produzindo origem NULL — master-only, sem levantar erro."""
+    db = _db_with_org()  # nenhuma relation registrada
+
+    save_unesco_pilot_baseline(
+        db,
+        user_id="u1",
+        baseline_stress_score=3,
+        baseline_trait_challenge="desafio",
+        baseline_expectation="expectativa",
+    )
+
+    stored = db.conn.execute(
+        "SELECT origin_relation_id FROM unesco_pilot_data WHERE user_id = 'u1'"
+    ).fetchone()
+    assert stored["origin_relation_id"] is None
+    assert fetch_unesco_participants(db.conn, org_id="org-a") == []
+    assert [row[0] for row in fetch_unesco_participants(db.conn)] == ["u1"]
 
 
 def test_telegram_onboarding_usa_a_coleta_com_origem():
