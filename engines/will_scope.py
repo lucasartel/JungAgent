@@ -20,6 +20,7 @@ WILL_SCOPED_TABLES = (
     "agent_will_message_signals",
     "agent_will_pressure_state",
     "agent_will_pulse_events",
+    "agent_hobby_artifacts",
 )
 
 

@@ -625,33 +625,60 @@ Responda APENAS com JSON valido:
     ) -> int:
         # C12g: artefato derivado de conversas so e produzido com Relation
         # elegivel (ou admin legado na quarentena).
-        self._query_scope(user_id).require_production()
+        scope = self._query_scope(user_id)
+        scope.require_production()
         cursor = self.db.conn.cursor()
         stored_image_url = persistable_image_url(image_url)
         stored_raw_response = sanitize_persisted_payload(raw_response)
+        from engines.will_scope import scoped_insert_columns, scope_context
+
+        base_columns = [
+            "user_id",
+            "cycle_id",
+            "title",
+            "summary",
+            "image_prompt",
+            "image_url",
+            "provider",
+            "status",
+            "critique_summary",
+            "critique_json",
+            "evaluation_model",
+            "evaluated_at",
+            "inspirations_json",
+            "raw_response_json",
+        ]
+        base_values = [
+            user_id,
+            cycle_id,
+            title,
+            summary,
+            image_prompt,
+            stored_image_url,
+            provider,
+            "generated",
+            critique_summary,
+            json.dumps(critique_payload, ensure_ascii=False) if critique_payload else None,
+            evaluation_model,
+            datetime.utcnow().isoformat() if critique_payload else None,
+            json.dumps(inspirations, ensure_ascii=False),
+            json.dumps(stored_raw_response, ensure_ascii=False),
+        ]
+        # Corte D (T1-1b): carimbo da Relation elegivel da producao; o admin
+        # legado nasce na quarentena (relation NULL). scoped_insert_columns
+        # appenda so colunas existentes — bancos pre-migracao continuam.
+        will_scope = scope_context(
+            self.db,
+            relation_id=scope.relation_id,
+            agent_instance=self.agent_instance,
+        )
+        columns, values = scoped_insert_columns(
+            cursor, "agent_hobby_artifacts", base_columns, base_values, will_scope
+        )
         cursor.execute(
-            """
-            INSERT INTO agent_hobby_artifacts (
-                user_id, cycle_id, title, summary, image_prompt, image_url,
-                provider, status, critique_summary, critique_json, evaluation_model,
-                evaluated_at, inspirations_json, raw_response_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'generated', ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                user_id,
-                cycle_id,
-                title,
-                summary,
-                image_prompt,
-                stored_image_url,
-                provider,
-                critique_summary,
-                json.dumps(critique_payload, ensure_ascii=False) if critique_payload else None,
-                evaluation_model,
-                datetime.utcnow().isoformat() if critique_payload else None,
-                json.dumps(inspirations, ensure_ascii=False),
-                json.dumps(stored_raw_response, ensure_ascii=False),
-            ),
+            f"INSERT INTO agent_hobby_artifacts ({', '.join(columns)}) "
+            f"VALUES ({', '.join('?' for _ in columns)})",
+            tuple(values),
         )
         self.db.conn.commit()
         return cursor.lastrowid

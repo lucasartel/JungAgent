@@ -349,6 +349,9 @@ class SchemaDatabaseMixin:
             CREATE TABLE IF NOT EXISTS agent_hobby_artifacts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
+                agent_instance TEXT,
+                relation_id TEXT,
+                scope_kind TEXT NOT NULL DEFAULT 'global',
                 cycle_id TEXT,
                 title TEXT,
                 summary TEXT,

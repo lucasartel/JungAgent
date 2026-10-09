@@ -109,8 +109,19 @@ class AgentMetaConsciousnessEngine:
         Retorna lista vazia se a tabela não existir.
         """
         scope = self._query_scope(user_id)
-        clause, clause_params = scope.sql(("id", "user_id", "agent_instance"))
+        # Corte D (T1-1b): com a coluna na lista o escopo passa a valer —
+        # Relation estrita (quarentena para NULL, 1 = 0 quando negado).
+        clause, clause_params = scope.sql(
+            ("id", "user_id", "agent_instance", "relation_id")
+        )
         cursor = self.db.conn.cursor()
+        # Review P2 da PR #58: .sql() só trata Relation — a instância
+        # entra explícita (mesma composição de _fetch_will_states).
+        from engines.will_scope import instance_where_clause
+
+        instance_clause, instance_params = instance_where_clause(
+            cursor, "agent_hobby_artifacts", self.agent_instance
+        )
         try:
             cursor.execute(
                 f"""
@@ -123,11 +134,11 @@ class AgentMetaConsciousnessEngine:
                     critique_json,
                     created_at
                 FROM agent_hobby_artifacts
-                WHERE user_id = ?{clause}
+                WHERE user_id = ?{instance_clause}{clause}
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?
                 """,
-                (user_id, *clause_params, limit),
+                (user_id, *instance_params, *clause_params, limit),
             )
             items: List[Dict[str, Any]] = []
             for row in cursor.fetchall():
