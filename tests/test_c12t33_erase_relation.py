@@ -30,6 +30,9 @@ sys.modules["openai"] = _openai_stub
 
 
 def _schema_db():
+    import importlib
+    import inspect
+
     from core.db.relations import RelationsDatabaseMixin
     from core.db.schema import SchemaDatabaseMixin
     from engines.will_scope import WillScopeDatabaseMixin
@@ -47,7 +50,44 @@ def _schema_db():
             self._lock = threading.RLock()
             self._init_sqlite_schema()
 
-    return _RealSchema()
+    db = _RealSchema()
+    # Inventario completo (Revisao P1 da PR #59): todos os inits que
+    # criam tabelas com coluna de Relation fora do Work.
+    for module_name in (
+        "core.db.working_memory",
+        "engines.will_expression",
+        "core.db.relational_state",
+        "core.db.essays",
+        "core.db.meta_cognition",
+        "core.db.integrative_self",
+        "core.db.theory_of_mind",
+        "core.db.symbolic_graph",
+        "core.db.availability",
+        "engines.will_phase_arbitration",
+    ):
+        module = importlib.import_module(module_name)
+        for candidate in vars(module).values():
+            if not inspect.isclass(candidate):
+                continue
+            for method_name in dir(candidate):
+                if (
+                    method_name.startswith("_init_")
+                    and method_name.endswith("_schema")
+                    and not hasattr(db, method_name)
+                ):
+                    method = getattr(candidate, method_name)
+                    if callable(method):
+                        method(db)
+    import jung_rumination
+
+    engine_cls = [
+        value
+        for value in vars(jung_rumination).values()
+        if inspect.isclass(value)
+        and "Rumination" in getattr(value, "__name__", "")
+    ][0]
+    engine_cls(db)
+    return db
 
 
 def _seed(db, *, relation_id, user_id="u1", titulo="obra"):
@@ -169,6 +209,8 @@ def test_exige_relation_e_pula_tabelas_ausentes():
     from core.db.erase import erase_relation, verify_relation_erase
 
     db = _schema_db()
+    db.conn.execute("DROP TABLE rumination_fragments")
+    db.conn.execute("DROP TABLE relational_state")
     with pytest.raises(ValueError, match="relation_id"):
         erase_relation(db.conn, "   ")
     with pytest.raises(ValueError, match="relation_id"):
@@ -178,3 +220,157 @@ def test_exige_relation_e_pula_tabelas_ausentes():
     counts = erase_relation(db.conn, "rel-A")
     assert "rumination_fragments" not in counts, "tabela inexistente pulada"
     assert "relational_state" not in counts, "tabela inexistente pulada"
+
+
+def test_p1_revisao_redige_sobreviventes_de_campos_e_tabelas():
+    """Revisao P1 da PR #59 (Rodada 1): campos de conteudo sobreviviam
+    em tabelas ja contempladas (synthesis das tensao, scores do UNESCO)
+    e familias inteiras ficavam fora do mapa (working_memory_items,
+    will_expressions) — o verificador declarava clean mesmo assim."""
+    from core.db.erase import erase_relation, verify_relation_erase
+
+    db = _schema_db()
+    db.conn.execute(
+        "INSERT INTO rumination_tensions"
+        " (user_id, relation_id, tension_type, pole_a_content, pole_b_content,"
+        " intensity, maturity_score, synthesis_symbol, synthesis_question)"
+        " VALUES ('u1', 'rel-P1', 'synthesis', 'pole A', 'pole B',"
+        " 0.9, 0.8, 'SIMBOLO', 'PERGUNTA')"
+    )
+    db.conn.execute(
+        "INSERT INTO unesco_pilot_data"
+        " (user_id, origin_relation_id, baseline_stress_score,"
+        " post_test_stress_score, dossier_accuracy_rating)"
+        " VALUES ('u1', 'rel-P1', 8, 6, 4)"
+    )
+    db.conn.execute(
+        "INSERT INTO working_memory_items"
+        " (agent_instance, phase, item_type, title, summary, ownership_class,"
+        " relation_id, source_refs_json, created_at, updated_at)"
+        " VALUES ('jung_v1', 'hmm', 'nota', 'titulo privado', 'resumo privado',"
+        " 'relation_private', 'rel-P1', '{}', '2026-10-09', '2026-10-09')"
+    )
+    db.conn.execute(
+        "INSERT INTO will_expressions"
+        " (agent_instance, relation_id, user_id, cycle_id, will_name,"
+        " capability_key, gate_level, cost_class, idempotency_key,"
+        " reason, intent_json, prepared_payload_json)"
+        " VALUES ('jung_v1', 'rel-P1', 'u1', 'c1', 'expressar', 'msg.send',"
+        " 'L1', 'low', 'idem-1', 'motivo privado', '{\"i\": 1}',"
+        " '{\"mensagem completa\": \"ola\"}')"
+    )
+    db.conn.commit()
+
+    erase_relation(db.conn, "rel-P1")
+
+    tension = db.conn.execute(
+        "SELECT intensity, maturity_score, synthesis_symbol,"
+        " synthesis_question FROM rumination_tensions WHERE relation_id='rel-P1'"
+    ).fetchone()
+    assert tension["synthesis_symbol"] is None, "synthesis_symbol sobreviveu"
+    assert tension["synthesis_question"] is None, "synthesis_question sobreviveu"
+    assert tension["intensity"] is None and tension["maturity_score"] is None
+
+    unesco = db.conn.execute(
+        "SELECT baseline_stress_score, post_test_stress_score,"
+        " dossier_accuracy_rating FROM unesco_pilot_data"
+        " WHERE origin_relation_id='rel-P1'"
+    ).fetchone()
+    assert unesco["baseline_stress_score"] is None, "score de estresse sobreviveu"
+    assert unesco["post_test_stress_score"] is None
+    assert unesco["dossier_accuracy_rating"] is None
+
+    wm = db.conn.execute(
+        "SELECT title, summary FROM working_memory_items"
+        " WHERE relation_id='rel-P1'"
+    ).fetchone()
+    assert wm["title"] == "" and wm["summary"] == "", "wm privada sobreviveu"
+
+    will = db.conn.execute(
+        "SELECT reason, intent_json, prepared_payload_json"
+        " FROM will_expressions WHERE relation_id='rel-P1'"
+    ).fetchone()
+    assert will["reason"] is None, "reason nullable: sobreviveu como NULL"
+    assert will["intent_json"] == ""
+    assert will["prepared_payload_json"] == "", "payload preparado sobreviveu"
+
+    assert verify_relation_erase(db.conn, "rel-P1") == {}
+
+
+def test_cobertura_completa_do_inventario_de_relation():
+    """Inventario verificavel (Revisao P1 da PR #59): TODA coluna de
+    TODA tabela com Relation (fora do Work) tem decidao explicita —
+    ou e conteudo (redigido: marcador some) ou e audit-safe (padrao
+    ``preserved_field``). Coluna sem decisao falha o teste listando-a."""
+    from core.db.erase import (
+        _ERASE_FIELDS,
+        erase_relation,
+        preserved_field,
+        verify_relation_erase,
+    )
+
+    db = _schema_db()
+    cur = db.conn.cursor()
+    marcador = "CONTEUDO-PRIVADO-XYZ"
+    alvo = "rel-COV"
+    tabelas = []
+    nomes = [
+        row[0]
+        for row in cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+        ).fetchall()
+    ]
+    for table in nomes:
+        if table.startswith("work_") or table in (
+            "agent_relations",
+            "relation_erase_events",
+        ):
+            continue
+        columns = [row[1] for row in cur.execute(f"PRAGMA table_info({table})")]
+        if not set(columns) & {"relation_id", "origin_relation_id"}:
+            continue
+        mapped = set(_ERASE_FIELDS.get(table, []))
+        undecided = [
+            col
+            for col in columns
+            if col not in mapped and not preserved_field(col)
+        ]
+        assert not undecided, f"{table}: colunas sem decisao: {undecided}"
+        assert not (mapped - set(columns)), (
+            f"{table}: mapa aponta coluna inexistente: {mapped - set(columns)}"
+        )
+        tabelas.append((table, columns, mapped))
+    assert len(tabelas) >= 30, "inventario incompleto no schema da fixture"
+
+    # linha-marcador em cada tabela: marcador em todo campo nao-chave.
+    for table, columns, _ in tabelas:
+        insert_columns = [col for col in columns if col != "id"]
+        values = [
+            alvo
+            if col in ("relation_id", "origin_relation_id")
+            else marcador
+            for col in insert_columns
+        ]
+        placeholders = ",".join("?" * len(insert_columns))
+        cur.execute(
+            f"INSERT INTO {table} ({', '.join(insert_columns)})"
+            f" VALUES ({placeholders})",
+            values,
+        )
+    db.conn.commit()
+
+    erase_relation(db.conn, alvo)
+
+    sobreviventes = []
+    for table, columns, mapped in tabelas:
+        for col in sorted(mapped):
+            row = cur.execute(
+                f"SELECT count(*) FROM {table} WHERE {col} = ?",
+                (marcador,),
+            ).fetchone()
+            if row[0]:
+                sobreviventes.append(f"{table}.{col}")
+    assert not sobreviventes, (
+        f"conteudo privado sobreviveu ao expurgo: {sobreviventes}"
+    )
+    assert verify_relation_erase(db.conn, alvo) == {}

@@ -21,12 +21,37 @@ mapa — o minimo auditavel de consent e preservado por desenho.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
 # Coluna de Relation por familia (fora do Work; o Work usa origin_).
 RELATION_COLUMNS = ("relation_id", "origin_relation_id")
+
+# Auditoria sem conteudo privado (Revisao P1 da PR #59): TUDO que nao
+# casa com este padrao e conteudo e DEVE estar em _ERASE_FIELDS — o
+# teste de cobertura falha listando colunas sem decisao. Preserva-se
+# somente chaves/escopo, timestamps, estado de fluxo, classificadores
+# de enum, contadores operacionais, provedores e configs de janela.
+_PRESERVED_FIELD = re.compile(
+    r"(^|_)(id|ids|ids_json|user_id|agent_instance|ownership_class|origin_class"
+    r"|scope_kind|scope_key|org_id|relation_type|role|consent_status|phase"
+    r"|status|processed|participant_user_id|source_kind|source_table|source_id"
+    r"|idempotency_key|relation_id|origin_relation_id|is_current|operation"
+    r"|will_name|capability_key|gate_level|cost_class)$"
+    r"|_at$|_date$|_ts$|_until$|timestamp$|^created_|^updated_|^last_updated$"
+    r"|_count$|_attempts$|_days$|_budget$|_used$|_version$|version$|_enabled$"
+    r"|_type$|_kind$|_scope$|_origin$|_ref$|_refs_json$|_refs$|_source$|^source$"
+    r"|_platform$|^platform$|provider$|_model$|_key$|_level$|_class$"
+    r"|threshold|_until|_code$"
+    r"|^consent_|provenance_json$|_per_hour$"
+)
+
+
+def preserved_field(name: str) -> bool:
+    """True quando a coluna e audit-safe (fora do escopo de conteudo)."""
+    return bool(_PRESERVED_FIELD.search(name))
 
 # Campos de conteudo por tabela. O substituto e calculado por PRAGMA
 # ``notnull``: coluna NOT NULL recebe ``''``; as demais recebem NULL.
@@ -38,13 +63,25 @@ _ERASE_FIELDS: Dict[str, list] = {
         "detected_conflicts",
         "complexity",
         "keywords",
+        "user_name",
+        "tension_level",
+        "affective_charge",
+        "existential_depth",
+        "intensity_level",
     ],
-    "user_facts": ["fact_category", "fact_subcategory", "fact_key", "fact_value"],
+    "user_facts": [
+        "fact_category",
+        "fact_subcategory",
+        "fact_key",
+        "fact_value",
+        "confidence",
+    ],
     "user_patterns": [
         "pattern_type",
         "pattern_name",
         "pattern_description",
         "supporting_conversation_ids",
+        "confidence_score",
     ],
     "user_milestones": [
         "milestone_type",
@@ -71,6 +108,7 @@ _ERASE_FIELDS: Dict[str, list] = {
         "vark_dominant", "vark_recommended_training",
         "schwartz_values", "schwartz_top_3", "schwartz_cultural_fit",
         "schwartz_retention_risk", "executive_summary",
+        "conversations_analyzed",
     ],
     "agent_development": [
         "phase",
@@ -150,6 +188,7 @@ _ERASE_FIELDS: Dict[str, list] = {
         "conflict_type",
         "description",
         "provenance_json",
+        "tension_level",
     ],
     "full_analyses": [
         "user_name",
@@ -181,6 +220,9 @@ _ERASE_FIELDS: Dict[str, list] = {
         "closure_summary",
         "closure_journal_entry",
         "closure_evidence_json",
+        "importance_score",
+        "target_area",
+        "target_scope",
         "source_refs_json",
         "provenance_json",
         "origin_participant_user_id",
@@ -190,6 +232,7 @@ _ERASE_FIELDS: Dict[str, list] = {
         "history_excerpt",
         "result_summary",
         "error_message",
+        "article_chars",
         "source_refs_json",
         "provenance_json",
         "origin_participant_user_id",
@@ -200,6 +243,9 @@ _ERASE_FIELDS: Dict[str, list] = {
         "extracted_archetype",
         "primary_cognitive_distortion",
         "qualitative_feedback",
+        "baseline_stress_score",
+        "post_test_stress_score",
+        "dossier_accuracy_rating",
     ],
     # Criadas fora do init padrao do schema: pragma-aware, pulam quando
     # o banco nao as tem (mesma tolerancia do espelho do Work).
@@ -208,16 +254,84 @@ _ERASE_FIELDS: Dict[str, list] = {
         "context",
         "source_quote",
         "source_metadata_json",
+        "emotional_weight",
+        "tension_level",
     ],
-    "rumination_tensions": ["pole_a_content", "pole_b_content", "tension_description"],
-    "rumination_insights": ["full_message", "symbol_content", "question_content"],
+    "rumination_tensions": [
+        "pole_a_content",
+        "pole_b_content",
+        "tension_description",
+        "intensity",
+        "maturity_score",
+        "synthesis_symbol",
+        "synthesis_question",
+    ],
+    "rumination_insights": [
+        "full_message",
+        "symbol_content",
+        "question_content",
+        "depth_score",
+        "novelty_score",
+        "user_engaged",
+    ],
     "rumination_log": ["input_summary", "output_summary"],
     "relational_state": [
         "affective_tone_recent_json",
         "recurring_themes_json",
         "source_refs_json",
         "notes",
+        "agent_stance",
+        "cadence_baseline_hours",
+        "silence_delta_hours",
     ],
+    # Revisao P1 da PR #59: familias com conteudo explicitamente ligado
+    # a Relation que estavam fora do inventario.
+    "working_memory_items": ["title", "summary", "priority", "metadata_json"],
+    "goal_threads": ["drive", "title", "objective"],
+    "controlled_action_runs": ["summary", "evidence_json", "metadata_json"],
+    "will_expressions": [
+        "reason",
+        "intent_json",
+        "prepared_payload_json",
+        "recovery_error",
+    ],
+    "will_phase_satisfactions": ["quality", "evidence_json", "integration_error"],
+    "agent_availability_states": [
+        "relational_reserve",
+        "relational_reserve_max",
+        "relational_reserve_threshold",
+    ],
+    "agent_meta_cognition_evaluations": [
+        "resonance_score",
+        "coherence_score",
+        "biases_detected_json",
+        "heuristic_adjustments_json",
+        "recommendations_json",
+        "summary",
+    ],
+    "agent_philosophical_essays": [
+        "title",
+        "thesis_statement",
+        "epistemic_tension",
+        "full_essay_markdown",
+        "sources_cited_json",
+        "philosophical_framework",
+    ],
+    "agent_theory_of_mind_snapshots": [
+        "epistemic_state_json",
+        "affective_trajectory_json",
+        "relational_needs_json",
+    ],
+    "async_maturation_inbox": ["inbound_message_text", "notes"],
+    "integrative_self_snapshots": [
+        "influence_mode",
+        "summary",
+        "first_person_snapshot",
+        "components_json",
+        "limits_json",
+        "metadata_json",
+    ],
+    "symbolic_triples": ["predicate", "confidence"],
 }
 
 
