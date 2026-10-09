@@ -109,7 +109,11 @@ class AgentMetaConsciousnessEngine:
         Retorna lista vazia se a tabela não existir.
         """
         scope = self._query_scope(user_id)
-        clause, clause_params = scope.sql(("id", "user_id", "agent_instance"))
+        # Corte D (T1-1b): com a coluna na lista o escopo passa a valer —
+        # Relation estrita (quarentena para NULL, 1 = 0 quando negado).
+        clause, clause_params = scope.sql(
+            ("id", "user_id", "agent_instance", "relation_id")
+        )
         cursor = self.db.conn.cursor()
         try:
             cursor.execute(

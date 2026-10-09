@@ -1070,7 +1070,11 @@ Evidencias:
 
     def _fetch_hobby_artifacts(self, cycle_id: str) -> List[Dict[str, Any]]:
         scope = self._query_scope()
-        clause, clause_params = scope.sql(("id", "user_id", "agent_instance"))
+        # Corte D (T1-1b): com a coluna na lista o escopo passa a valer —
+        # Relation estrita (quarentena para NULL, 1 = 0 quando negado).
+        clause, clause_params = scope.sql(
+            ("id", "user_id", "agent_instance", "relation_id")
+        )
         if not self._table_exists("agent_hobby_artifacts"):
             return []
         return self._fetch_all(

@@ -686,17 +686,41 @@ class WillEngine:
             "created_at": row["created_at"],
         }
 
-    def _latest_hobby(self, user_id: str) -> Optional[Dict[str, Any]]:
+    def _latest_hobby(
+        self,
+        user_id: str,
+        *,
+        relation_id: Optional[str] = None,
+        agent_instance: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
+        from engines.will_scope import will_visibility_scope
+
+        # Escopo explicito (corte D / T1-1b): Relation estrita quando o
+        # caller ja normalizou o escopo; sem relation, apenas a quarentena
+        # legacy (relation_id IS NULL). PRAGMA-aware: bancos pre-migracao
+        # degradam para o filtro de usuario.
+        clause, clause_params = will_visibility_scope(
+            cursor,
+            "agent_hobby_artifacts",
+            relation_id=relation_id,
+            agent_instance=agent_instance,
+        )
+        where = "user_id = ?"
+        params: List[Any] = [user_id]
+        if clause:
+            # will_visibility_scope ja devolve o fragmento com " AND ".
+            where += clause
+            params.extend(clause_params)
         cursor.execute(
-            """
+            f"""
             SELECT title, summary, critique_summary, created_at
             FROM agent_hobby_artifacts
-            WHERE user_id = ?
+            WHERE {where}
             ORDER BY created_at DESC, id DESC
             LIMIT 1
             """,
-            (user_id,),
+            tuple(params),
         )
         row = cursor.fetchone()
         return dict(row) if row else None
@@ -755,7 +779,11 @@ class WillEngine:
         rumination = self._recent_rumination(user_id, relation_id=scoped_relation_id)
         active_tensions = self._active_rumination_tensions(user_id, relation_id=scoped_relation_id)
         meta = self._latest_meta_consciousness(user_id)
-        hobby = self._latest_hobby(user_id)
+        hobby = self._latest_hobby(
+            user_id,
+            relation_id=scoped_relation_id,
+            agent_instance=scope.get("agent_instance"),
+        )
         world = self._latest_world_state(world_state)
         relational = (
             self._latest_relational_state(user_id, relation_id=scoped_relation_id)
