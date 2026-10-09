@@ -224,3 +224,61 @@ def test_latest_hobby_do_will_recebe_escopo_do_caller():
         "Will sem relation ve apenas a quarentena (relation_id IS NULL), "
         "nunca a obra da relation privada"
     )
+
+
+def test_leitores_isolam_instancias_na_quarentena_legada(tmp_path):
+    """Review P2 da PR #58: `.sql()` só trata Relation — sem filtro
+    explícito de instância o diário e a metaconsciência devolvem obras
+    de QUALQUER instância no legado (o Will já isolava via
+    will_visibility_scope). Reproduz o cenário: mesmo admin (sem
+    Relation) com obras em duas instâncias."""
+    from agent_diary import AgentDiaryWriter
+    from agent_meta_consciousness import AgentMetaConsciousnessEngine
+    from instance_config import ADMIN_USER_ID
+
+    db = _schema_db()
+    reader = AgentMetaConsciousnessEngine(db)
+    instance_a = reader.agent_instance
+    instance_b = instance_a + "_other"
+    assert instance_a != instance_b
+    for title, stamp, instance in (
+        ("Obra instância A", "2025-03-01 00:00:00", instance_a),
+        ("Obra instância B", "2025-03-02 00:00:00", instance_b),
+    ):
+        db.conn.execute(
+            "INSERT INTO agent_hobby_artifacts"
+            " (user_id, cycle_id, title, summary, agent_instance, created_at)"
+            " VALUES (?, 'ciclo-x', ?, 's', ?, ?)",
+            (str(ADMIN_USER_ID), title, instance, stamp),
+        )
+    db.conn.commit()
+
+    meta_titles = [
+        item["title"]
+        for item in reader._recent_artworks(str(ADMIN_USER_ID), limit=10)
+    ]
+    assert meta_titles == ["Obra instância A"], (
+        "metaconsciência: só a obra da própria instância"
+    )
+
+    writer = AgentDiaryWriter(
+        db,
+        base_dir=str(tmp_path),
+        user_id=str(ADMIN_USER_ID),
+        agent_instance=instance_a,
+    )
+    diary_titles = [
+        row["title"] for row in writer._fetch_hobby_artifacts("ciclo-x")
+    ]
+    assert diary_titles == ["Obra instância A"], (
+        "diário: só a obra da própria instância"
+    )
+
+    from will_engine import WillEngine
+
+    will = WillEngine.__new__(WillEngine)
+    will.db = db
+    latest = will._latest_hobby(str(ADMIN_USER_ID), agent_instance=instance_a)
+    assert latest is not None and latest["title"] == "Obra instância A", (
+        "paridade: o Will já isolava a instância na quarentena"
+    )

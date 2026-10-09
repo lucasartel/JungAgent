@@ -1077,16 +1077,23 @@ Evidencias:
         )
         if not self._table_exists("agent_hobby_artifacts"):
             return []
+        # Review P2 da PR #58: .sql() só trata Relation — a instância
+        # entra explícita (mesma composição de _fetch_will_states).
+        from engines.will_scope import instance_where_clause
+
+        instance_clause, instance_params = instance_where_clause(
+            self.conn.cursor(), "agent_hobby_artifacts", self.agent_instance
+        )
         return self._fetch_all(
             f"""
             SELECT id, cycle_id, title, summary, image_prompt, image_url, provider,
                    status, critique_summary, evaluation_model, evaluated_at, created_at
             FROM agent_hobby_artifacts
-            WHERE user_id = ?{clause} AND cycle_id = ?
+            WHERE user_id = ?{instance_clause}{clause} AND cycle_id = ?
             ORDER BY created_at ASC, id ASC
             LIMIT 10
             """,
-            (self.user_id, *clause_params, cycle_id),
+            (self.user_id, *instance_params, *clause_params, cycle_id),
         )
 
     def _fetch_development_state(self) -> Optional[Dict[str, Any]]:
