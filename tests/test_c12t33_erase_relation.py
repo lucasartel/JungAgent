@@ -576,7 +576,9 @@ def test_p1_filhas_indiretas_sao_alcancadas_pelo_pai():
         "SELECT effect FROM will_proactive_effects WHERE expression_id = ?",
         (will_a,),
     ).fetchone()
-    assert effect["effect"] == ""
+    assert effect["effect"] == "efeito privado", (
+        "classificador operacional fixo: preservado"
+    )
 
     step_b = db.conn.execute(
         "SELECT title, status FROM goal_steps WHERE goal_id = ?",
@@ -584,4 +586,73 @@ def test_p1_filhas_indiretas_sao_alcancadas_pelo_pai():
     ).fetchone()
     assert step_b["title"] == "passo privado B", "filha de B intacta"
     assert step_b["status"] == "pending"
+    assert verify_relation_erase(db.conn, "rel-A") == {}
+
+
+def test_p1_quatro_efeitos_reais_nao_colidem_e_isolam_relations():
+    """Revisao r3 da PR #59 (Rodada 4): `effect` integra a PK
+    (expression_id, effect) — redigir os quatro efeitos reais a ''
+    causava IntegrityError e interrompia o expurgo. `effect` e
+    classificador operacional fixo (development/facts/session_log/
+    semantic_memory): audit-safe e preservado. Teste cobre os 4 efeitos
+    reais e o isolamento de outra Relation."""
+    from core.db.erase import erase_relation, verify_relation_erase
+    from engines.will_proactive_record import EFFECTS
+
+    assert len(EFFECTS) == 4, "os quatro efeitos reais do motor"
+    db = _schema_db()
+    for rel, chave in (("rel-A", "efeitos-a"), ("rel-B", "efeitos-b")):
+        db.conn.execute(
+            "INSERT INTO will_expressions"
+            " (agent_instance, relation_id, user_id, cycle_id, will_name,"
+            " capability_key, gate_level, cost_class, idempotency_key,"
+            " intent_json, prepared_payload_json)"
+            " VALUES ('jung_v1', ?, 'u1', 'c1', 'expressar', 'msg.send',"
+            " 'L1', 'low', ?, '{}', '{}')",
+            (rel, chave),
+        )
+        expr_id = db.conn.execute(
+            "SELECT id FROM will_expressions WHERE idempotency_key = ?",
+            (chave,),
+        ).fetchone()[0]
+        for effect in EFFECTS:
+            db.conn.execute(
+                "INSERT INTO will_proactive_effects"
+                " (expression_id, effect, status)"
+                " VALUES (?, ?, 'pending')",
+                (expr_id, effect),
+            )
+    db.conn.commit()
+
+    counts = erase_relation(db.conn, "rel-A")
+
+    assert counts.get("will_proactive_effects") is None, (
+        "classificadores operacionais nao sao conteudo redigido"
+    )
+    expr_a = db.conn.execute(
+        "SELECT id FROM will_expressions WHERE idempotency_key='efeitos-a'"
+    ).fetchone()[0]
+    effects_a = [
+        row["effect"]
+        for row in db.conn.execute(
+            "SELECT effect FROM will_proactive_effects"
+            " WHERE expression_id = ? ORDER BY effect",
+            (expr_a,),
+        )
+    ]
+    assert effects_a == sorted(EFFECTS), (
+        "os 4 classificadores de A intactos, sem IntegrityError"
+    )
+    expr_b = db.conn.execute(
+        "SELECT id FROM will_expressions WHERE idempotency_key='efeitos-b'"
+    ).fetchone()[0]
+    effects_b = [
+        row["effect"]
+        for row in db.conn.execute(
+            "SELECT effect FROM will_proactive_effects"
+            " WHERE expression_id = ? ORDER BY effect",
+            (expr_b,),
+        )
+    ]
+    assert effects_b == sorted(EFFECTS), "Relation B isolada e intacta"
     assert verify_relation_erase(db.conn, "rel-A") == {}

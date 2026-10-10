@@ -43,6 +43,7 @@ _PRESERVED_FIELD = re.compile(
     r"|_at$|_date$|_ts$|_until$|timestamp$|^created_|^updated_|^last_updated$"
     r"|_count$|_attempts$|_days$|_budget$|_used$|_version$|version$|_enabled$"
     r"|_type$|_kind$|_scope$|_origin$|_ref$|_refs_json$|_refs$|_source$|^source$"
+    r"|^effect$"
     r"|_platform$|^platform$|provider$|_model$|_key$|_level$|_class$"
     r"|threshold|_until|_code$|_order$"
     r"|^consent_|provenance_json$|_per_hour$"
@@ -71,7 +72,10 @@ _ERASE_VIA_PARENT: Dict[str, Dict[str, str]] = {
 _ERASE_CHILD_FIELDS: Dict[str, list] = {
     "goal_steps": ["title", "expected_evidence", "result_summary"],
     "will_expression_receipts": ["summary", "evidence_json"],
-    "will_proactive_effects": ["effect"],
+    # Revisao r3 da PR #59: `effect` integra a PK (expression_id, effect)
+    # e os valores sao classificadores operacionais fixos (development,
+    # facts, session_log, semantic_memory) — audit-safe, nao conteudo.
+    "will_proactive_effects": [],
 }
 
 # Revisao r2 da PR #59: conteudo em coluna parte de restricao UNIQUE
