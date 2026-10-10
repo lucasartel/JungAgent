@@ -304,6 +304,8 @@ def test_cobertura_completa_do_inventario_de_relation():
     ``preserved_field``). Coluna sem decisao falha o teste listando-a."""
     from core.db.erase import (
         _ERASE_FIELDS,
+        _ERASE_CHILD_FIELDS,
+        _ERASE_VIA_PARENT,
         erase_relation,
         preserved_field,
         verify_relation_erase,
@@ -359,6 +361,62 @@ def test_cobertura_completa_do_inventario_de_relation():
         )
     db.conn.commit()
 
+    # vinculos indiretos: decisao de coluna + linha-marcador via pai.
+    filho_campos: dict = {}
+    for child, spec in _ERASE_VIA_PARENT.items():
+        child_columns = [
+            row[1] for row in cur.execute(f"PRAGMA table_info({child})")
+        ]
+        if not child_columns:
+            continue
+        child_mapped = set(_ERASE_CHILD_FIELDS.get(child, []))
+        undecided = [
+            col
+            for col in child_columns
+            if col not in child_mapped and not preserved_field(col)
+        ]
+        assert not undecided, f"{child}: colunas sem decisao: {undecided}"
+        assert not (child_mapped - set(child_columns)), (
+            f"{child}: campos inexistentes: {child_mapped - set(child_columns)}"
+        )
+        filho_campos[child] = (spec, child_columns, child_mapped)
+
+    goal_ids = [
+        row[0]
+        for row in cur.execute(
+            "SELECT id FROM goal_threads WHERE relation_id = ?", (alvo,)
+        ).fetchall()
+    ]
+    will_ids = [
+        row[0]
+        for row in cur.execute(
+            "SELECT id FROM will_expressions WHERE relation_id = ?", (alvo,)
+        ).fetchall()
+    ]
+    assert goal_ids and will_ids, "pais de referencia nao criados"
+    if "goal_steps" in filho_campos:
+        cur.execute(
+            "INSERT INTO goal_steps (goal_id, status, step_order, title,"
+            " expected_evidence, result_summary, created_at)"
+            " VALUES (?, 'pending', 1, ?, ?, ?, '2026-10-09')",
+            (goal_ids[0], marcador, marcador, marcador),
+        )
+    if "will_expression_receipts" in filho_campos:
+        cur.execute(
+            "INSERT INTO will_expression_receipts"
+            " (expression_id, status, result_code, summary, evidence_json)"
+            " VALUES (?, 'done', 'ok', ?, ?)",
+            (will_ids[0], marcador, marcador),
+        )
+    if "will_proactive_effects" in filho_campos:
+        cur.execute(
+            "INSERT INTO will_proactive_effects"
+            " (expression_id, effect, status)"
+            " VALUES (?, ?, 'pending')",
+            (will_ids[0], marcador),
+        )
+    db.conn.commit()
+
     erase_relation(db.conn, alvo)
 
     sobreviventes = []
@@ -373,4 +431,157 @@ def test_cobertura_completa_do_inventario_de_relation():
     assert not sobreviventes, (
         f"conteudo privado sobreviveu ao expurgo: {sobreviventes}"
     )
+    sobreviventes_filhos = []
+    for child, (spec, _, child_mapped) in filho_campos.items():
+        parent = spec["parent"]
+        via = spec["via"]
+        for col in sorted(child_mapped):
+            row = cur.execute(
+                f"SELECT count(*) FROM {child} WHERE {via} IN ("
+                f"SELECT id FROM {parent} WHERE relation_id = ?)"
+                f" AND {col} = ?",
+                (alvo, marcador),
+            ).fetchone()
+            if row[0]:
+                sobreviventes_filhos.append(f"{child}.{col}")
+    assert not sobreviventes_filhos, (
+        f"conteudo privado sobreviveu via vinculo indireto: "
+        f"{sobreviventes_filhos}"
+    )
     assert verify_relation_erase(db.conn, alvo) == {}
+
+
+def test_p1_triplas_com_predicados_distintos_nao_quebram():
+    """Revisao r2 da PR #59 (Rodada 2): triplas com mesmo sujeito/objeto/
+    fonte e predicados diferentes sao validas (UNIQUE inclui predicate).
+    Redigir ambos a '' violava o UNIQUE com IntegrityError — agora a
+    linha da Relation e apagada, sem tocar em outras Relations."""
+    from core.db.erase import erase_relation, verify_relation_erase
+
+    db = _schema_db()
+
+    def _triple(rel, pred, subject, source):
+        db.conn.execute(
+            "INSERT INTO symbolic_triples"
+            " (agent_instance, subject_id, predicate, object_id, source_ref,"
+            " ownership_class, origin_class, origin_relation_id,"
+            " source_refs_json, provenance_json)"
+            " VALUES ('jung_v1', ?, ?, ?, ?, 'relation_private',"
+            " 'Relation', ?, '{}', '{}')",
+            (subject, pred, subject + 10, source, rel),
+        )
+
+    _triple("rel-A", "significa", 10, "ref")
+    _triple("rel-A", "relaciona", 10, "ref")
+    _triple("rel-B", "significa", 50, "ref-B")
+    db.conn.commit()
+
+    counts = erase_relation(db.conn, "rel-A")
+
+    assert counts.get("symbolic_triples") == 2, "as duas triplas de A apagadas"
+    restantes = db.conn.execute(
+        "SELECT origin_relation_id, predicate FROM symbolic_triples"
+        " ORDER BY origin_relation_id"
+    ).fetchall()
+    assert len(restantes) == 1, "somente a tripla da Relation vizinha resta"
+    assert restantes[0]["origin_relation_id"] == "rel-B"
+    assert restantes[0]["predicate"] == "significa", "conteudo de B intacto"
+    assert verify_relation_erase(db.conn, "rel-A") == {}
+
+
+def test_p1_filhas_indiretas_sao_alcancadas_pelo_pai():
+    """Revisao r2 da PR #59 (Rodada 2): goal_steps (filha de goal_threads)
+    e receipts/effects (filhas de will_expressions) nao tem coluna de
+    Relation — o conteudo privado delas sobrevivia com clean=True. Agora
+    sao alcancadas pelo vinculo com o pai carimbado."""
+    from core.db.erase import erase_relation, verify_relation_erase
+
+    db = _schema_db()
+    db.conn.execute(
+        "INSERT INTO goal_threads"
+        " (agent_instance, status, title, objective, source_refs_json,"
+        " ownership_class, relation_id, created_at, updated_at)"
+        " VALUES ('jung_v1', 'active', 'objetivo privado A', 'meta A', '{}',"
+        " 'relation_private', 'rel-A', '2026-10-09', '2026-10-09')"
+    )
+    goal_a = db.conn.execute("SELECT id FROM goal_threads").fetchone()[0]
+    db.conn.execute(
+        "INSERT INTO goal_steps (goal_id, status, step_order, title,"
+        " expected_evidence, result_summary, created_at)"
+        " VALUES (?, 'done', 1, 'passo privado', 'evidencia privada',"
+        " 'resultado privado', '2026-10-09')",
+        (goal_a,),
+    )
+    db.conn.execute(
+        "INSERT INTO goal_threads"
+        " (agent_instance, status, title, objective, source_refs_json,"
+        " ownership_class, relation_id, created_at, updated_at)"
+        " VALUES ('jung_v1', 'active', 'objetivo privado B', 'meta B', '{}',"
+        " 'relation_private', 'rel-B', '2026-10-09', '2026-10-09')"
+    )
+    goal_b = db.conn.execute(
+        "SELECT id FROM goal_threads WHERE relation_id='rel-B'"
+    ).fetchone()[0]
+    db.conn.execute(
+        "INSERT INTO goal_steps (goal_id, status, step_order, title,"
+        " created_at)"
+        " VALUES (?, 'pending', 1, 'passo privado B', '2026-10-09')",
+        (goal_b,),
+    )
+    db.conn.execute(
+        "INSERT INTO will_expressions"
+        " (agent_instance, relation_id, user_id, cycle_id, will_name,"
+        " capability_key, gate_level, cost_class, idempotency_key,"
+        " intent_json, prepared_payload_json)"
+        " VALUES ('jung_v1', 'rel-A', 'u1', 'c1', 'expressar', 'msg.send',"
+        " 'L1', 'low', 'idem-filho', '{}', '{}')"
+    )
+    will_a = db.conn.execute(
+        "SELECT id FROM will_expressions WHERE relation_id='rel-A'"
+    ).fetchone()[0]
+    db.conn.execute(
+        "INSERT INTO will_expression_receipts"
+        " (expression_id, status, summary, evidence_json)"
+        " VALUES (?, 'done', 'resumo privado', '{\"e\": 1}')",
+        (will_a,),
+    )
+    db.conn.execute(
+        "INSERT INTO will_proactive_effects (expression_id, effect, status)"
+        " VALUES (?, 'efeito privado', 'pending')",
+        (will_a,),
+    )
+    db.conn.commit()
+
+    counts = erase_relation(db.conn, "rel-A")
+
+    step_a = db.conn.execute(
+        "SELECT title, expected_evidence, result_summary FROM goal_steps"
+        " WHERE goal_id = ?",
+        (goal_a,),
+    ).fetchone()
+    assert step_a["title"] == "", "titulo do passo privado sobreviveu"
+    assert step_a["expected_evidence"] is None
+    assert step_a["result_summary"] is None
+    assert counts.get("goal_steps", 0) >= 3
+
+    receipt = db.conn.execute(
+        "SELECT summary, evidence_json FROM will_expression_receipts"
+        " WHERE expression_id = ?",
+        (will_a,),
+    ).fetchone()
+    assert receipt["summary"] is None
+    assert receipt["evidence_json"] == ""
+
+    effect = db.conn.execute(
+        "SELECT effect FROM will_proactive_effects WHERE expression_id = ?",
+        (will_a,),
+    ).fetchone()
+    assert effect["effect"] == ""
+
+    step_b = db.conn.execute(
+        "SELECT title, status FROM goal_steps WHERE goal_id = ?",
+        (goal_b,),
+    ).fetchone()
+    assert step_b["title"] == "passo privado B", "filha de B intacta"
+    assert step_b["status"] == "pending"
+    assert verify_relation_erase(db.conn, "rel-A") == {}

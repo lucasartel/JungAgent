@@ -44,7 +44,7 @@ _PRESERVED_FIELD = re.compile(
     r"|_count$|_attempts$|_days$|_budget$|_used$|_version$|version$|_enabled$"
     r"|_type$|_kind$|_scope$|_origin$|_ref$|_refs_json$|_refs$|_source$|^source$"
     r"|_platform$|^platform$|provider$|_model$|_key$|_level$|_class$"
-    r"|threshold|_until|_code$"
+    r"|threshold|_until|_code$|_order$"
     r"|^consent_|provenance_json$|_per_hour$"
 )
 
@@ -52,6 +52,35 @@ _PRESERVED_FIELD = re.compile(
 def preserved_field(name: str) -> bool:
     """True quando a coluna e audit-safe (fora do escopo de conteudo)."""
     return bool(_PRESERVED_FIELD.search(name))
+
+
+# Revisao r2 da PR #59: vinculos INDIRETOS — tabelas filhas sem coluna de
+# Relation cujo conteudo privado sobrevive quando o pai e expurgado
+# (ex.: goal_steps de um goal_threads privado). Alcancadas pelo id do pai.
+_ERASE_VIA_PARENT: Dict[str, Dict[str, str]] = {
+    "goal_steps": {"parent": "goal_threads", "via": "goal_id"},
+    "will_expression_receipts": {
+        "parent": "will_expressions",
+        "via": "expression_id",
+    },
+    "will_proactive_effects": {
+        "parent": "will_expressions",
+        "via": "expression_id",
+    },
+}
+_ERASE_CHILD_FIELDS: Dict[str, list] = {
+    "goal_steps": ["title", "expected_evidence", "result_summary"],
+    "will_expression_receipts": ["summary", "evidence_json"],
+    "will_proactive_effects": ["effect"],
+}
+
+# Revisao r2 da PR #59: conteudo em coluna parte de restricao UNIQUE
+# (symbolic_triples: UNIQUE(agent_instance, subject_id, predicate,
+# object_id, source_ref)) — redigir o predicado a '' colidiria entre
+# linhas da MESMA Relation (IntegrityError). A linha inteira da Relation
+# e apagada (contrato C12g: delete or anonymize), com contagem auditada;
+# outras Relations nunca sao tocadas.
+_ERASE_DELETE_TABLES = ("symbolic_triples",)
 
 # Campos de conteudo por tabela. O substituto e calculado por PRAGMA
 # ``notnull``: coluna NOT NULL recebe ``''``; as demais recebem NULL.
@@ -353,6 +382,27 @@ def _table_exists(cursor: sqlite3.Cursor, table: str) -> bool:
     return bool(cursor.fetchone()[0])
 
 
+def _child_link(
+    cursor: sqlite3.Cursor, child: str, parent: str, via: str
+):
+    """Resolve o vinculo filha->pai pragma-aware (None quando ausente)."""
+    if not _table_exists(cursor, child) or not _table_exists(cursor, parent):
+        return None
+    if via not in _table_columns(cursor, child):
+        return None
+    for fk in cursor.execute(f"PRAGMA foreign_key_list({child})").fetchall():
+        # (id, seq, table, from, to, on_update, on_delete, match)
+        if fk[2] == parent and fk[3] == via:
+            parent_col = fk[4] or "id"
+            if parent_col not in _table_columns(cursor, parent):
+                return None
+            parent_relation_col = _relation_column(cursor, parent)
+            if parent_relation_col is None:
+                return None
+            return via, parent_col, parent_relation_col
+    return None
+
+
 def _relation_column(cursor: sqlite3.Cursor, table: str) -> Optional[str]:
     columns = _table_columns(cursor, table)
     for candidate in RELATION_COLUMNS:
@@ -402,6 +452,11 @@ def erase_relation(conn: sqlite3.Connection, relation_id: str) -> Dict[str, int]
     for table, fields in _ERASE_FIELDS.items():
         if not _table_exists(cursor, table):
             continue
+        if table in _ERASE_DELETE_TABLES:
+            # Conteudo em coluna parte de UNIQUE: redigir a '' colidiria
+            # entre linhas vivas da mesma Relation — a linha inteira e
+            # apagada abaixo, com contagem auditada.
+            continue
         relation_col = _relation_column(cursor, table)
         if relation_col is None:
             continue
@@ -424,6 +479,50 @@ def erase_relation(conn: sqlite3.Connection, relation_id: str) -> Dict[str, int]
             table_changes += cursor.rowcount if cursor.rowcount > 0 else 0
         if table_changes:
             counts[table] = counts.get(table, 0) + table_changes
+
+    # Vinculos indiretos: conteudo de filhas sem coluna de Relation,
+    # alcancado pelo id do pai carimbado (pragma-aware).
+    for child, spec in _ERASE_VIA_PARENT.items():
+        link = _child_link(cursor, child, spec["parent"], spec["via"])
+        if link is None:
+            continue
+        via_col, parent_col, parent_relation_col = link
+        parent = spec["parent"]
+        columns = _table_columns(cursor, child)
+        notnull = _notnull_columns(cursor, child)
+        child_changes = 0
+        for field in _ERASE_CHILD_FIELDS.get(child, []):
+            if field not in columns:
+                continue
+            replacement = _replacement_for(field, notnull)
+            if replacement == "NULL":
+                predicate = f"{field} IS NOT NULL"
+            else:
+                predicate = f"{field} IS NOT NULL AND {field} <> {replacement}"
+            cursor.execute(
+                f"UPDATE {child} SET {field} = {replacement} "
+                f"WHERE {via_col} IN ("
+                f"SELECT {parent_col} FROM {parent}"
+                f" WHERE {parent_relation_col} = ?) AND {predicate}",
+                (relation_id,),
+            )
+            child_changes += cursor.rowcount if cursor.rowcount > 0 else 0
+        if child_changes:
+            counts[child] = counts.get(child, 0) + child_changes
+
+    # Conteudo em coluna parte de restricao UNIQUE: redacao a '' colidiria
+    # entre linhas da mesma Relation — apaga a linha da Relation inteira.
+    for table in _ERASE_DELETE_TABLES:
+        if not _table_exists(cursor, table):
+            continue
+        relation_col = _relation_column(cursor, table)
+        if relation_col is None:
+            continue
+        cursor.execute(
+            f"DELETE FROM {table} WHERE {relation_col} = ?", (relation_id,)
+        )
+        if cursor.rowcount > 0:
+            counts[table] = counts.get(table, 0) + cursor.rowcount
 
     _ensure_audit_table(cursor)
     _audit_erase(conn, relation_id, counts)
@@ -468,6 +567,50 @@ def verify_relation_erase(
             table_remaining[field] = int(cursor.fetchone()[0])
         if any(table_remaining.values()):
             remaining[table] = table_remaining
+
+    # Vinculos indiretos: mesmo criterio do expurgo, via id do pai.
+    for child, spec in _ERASE_VIA_PARENT.items():
+        link = _child_link(cursor, child, spec["parent"], spec["via"])
+        if link is None:
+            continue
+        via_col, parent_col, parent_relation_col = link
+        parent = spec["parent"]
+        columns = _table_columns(cursor, child)
+        notnull = _notnull_columns(cursor, child)
+        table_remaining: Dict[str, int] = {}
+        for field in _ERASE_CHILD_FIELDS.get(child, []):
+            if field not in columns:
+                continue
+            replacement = _replacement_for(field, notnull)
+            if replacement == "NULL":
+                predicate = f"{field} IS NOT NULL"
+            else:
+                predicate = f"{field} IS NOT NULL AND {field} <> {replacement}"
+            cursor.execute(
+                f"SELECT COUNT(*) FROM {child} WHERE {via_col} IN ("
+                f"SELECT {parent_col} FROM {parent}"
+                f" WHERE {parent_relation_col} = ?) AND {predicate}",
+                (relation_id,),
+            )
+            table_remaining[field] = int(cursor.fetchone()[0])
+        if any(table_remaining.values()):
+            remaining[child] = table_remaining
+
+    # Linhas apagadas por restricao UNIQUE: qualquer restante da Relation
+    # e sobrevivencia.
+    for table in _ERASE_DELETE_TABLES:
+        if not _table_exists(cursor, table):
+            continue
+        relation_col = _relation_column(cursor, table)
+        if relation_col is None:
+            continue
+        cursor.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE {relation_col} = ?",
+            (relation_id,),
+        )
+        rows = int(cursor.fetchone()[0])
+        if rows:
+            remaining[table] = {"rows": rows}
     return remaining
 
 
