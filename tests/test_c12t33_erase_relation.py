@@ -48,9 +48,43 @@ def _schema_db():
             self.conn = sqlite3.connect(":memory:")
             self.conn.row_factory = sqlite3.Row
             self._lock = threading.RLock()
+            # Tabelas de migration/runtime que em producao existem de
+            # boots anteriores quando o init central roda (Revisao r4:
+            # user_facts_v2 nasce em migrate_facts_v2, depois recebe
+            # relation_id/agent_instance pelo ALTER do schema central).
+            self.conn.execute(
+                "CREATE TABLE user_facts_v2 ("
+                " id INTEGER PRIMARY KEY AUTOINCREMENT"
+                ", user_id TEXT NOT NULL"
+                ", fact_category TEXT NOT NULL"
+                ", fact_type TEXT NOT NULL"
+                ", fact_attribute TEXT NOT NULL"
+                ", fact_value TEXT NOT NULL"
+                ", confidence REAL DEFAULT 1.0"
+                ", extraction_method TEXT DEFAULT 'llm'"
+                ", context TEXT"
+                ", source_conversation_id INTEGER"
+                ", created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
+                ", updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"
+                ", is_current BOOLEAN DEFAULT 1"
+                ", version INTEGER DEFAULT 1"
+                ", replaced_by INTEGER)"
+            )
             self._init_sqlite_schema()
 
     db = _RealSchema()
+    # Revisao r4: proactive_approaches nasce em runtime (ProactiveAdvancedDB);
+    # criada ANTES do loop para que _init_will_expression_schema aplique o
+    # ALTER de agent_instance/relation_id, como em producao.
+    import jung_proactive_advanced
+
+    for value in vars(jung_proactive_advanced).values():
+        if (
+            inspect.isclass(value)
+            and getattr(value, "__name__", "") == "ProactiveAdvancedDB"
+        ):
+            value(db)
+            break
     # Inventario completo (Revisao P1 da PR #59): todos os inits que
     # criam tabelas com coluna de Relation fora do Work.
     for module_name in (
@@ -79,6 +113,14 @@ def _schema_db():
                     if callable(method):
                         method(db)
     import jung_rumination
+
+    # Revisao r4 (Rodada 5): produtores de runtime com conteudo vinculado.
+    from engines import will_decision_store
+
+    will_decision_store.init_schema(db.conn)
+    from jung_memory_consolidation import MemoryConsolidator
+
+    MemoryConsolidator._progress_table(db.conn)
 
     engine_cls = [
         value
@@ -305,6 +347,7 @@ def test_cobertura_completa_do_inventario_de_relation():
     from core.db.erase import (
         _ERASE_FIELDS,
         _ERASE_CHILD_FIELDS,
+        _ERASE_VIA_SCOPE_KEY,
         _ERASE_VIA_PARENT,
         erase_relation,
         preserved_field,
@@ -415,6 +458,33 @@ def test_cobertura_completa_do_inventario_de_relation():
             " VALUES (?, ?, 'pending')",
             (will_ids[0], marcador),
         )
+    # escopo por carimbo de chave: decisao de coluna + linha-marcador.
+    scope_campos: dict = {}
+    for table, spec in _ERASE_VIA_SCOPE_KEY.items():
+        scope_columns = [
+            row[1] for row in cur.execute(f"PRAGMA table_info({table})")
+        ]
+        if not scope_columns:
+            continue
+        scope_mapped = set(spec["fields"])
+        undecided = [
+            col
+            for col in scope_columns
+            if col not in scope_mapped and not preserved_field(col)
+        ]
+        assert not undecided, f"{table}: colunas sem decisao: {undecided}"
+        assert not (scope_mapped - set(scope_columns)), (
+            f"{table}: campos inexistentes: {scope_mapped - set(scope_columns)}"
+        )
+        scope_campos[table] = (spec, scope_columns, scope_mapped)
+    if "agent_will_decisions" in scope_campos:
+        cur.execute(
+            "INSERT INTO agent_will_decisions"
+            " (source_kind, source_id, agent_instance, scope_key,"
+            " envelope_json, decided_at)"
+            " VALUES ('proactive', 1, ?, ?, ?, '2026-10-12')",
+            (marcador, f"relation:{alvo}", marcador),
+        )
     db.conn.commit()
 
     erase_relation(db.conn, alvo)
@@ -447,6 +517,20 @@ def test_cobertura_completa_do_inventario_de_relation():
     assert not sobreviventes_filhos, (
         f"conteudo privado sobreviveu via vinculo indireto: "
         f"{sobreviventes_filhos}"
+    )
+    sobreviventes_escopo = []
+    for table, (spec, _, scope_mapped) in scope_campos.items():
+        for col in sorted(scope_mapped):
+            row = cur.execute(
+                f"SELECT count(*) FROM {table} WHERE {spec['scope_col']} = ?"
+                f" AND {col} = ?",
+                (f"{spec['prefix']}{alvo}", marcador),
+            ).fetchone()
+            if row[0]:
+                sobreviventes_escopo.append(f"{table}.{col}")
+    assert not sobreviventes_escopo, (
+        f"conteudo privado sobreviveu via carimbo de escopo: "
+        f"{sobreviventes_escopo}"
     )
     assert verify_relation_erase(db.conn, alvo) == {}
 
@@ -656,3 +740,185 @@ def test_p1_quatro_efeitos_reais_nao_colidem_e_isolam_relations():
     ]
     assert effects_b == sorted(EFFECTS), "Relation B isolada e intacta"
     assert verify_relation_erase(db.conn, "rel-A") == {}
+
+
+def test_p1_proactive_approaches_expurgado_em_duas_relations():
+    """Revisao r4 (Rodada 5): bloqueio da PR #59 — registros proativos
+    carimbados com a Relation sobreviviam (tabela criada em runtime, fora
+    dos inits). Expurgo redige topic/insight/facts de A, preserva B."""
+    from core.db.erase import erase_relation, verify_relation_erase
+
+    db = _schema_db()
+    cur = db.conn
+    for rel, chave in (("rel-A", "prov-a"), ("rel-B", "prov-b")):
+        cur.execute(
+            "INSERT INTO proactive_approaches"
+            " (user_id, agent_instance, relation_id, archetype_primary,"
+            " archetype_secondary, knowledge_domain, topic_extracted,"
+            " autonomous_insight, complexity_score, facts_used, timestamp)"
+            " VALUES ('u1', 'jung_v1', ?, 'Cuidador', 'Amante', 'psicológico',"
+            " ?, ?, 0.62, ?, '2026-10-12')",
+            (rel, f"topico-{chave}", f"insight-{chave}", f'["{chave}"]'),
+        )
+    db.conn.commit()
+
+    counts = erase_relation(db.conn, "rel-A")
+
+    a = cur.execute(
+        "SELECT topic_extracted, autonomous_insight, facts_used,"
+        " knowledge_domain, archetype_primary FROM proactive_approaches"
+        " WHERE relation_id='rel-A'"
+    ).fetchone()
+    assert a["topic_extracted"] is None and a["autonomous_insight"] is None
+    assert a["facts_used"] is None and a["knowledge_domain"] == ""
+    assert a["archetype_primary"] == "", "conteudo redigido em A"
+    b = cur.execute(
+        "SELECT topic_extracted FROM proactive_approaches"
+        " WHERE relation_id='rel-B'"
+    ).fetchone()
+    assert b["topic_extracted"] == "topico-prov-b", "B isolado e intacto"
+    assert counts.get("proactive_approaches", 0) > 0
+    assert verify_relation_erase(db.conn, "rel-A") == {}
+
+
+def test_p1_user_facts_v2_expurgado_em_duas_relations():
+    """Revisao r4 (Rodada 5): user_facts_v2 (tabela ativa da migracao v2)
+    ganha relation_id pelo ALTER do schema central — fatos privados de A
+    redigidos, B intacto."""
+    from core.db.erase import erase_relation, verify_relation_erase
+
+    db = _schema_db()
+    cur = db.conn
+    for rel, valor in (("rel-A", "esposa de A"), ("rel-B", "esposa de B")):
+        cur.execute(
+            "INSERT INTO user_facts_v2"
+            " (user_id, relation_id, agent_instance, fact_category,"
+            " fact_type, fact_attribute, fact_value, confidence, context)"
+            " VALUES ('u1', ?, 'jung_v1', 'RELACIONAMENTO', 'esposa',"
+            " 'nome', ?, 0.9, 'trecho de conversa privada')",
+            (rel, valor),
+        )
+    db.conn.commit()
+
+    counts = erase_relation(db.conn, "rel-A")
+
+    a = cur.execute(
+        "SELECT fact_value, fact_type, context FROM user_facts_v2"
+        " WHERE relation_id='rel-A'"
+    ).fetchone()
+    assert a["fact_value"] == "" and a["fact_type"] == "", (
+        "colunas NOT NULL recebem ''"
+    )
+    assert a["context"] is None, "trecho de conversa redigido"
+    b = cur.execute(
+        "SELECT fact_value FROM user_facts_v2 WHERE relation_id='rel-B'"
+    ).fetchone()
+    assert b["fact_value"] == "esposa de B", "B isolado e intacto"
+    assert counts.get("user_facts_v2", 0) > 0
+    assert verify_relation_erase(db.conn, "rel-A") == {}
+
+
+def test_p1_envelope_will_decision_escopo_relation():
+    """Revisao r4 (Rodada 5): agent_will_decisions nao tem coluna
+    relation_id — o escopo vive em scope_key = 'relation:<id>' (formato
+    deterministico do motor). Envelope da A redigido; global e B intactos."""
+    from core.db.erase import erase_relation, verify_relation_erase
+
+    db = _schema_db()
+    cur = db.conn
+    for key, payload in (
+        ("relation:rel-A", '{"outcome":"aprovado","detail":"privado A"}'),
+        ("relation:rel-B", '{"outcome":"aprovado","detail":"privado B"}'),
+        ("global", '{"outcome":"geral"}'),
+    ):
+        cur.execute(
+            "INSERT INTO agent_will_decisions"
+            " (source_kind, source_id, agent_instance, scope_key,"
+            " envelope_json, decided_at)"
+            " VALUES ('proactive', 7, 'jung_v1', ?, ?, '2026-10-12')",
+            (key, payload),
+        )
+    db.conn.commit()
+
+    counts = erase_relation(db.conn, "rel-A")
+
+    a = cur.execute(
+        "SELECT envelope_json FROM agent_will_decisions"
+        " WHERE scope_key='relation:rel-A'"
+    ).fetchone()
+    assert a["envelope_json"] is None or a["envelope_json"] == "", (
+        "envelope da Relation A redigido"
+    )
+    for key, esperado in (
+        ("relation:rel-B", '{"outcome":"aprovado","detail":"privado B"}'),
+        ("global", '{"outcome":"geral"}'),
+    ):
+        row = cur.execute(
+            "SELECT envelope_json FROM agent_will_decisions WHERE scope_key=?",
+            (key,),
+        ).fetchone()
+        assert row["envelope_json"] == esperado, f"{key} intacto"
+    assert counts.get("agent_will_decisions", 0) > 0
+    assert verify_relation_erase(db.conn, "rel-A") == {}
+
+
+def test_p1_produtores_com_carimbo_fora_do_inventario():
+    """Revisao r4 (Rodada 5): varredura de produtores — toda tabela que o
+    codigo de producao cria com carimbo de Relation (CREATE/ALTER/INSERT
+    citando relation_id/origin_relation_id) precisa existir na fixture do
+    inventario e passar pela cobertura de colunas. Foi exatamente assim que
+    proactive_approaches (criada em runtime) escapou do gap-analysis."""
+    import pathlib
+    import re
+
+    db = _schema_db()
+    materializadas = {
+        row[0]
+        for row in db.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    re_create = re.compile(
+        r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\([^)]*"
+        r"\b(?:relation_id|origin_relation_id)\b",
+        re.I | re.S,
+    )
+    re_alter = re.compile(
+        r"ALTER\s+TABLE\s+(\w+)[^;]*\b(?:relation_id|origin_relation_id)\b",
+        re.I | re.S,
+    )
+    re_insert = re.compile(
+        r"INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(\w+)\s*\([^)]*"
+        r"\b(?:relation_id|origin_relation_id)\b[^)]*\)",
+        re.I | re.S,
+    )
+    fora: dict = {}
+    root = pathlib.Path(__file__).resolve().parents[1]
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root)
+        if not rel.parts or rel.parts[0] in (
+            "tests",
+            ".venv",
+            "archive",
+            "migrations",
+            "docs",
+        ):
+            continue
+        src = path.read_text(errors="ignore")
+        alvos = (
+            set(re_create.findall(src))
+            | set(re_alter.findall(src))
+            | set(re_insert.findall(src))
+        )
+        for table in alvos:
+            if table.startswith("work_") or table in (
+                "agent_relations",
+                "relation_erase_events",
+            ):
+                continue
+            if table not in materializadas:
+                fora.setdefault(table, str(rel))
+    assert not fora, (
+        "produtores com carimbo de Relation fora do inventario da fixture "
+        "(materializar + decidir colunas): " + str(fora)
+    )

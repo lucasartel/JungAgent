@@ -44,6 +44,7 @@ _PRESERVED_FIELD = re.compile(
     r"|_count$|_attempts$|_days$|_budget$|_used$|_version$|version$|_enabled$"
     r"|_type$|_kind$|_scope$|_origin$|_ref$|_refs_json$|_refs$|_source$|^source$"
     r"|^effect$"
+    r"|_method$|_by$"
     r"|_platform$|^platform$|provider$|_model$|_key$|_level$|_class$"
     r"|threshold|_until|_code$|_order$"
     r"|^consent_|provenance_json$|_per_hour$"
@@ -85,6 +86,19 @@ _ERASE_CHILD_FIELDS: Dict[str, list] = {
 # e apagada (contrato C12g: delete or anonymize), com contagem auditada;
 # outras Relations nunca sao tocadas.
 _ERASE_DELETE_TABLES = ("symbolic_triples",)
+
+# Revisao da PR #59 (Rodada 5, conferencia de produtores): conteudo
+# vinculado a Relation escondido em tabela SEM coluna relation_id —
+# agent_will_decisions carrega o escopo em ``scope_key`` com o formato
+# deterministico do proprio motor (``relation:<id>``; ``global`` nunca e
+# tocado). Nao e inferencia de conteudo: e a coluna de escopo da tabela.
+_ERASE_VIA_SCOPE_KEY: Dict[str, dict] = {
+    "agent_will_decisions": {
+        "scope_col": "scope_key",
+        "prefix": "relation:",
+        "fields": ["envelope_json"],
+    },
+}
 
 # Campos de conteudo por tabela. O substituto e calculado por PRAGMA
 # ``notnull``: coluna NOT NULL recebe ``''``; as demais recebem NULL.
@@ -365,6 +379,27 @@ _ERASE_FIELDS: Dict[str, list] = {
         "metadata_json",
     ],
     "symbolic_triples": ["predicate", "confidence"],
+    # Revisao r4 (Rodada 5): registros proativos carimbados com a Relation
+    # (topic/insight/facts privados; INSERT de will_proactive_record).
+    "proactive_approaches": [
+        "topic_extracted",
+        "autonomous_insight",
+        "facts_used",
+        "knowledge_domain",
+        "archetype_primary",
+        "archetype_secondary",
+        "complexity_score",
+    ],
+    # Revisao r4 (Rodada 5): user_facts_v2 e a tabela ativa de fatos
+    # (migracao v2); ganha relation_id pelo ALTER do schema central.
+    "user_facts_v2": [
+        "fact_category",
+        "fact_type",
+        "fact_attribute",
+        "fact_value",
+        "confidence",
+        "context",
+    ],
 }
 
 
@@ -514,6 +549,32 @@ def erase_relation(conn: sqlite3.Connection, relation_id: str) -> Dict[str, int]
         if child_changes:
             counts[child] = counts.get(child, 0) + child_changes
 
+    # Escopo por carimbo de chave: a Relation e identificada pelo formato
+    # deterministico da propria tabela (scope_key = "relation:<id>").
+    # Linhas fora do escopo (ex.: "global") nunca sao tocadas.
+    for table, spec in _ERASE_VIA_SCOPE_KEY.items():
+        if not _table_exists(cursor, table):
+            continue
+        columns = _table_columns(cursor, table)
+        notnull = _notnull_columns(cursor, table)
+        table_changes = 0
+        for field in spec["fields"]:
+            if field not in columns:
+                continue
+            replacement = _replacement_for(field, notnull)
+            if replacement == "NULL":
+                predicate = f"{field} IS NOT NULL"
+            else:
+                predicate = f"{field} IS NOT NULL AND {field} <> {replacement}"
+            cursor.execute(
+                f"UPDATE {table} SET {field} = {replacement} "
+                f"WHERE {spec['scope_col']} = ? AND {predicate}",
+                (f"{spec['prefix']}{relation_id}",),
+            )
+            table_changes += cursor.rowcount if cursor.rowcount > 0 else 0
+        if table_changes:
+            counts[table] = counts.get(table, 0) + table_changes
+
     # Conteudo em coluna parte de restricao UNIQUE: redacao a '' colidiria
     # entre linhas da mesma Relation — apaga a linha da Relation inteira.
     for table in _ERASE_DELETE_TABLES:
@@ -599,6 +660,32 @@ def verify_relation_erase(
             table_remaining[field] = int(cursor.fetchone()[0])
         if any(table_remaining.values()):
             remaining[child] = table_remaining
+
+    # Escopo por carimbo de chave (scope_key = "relation:<id>").
+    for table, spec in _ERASE_VIA_SCOPE_KEY.items():
+        if not _table_exists(cursor, table):
+            continue
+        columns = _table_columns(cursor, table)
+        notnull = _notnull_columns(cursor, table)
+        table_remaining: Dict[str, int] = {}
+        for field in spec["fields"]:
+            if field not in columns:
+                continue
+            replacement = _replacement_for(field, notnull)
+            if replacement == "NULL":
+                predicate = f"{field} IS NOT NULL"
+            else:
+                predicate = f"{field} IS NOT NULL AND {field} <> {replacement}"
+            cursor.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {spec['scope_col']} = ?"
+                f" AND {predicate}",
+                (f"{spec['prefix']}{relation_id}",),
+            )
+            count = int(cursor.fetchone()[0])
+            if count:
+                table_remaining[field] = count
+        if any(table_remaining.values()):
+            remaining[table] = table_remaining
 
     # Linhas apagadas por restricao UNIQUE: qualquer restante da Relation
     # e sobrevivencia.
