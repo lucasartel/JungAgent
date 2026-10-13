@@ -152,6 +152,7 @@ def test_run_erase_ro_connection_works():
 
 def test_resolve_db_path_env(monkeypatch):
     monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", "/data")
+    monkeypatch.delenv("SQLITE_DB_PATH", raising=False)
     mod = _load_erase_module()
     path = mod._resolve_db_path()
     assert "jung_hybrid.db" in path
@@ -164,6 +165,36 @@ def test_resolve_db_path_sqlite_env(monkeypatch):
     mod = _load_erase_module()
     path = mod._resolve_db_path()
     assert "my.db" in path
+
+
+def test_resolve_db_path_volume_with_relative_sqlite(monkeypatch):
+    """When both VOLUME and relative SQLITE_DB_PATH are set, use volume + basename."""
+    monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", "/data")
+    monkeypatch.setenv("SQLITE_DB_PATH", "custom.db")
+    mod = _load_erase_module()
+    path = mod._resolve_db_path()
+    assert path == "/data/custom.db"
+
+
+def test_resolve_db_path_volume_with_absolute_sqlite(monkeypatch):
+    """When both VOLUME and absolute SQLITE_DB_PATH are set, use SQLITE_DB_PATH directly."""
+    monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", "/data")
+    monkeypatch.setenv("SQLITE_DB_PATH", "/elsewhere/prod.db")
+    mod = _load_erase_module()
+    path = mod._resolve_db_path()
+    assert path == "/elsewhere/prod.db"
+
+
+def test_resolve_db_path_matches_config_sqlite_path(monkeypatch):
+    """_resolve_db_path must resolve the same path as Config.SQLITE_PATH."""
+    # Scenario: volume=/data, SQLITE_DB_PATH=my.db (relative)
+    monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", "/data")
+    monkeypatch.setenv("SQLITE_DB_PATH", "my.db")
+    # Config.SQLITE_PATH = os.path.join("/data", "my.db") = "/data/my.db"
+    # _resolve_db_path must return the same.
+    mod = _load_erase_module()
+    path = mod._resolve_db_path()
+    assert path == "/data/my.db"
 
 
 def test_cli_reports_database_not_found(monkeypatch):
