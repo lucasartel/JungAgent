@@ -45,8 +45,14 @@ _FACT_MODULE = _load_module(
 ExtractedFact = _FACT_MODULE.ExtractedFact
 KnowledgeGap = _FACT_MODULE.KnowledgeGap
 
+# Load the canonical mixin — do NOT reimplement _save_fact_v2.
+_FACT_EXTRACTION_MODULE = _load_module(
+    "core.db.fact_extraction_test", REPO_ROOT / "core" / "db" / "fact_extraction.py"
+)
+FactExtractionDatabaseMixin = _FACT_EXTRACTION_MODULE.FactExtractionDatabaseMixin
 
-class _RealDB:
+
+class _RealDB(FactExtractionDatabaseMixin):
     """Real SQLite persistence using the canonical FactExtractionDatabaseMixin."""
 
     def __init__(self, conn):
@@ -74,6 +80,8 @@ class _RealDB:
                 version INTEGER DEFAULT 1,
                 is_current INTEGER DEFAULT 1,
                 replaced_by INTEGER,
+                source_conversation_id INTEGER,
+                updated_at DATETIME,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS knowledge_gaps (
@@ -88,60 +96,15 @@ class _RealDB:
             """
         )
         conn.commit()
+        # Methods _save_fact_v2, _relation_id_for_fact, _relation_scope,
+        # _table_has_column are inherited from FactExtractionDatabaseMixin.
 
     def _get_current_facts(self, user_id: str):
         return []
 
-    def _relation_id_for_fact(self, user_id, relation_id, conversation_id):
-        return relation_id  # simple: use what's passed
-
-    def _relation_scope(self, table, relation_id):
-        if relation_id:
-            return " AND relation_id = ?", [relation_id]
-        return " AND (relation_id IS NULL)", []
-
-    def _table_has_column(self, table, column):
-        return True
-
-    def _save_fact_v2(self, user_id, category, fact_type, attribute, value,
-                      confidence=1.0, extraction_method='llm', context=None,
-                      conversation_id=None, relation_id=None):
-        """Real SQLite persistence of a fact."""
-        cursor = self.conn.cursor()
-        # Check if identical fact already exists (is_current=1).
-        cursor.execute(
-            """SELECT id FROM user_facts_v2
-               WHERE user_id = ? AND fact_category = ? AND fact_type = ?
-                 AND fact_attribute = ? AND LOWER(fact_value) = LOWER(?)
-                 AND is_current = 1""",
-            (user_id, category, fact_type, attribute, value),
-        )
-        if cursor.fetchone():
-            return  # duplicate — skip
-        # Mark old same-attribute facts as not current.
-        cursor.execute(
-            """UPDATE user_facts_v2 SET is_current = 0
-               WHERE user_id = ? AND fact_category = ? AND fact_type = ?
-                 AND fact_attribute = ? AND is_current = 1""",
-            (user_id, category, fact_type, attribute),
-        )
-        # Insert new fact.
-        cursor.execute(
-            """INSERT INTO user_facts_v2
-               (user_id, fact_category, fact_type, fact_attribute, fact_value,
-                confidence, extraction_method, context, conversation_id,
-                relation_id, agent_instance, version, is_current, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)""",
-            (user_id, category, fact_type, attribute, value,
-             confidence, extraction_method, context, conversation_id,
-             relation_id, self.agent_instance, self._now_iso()),
-        )
-        self.conn.commit()
-        return cursor.lastrowid
-
-    def _now_iso(self):
-        from datetime import datetime, timezone
-        return datetime.now(timezone.utc).isoformat()
+    def _relation_id_for_fact(self, user_id, relation_id=None, conversation_id=None):
+        """Simplified: skip require_eligible_relation (not available in test)."""
+        return str(relation_id) if relation_id else None
 
     def add_knowledge_gap(self, user_id, topic, the_gap, importance=0.5):
         cursor = self.conn.cursor()
@@ -274,24 +237,33 @@ class TestFlushFix:
         assert row["confidence"] == pytest.approx(0.9 * 0.8)
 
     def test_two_relations_isolated(self):
-        """Facts saved for Relation A do not leak into Relation B."""
+        """Facts saved for Relation A do not leak into Relation B.
+        Uses the canonical _save_fact_v2 from FactExtractionDatabaseMixin."""
         db = _make_db()
-        # Save a fact in relation rel-1
+        # Save a fact in relation rel-1 via the canonical method.
         db._save_fact_v2(
             user_id="u1", category="TRABALHO", fact_type="profissao",
             attribute="cargo", value="engenheiro", confidence=0.9,
             extraction_method="flush", relation_id="rel-1",
         )
-        # Count in rel-1
+        # Save a DIFFERENT fact in relation rel-2 via the canonical method.
+        db._save_fact_v2(
+            user_id="u1", category="TRABALHO", fact_type="profissao",
+            attribute="cargo", value="designer", confidence=0.8,
+            extraction_method="flush", relation_id="rel-2",
+        )
+        # Both should be current — one in each relation.
         cur = db.conn.execute(
-            "SELECT COUNT(*) FROM user_facts_v2 WHERE relation_id = 'rel-1'"
+            "SELECT relation_id, fact_value FROM user_facts_v2 WHERE is_current = 1"
+        )
+        rows = {r["relation_id"]: r["fact_value"] for r in cur.fetchall()}
+        assert rows.get("rel-1") == "engenheiro"
+        assert rows.get("rel-2") == "designer"
+        # rel-1 fact should still be current after rel-2 was saved.
+        cur = db.conn.execute(
+            "SELECT is_current FROM user_facts_v2 WHERE relation_id = 'rel-1' AND fact_value = 'engenheiro'"
         )
         assert cur.fetchone()[0] == 1
-        # Count in rel-2 — should be 0
-        cur = db.conn.execute(
-            "SELECT COUNT(*) FROM user_facts_v2 WHERE relation_id = 'rel-2'"
-        )
-        assert cur.fetchone()[0] == 0
 
     def test_repetition_no_duplicate(self):
         """Calling twice with the same fact does not create a duplicate."""
