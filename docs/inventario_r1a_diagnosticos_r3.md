@@ -179,7 +179,7 @@ Escopo: `agent_instance` + `origin_relation_id` via `_identity_origin`.
 |---|---|---|
 | **F-1** | `user_milestones` | **Zero produtores** em todo o código (tabela criada, esvaziável, sem INSERT). |
 | **F-2** | `async_maturation_inbox` | Produtor `add_maturation_inbox_item` completo, **nenhum chamador de produção**. |
-| **F-3** | `memory_flush.py` L113 | 3-tuple desempacotada como 2 → `ValueError` engolido → **fatos do flush silenciosamente descartados**. |
+| **F-3** ✅ | `memory_flush.py` L113 | **RESOLVIDO** (branch `fase-iv/r1a-1-source-vias-flush-fix`, commit `65e3a42`): unpack corrigido, resolvedor defensivo `_resolve_db_manager`, correções logadas mas não aplicadas, gaps persistidos. 10 testes com SQLite real cobrindo persistência, isolamento por Relation, repetição sem duplicação e falha sem sucesso fictício. **Subcorte do R1a-1** — mapeamento de produtores e contrato de vias de origem ainda pendentes. |
 | **F-4** | `work_task_attachments`/`work_project_attachments` `extraction_status='pending'` | **Sem job de retry** — falha vira `failed` sem segunda tentativa. |
 | **F-5** | Loop material em ruminação | Entra como `conversation_id` sintético negativo — **sem via explícita para "material global autorizado"** distinta de privado/legado (alvo direto do R1a). |
 
@@ -215,7 +215,7 @@ Escopo: `agent_instance` + `origin_relation_id` via `_identity_origin`.
 
 | Subcorte | Escopo | Entrega |
 |---|---|---|
-| **R1a-1** | **Inventário + vias de origem.** Criar enum explícito de `source_kind` que distinga `global_authorized` de `relation_private` e de `legacy_unscoped`. Mapear cada produtor existente (Tabela 2.1-2.7) para uma via. Corrigir `memory_flush` (F-3). | Tabela de mapeamento + correção do unpack bug + migração de `source_kind` legado para a nova taxonomia |
+| **R1a-1** | **Inventário + vias de origem.** ~~Criar enum explícito de `source_kind`~~ *(ajustado: não substituir fonte por propriedade — `source_kind` diz de onde veio; `ownership_class` já representa propriedade)*. **Parcial**: bug do flush corrigido (subcorte, ver F-3). **Pendentes**: enum/taxonomia de `source_kind` combinando origem × propriedade, mapeamento dos produtores (Tabelas 2.1-2.7) para a nova taxonomia, contrato documental. **Sem migração de dados históricos.** | Bug flush ✅ · Taxonomia e mapeamento pendentes |
 | **R1a-2** | **Fila de processamento para material global.** Criar fila explícita (`processing_queue` ou equivalente) para material global autorizado, separada de material privado. Resolver F-1 (`user_milestones` — remover ou criar produtor), F-2 (`async_maturation_inbox` — conectar ou remover), F-4 (retry de extração PDF). | Fila + retry + decisão sobre órfãos |
 | **R1a-3** | **Corrigir leitores sem escopo P1-1..P1-4 + P2-1..P2-4.** Aplicar `_relation_scope`/`scope_context`/`legacy_quarantine_clause` nas 8 leituras identificadas. | 8 correções escopadas + testes de isolamento |
 | **R1a-4** | **Consolidação conceitual (R1b pontual).** Conectar `source_kind` → `knowledge_gaps` com `origin_class` distinto (os 2 caminhos da Tabela 2.6). Indexação idempotente. | Fonte, qualidade e incerteza por entrada |
