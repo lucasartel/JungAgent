@@ -48,6 +48,21 @@ def flush_if_needed(
     return keep
 
 
+def _resolve_db_manager(db):
+    """Resolve o HybridDatabaseManager real.
+
+    O caller em core/engine.py passa db=self.db (HybridDatabaseManager).
+    Mas por segurança, se alguém passar o JungianEngine (que tem .db),
+    resolve o manager real. Sem isso, fact_extractor e _save_fact_v2
+    não existem no objeto recebido e os fatos são silenciosamente descartados.
+    """
+    if hasattr(db, "fact_extractor") and hasattr(db, "_save_fact_v2"):
+        return db  # já é o HybridDatabaseManager
+    if hasattr(db, "db") and hasattr(db.db, "fact_extractor"):
+        return db.db  # JungianEngine → HybridDatabaseManager
+    return db
+
+
 def _extract_and_persist(
     db,
     anthropic_client,
@@ -59,6 +74,9 @@ def _extract_and_persist(
     Usa o LLM interno para extrair fragmentos importantes das mensagens e
     os persiste em user_facts_v2 e no log diário.
     """
+    # Resolver o HybridDatabaseManager real (defensivo).
+    db = _resolve_db_manager(db)
+
     # Montar texto das mensagens para o LLM analisar
     text_block = "\n".join(
         f"{'Usuário' if m['role'] == 'user' else 'Jung'}: {m['content'][:300]}"
@@ -115,11 +133,12 @@ def _extract_and_persist(
     # Tentar salvar como fatos via extrator existente
     try:
         if hasattr(db, 'fact_extractor') and db.fact_extractor:
-            extracted, corrections = db.fact_extractor.extract_facts(
+            extracted, corrections, gaps = db.fact_extractor.extract_facts(
                 user_input=fragments,
                 user_id=user_id,
                 existing_facts=db._get_current_facts(user_id),
             )
+            # Persistir fatos novos (confiança reduzida por ser flush)
             for fact in extracted:
                 db._save_fact_v2(
                     user_id=user_id,
@@ -127,11 +146,32 @@ def _extract_and_persist(
                     fact_type=fact.fact_type,
                     attribute=fact.attribute,
                     value=fact.value,
-                    confidence=fact.confidence * 0.8,  # confiança ligeiramente reduzida por ser flush
+                    confidence=fact.confidence * 0.8,
                     extraction_method="flush",
                     context=fact.context,
                     conversation_id=None,
                 )
-            logger.info(f"🔄 [FLUSH] {len(extracted)} fatos salvos de {len(messages)} msgs descartadas")
+            # Tratar correções: registrar mas não aplicar — o contexto da
+            # conversa original foi descartado, então não há lastro para
+            # reescrever o fato de forma segura.
+            if corrections:
+                logger.info(
+                    f"🔄 [FLUSH] {len(corrections)} correções detectadas mas não aplicadas "
+                    f"(contexto de conversa descartado); fatos originais preservados"
+                )
+            # Persistir knowledge gaps descobertos — viram exploráveis depois.
+            for gap in gaps:
+                try:
+                    db.add_knowledge_gap(
+                        user_id=user_id,
+                        topic=gap.topic,
+                        the_gap=gap.the_gap,
+                        importance=gap.importance,
+                    )
+                except Exception as gap_exc:
+                    logger.warning(f"⚠️ [FLUSH] Erro ao salvar knowledge gap: {gap_exc}")
+            logger.info(
+                f"🔄 [FLUSH] {len(extracted)} fatos salvos de {len(messages)} msgs descartadas"
+            )
     except Exception as e:
-        logger.warning(f"⚠️ [FLUSH] Erro ao salvar fatos: {e}")
+        logger.error(f"⚠️ [FLUSH] Erro ao salvar fatos: {e}", exc_info=True)
