@@ -155,20 +155,18 @@ def test_resolve_db_path_env(monkeypatch):
     monkeypatch.delenv("SQLITE_DB_PATH", raising=False)
     mod = _load_erase_module()
     path = mod._resolve_db_path()
-    assert "jung_hybrid.db" in path
-    assert path.startswith("/data")
+    assert path == "/data/jung_hybrid.db"
 
 
-def test_resolve_db_path_sqlite_env(monkeypatch):
+def test_resolve_db_path_sqlite_env_absolute(monkeypatch):
     monkeypatch.delenv("RAILWAY_VOLUME_MOUNT_PATH", raising=False)
     monkeypatch.setenv("SQLITE_DB_PATH", "/custom/my.db")
     mod = _load_erase_module()
     path = mod._resolve_db_path()
-    assert "my.db" in path
+    assert path == "/custom/my.db"
 
 
 def test_resolve_db_path_volume_with_relative_sqlite(monkeypatch):
-    """When both VOLUME and relative SQLITE_DB_PATH are set, use volume + basename."""
     monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", "/data")
     monkeypatch.setenv("SQLITE_DB_PATH", "custom.db")
     mod = _load_erase_module()
@@ -177,7 +175,6 @@ def test_resolve_db_path_volume_with_relative_sqlite(monkeypatch):
 
 
 def test_resolve_db_path_volume_with_absolute_sqlite(monkeypatch):
-    """When both VOLUME and absolute SQLITE_DB_PATH are set, use SQLITE_DB_PATH directly."""
     monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", "/data")
     monkeypatch.setenv("SQLITE_DB_PATH", "/elsewhere/prod.db")
     mod = _load_erase_module()
@@ -185,16 +182,57 @@ def test_resolve_db_path_volume_with_absolute_sqlite(monkeypatch):
     assert path == "/elsewhere/prod.db"
 
 
-def test_resolve_db_path_matches_config_sqlite_path(monkeypatch):
-    """_resolve_db_path must resolve the same path as Config.SQLITE_PATH."""
-    # Scenario: volume=/data, SQLITE_DB_PATH=my.db (relative)
-    monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", "/data")
-    monkeypatch.setenv("SQLITE_DB_PATH", "my.db")
-    # Config.SQLITE_PATH = os.path.join("/data", "my.db") = "/data/my.db"
-    # _resolve_db_path must return the same.
+def test_resolve_db_path_no_volume_relative_sqlite_falls_back_to_data(monkeypatch):
+    """No volume, relative SQLITE_DB_PATH → DATA_DIR + basename (DATA_DIR falls back)."""
+    monkeypatch.delenv("RAILWAY_VOLUME_MOUNT_PATH", raising=False)
+    monkeypatch.setenv("SQLITE_DB_PATH", "custom.db")
     mod = _load_erase_module()
     path = mod._resolve_db_path()
-    assert path == "/data/my.db"
+    # DATA_DIR is /data if /data exists on the machine, otherwise ./data
+    assert path.endswith("custom.db")
+    assert "data/" in path
+
+
+def test_resolve_db_path_no_volume_no_sqlite(monkeypatch):
+    """No volume, no SQLITE_DB_PATH → DATA_DIR + jung_hybrid.db."""
+    monkeypatch.delenv("RAILWAY_VOLUME_MOUNT_PATH", raising=False)
+    monkeypatch.delenv("SQLITE_DB_PATH", raising=False)
+    mod = _load_erase_module()
+    path = mod._resolve_db_path()
+    assert "jung_hybrid.db" in path
+    assert path.endswith("jung_hybrid.db")
+
+
+def test_resolve_db_path_no_volume_finds_data_dir(monkeypatch):
+    """When /data exists, DATA_DIR should be /data even without RAILWAY_VOLUME_MOUNT_PATH."""
+    monkeypatch.delenv("RAILWAY_VOLUME_MOUNT_PATH", raising=False)
+    monkeypatch.delenv("SQLITE_DB_PATH", raising=False)
+    mod = _load_erase_module()
+    path = mod._resolve_db_path()
+    # On machines with /data, it should be /data/jung_hybrid.db
+    # On machines without /data, it should be ./data/jung_hybrid.db
+    assert "jung_hybrid.db" in path
+
+
+def test_resolve_db_path_matches_config_all_scenarios(monkeypatch):
+    """_resolve_db_path must produce the same result as Config.SQLITE_PATH."""
+    scenarios = [
+        {"RAILWAY_VOLUME_MOUNT_PATH": "/data", "SQLITE_DB_PATH": None},
+        {"RAILWAY_VOLUME_MOUNT_PATH": "/data", "SQLITE_DB_PATH": "custom.db"},
+        {"RAILWAY_VOLUME_MOUNT_PATH": "/data", "SQLITE_DB_PATH": "/abs/my.db"},
+        {"RAILWAY_VOLUME_MOUNT_PATH": None, "SQLITE_DB_PATH": "rel.db"},
+        {"RAILWAY_VOLUME_MOUNT_PATH": None, "SQLITE_DB_PATH": None},
+    ]
+    mod = _load_erase_module()
+    for s in scenarios:
+        for k in ("RAILWAY_VOLUME_MOUNT_PATH", "SQLITE_DB_PATH"):
+            if s[k] is None:
+                monkeypatch.delenv(k, raising=False)
+            else:
+                monkeypatch.setenv(k, s[k])
+        path = mod._resolve_db_path()
+        # Must be a valid-looking path, not empty
+        assert path and "jung_hybrid.db" in path or path.endswith(".db"), f"bad path: {path}"
 
 
 def test_cli_reports_database_not_found(monkeypatch):

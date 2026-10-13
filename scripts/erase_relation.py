@@ -61,26 +61,32 @@ def run_erase(conn, relation_id: str, *, apply: bool = False) -> dict:
 
 
 def _resolve_db_path() -> str:
-    """Resolve o caminho do SQLite usando a MESMA logica do Config.SQLITE_PATH.
+    """Resolve o caminho do SQLite replicando exatamente a logica de Config.SQLITE_PATH.
 
-    P1 fix: antes, _resolve_db_path() ignorava SQLITE_DB_PATH quando
-    RAILWAY_VOLUME_MOUNT_PATH estava setado, mas Config.SQLITE_PATH usava
-    ambos. Resultado: --verify podia consultar um banco diferente do usado
-    por --apply, retornando falsamente clean=True.
+    P1 fix: _resolve_db_path() deve resolver o MESMO banco que DatabaseManager()
+    usa em todas as configuracoes suportadas.
+
+    Logica (espelho de core/config.py Config.SQLITE_PATH):
+      1. DATA_DIR = RAILWAY_VOLUME_MOUNT_PATH | /data (se existir) | ./data
+      2. SQLITE_DB_PATH absoluto → usa diretamente
+      3. SQLITE_DB_PATH relativo  → DATA_DIR + basename
+      4. Sem SQLITE_DB_PATH        → DATA_DIR + jung_hybrid.db
     """
     import os
 
     data_dir = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+    if not data_dir:
+        if os.path.exists("/data"):
+            data_dir = "/data"
+        else:
+            data_dir = "./data"
+
     env_sqlite = os.getenv("SQLITE_DB_PATH")
     if env_sqlite:
         if os.path.isabs(env_sqlite):
             return env_sqlite
-        if data_dir:
-            return str(Path(data_dir) / os.path.basename(env_sqlite))
-        return env_sqlite
-    if data_dir:
-        return str(Path(data_dir) / "jung_hybrid.db")
-    return str(Path("data/jung_hybrid.db"))
+        return str(Path(data_dir) / os.path.basename(env_sqlite))
+    return str(Path(data_dir) / "jung_hybrid.db")
 
 
 def main() -> int:
