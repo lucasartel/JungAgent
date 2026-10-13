@@ -13,10 +13,15 @@ auditoria proprios).
 
 Padrao: dry-run (apenas relatorio do que existiria hoje).
 
+Seguranca: dry-run e --verify usam conexao SQLite somente-leitura
+(``mode=ro``) e NAO inicializam o DatabaseManager — portanto nao abrem
+o banco para escrita nem executam migracoes de schema. Apenas ``--apply``
+inicializa o gerenciador completo.
+
 Uso:
-    python scripts/erase_relation.py --relation-id REL-1             # dry-run
-    python scripts/erase_relation.py --relation-id REL-1 --apply     # expurga + verifica
-    python scripts/erase_relation.py --relation-id REL-1 --verify    # so verifica
+    python scripts/erase_relation.py --relation-id REL-1             # dry-run (somente-leitura)
+    python scripts/erase_relation.py --relation-id REL-1 --verify    # so verifica (somente-leitura)
+    python scripts/erase_relation.py --relation-id REL-1 --apply     # expurga + verifica (escrita)
 """
 from __future__ import annotations
 
@@ -55,6 +60,21 @@ def run_erase(conn, relation_id: str, *, apply: bool = False) -> dict:
     return report
 
 
+def _resolve_db_path() -> str:
+    """Resolve o caminho do SQLite sem inicializar o DatabaseManager."""
+    import os
+
+    volume = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+    if volume:
+        return str(Path(volume) / "jung_hybrid.db")
+    sqlite_env = os.getenv("SQLITE_DB_PATH")
+    if sqlite_env:
+        return sqlite_env
+    if Path("/data/jung_hybrid.db").exists():
+        return "/data/jung_hybrid.db"
+    return str(Path("data/jung_hybrid.db"))
+
+
 def main() -> int:
     args = build_parser().parse_args()
     relation_id = str(args.relation_id or "").strip()
@@ -62,10 +82,29 @@ def main() -> int:
         print(json.dumps({"success": False, "error": "relation_id obrigatorio"}))
         return 2
 
-    from jung_core import DatabaseManager
+    if args.apply and not args.verify:
+        # Escrita: inicializa o DatabaseManager completo (migrações, mem0).
+        from jung_core import DatabaseManager
 
-    db = DatabaseManager()
-    report = run_erase(db.conn, relation_id, apply=bool(args.apply and not args.verify))
+        db = DatabaseManager()
+        report = run_erase(db.conn, relation_id, apply=True)
+    else:
+        # Consulta (dry-run ou --verify): conexão somente-leitura, sem
+        # DatabaseManager. Neste modo o banco NÃO é modificado — nem por
+        # migrações de schema nem por inicialização de subsystemos.
+        db_path = _resolve_db_path()
+        if not Path(db_path).exists():
+            print(json.dumps({"success": False, "error": f"database_not_found: {db_path}"}))
+            return 2
+        import sqlite3
+
+        conn = sqlite3.connect(f"file:{Path(db_path).as_posix()}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            report = run_erase(conn, relation_id, apply=False)
+        finally:
+            conn.close()
+
     payload = {"success": report["clean"], **report}
     print(json.dumps(payload, ensure_ascii=False, indent=2 if args.pretty else None))
     return 0 if report["clean"] else 1
