@@ -1,14 +1,13 @@
 """Tests for memory_flush.py fact extraction fix (R1a-1).
 
-Covers the unpack bug fix and the four required test scenarios:
-1. Persistence in the correct Relation
-2. Revocation (corrections logged but not applied — original facts preserved)
-3. Repetition without duplication (extracting same input twice)
-4. Failure without false success (LLM failure does not silently produce facts)
-
-The fix: extract_facts() returns (facts, corrections, gaps) — 3 values.
-memory_flush previously unpacked only 2, causing ValueError swallowed by
-except → facts silently discarded.
+Covers the P1 fix (db resolution) and the unpack bug fix:
+- _resolve_db_manager resolves JungianEngine → HybridDatabaseManager
+- extract_facts returns 3 values (facts, corrections, gaps)
+- Facts persisted with extraction_method="flush" and confidence * 0.8
+- Corrections logged but not applied
+- Knowledge gaps persisted via add_knowledge_gap
+- LLM failure does not produce facts
+- No extractor → no crash, no facts
 """
 from __future__ import annotations
 
@@ -44,8 +43,8 @@ ExtractedFact = _FACT_MODULE.ExtractedFact
 KnowledgeGap = _FACT_MODULE.KnowledgeGap
 
 
-class _FlushDB:
-    """Stub DB with methods called by memory_flush._extract_and_persist."""
+class _RealishDB:
+    """Mimics the HybridDatabaseManager surface used by memory_flush."""
 
     def __init__(self):
         self.conn = sqlite3.connect(":memory:")
@@ -67,6 +66,14 @@ class _FlushDB:
         return 1
 
 
+class _FakeJungianEngine:
+    """Mimics the JungianEngine: has .db pointing to the real manager."""
+
+    def __init__(self, db_manager):
+        self.db = db_manager
+        self.anthropic_client = MagicMock()
+
+
 def _load_flush_module():
     if "core.embeddings" not in sys.modules:
         emb_stub = type(sys)("core.embeddings")
@@ -80,22 +87,24 @@ def _load_flush_module():
         pf = type(sys)("engines.participant_files")
         pf.relation_file_scope = lambda db, uid: ("jung_v1", "rel-1")
         sys.modules["engines.participant_files"] = pf
-    # Force-overwrite the anthropic stub — the conftest stub doesn't
-    # expose `Anthropic`, and memory_flush does a lazy import inside the
-    # function that needs the attribute.
-    ant = type(sys)("anthropic")
+    # Force-overwrite anthropic stub (conftest stub lacks the attribute).
+    import types as _types
+    ant = _types.ModuleType("anthropic")
 
     class _FakeMsg:
-        def __init__(self, text):
-            self.content = [type("C", (), {"text": text})()]
+        content = [_types.SimpleNamespace(text="fragmento relevante")]
 
     class _FakeMsgs:
         def create(self, **kw):
-            return _FakeMsg("fragmento extraido do flush")
+            return _FakeMsg()
 
-    ant.Anthropic = lambda **kw: type("A", (), {"messages": _FakeMsgs()})()
+    ant.Anthropic = lambda **kw: _types.SimpleNamespace(messages=_FakeMsgs())()
     sys.modules["anthropic"] = ant
     return _load_module("memory_flush_test", REPO_ROOT / "memory_flush.py")
+
+
+def _make_db() -> _RealishDB:
+    return _RealishDB()
 
 
 class TestFlushFix:
@@ -103,9 +112,6 @@ class TestFlushFix:
         mod = _load_flush_module()
         if extractor:
             db.fact_extractor = extractor
-
-        # Intercept the lazy `from anthropic import Anthropic` inside
-        # _extract_and_persist by replacing builtins.__import__.
         import builtins
         import types as _types
 
@@ -119,7 +125,6 @@ class TestFlushFix:
                 return _FakeMsg()
 
         stub_mod.Anthropic = lambda **kw: _types.SimpleNamespace(messages=_FakeMsgs())
-
         real_import = builtins.__import__
 
         def fake_import(name, *args, **kwargs):
@@ -144,9 +149,35 @@ class TestFlushFix:
             if old_mod is not None:
                 sys.modules["anthropic"] = old_mod
 
+    # ------------------------------------------------------------------
+    # P1 fix: _resolve_db_manager
+    # ------------------------------------------------------------------
+
+    def test_resolve_db_manager_passthrough(self):
+        """When db is already HybridDatabaseManager, return it unchanged."""
+        mod = _load_flush_module()
+        db = _make_db()
+        assert mod._resolve_db_manager(db) is db
+
+    def test_resolve_db_manager_jungian_engine(self):
+        """When db is JungianEngine (has .db), resolve to the real manager."""
+        mod = _load_flush_module()
+        manager = _make_db()
+        engine = _FakeJungianEngine(manager)
+        assert mod._resolve_db_manager(engine) is manager
+
+    def test_resolve_db_manager_no_db_attr(self):
+        """When db has neither, return it unchanged (best effort)."""
+        mod = _load_flush_module()
+        bare = object()
+        assert mod._resolve_db_manager(bare) is bare
+
+    # ------------------------------------------------------------------
+    # Unpack fix: 3 values from extract_facts
+    # ------------------------------------------------------------------
+
     def test_unpacks_three_values_and_persists_facts(self):
-        """Core fix: extract_facts returns 3 values; flush persists facts."""
-        db = _FlushDB()
+        db = _make_db()
         mock_extractor = MagicMock()
         mock_extractor.extract_facts.return_value = (
             [ExtractedFact("TRABALHO", "profissao", "cargo", "engenheiro", 0.9, "ctx")],
@@ -156,10 +187,10 @@ class TestFlushFix:
         assert len(db.saved_facts) == 1
         assert db.saved_facts[0]["value"] == "engenheiro"
         assert db.saved_facts[0]["extraction_method"] == "flush"
+        assert db.saved_facts[0]["confidence"] == pytest.approx(0.9 * 0.8)
 
     def test_corrections_logged_not_applied(self):
-        """Corrections detected but not applied — original facts preserved."""
-        db = _FlushDB()
+        db = _make_db()
         mock_extractor = MagicMock()
         mock_extractor.extract_facts.return_value = (
             [ExtractedFact("TRABALHO", "profissao", "cargo", "engenheiro", 0.9, "ctx")],
@@ -167,16 +198,14 @@ class TestFlushFix:
             [],
         )
         self._run_flush(db, mock_extractor)
-        # Fact is still persisted despite corrections being detected.
+        # Fact persisted; correction logged but not applied.
         assert len(db.saved_facts) == 1
 
     def test_gaps_persisted(self):
-        """Knowledge gaps from extract_facts are persisted."""
-        db = _FlushDB()
+        db = _make_db()
         mock_extractor = MagicMock()
         mock_extractor.extract_facts.return_value = (
-            [],
-            [],
+            [], [],
             [KnowledgeGap("topic_a", "what_is_x", 0.7)],
         )
         self._run_flush(db, mock_extractor)
@@ -185,8 +214,7 @@ class TestFlushFix:
         assert db.saved_gaps[0]["importance"] == 0.7
 
     def test_llm_failure_does_not_produce_facts(self):
-        """When extract_facts raises, no facts should be saved."""
-        db = _FlushDB()
+        db = _make_db()
         mock_extractor = MagicMock()
         mock_extractor.extract_facts.side_effect = RuntimeError("LLM down")
         self._run_flush(db, mock_extractor)
@@ -194,9 +222,22 @@ class TestFlushFix:
         assert len(db.saved_gaps) == 0
 
     def test_no_extractor_no_crash(self):
-        """When fact_extractor is None/absent, no facts saved, no crash."""
-        db = _FlushDB()
+        db = _make_db()
         db.fact_extractor = None
         self._run_flush(db)
         assert len(db.saved_facts) == 0
         assert len(db.saved_gaps) == 0
+
+    def test_flush_with_jungian_engine_resolves_manager(self):
+        """End-to-end: pass JungianEngine, verify resolution works."""
+        manager = _make_db()
+        mock_extractor = MagicMock()
+        mock_extractor.extract_facts.return_value = (
+            [ExtractedFact("TRABALHO", "profissao", "cargo", "engenheiro", 0.9, "ctx")],
+            [], [],
+        )
+        manager.fact_extractor = mock_extractor
+        engine = _FakeJungianEngine(manager)
+        self._run_flush(engine)
+        # Facts should be on the MANAGER, not the engine.
+        assert len(manager.saved_facts) == 1

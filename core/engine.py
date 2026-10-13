@@ -2921,7 +2921,7 @@ class JungianEngine:
                 ).fetchone()
                 user_name_for_flush = user_row[0] if user_row else user_id
                 chat_history = flush_if_needed(
-                    db=self,
+                    db=self.db,
                     anthropic_client=self.anthropic_client,
                     user_id=user_id,
                     user_name=user_name_for_flush,

@@ -48,6 +48,21 @@ def flush_if_needed(
     return keep
 
 
+def _resolve_db_manager(db):
+    """Resolve o HybridDatabaseManager real.
+
+    O caller em core/engine.py passa db=self.db (HybridDatabaseManager).
+    Mas por segurança, se alguém passar o JungianEngine (que tem .db),
+    resolve o manager real. Sem isso, fact_extractor e _save_fact_v2
+    não existem no objeto recebido e os fatos são silenciosamente descartados.
+    """
+    if hasattr(db, "fact_extractor") and hasattr(db, "_save_fact_v2"):
+        return db  # já é o HybridDatabaseManager
+    if hasattr(db, "db") and hasattr(db.db, "fact_extractor"):
+        return db.db  # JungianEngine → HybridDatabaseManager
+    return db
+
+
 def _extract_and_persist(
     db,
     anthropic_client,
@@ -59,6 +74,9 @@ def _extract_and_persist(
     Usa o LLM interno para extrair fragmentos importantes das mensagens e
     os persiste em user_facts_v2 e no log diário.
     """
+    # Resolver o HybridDatabaseManager real (defensivo).
+    db = _resolve_db_manager(db)
+
     # Montar texto das mensagens para o LLM analisar
     text_block = "\n".join(
         f"{'Usuário' if m['role'] == 'user' else 'Jung'}: {m['content'][:300]}"
