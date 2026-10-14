@@ -376,3 +376,82 @@ class TestReadingContextIsolation:
         scheduler = sched_module.WorkScheduler(db)
         text = scheduler.get_reading_context(cycle_id="c1")
         assert "Outra instancia" not in text
+
+
+class TestEligibilityGateFailClosed:
+    """O gate de elegibilidade deve negar quando não consegue verificar."""
+
+    @staticmethod
+    def _builder_for(db):
+        builder_module = _load_module(
+            "agent_identity_context_builder_test",
+            REPO_ROOT / "agent_identity_context_builder.py",
+        )
+        return builder_module.AgentIdentityContextBuilder(db)
+
+    @staticmethod
+    def _make_rumination_table(db):
+        cursor = db.conn.cursor()
+        cursor.execute(
+            "CREATE TABLE IF NOT EXISTS rumination_fragments "
+            "(id INTEGER PRIMARY KEY, user_id TEXT, relation_id TEXT, agent_instance TEXT)"
+        )
+        db.conn.commit()
+
+    def test_no_get_agent_relation_denied(self):
+        """Sem get_agent_relation, Relation resolvida não pode ser verificada → deny."""
+        db = _make_db()
+        # Remove o leitor de Relations.
+        db.get_agent_relation = None
+        builder = self._builder_for(db)
+        cursor = db.conn.cursor()
+        self._make_rumination_table(db)
+        scope, params = builder._rumination_visibility_scope(
+            cursor, "rumination_fragments", "participant-A"
+        )
+        assert scope == "1 = 0"
+        assert params == []
+
+    def test_get_agent_relation_returns_none_denied(self):
+        """get_agent_relation retorna None → Relation inexistente → deny."""
+        db = _make_db()
+        db.get_agent_relation = lambda rid: None
+        builder = self._builder_for(db)
+        cursor = db.conn.cursor()
+        self._make_rumination_table(db)
+        scope, params = builder._rumination_visibility_scope(
+            cursor, "rumination_fragments", "participant-A"
+        )
+        assert scope == "1 = 0"
+        assert params == []
+
+    def test_no_resolver_non_admin_denied(self):
+        """Sem resolve_relation_id, participante não-admin não acessa legado."""
+        db = _make_db()
+        # Remove o resolvedor.
+        db.resolve_relation_id = None
+        builder = self._builder_for(db)
+        cursor = db.conn.cursor()
+        self._make_rumination_table(db)
+        scope, params = builder._rumination_visibility_scope(
+            cursor, "rumination_fragments", "participant-A"
+        )
+        assert scope == "1 = 0"
+        assert params == []
+
+    def test_resolver_exception_denied(self):
+        """resolve_relation_id lança exceção → não-verificável → deny."""
+        db = _make_db()
+
+        def _broken(**kw):
+            raise RuntimeError("broken")
+
+        db.resolve_relation_id = _broken
+        builder = self._builder_for(db)
+        cursor = db.conn.cursor()
+        self._make_rumination_table(db)
+        scope, params = builder._rumination_visibility_scope(
+            cursor, "rumination_fragments", "participant-A"
+        )
+        assert scope == "1 = 0"
+        assert params == []

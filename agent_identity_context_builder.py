@@ -1315,26 +1315,26 @@ class AgentIdentityContextBuilder:
                     participant_user_id=user_id,
                 )
             except Exception:
-                resolved_relation = None
+                # Resolvedor indisponível/quebrado: não-verificável → fail-closed.
+                return "1 = 0", []
         if resolved_relation:
-            # Verificar elegibilidade (revogação C12g): Relation revogada não
-            # pode ser lida, mesmo que exista no registro.
-            eligible = getattr(self.db, "get_agent_relation", None)
-            if callable(eligible):
-                relation = eligible(resolved_relation)
-                if relation is not None:
-                    status = relation.get("status")
-                    consent = relation.get("consent_status")
-                    if status != "active" or consent != "granted":
-                        return "1 = 0", []
+            # require_eligible_relation: fail-closed. Sem get_agent_relation
+            # ou Relation inexistente/revogada → ValueError → deny.
+            from core.db.relations import require_eligible_relation
+
+            try:
+                require_eligible_relation(self.db, resolved_relation)
+            except ValueError:
+                return "1 = 0", []
             # Leitura estrita: apenas linhas desta Relation. Sem fallback para
             # linhas legadas não classificadas (relation_id IS NULL).
             return (
                 "agent_instance = ? AND relation_id = ?",
                 [self.agent_instance, resolved_relation],
             )
-        if callable(resolver) and str(user_id) != str(ADMIN_USER_ID):
-            # Participante sem Relation verificável → fail-closed.
+        # Sem Relation resolvida. Só o admin explícito acessa o legado;
+        # participante sem Relation → fail-closed.
+        if str(user_id) != str(ADMIN_USER_ID):
             return "1 = 0", []
         # Admin legado sem Relation explícita: apenas linhas legadas próprias.
         return (
