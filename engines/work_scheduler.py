@@ -254,20 +254,27 @@ class WorkScheduler:
     ) -> str:
         """Return a natural-language summary of scheduled reading for this pulse."""
         cursor = self.db.conn.cursor()
-        cursor.execute(
-            """
-            SELECT wb.id, wb.objective, wb.title_hint, wb.project_id,
-                   wb.notes, p.name AS project_name,
-                   p.effort_target, p.effort_unit, p.progress_value,
-                   p.deadline_at, p.status AS project_status
-            FROM work_briefs wb
-            LEFT JOIN work_projects p ON p.id = wb.project_id
-            WHERE wb.origin = 'scheduled_reading'
-              AND wb.trigger_source = ?
-            ORDER BY wb.id ASC
-            """,
-            (f"work_scheduler:{cycle_id}",),
+        from core.db.relation_scope import legacy_quarantine_clause
+        brief_scope, brief_scope_params = legacy_quarantine_clause(
+            cursor,
+            table="work_briefs", relation_column="origin_relation_id",
+            prefix="wb.",
         )
+        cursor.execute(
+                f"""
+                SELECT wb.id, wb.objective, wb.title_hint, wb.project_id,
+                       wb.notes, p.name AS project_name,
+                       p.effort_target, p.effort_unit, p.progress_value,
+                       p.deadline_at, p.status AS project_status
+                FROM work_briefs wb
+                LEFT JOIN work_projects p ON p.id = wb.project_id
+                WHERE wb.origin = 'scheduled_reading'
+                  AND wb.trigger_source = ?
+                  {brief_scope}
+                ORDER BY wb.id ASC
+                """,
+                (f"work_scheduler:{cycle_id}", *brief_scope_params),
+            )
         rows = cursor.fetchall()
         if not rows:
             return "Nenhuma leitura programada para este pulso."

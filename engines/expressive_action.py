@@ -158,18 +158,26 @@ def handle_compose_essay_draft(
     title = "Ensaio Autobiografico — EndoJung"
     now = datetime.utcnow().isoformat()
     cursor = db.conn.cursor()
+    from work.tenancy import tenancy_insert_values
+
+    tenancy = tenancy_insert_values(db)
     cursor.execute(
         """
         INSERT INTO work_artifacts (
             status, title, excerpt, body, content_type, voice_mode,
-            editorial_note, created_at, updated_at
-        ) VALUES ('composed', ?, ?, ?, 'essay_draft', 'endojung', ?, ?, ?)
+            editorial_note, org_id, agent_instance, origin_class,
+            origin_relation_id, created_at, updated_at
+        ) VALUES ('composed', ?, ?, ?, 'essay_draft', 'endojung', ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             title,
             _trunc(essay_text, 280),
             (essay_text or "").strip(),
             json.dumps({"source_refs": source_refs}, ensure_ascii=False),
+            tenancy[0],
+            tenancy[1],
+            tenancy[2],
+            tenancy[3],
             now,
             now,
         ),

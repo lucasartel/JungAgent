@@ -73,18 +73,26 @@ def handle_synthesize_cross_source(
         )
 
     now = datetime.utcnow().isoformat()
+    from work.tenancy import tenancy_insert_values
+
+    tenancy = tenancy_insert_values(db)
     cursor = db.conn.cursor()
     cursor.execute(
         """
         INSERT INTO work_artifacts (
             status, title, body, content_type, voice_mode,
-            editorial_note, created_at, updated_at
-        ) VALUES ('composed', ?, ?, 'synthesis_note', 'endojung', ?, ?, ?)
+            editorial_note, org_id, agent_instance, origin_class,
+            origin_relation_id, created_at, updated_at
+        ) VALUES ('composed', ?, ?, 'synthesis_note', 'endojung', ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             f"Sintese do ciclo",
             (synthesis_text or "").strip(),
             json.dumps({"source_refs": sources.get("source_refs", [])}, ensure_ascii=False),
+            tenancy[0],
+            tenancy[1],
+            tenancy[2],
+            tenancy[3],
             now,
             now,
         ),

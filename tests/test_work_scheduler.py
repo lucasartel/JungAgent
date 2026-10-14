@@ -24,6 +24,15 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
+# Stub openai.OpenAI before any core.* module is loaded.
+if "openai" in sys.modules:
+    if not hasattr(sys.modules["openai"], "OpenAI"):
+        sys.modules["openai"].OpenAI = object
+else:
+    _oai = type(sys)("openai")
+    _oai.OpenAI = object
+    sys.modules["openai"] = _oai
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 

@@ -290,16 +290,20 @@ class AgentIdentityContextBuilder:
                     )
 
             if user_id and self._identity_table_exists(cursor, "rumination_insights"):
+                rum_scope, rum_params = self._rumination_visibility_scope(
+                    cursor, "rumination_insights", user_id
+                )
                 cursor.execute(
-                    """
+                    f"""
                     SELECT id, insight_type, symbol_content, question_content,
                            full_message, crystallized_at
                     FROM rumination_insights
                     WHERE user_id = ?
+                      AND {rum_scope}
                     ORDER BY crystallized_at DESC, id DESC
                     LIMIT 1
                     """,
-                    (user_id,),
+                    (user_id, *rum_params),
                 )
                 row = cursor.fetchone()
                 if row:
@@ -1290,6 +1294,39 @@ class AgentIdentityContextBuilder:
             [self.agent_instance],
         )
 
+    def _rumination_visibility_scope(
+        self, cursor, table: str, user_id: str
+    ) -> tuple[str, list]:
+        """Scope para rumination_fragments e rumination_insights (P1-1/P1-2).
+
+        Essas tabelas usam `relation_id` (não `origin_relation_id`). Aplica
+        o mesmo princípio fail-closed do _dream_visibility_scope:
+        - Com Relation resolvida: escopo por Relation + admin legacy.
+        - Sem Relation e não-admin: 1 = 0 (fail-closed).
+        - Admin sem Relation: apenas linhas legadas (relation_id IS NULL).
+        """
+        columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+        if "agent_instance" not in columns or "relation_id" not in columns:
+            return "1 = 1", []
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        resolved_relation = None
+        if callable(resolver):
+            resolved_relation = resolver(
+                agent_instance=self.agent_instance,
+                participant_user_id=user_id,
+            )
+        if resolved_relation:
+            return (
+                "agent_instance = ? AND (relation_id = ? OR relation_id IS NULL)",
+                [self.agent_instance, resolved_relation],
+            )
+        if callable(resolver) and str(user_id) != str(ADMIN_USER_ID):
+            return "1 = 0", []
+        return (
+            "agent_instance = ? AND relation_id IS NULL",
+            [self.agent_instance],
+        )
+
     def _get_latest_dream_residue(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
         if not user_id:
             return None
@@ -1455,8 +1492,11 @@ class AgentIdentityContextBuilder:
             return None
 
         try:
+            rum_scope, rum_params = self._rumination_visibility_scope(
+                cursor, "rumination_fragments", user_id
+            )
             cursor.execute(
-                """
+                f"""
                 SELECT content, context, created_at
                 FROM rumination_fragments
                 WHERE user_id = ?
@@ -1467,10 +1507,11 @@ class AgentIdentityContextBuilder:
                       'work_expression',
                       'work_delivery'
                   )
+                  AND {rum_scope}
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
-                (user_id,),
+                (user_id, *rum_params),
             )
             row = cursor.fetchone()
         except Exception:
