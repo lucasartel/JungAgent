@@ -15,6 +15,7 @@ from work.tenancy import apply_work_tenancy
 
 import importlib.util
 import json
+import os
 import sqlite3
 import sys
 import threading
@@ -505,10 +506,13 @@ class TestWorkScheduler:
         db.conn.commit()
         scheduler = WorkScheduler(db)
         scheduler.plan_for_phase(cycle_id="c1", pulse_count=2)
-        # Ensure the brief has agent_instance for the scope filter.
+        # Ensure the brief has agent_instance matching the scope filter.
+        # CI sets AGENT_INSTANCE=test_jung_ci; local defaults to test_jung_v0.
+        _inst = os.getenv("AGENT_INSTANCE", "test_jung_v0")
         db.conn.execute(
-            "UPDATE work_briefs SET agent_instance = 'test_jung_v0' "
-            "WHERE origin = 'scheduled_reading'"
+            "UPDATE work_briefs SET agent_instance = ? "
+            "WHERE origin = 'scheduled_reading'",
+            (_inst,),
         )
         db.conn.commit()
         text = scheduler.get_pulse_awareness(cycle_id="c1", pulse_index=1)
