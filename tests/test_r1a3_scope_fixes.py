@@ -11,7 +11,7 @@ import importlib.util
 import sqlite3
 import sys
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -232,3 +232,147 @@ class TestTenancyPropagation:
             agent_instance="test_jung_v0", participant_user_id="unknown"
         )
         assert resolved is None
+
+
+class TestRevokedRelationRejectsRuminationScope:
+    def test_revoked_consent_denied(self):
+        db = _make_db()
+        db.conn.execute(
+            "UPDATE agent_relations SET consent_status = 'revoked' WHERE relation_id = 'rel-A'"
+        )
+        db.conn.commit()
+        builder_module = _load_module(
+            "agent_identity_context_builder_test",
+            REPO_ROOT / "agent_identity_context_builder.py",
+        )
+        builder = builder_module.AgentIdentityContextBuilder(db)
+        cursor = db.conn.cursor()
+        cursor.execute(
+            "CREATE TABLE IF NOT EXISTS rumination_fragments "
+            "(id INTEGER PRIMARY KEY, user_id TEXT, relation_id TEXT, agent_instance TEXT)"
+        )
+        db.conn.commit()
+        scope, params = builder._rumination_visibility_scope(
+            cursor, "rumination_fragments", "participant-A"
+        )
+        assert scope == "1 = 0"
+        assert params == []
+
+    def test_revoked_status_denied(self):
+        db = _make_db()
+        db.conn.execute(
+            "UPDATE agent_relations SET status = 'revoked' WHERE relation_id = 'rel-A'"
+        )
+        db.conn.commit()
+        builder_module = _load_module(
+            "agent_identity_context_builder_test",
+            REPO_ROOT / "agent_identity_context_builder.py",
+        )
+        builder = builder_module.AgentIdentityContextBuilder(db)
+        cursor = db.conn.cursor()
+        cursor.execute(
+            "CREATE TABLE IF NOT EXISTS rumination_fragments "
+            "(id INTEGER PRIMARY KEY, user_id TEXT, relation_id TEXT, agent_instance TEXT)"
+        )
+        db.conn.commit()
+        scope, params = builder._rumination_visibility_scope(
+            cursor, "rumination_fragments", "participant-A"
+        )
+        assert scope == "1 = 0"
+
+
+class TestArtifactWriterPropagatesValidatedRelation:
+    """Executa os handlers reais e verifica o artefato persistido."""
+
+    @staticmethod
+    def _make_writer_db():
+        db = _make_db()
+        db.conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS work_artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                status TEXT, title TEXT, excerpt TEXT, body TEXT,
+                content_type TEXT, voice_mode TEXT, editorial_note TEXT,
+                org_id TEXT, agent_instance TEXT, origin_class TEXT,
+                origin_relation_id TEXT,
+                created_at DATETIME, updated_at DATETIME
+            );
+            """
+        )
+        db.conn.commit()
+        return db
+
+    @staticmethod
+    def _stub_llm(monkeypatch):
+        import llm_providers
+        monkeypatch.setattr(
+            llm_providers, "get_llm_response",
+            lambda *a, **kw: "sintese de teste",
+        )
+
+    def test_synthesis_persists_relation(self, monkeypatch):
+        from engines.synthesis_action import handle_synthesize_cross_source
+
+        self._stub_llm(monkeypatch)
+        db = self._make_writer_db()
+        result = handle_synthesize_cross_source(db, {}, "participant-A")
+        assert result["artifact_id"] > 0
+        row = db.conn.execute(
+            "SELECT origin_relation_id, agent_instance FROM work_artifacts WHERE id = ?",
+            (result["artifact_id"],),
+        ).fetchone()
+        assert row[0] == "rel-A"
+
+    def test_expressive_persists_relation(self, monkeypatch):
+        from engines.expressive_action import handle_compose_essay_draft
+
+        self._stub_llm(monkeypatch)
+        db = self._make_writer_db()
+        result = handle_compose_essay_draft(db, {}, "participant-A")
+        assert result["artifact_id"] > 0
+        row = db.conn.execute(
+            "SELECT origin_relation_id FROM work_artifacts WHERE id = ?",
+            (result["artifact_id"],),
+        ).fetchone()
+        assert row[0] == "rel-A"
+
+    def test_synthesis_revoked_relation_refused(self, monkeypatch):
+        from engines.synthesis_action import handle_synthesize_cross_source
+
+        self._stub_llm(monkeypatch)
+        db = self._make_writer_db()
+        db.conn.execute(
+            "UPDATE agent_relations SET consent_status = 'revoked' WHERE relation_id = 'rel-A'"
+        )
+        db.conn.commit()
+        with pytest.raises(ValueError):
+            handle_synthesize_cross_source(db, {}, "participant-A")
+
+
+class TestReadingContextIsolation:
+    def test_reading_context_excludes_other_instances(self):
+        db = _make_db()
+        db.conn.execute(
+            "CREATE TABLE IF NOT EXISTS work_projects ("
+            "id INTEGER PRIMARY KEY, name TEXT, status TEXT, priority INTEGER, "
+            "deadline_at DATETIME, effort_target REAL, effort_unit TEXT, "
+            "progress_value REAL, agent_instance TEXT, "
+            "created_at DATETIME, updated_at DATETIME)"
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        db.conn.execute(
+            "INSERT INTO work_projects (id, name, status, priority, deadline_at, "
+            "effort_target, effort_unit, progress_value, agent_instance, "
+            "created_at, updated_at) VALUES "
+            "(1, 'Outra instancia', 'active', 80, ?, 100, 'pages', 0, "
+            "'other_instance', ?, ?)",
+            ((datetime.now(timezone.utc) + timedelta(days=5)).isoformat(), now, now),
+        )
+        db.conn.commit()
+        sched_module = _load_module(
+            "engines.work_scheduler_test",
+            REPO_ROOT / "engines" / "work_scheduler.py",
+        )
+        scheduler = sched_module.WorkScheduler(db)
+        text = scheduler.get_reading_context(cycle_id="c1")
+        assert "Outra instancia" not in text

@@ -45,7 +45,7 @@ def handle_synthesize_cross_source(
 
     # C12g: so produz sintese derivada do usuario com Relation elegivel
     # (ou admin legado na quarentena).
-    _relation_scope(db, user_id).require_production()
+    scope = _relation_scope(db, user_id).require_production()
 
     sources = _gather_synthesis_sources(db, user_id)
 
@@ -75,17 +75,9 @@ def handle_synthesize_cross_source(
     now = datetime.utcnow().isoformat()
     from work.tenancy import tenancy_insert_values
 
-    # Resolve the Relation from the participant (fail-closed: no Relation → None).
-    resolved_relation = None
-    try:
-        resolver = getattr(db, "resolve_relation_id", None)
-        if callable(resolver):
-            resolved_relation = resolver(
-                agent_instance=getattr(db, "agent_instance", None),
-                participant_user_id=user_id,
-            )
-    except Exception:
-        resolved_relation = None
+    # Reutiliza a Relation ja validada pelo scope. Se o scope nao tem
+    # relation_id (admin legado sem Relation), grava com None (quarentena).
+    resolved_relation = scope.relation_id
     tenancy = tenancy_insert_values(db, origin_relation_id=resolved_relation)
     cursor = db.conn.cursor()
     cursor.execute(

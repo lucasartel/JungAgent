@@ -299,14 +299,32 @@ class WorkScheduler:
 
     def get_reading_context(self, *, cycle_id: str) -> str:
         """Return contextual info about reading projects for the agent prompt."""
-        from work import WorkEngine
-        engine = WorkEngine(self.db)
-        projects = engine.list_projects_with_deadline()
-        reading_projects = [
-            p for p in projects
-            if p.get("effort_unit") == "pages"
-            and float(p.get("progress_value") or 0) < float(p.get("effort_target") or 0)
-        ]
+        cursor = self.db.conn.cursor()
+        from core.db.relation_scope import legacy_quarantine_clause
+
+        proj_scope, proj_scope_params = legacy_quarantine_clause(
+            cursor,
+            table="work_projects",
+            relation_column="origin_relation_id",
+        )
+        cursor.execute(
+            f"""
+            SELECT * FROM work_projects
+            WHERE status != 'deleted' AND deadline_at IS NOT NULL
+              {proj_scope}
+            ORDER BY deadline_at ASC, priority DESC
+            """,
+            tuple(proj_scope_params),
+        )
+        cols = [d[0] for d in cursor.description]
+        reading_projects = []
+        for row in cursor.fetchall():
+            p = dict(zip(cols, row))
+            if (
+                p.get("effort_unit") == "pages"
+                and float(p.get("progress_value") or 0) < float(p.get("effort_target") or 0)
+            ):
+                reading_projects.append(p)
         if not reading_projects:
             return ""
 

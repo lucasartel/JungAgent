@@ -1317,6 +1317,16 @@ class AgentIdentityContextBuilder:
             except Exception:
                 resolved_relation = None
         if resolved_relation:
+            # Verificar elegibilidade (revogação C12g): Relation revogada não
+            # pode ser lida, mesmo que exista no registro.
+            eligible = getattr(self.db, "get_agent_relation", None)
+            if callable(eligible):
+                relation = eligible(resolved_relation)
+                if relation is not None:
+                    status = relation.get("status")
+                    consent = relation.get("consent_status")
+                    if status != "active" or consent != "granted":
+                        return "1 = 0", []
             # Leitura estrita: apenas linhas desta Relation. Sem fallback para
             # linhas legadas não classificadas (relation_id IS NULL).
             return (
