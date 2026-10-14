@@ -123,7 +123,9 @@ class _WorkTestDB:
                 admin_telegram_id TEXT, title_hint TEXT,
                 notes TEXT, raw_input TEXT, extracted_json TEXT,
                 created_at DATETIME, updated_at DATETIME,
-                project_id INTEGER, action_type TEXT
+                project_id INTEGER, action_type TEXT,
+                agent_instance TEXT, origin_relation_id TEXT,
+                org_id TEXT, origin_class TEXT
             );
             CREATE TABLE IF NOT EXISTS work_approval_tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -503,5 +505,11 @@ class TestWorkScheduler:
         db.conn.commit()
         scheduler = WorkScheduler(db)
         scheduler.plan_for_phase(cycle_id="c1", pulse_count=2)
+        # Ensure the brief has agent_instance for the scope filter.
+        db.conn.execute(
+            "UPDATE work_briefs SET agent_instance = 'test_jung_v0' "
+            "WHERE origin = 'scheduled_reading'"
+        )
+        db.conn.commit()
         text = scheduler.get_pulse_awareness(cycle_id="c1", pulse_index=1)
         assert "Book W" in text or "paginas" in text
