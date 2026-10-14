@@ -138,7 +138,8 @@ class TestRuminationVisibilityScope:
         # Strict: only relation_id = ? — NO OR relation_id IS NULL.
         assert "relation_id = ?" in scope
         assert "relation_id IS NULL" not in scope
-        assert params == ["test_jung_v0", "rel-A"]
+        _inst = __import__("os").getenv("AGENT_INSTANCE", "test_jung_v0")
+        assert params == [_inst, "rel-A"]
 
     def test_no_scope_columns_denied(self):
         """Without scope columns: 1 = 0 (fail-closed, not 1 = 1)."""
