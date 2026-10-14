@@ -1299,29 +1299,34 @@ class AgentIdentityContextBuilder:
     ) -> tuple[str, list]:
         """Scope para rumination_fragments e rumination_insights (P1-1/P1-2).
 
-        Essas tabelas usam `relation_id` (não `origin_relation_id`). Aplica
-        o mesmo princípio fail-closed do _dream_visibility_scope:
-        - Com Relation resolvida: escopo por Relation + admin legacy.
-        - Sem Relation e não-admin: 1 = 0 (fail-closed).
-        - Admin sem Relation: apenas linhas legadas (relation_id IS NULL).
+        Fail-closed: ausência de colunas de escopo ou Relation não verificável
+        nega o escopo (1 = 0). Relação resolvida leitura estrita (relation_id = ?)
+        sem fallback para linhas legadas não classificadas.
         """
         columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
         if "agent_instance" not in columns or "relation_id" not in columns:
-            return "1 = 1", []
+            return "1 = 0", []
         resolver = getattr(self.db, "resolve_relation_id", None)
         resolved_relation = None
         if callable(resolver):
-            resolved_relation = resolver(
-                agent_instance=self.agent_instance,
-                participant_user_id=user_id,
-            )
+            try:
+                resolved_relation = resolver(
+                    agent_instance=self.agent_instance,
+                    participant_user_id=user_id,
+                )
+            except Exception:
+                resolved_relation = None
         if resolved_relation:
+            # Leitura estrita: apenas linhas desta Relation. Sem fallback para
+            # linhas legadas não classificadas (relation_id IS NULL).
             return (
-                "agent_instance = ? AND (relation_id = ? OR relation_id IS NULL)",
+                "agent_instance = ? AND relation_id = ?",
                 [self.agent_instance, resolved_relation],
             )
         if callable(resolver) and str(user_id) != str(ADMIN_USER_ID):
+            # Participante sem Relation verificável → fail-closed.
             return "1 = 0", []
+        # Admin legado sem Relation explícita: apenas linhas legadas próprias.
         return (
             "agent_instance = ? AND relation_id IS NULL",
             [self.agent_instance],

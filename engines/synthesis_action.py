@@ -75,7 +75,18 @@ def handle_synthesize_cross_source(
     now = datetime.utcnow().isoformat()
     from work.tenancy import tenancy_insert_values
 
-    tenancy = tenancy_insert_values(db)
+    # Resolve the Relation from the participant (fail-closed: no Relation → None).
+    resolved_relation = None
+    try:
+        resolver = getattr(db, "resolve_relation_id", None)
+        if callable(resolver):
+            resolved_relation = resolver(
+                agent_instance=getattr(db, "agent_instance", None),
+                participant_user_id=user_id,
+            )
+    except Exception:
+        resolved_relation = None
+    tenancy = tenancy_insert_values(db, origin_relation_id=resolved_relation)
     cursor = db.conn.cursor()
     cursor.execute(
         """
