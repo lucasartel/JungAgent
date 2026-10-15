@@ -290,6 +290,26 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(extraction_retry_scheduler())
     logger.info("✅ Job de retry de extração de PDF (R1a-2) agendado!")
 
+    async def maturation_drain_scheduler():
+        """R1a-2 (F-2): drena a caixa de maturação para a fila de entrega."""
+        from engines.maturation_drain import run_maturation_drain
+
+        logger.info("⏳ [MATURATION DRAIN] Aguardando 5 min antes da primeira rodada...")
+        await asyncio.sleep(300)
+
+        while True:
+            try:
+                result = await asyncio.to_thread(run_maturation_drain, bot_state.db)
+                if result.get("created"):
+                    logger.info("🧘 [MATURATION DRAIN] %s", result)
+            except Exception as e:
+                logger.error(f"❌ Erro no scheduler de dreno de maturação: {e}")
+
+            await asyncio.sleep(900)
+
+    asyncio.create_task(maturation_drain_scheduler())
+    logger.info("✅ Job de dreno de maturação (R1a-2) agendado!")
+
     async def will_pulse_scheduler():
         """Mede pressão psíquica e aciona proatividade endógena quando houver transbordamento."""
         from instance_config import ADMIN_USER_ID

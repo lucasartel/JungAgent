@@ -400,3 +400,296 @@ class TestExtractionHandler:
         assert counts["failed"] == 1
         row = db.conn.execute("SELECT last_error FROM processing_queue").fetchone()
         assert "extraction_not_extracted" in row["last_error"]
+
+
+class TestOrphanDecisions:
+    """F-1/F-2: decisões sobre órfãos registradas neste corte (R1a-2)."""
+
+    def _production_sources(self):
+        import re
+
+        skip = {"tests", ".venv", "archive", "migrations", "docs", "tmp"}
+        insert_re = re.compile(
+            r"INSERT\s+(?:OR\s+\w+\s+)?INTO\s+user_milestones", re.I
+        )
+        # Guarda por linha: DELETE/UPDATE são só plumbing de reset/expurgo,
+        # um leitor real traz SELECT na mesma linha do FROM.
+        from_re = re.compile(r"\bFROM\s+user_milestones", re.I)
+        select_re = re.compile(r"\bSELECT\b", re.I)
+        producers, consumers = [], []
+        for path in sorted(REPO_ROOT.rglob("*.py")):
+            rel = path.relative_to(REPO_ROOT)
+            if not rel.parts or rel.parts[0] in skip:
+                continue
+            src = path.read_text(errors="ignore")
+            if insert_re.search(src):
+                producers.append(str(rel))
+            if any(
+                select_re.search(line) and from_re.search(line)
+                for line in src.splitlines()
+            ):
+                consumers.append(str(rel))
+        return producers, consumers
+
+    def test_user_milestones_retired_has_no_producer(self):
+        """F-1 decidido: aposentar. Um produtor novo quebra esta decisão."""
+        producers, consumers = self._production_sources()
+        assert producers == [], f"user_milestones ganhou produtor: {producers}"
+        assert consumers == [], f"user_milestones ganhou consumidor: {consumers}"
+
+    def test_queue_exists_in_canonical_schema(self):
+        from core.db.schema import SchemaDatabaseMixin
+
+        class _Fixture(SchemaDatabaseMixin):
+            def __init__(self):
+                self.conn = sqlite3.connect(":memory:")
+
+        db = _Fixture()
+        db._init_sqlite_schema()
+        names = {
+            row[0]
+            for row in db.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert "processing_queue" in names
+
+
+class TestMaturationCircuit:
+    """F-2: política → inbox → fila (handoff), sem envio externo."""
+
+    @staticmethod
+    def _tom_db(tmp_path, instance="test_jung"):
+        from core.database import HybridDatabaseManager
+
+        db = HybridDatabaseManager.__new__(HybridDatabaseManager)
+        db.conn = sqlite3.connect(str(tmp_path / "maturation.db"), check_same_thread=False)
+        db.conn.row_factory = sqlite3.Row
+        import threading
+
+        db._lock = threading.Lock()
+        db.agent_instance = instance
+        db._init_sqlite_schema()
+        return db
+
+    def test_policy_defers_reflexive_message(self, tmp_path):
+        from engines.theory_of_mind import TheoryOfMindEngine
+
+        db = self._tom_db(tmp_path)
+        tom = TheoryOfMindEngine(db, agent_instance="test_jung")
+        text = (
+            "Como voce ve a relacao entre liberdade e responsabilidade "
+            "no seu proprio agir quando ninguem esta olhando?"
+        )
+        should_defer, threshold, rationale = tom.evaluate_message_maturation_policy(
+            user_id="participant-1", message_text=text
+        )
+        assert should_defer is True
+        assert threshold > 0.0
+        assert "maturation" in rationale or "deferred" in rationale
+
+    def test_policy_passes_admin_and_short_messages(self, tmp_path):
+        import instance_config
+        from engines.theory_of_mind import TheoryOfMindEngine
+
+        db = self._tom_db(tmp_path)
+        tom = TheoryOfMindEngine(db, agent_instance="test_jung")
+        assert tom.evaluate_message_maturation_policy(
+            user_id=str(instance_config.ADMIN_USER_ID), message_text="x " * 50
+        )[0] is False
+        assert tom.evaluate_message_maturation_policy(
+            user_id="participant-1", message_text="tudo bem?"
+        )[0] is False
+
+    def test_engine_defer_creates_inbox_item(self, tmp_path):
+        from core.engine import JungianEngine
+
+        db = self._tom_db(tmp_path)
+        db.register_agent_relation(
+            agent_instance="test_jung",
+            participant_user_id="participant-1",
+            consent_status="granted",
+        )
+        engine = JungianEngine.__new__(JungianEngine)
+        engine.db = db
+        text = (
+            "Tenho pensado sobre o que significa confiar em alguem depois "
+            "de ter sido decepcionado tantas vezes, e queria ouvir voce."
+        )
+        result = engine._defer_message_to_maturation(
+            user_id="participant-1", message=text
+        )
+        assert result is not None and result["item_id"] > 0
+        row = db.conn.execute(
+            "SELECT status, inbound_message_text FROM async_maturation_inbox WHERE id = ?",
+            (result["item_id"],),
+        ).fetchone()
+        assert row["status"] == "maturing"
+        assert "decepcionado" in row["inbound_message_text"]
+
+    def test_engine_defer_passes_admin(self, tmp_path):
+        import instance_config
+        from core.engine import JungianEngine
+
+        db = self._tom_db(tmp_path)
+        engine = JungianEngine.__new__(JungianEngine)
+        engine.db = db
+        assert engine._defer_message_to_maturation(
+            user_id=str(instance_config.ADMIN_USER_ID), message="x " * 50
+        ) is None
+
+    def test_drain_enqueues_matured_with_relation_stamp(self, tmp_path, monkeypatch):
+        from core.db.processing_queue import QUEUE_MATURATION_INBOX
+
+        db = self._tom_db(tmp_path)
+        relation_id = db.register_agent_relation(
+            agent_instance="test_jung",
+            participant_user_id="participant-1",
+            consent_status="granted",
+        )
+        item_id = db.add_maturation_inbox_item(
+            agent_instance="test_jung",
+            user_id="participant-1",
+            inbound_message_text="mensagem reflexiva longa o bastante para maturar",
+            relational_threshold=0.30,
+            relation_id=relation_id,
+        )
+        import will_engine
+
+        monkeypatch.setattr(
+            will_engine,
+            "load_latest_will_state",
+            lambda *a, **kw: {"relacionar_score": 0.55},
+        )
+        drain_mod = _load_module(
+            "engines.maturation_drain_test",
+            REPO_ROOT / "engines" / "maturation_drain.py",
+        )
+        result = drain_mod.run_maturation_drain(db)
+        assert result["matured"] == 1
+        assert result["created"] == 1
+        queued = db.conn.execute(
+            "SELECT queue_kind, ownership_class, origin_relation_id, payload_json "
+            "FROM processing_queue WHERE queue_kind = ?",
+            (QUEUE_MATURATION_INBOX,),
+        ).fetchone()
+        assert queued is not None
+        assert queued["ownership_class"] == "relation_private"
+        assert queued["origin_relation_id"] == relation_id
+        payload = json.loads(queued["payload_json"])
+        assert payload["maturation_item_id"] == item_id
+        # O envio não aconteceu: a caixa NÃO pode estar 'delivered'.
+        inbox = db.conn.execute(
+            "SELECT status FROM async_maturation_inbox WHERE id = ?", (item_id,)
+        ).fetchone()
+        assert inbox["status"] == "maturing"
+
+    def test_drain_keeps_item_maturing_when_will_is_low(self, tmp_path, monkeypatch):
+        db = self._tom_db(tmp_path)
+        relation_id = db.register_agent_relation(
+            agent_instance="test_jung",
+            participant_user_id="participant-1",
+            consent_status="granted",
+        )
+        db.add_maturation_inbox_item(
+            agent_instance="test_jung",
+            user_id="participant-1",
+            inbound_message_text="mensagem reflexiva longa o bastante para maturar",
+            relational_threshold=0.30,
+            relation_id=relation_id,
+        )
+        import will_engine
+
+        monkeypatch.setattr(
+            will_engine,
+            "load_latest_will_state",
+            lambda *a, **kw: {"relacionar_score": 0.10},
+        )
+        drain_mod = _load_module(
+            "engines.maturation_drain_test",
+            REPO_ROOT / "engines" / "maturation_drain.py",
+        )
+        result = drain_mod.run_maturation_drain(db)
+        assert result["matured"] == 0
+        assert result["created"] == 0
+
+    def test_drain_is_idempotent(self, tmp_path, monkeypatch):
+        db = self._tom_db(tmp_path)
+        relation_id = db.register_agent_relation(
+            agent_instance="test_jung",
+            participant_user_id="participant-1",
+            consent_status="granted",
+        )
+        db.add_maturation_inbox_item(
+            agent_instance="test_jung",
+            user_id="participant-1",
+            inbound_message_text="mensagem reflexiva longa o bastante para maturar",
+            relational_threshold=0.30,
+            relation_id=relation_id,
+        )
+        import will_engine
+
+        monkeypatch.setattr(
+            will_engine,
+            "load_latest_will_state",
+            lambda *a, **kw: {"relacionar_score": 0.55},
+        )
+        drain_mod = _load_module(
+            "engines.maturation_drain_test",
+            REPO_ROOT / "engines" / "maturation_drain.py",
+        )
+        first = drain_mod.run_maturation_drain(db)
+        second = drain_mod.run_maturation_drain(db)
+        assert first["created"] == 1
+        assert second["created"] == 0
+        assert second["skipped"] == 1
+
+    def test_delivered_only_when_transport_closes(self, tmp_path):
+        from core.db.processing_queue import QUEUE_MATURATION_INBOX
+
+        db = self._tom_db(tmp_path)
+        relation_id = db.register_agent_relation(
+            agent_instance="test_jung",
+            participant_user_id="participant-1",
+            consent_status="granted",
+        )
+        item_id = db.add_maturation_inbox_item(
+            agent_instance="test_jung",
+            user_id="participant-1",
+            inbound_message_text="mensagem reflexiva longa o bastante para maturar",
+            relational_threshold=0.30,
+            relation_id=relation_id,
+        )
+        from core.db.processing_queue import enqueue
+
+        queue_id = enqueue(
+            db,
+            queue_kind=QUEUE_MATURATION_INBOX,
+            dedupe_key=f"maturation:{item_id}",
+            payload={"maturation_item_id": item_id, "user_id": "participant-1"},
+            agent_instance="test_jung",
+            ownership_class="relation_private",
+            origin_relation_id=relation_id,
+        )
+        drain_mod = _load_module(
+            "engines.maturation_drain_test",
+            REPO_ROOT / "engines" / "maturation_drain.py",
+        )
+        queue_item = db.conn.execute(
+            "SELECT * FROM processing_queue WHERE id = ?", (queue_id,)
+        ).fetchone()
+        queue_item = dict(queue_item)
+        queue_item["payload"] = json.loads(queue_item["payload_json"])
+        assert drain_mod.mark_delivered_for_queue_item(db, queue_item) is True
+        assert db.conn.execute(
+            "SELECT status FROM async_maturation_inbox WHERE id = ?", (item_id,)
+        ).fetchone()["status"] == "delivered"
+
+    def test_delivered_helper_rejects_item_without_source(self, tmp_path):
+        db = self._tom_db(tmp_path)
+        drain_mod = _load_module(
+            "engines.maturation_drain_test",
+            REPO_ROOT / "engines" / "maturation_drain.py",
+        )
+        with pytest.raises(ValueError, match="maturation_queue_item_missing_source"):
+            drain_mod.mark_delivered_for_queue_item(db, {"payload": {}})

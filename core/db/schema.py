@@ -130,6 +130,11 @@ class SchemaDatabaseMixin:
         """)
         
         # ========== MARCOS DO USUÃRIO ==========
+        # R1a-2 (F-1) — APOSENTADA. Sem produtor e sem consumidor em todo o
+        # repositorio (o INSERT de marcos do agente e em `milestones`, usada
+        # por agent_development). Mantida apenas por compatibilidade de schema:
+        # nao ha DROP no projeto. NAO criar produtor aqui sem decisao nova do
+        # mantenedor — a decisao vigente deste corte e aposentar.
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_milestones (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

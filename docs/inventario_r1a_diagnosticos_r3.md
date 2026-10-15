@@ -177,11 +177,11 @@ Escopo: `agent_instance` + `origin_relation_id` via `_identity_origin`.
 
 | # | Onde | Problema |
 |---|---|---|
-| **F-1** | `user_milestones` | **Zero produtores** em todo o código (tabela criada, esvaziável, sem INSERT). |
-| **F-2** | `async_maturation_inbox` | Produtor `add_maturation_inbox_item` completo, **nenhum chamador de produção**. |
+| **F-1** ✅ | `user_milestones` | **RESOLVIDO — decisão: aposentar** (branch `fase-iv/r1a-2-processing-queue`). Sem produtor e sem consumidor em todo o código (o INSERT de marcos do agente é em `milestones`, usada por `agent_development`). Criar produtor seria capacidade nova (viola o Princípio Áureo); DROP não existe no projeto. Entregue: nota de aposentadoria no `CREATE` (`core/db/schema.py`), nota no contrato `structured_facts` (`core/db/cognitive_ownership.py`) mantendo o apagamento correto de linhas legadas, e guarda de regressão `TestOrphanDecisions::test_user_milestones_retired_has_no_producer` que falha se alguém adicionar produtor/leitor sem nova decisão do mantenedor. |
+| **F-2** ✅ | `async_maturation_inbox` | **RESOLVIDO — decisão: conectar até o limite da regra 7** (mesma branch). Upstream ligado em `JungianEngine.process_message` (`core/engine.py:_defer_message_to_maturation`): a política `evaluate_message_maturation_policy` — que nunca era chamada — agora decide, e `add_maturation_inbox_item` — que nunca teve produtor — ganhou um. Enfileirar falhando **não suprime a resposta** (disponibilidade do turno > supressão). Downstream ligado em `engines/maturation_drain.py`: item maduro (limiar ≤ vontade de relacionar) vira trabalho durável em `processing_queue` (`maturation_inbox`) com a Relation carimbada e `ownership_class='relation_private'` — a fila não promove material privado a global. **O envio real continua atrás do gate existente**: `mark_maturation_item_delivered` só pode ser chamado por quem entregou de fato (`mark_delivered_for_queue_item`), porque marcar sem entregar seria mentir no estado da máquina. |
 | **F-3** ✅ | `memory_flush.py` L113 | **RESOLVIDO** (branch `fase-iv/r1a-1-source-vias-flush-fix`, commit `65e3a42`): unpack corrigido, resolvedor defensivo `_resolve_db_manager`, correções logadas mas não aplicadas, gaps persistidos. 10 testes com SQLite real cobrindo persistência, isolamento por Relation, repetição sem duplicação e falha sem sucesso fictício. **Subcorte do R1a-1** — mapeamento de produtores e contrato de vias de origem ainda pendentes. |
-| **F-4** | `work_task_attachments`/`work_project_attachments` `extraction_status='pending'` | **Sem job de retry** — falha vira `failed` sem segunda tentativa. |
-| **F-5** | Loop material em ruminação | Entra como `conversation_id` sintético negativo — **sem via explícita para "material global autorizado"** distinta de privado/legado (alvo direto do R1a). |
+| **F-4** ✅ | `work_task_attachments`/`work_project_attachments` `extraction_status='pending'` | **RESOLVIDO** (mesma branch): extração deixa de ser single-shot. `core/db/processing_queue.py` cria a primeira fila explícita do projeto (`processing_queue`) com claim atômico, teto de tentativas e backoff exponencial — molde de `engines/loop_post_commit_integration.py`. `work/extraction_retry.py` faz backfill idempotente de PDFs `pending`/`failed`, reexecuta o extrator no worker e é agendado em `main.py` (a cada 30 min). A falha no upload também enfileira na hora, copiando a origem da linha do anexo. |
+| **F-5** | Loop material em ruminação | Entra como `conversation_id` sintético negativo — **sem via explícita para "material global autorizado"** distinta de privado/legado (alvo direto do R1a). **Pendente** (R1a-4 / taxonomia de `source_kind`). |
 
 ---
 
@@ -216,7 +216,7 @@ Escopo: `agent_instance` + `origin_relation_id` via `_identity_origin`.
 | Subcorte | Escopo | Entrega |
 |---|---|---|
 | **R1a-1** | **Inventário + vias de origem.** ~~Criar enum explícito de `source_kind`~~ *(ajustado: não substituir fonte por propriedade — `source_kind` diz de onde veio; `ownership_class` já representa propriedade)*. **Parcial**: bug do flush corrigido (subcorte, ver F-3). **Pendentes**: enum/taxonomia de `source_kind` combinando origem × propriedade, mapeamento dos produtores (Tabelas 2.1-2.7) para a nova taxonomia, contrato documental. **Sem migração de dados históricos.** | Bug flush ✅ · Taxonomia e mapeamento pendentes |
-| **R1a-2** | **Fila de processamento para material global.** Criar fila explícita (`processing_queue` ou equivalente) para material global autorizado, separada de material privado. Resolver F-1 (`user_milestones` — remover ou criar produtor), F-2 (`async_maturation_inbox` — conectar ou remover), F-4 (retry de extração PDF). | Fila + retry + decisão sobre órfãos |
+| **R1a-2** ✅ | **Fila de processamento para material global.** ~~Criar fila explícita (`processing_queue` ou equivalente) para material global autorizado, separada de material privado.~~ **Entregue**: `processing_queue` (`core/db/processing_queue.py`, também no schema canônico) com claim atômico, teto de tentativas e backoff. Cada item carrega `ownership_class`/`origin_class`/`origin_relation_id` próprios — a fila **não promove origem**; quem enfileira decide a classe de propriedade e o material privado (`relation_private`) continua privado. F-1 aposentado, F-2 conectado até o gate de envio, F-4 com retry real. `processing_queue` é *delete-table* no expurgo de Relation (item aponta material que o expurgo remove). | Fila + retry + órfãos decididos ✅ |
 | **R1a-3** | **Corrigir leitores sem escopo P1-1..P1-4 + P2-1..P2-4.** Aplicar `_relation_scope`/`scope_context`/`legacy_quarantine_clause` nas 8 leituras identificadas. | 8 correções escopadas + testes de isolamento |
 | **R1a-4** | **Consolidação conceitual (R1b pontual).** Conectar `source_kind` → `knowledge_gaps` com `origin_class` distinto (os 2 caminhos da Tabela 2.6). Indexação idempotente. | Fonte, qualidade e incerteza por entrada |
 
@@ -237,6 +237,18 @@ R1a-1 (vias de origem + bug flush) → R1a-3 (correções P1/P2)
 ```
 
 R1a-3 pode correr em paralelo com R1a-2 (não se sobrepõem). R3 pode iniciar após R1a-1, pois depende da taxonomia de origem para a política de confiança.
+
+### Progresso
+
+| Corte | Estado |
+|---|---|
+| R1a-1 | Parcial (bug flush ✅ / taxonomia de `source_kind` pendente) |
+| R1a-2 | ✅ Fila + retry + órfãos (F-1 aposentado, F-2 conectado, F-4 resolvido) — PR #62 |
+| R1a-3 | ✅ Correções de isolamento P1 — PR #61 |
+| R1a-4 | Pendente (consolidação `source_kind` → `knowledge_gaps`) |
+| R3a–R3c | Pendentes |
+
+**F-5 permanece aberto** de propósito: é o alvo da taxonomia de origem (R1a-1 pendente / R1a-4), e o Princípio Áureo procura criar a via de "material global autorizado" antes de alimentá-la.
 
 ---
 

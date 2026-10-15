@@ -75,7 +75,9 @@ OWNERSHIP_CONTRACTS: Tuple[CognitiveOwnershipContract, ...] = (
        "Version inside the Relation; delete or anonymize on revocation.",
        "Same Relation; aggregation requires a separate projection.", SAME_RELATION,
        "Map admin facts explicitly; never infer ownership from user_id alone.", READY, "none",
-       "Facts, patterns, milestones and psychometrics carry instance and Relation scope; historical null rows remain quarantined."),
+       "Facts, patterns, milestones and psychometrics carry instance and Relation scope; historical null rows remain quarantined."
+       " (user_milestones is RETIRED by R1a-2/F-1: no producer, no consumer —"
+       " contract kept so legacy rows still erase correctly.)"),
     _c("semantic_memory", ("mem0/Qdrant relation:<relation_id>", "SQLite semantic fallback"),
        RELATION_PRIVATE, RELATION_PRIVATE, ("relation_namespace", "user_id_legacy_fallback"), _REL,
        "Conversation memory selected for semantic retrieval.", "Same-Relation prompt context.",
