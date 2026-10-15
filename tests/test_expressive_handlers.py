@@ -21,6 +21,15 @@ from pathlib import Path
 
 import pytest
 
+# Stub openai.OpenAI before any core.* module is loaded.
+if "openai" in sys.modules:
+    if not hasattr(sys.modules["openai"], "OpenAI"):
+        sys.modules["openai"].OpenAI = object
+else:
+    _oai = type(sys)("openai")
+    _oai.OpenAI = object
+    sys.modules["openai"] = _oai
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -56,7 +65,8 @@ class _ExpressiveDB(ActionProposalDatabaseMixin):
             "CREATE TABLE IF NOT EXISTS work_artifacts ("
             "id INTEGER PRIMARY KEY, status TEXT, title TEXT, excerpt TEXT, "
             "body TEXT, content_type TEXT, voice_mode TEXT, editorial_note TEXT, "
-            "created_at DATETIME, updated_at DATETIME)"
+            "org_id TEXT, agent_instance TEXT, origin_class TEXT, "
+            "origin_relation_id TEXT, created_at DATETIME, updated_at DATETIME)"
         )
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS agent_dreams ("

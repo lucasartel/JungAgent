@@ -74,7 +74,9 @@ def _build_conn_with_architectural_tables():
             symbol_content TEXT,
             question_content TEXT,
             full_message TEXT NOT NULL,
-            crystallized_at TEXT
+            crystallized_at TEXT,
+            agent_instance TEXT,
+            relation_id TEXT
         )
         """
     )
@@ -143,12 +145,13 @@ def test_architectural_self_awareness_uses_recent_internal_evidence():
         """
         INSERT INTO rumination_insights (
             id, user_id, insight_type, symbol_content, question_content,
-            full_message, crystallized_at
+            full_message, crystallized_at, agent_instance, relation_id
         )
         VALUES (5, ?, 'simbolo', 'limiar', 'o que muda quando ha travessia?',
-                'o limiar apareceu como simbolo de continuidade', '2026-07-01T09:30:00')
+                'o limiar apareceu como simbolo de continuidade', '2026-07-01T09:30:00',
+                ?, NULL)
         """,
-        (ADMIN_USER_ID,),
+        (ADMIN_USER_ID, __import__("instance_config", fromlist=["AGENT_INSTANCE"]).AGENT_INSTANCE),
     )
     conn.execute(
         """

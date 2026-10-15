@@ -290,16 +290,20 @@ class AgentIdentityContextBuilder:
                     )
 
             if user_id and self._identity_table_exists(cursor, "rumination_insights"):
+                rum_scope, rum_params = self._rumination_visibility_scope(
+                    cursor, "rumination_insights", user_id
+                )
                 cursor.execute(
-                    """
+                    f"""
                     SELECT id, insight_type, symbol_content, question_content,
                            full_message, crystallized_at
                     FROM rumination_insights
                     WHERE user_id = ?
+                      AND {rum_scope}
                     ORDER BY crystallized_at DESC, id DESC
                     LIMIT 1
                     """,
-                    (user_id,),
+                    (user_id, *rum_params),
                 )
                 row = cursor.fetchone()
                 if row:
@@ -1290,6 +1294,54 @@ class AgentIdentityContextBuilder:
             [self.agent_instance],
         )
 
+    def _rumination_visibility_scope(
+        self, cursor, table: str, user_id: str
+    ) -> tuple[str, list]:
+        """Scope para rumination_fragments e rumination_insights (P1-1/P1-2).
+
+        Fail-closed: ausência de colunas de escopo ou Relation não verificável
+        nega o escopo (1 = 0). Relação resolvida leitura estrita (relation_id = ?)
+        sem fallback para linhas legadas não classificadas.
+        """
+        columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+        if "agent_instance" not in columns or "relation_id" not in columns:
+            return "1 = 0", []
+        resolver = getattr(self.db, "resolve_relation_id", None)
+        resolved_relation = None
+        if callable(resolver):
+            try:
+                resolved_relation = resolver(
+                    agent_instance=self.agent_instance,
+                    participant_user_id=user_id,
+                )
+            except Exception:
+                # Resolvedor indisponível/quebrado: não-verificável → fail-closed.
+                return "1 = 0", []
+        if resolved_relation:
+            # require_eligible_relation: fail-closed. Sem get_agent_relation
+            # ou Relation inexistente/revogada → ValueError → deny.
+            from core.db.relations import require_eligible_relation
+
+            try:
+                require_eligible_relation(self.db, resolved_relation)
+            except ValueError:
+                return "1 = 0", []
+            # Leitura estrita: apenas linhas desta Relation. Sem fallback para
+            # linhas legadas não classificadas (relation_id IS NULL).
+            return (
+                "agent_instance = ? AND relation_id = ?",
+                [self.agent_instance, resolved_relation],
+            )
+        # Sem Relation resolvida. Só o admin explícito acessa o legado;
+        # participante sem Relation → fail-closed.
+        if str(user_id) != str(ADMIN_USER_ID):
+            return "1 = 0", []
+        # Admin legado sem Relation explícita: apenas linhas legadas próprias.
+        return (
+            "agent_instance = ? AND relation_id IS NULL",
+            [self.agent_instance],
+        )
+
     def _get_latest_dream_residue(self, cursor, user_id: Optional[str]) -> Optional[Dict]:
         if not user_id:
             return None
@@ -1455,8 +1507,11 @@ class AgentIdentityContextBuilder:
             return None
 
         try:
+            rum_scope, rum_params = self._rumination_visibility_scope(
+                cursor, "rumination_fragments", user_id
+            )
             cursor.execute(
-                """
+                f"""
                 SELECT content, context, created_at
                 FROM rumination_fragments
                 WHERE user_id = ?
@@ -1467,10 +1522,11 @@ class AgentIdentityContextBuilder:
                       'work_expression',
                       'work_delivery'
                   )
+                  AND {rum_scope}
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
-                (user_id,),
+                (user_id, *rum_params),
             )
             row = cursor.fetchone()
         except Exception:

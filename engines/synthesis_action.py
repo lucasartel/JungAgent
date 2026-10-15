@@ -45,7 +45,7 @@ def handle_synthesize_cross_source(
 
     # C12g: so produz sintese derivada do usuario com Relation elegivel
     # (ou admin legado na quarentena).
-    _relation_scope(db, user_id).require_production()
+    scope = _relation_scope(db, user_id).require_production()
 
     sources = _gather_synthesis_sources(db, user_id)
 
@@ -73,18 +73,29 @@ def handle_synthesize_cross_source(
         )
 
     now = datetime.utcnow().isoformat()
+    from work.tenancy import tenancy_insert_values
+
+    # Reutiliza a Relation ja validada pelo scope. Se o scope nao tem
+    # relation_id (admin legado sem Relation), grava com None (quarentena).
+    resolved_relation = scope.relation_id
+    tenancy = tenancy_insert_values(db, origin_relation_id=resolved_relation)
     cursor = db.conn.cursor()
     cursor.execute(
         """
         INSERT INTO work_artifacts (
             status, title, body, content_type, voice_mode,
-            editorial_note, created_at, updated_at
-        ) VALUES ('composed', ?, ?, 'synthesis_note', 'endojung', ?, ?, ?)
+            editorial_note, org_id, agent_instance, origin_class,
+            origin_relation_id, created_at, updated_at
+        ) VALUES ('composed', ?, ?, 'synthesis_note', 'endojung', ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             f"Sintese do ciclo",
             (synthesis_text or "").strip(),
             json.dumps({"source_refs": sources.get("source_refs", [])}, ensure_ascii=False),
+            tenancy[0],
+            tenancy[1],
+            tenancy[2],
+            tenancy[3],
             now,
             now,
         ),

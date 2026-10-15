@@ -254,20 +254,27 @@ class WorkScheduler:
     ) -> str:
         """Return a natural-language summary of scheduled reading for this pulse."""
         cursor = self.db.conn.cursor()
-        cursor.execute(
-            """
-            SELECT wb.id, wb.objective, wb.title_hint, wb.project_id,
-                   wb.notes, p.name AS project_name,
-                   p.effort_target, p.effort_unit, p.progress_value,
-                   p.deadline_at, p.status AS project_status
-            FROM work_briefs wb
-            LEFT JOIN work_projects p ON p.id = wb.project_id
-            WHERE wb.origin = 'scheduled_reading'
-              AND wb.trigger_source = ?
-            ORDER BY wb.id ASC
-            """,
-            (f"work_scheduler:{cycle_id}",),
+        from core.db.relation_scope import legacy_quarantine_clause
+        brief_scope, brief_scope_params = legacy_quarantine_clause(
+            cursor,
+            table="work_briefs", relation_column="origin_relation_id",
+            prefix="wb.",
         )
+        cursor.execute(
+                f"""
+                SELECT wb.id, wb.objective, wb.title_hint, wb.project_id,
+                       wb.notes, p.name AS project_name,
+                       p.effort_target, p.effort_unit, p.progress_value,
+                       p.deadline_at, p.status AS project_status
+                FROM work_briefs wb
+                LEFT JOIN work_projects p ON p.id = wb.project_id
+                WHERE wb.origin = 'scheduled_reading'
+                  AND wb.trigger_source = ?
+                  {brief_scope}
+                ORDER BY wb.id ASC
+                """,
+                (f"work_scheduler:{cycle_id}", *brief_scope_params),
+            )
         rows = cursor.fetchall()
         if not rows:
             return "Nenhuma leitura programada para este pulso."
@@ -292,14 +299,32 @@ class WorkScheduler:
 
     def get_reading_context(self, *, cycle_id: str) -> str:
         """Return contextual info about reading projects for the agent prompt."""
-        from work import WorkEngine
-        engine = WorkEngine(self.db)
-        projects = engine.list_projects_with_deadline()
-        reading_projects = [
-            p for p in projects
-            if p.get("effort_unit") == "pages"
-            and float(p.get("progress_value") or 0) < float(p.get("effort_target") or 0)
-        ]
+        cursor = self.db.conn.cursor()
+        from core.db.relation_scope import legacy_quarantine_clause
+
+        proj_scope, proj_scope_params = legacy_quarantine_clause(
+            cursor,
+            table="work_projects",
+            relation_column="origin_relation_id",
+        )
+        cursor.execute(
+            f"""
+            SELECT * FROM work_projects
+            WHERE status != 'deleted' AND deadline_at IS NOT NULL
+              {proj_scope}
+            ORDER BY deadline_at ASC, priority DESC
+            """,
+            tuple(proj_scope_params),
+        )
+        cols = [d[0] for d in cursor.description]
+        reading_projects = []
+        for row in cursor.fetchall():
+            p = dict(zip(cols, row))
+            if (
+                p.get("effort_unit") == "pages"
+                and float(p.get("progress_value") or 0) < float(p.get("effort_target") or 0)
+            ):
+                reading_projects.append(p)
         if not reading_projects:
             return ""
 

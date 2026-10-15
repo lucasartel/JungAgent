@@ -15,6 +15,7 @@ from work.tenancy import apply_work_tenancy
 
 import importlib.util
 import json
+import os
 import sqlite3
 import sys
 import threading
@@ -23,6 +24,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytest
+
+# Stub openai.OpenAI before any core.* module is loaded.
+if "openai" in sys.modules:
+    if not hasattr(sys.modules["openai"], "OpenAI"):
+        sys.modules["openai"].OpenAI = object
+else:
+    _oai = type(sys)("openai")
+    _oai.OpenAI = object
+    sys.modules["openai"] = _oai
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -114,7 +124,9 @@ class _WorkTestDB:
                 admin_telegram_id TEXT, title_hint TEXT,
                 notes TEXT, raw_input TEXT, extracted_json TEXT,
                 created_at DATETIME, updated_at DATETIME,
-                project_id INTEGER, action_type TEXT
+                project_id INTEGER, action_type TEXT,
+                agent_instance TEXT, origin_relation_id TEXT,
+                org_id TEXT, origin_class TEXT
             );
             CREATE TABLE IF NOT EXISTS work_approval_tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -494,5 +506,14 @@ class TestWorkScheduler:
         db.conn.commit()
         scheduler = WorkScheduler(db)
         scheduler.plan_for_phase(cycle_id="c1", pulse_count=2)
+        # Ensure the brief has agent_instance matching the scope filter.
+        # CI sets AGENT_INSTANCE=test_jung_ci; local defaults to test_jung_v0.
+        _inst = os.getenv("AGENT_INSTANCE", "test_jung_v0")
+        db.conn.execute(
+            "UPDATE work_briefs SET agent_instance = ? "
+            "WHERE origin = 'scheduled_reading'",
+            (_inst,),
+        )
+        db.conn.commit()
         text = scheduler.get_pulse_awareness(cycle_id="c1", pulse_index=1)
         assert "Book W" in text or "paginas" in text
