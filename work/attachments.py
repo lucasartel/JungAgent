@@ -135,6 +135,24 @@ class WorkAttachmentMixin:
                  result.get("word_count"), _now_iso(), attachment_id),
             )
             self.db.conn.commit()
+            if status != "extracted":
+                # Falha sem exceção (extrator devolveu 'failed'): também
+                # entra na fila de retry (F-4).
+                try:
+                    from work.extraction_retry import enqueue_extraction_failure
+
+                    enqueue_extraction_failure(
+                        self.db,
+                        table="work_project_attachments",
+                        attachment_id=attachment_id,
+                        stored_path=file_path,
+                    )
+                except Exception as queue_exc:
+                    logger.warning(
+                        "extract_and_store_project_pdf: enqueue retry failed id=%s error=%s",
+                        attachment_id,
+                        queue_exc,
+                    )
             return result
         except Exception as exc:
             cursor = self.db.conn.cursor()
@@ -143,6 +161,23 @@ class WorkAttachmentMixin:
                 (attachment_id,),
             )
             self.db.conn.commit()
+            # R1a-2 (F-4): falha de extração não é final — entra na fila de
+            # retry com o dono herdado do anexo.
+            try:
+                from work.extraction_retry import enqueue_extraction_failure
+
+                enqueue_extraction_failure(
+                    self.db,
+                    table="work_project_attachments",
+                    attachment_id=attachment_id,
+                    stored_path=file_path,
+                )
+            except Exception as queue_exc:
+                logger.warning(
+                    "extract_and_store_project_pdf: enqueue retry failed id=%s error=%s",
+                    attachment_id,
+                    queue_exc,
+                )
             return {"status": "failed", "error": str(exc)}
 
     def list_project_attachments(self, project_id: int) -> List[Dict[str, Any]]:

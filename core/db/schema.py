@@ -1443,6 +1443,37 @@ class SchemaDatabaseMixin:
         if hasattr(self, "_init_essays_schema"):
             self._init_essays_schema()
 
+        # R1a-2: fila de processamento de material autorizado (retry/backoff).
+        # Criada no schema canonico para existir desde o init; a API em
+        # core/db/processing_queue.py garante de novo (idempotente).
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS processing_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                queue_kind TEXT NOT NULL,
+                dedupe_key TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'pending',
+                retry_attempts INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 5,
+                next_at TEXT,
+                last_error TEXT,
+                org_id TEXT,
+                agent_instance TEXT,
+                ownership_class TEXT NOT NULL DEFAULT 'instance_global',
+                origin_class TEXT,
+                origin_relation_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(queue_kind, dedupe_key)
+            )
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_processing_queue_due "
+            "ON processing_queue(queue_kind, status, next_at)"
+        )
+
         # R2: project-level attachments (replaces work_task_attachments)
         cursor.execute(
             """

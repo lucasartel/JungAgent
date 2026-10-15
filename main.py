@@ -266,6 +266,30 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(world_consciousness_scheduler())
     logger.info("✅ Job de Curiosidade Ontológica (World Consciousness) agendado!")
 
+    async def extraction_retry_scheduler():
+        """R1a-2 (F-4): drena a fila de retry de extração de PDF."""
+        from work.extraction_retry import run_extraction_retry
+
+        logger.info("⏳ [EXTRACTION RETRY] Aguardando 5 min antes da primeira rodada...")
+        await asyncio.sleep(300)
+
+        while True:
+            try:
+                result = await asyncio.to_thread(run_extraction_retry, bot_state.db)
+                counts = result.get("counts", {})
+                if counts.get("processed"):
+                    logger.info(
+                        "📎 [EXTRACTION RETRY] %s",
+                        result,
+                    )
+            except Exception as e:
+                logger.error(f"❌ Erro no scheduler de retry de extração: {e}")
+
+            await asyncio.sleep(1800)
+
+    asyncio.create_task(extraction_retry_scheduler())
+    logger.info("✅ Job de retry de extração de PDF (R1a-2) agendado!")
+
     async def will_pulse_scheduler():
         """Mede pressão psíquica e aciona proatividade endógena quando houver transbordamento."""
         from instance_config import ADMIN_USER_ID
