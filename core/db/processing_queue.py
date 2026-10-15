@@ -111,8 +111,14 @@ def enqueue(
 
     Retorna o ``id`` quando criou; ``None`` quando já existia (dedupe) ou
     quando o item está ``exhausted`` (não re-enfileira material esgotado).
+
+    ``agent_instance`` é obrigatório na prática: ``None`` resolve para a
+    instância do processo, porque item sem instância não é atribuível e o
+    dreno o recusa — deixar NULL seria criar material indrenável.
     """
     ensure_schema(db)
+    if not agent_instance:
+        agent_instance = _worker_instance(db, None)
     moment = now or _utc_now()
     stamp = _iso(moment)
     cursor = db.conn.cursor()
@@ -159,6 +165,7 @@ def _due_rows(
     db: Any,
     *,
     queue_kind: str,
+    agent_instance: str,
     now: datetime,
     limit: int,
 ) -> List[int]:
@@ -166,35 +173,92 @@ def _due_rows(
     cursor.execute(
         f"""
         SELECT id FROM processing_queue
-        WHERE queue_kind = ? AND status IN ({RECOVERABLE_STATUS_SQL})
+        WHERE queue_kind = ? AND agent_instance = ?
+          AND status IN ({RECOVERABLE_STATUS_SQL})
           AND retry_attempts < max_attempts
           AND (next_at IS NULL OR julianday(next_at) <= julianday(?))
         ORDER BY id
         LIMIT ?
         """,
-        (str(queue_kind), _iso(now), int(limit)),
+        (str(queue_kind), agent_instance, _iso(now), int(limit)),
     )
     return [int(row[0]) for row in cursor.fetchall()]
+
+
+def _worker_instance(db: Any, agent_instance: Optional[str]) -> str:
+    """Instância do executor. Materiál de outra instância nunca é drenado."""
+    if agent_instance:
+        return str(agent_instance)
+    from work.tenancy import current_agent_instance
+
+    return str(current_agent_instance(db))
+
+
+def _reconcile_exhausted_running(
+    db: Any, *, queue_kind: str, agent_instance: str, now: datetime
+) -> int:
+    """Move ``running`` interrompido já sem tentativas para ``exhausted``.
+
+    Sem isso, uma interrupção na última tentativa deixa o item em ``running``
+    para sempre: a seleção exige ``retry_attempts < max_attempts`` e nunca mais
+    o alcança. ``exhausted`` é terminal e visível para revisão.
+    """
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """
+        UPDATE processing_queue
+        SET status = 'exhausted',
+            last_error = COALESCE(last_error, 'interrupted_attempts_exhausted'),
+            next_at = NULL,
+            updated_at = ?
+        WHERE queue_kind = ? AND agent_instance = ? AND status = 'running'
+          AND retry_attempts >= max_attempts
+          AND next_at IS NOT NULL AND julianday(next_at) <= julianday(?)
+        """,
+        (_iso(now), str(queue_kind), agent_instance, _iso(now)),
+    )
+    moved = cursor.rowcount
+    if moved:
+        db.conn.commit()
+        logger.warning(
+            "processing_queue: %s item(ns) interrompido(s) sem tentativas "
+            "restantes em queue_kind=%s -> exhausted",
+            moved, queue_kind,
+        )
+    return moved
 
 
 def claim_due(
     db: Any,
     *,
     queue_kind: str,
+    agent_instance: Optional[str] = None,
     now: Optional[datetime] = None,
     limit: int = DEFAULT_BATCH_LIMIT,
 ) -> List[Dict[str, Any]]:
     """Reivindica atomicamente itens vencidos (``rowcount == 1`` por item).
 
-    Cada claim incrementa ``retry_attempts`` e agenda ``next_at`` (backoff).
-    Um ``running`` cujo ``next_at`` venceu e um claim interrompido (processo
-    morreu no meio): ele volta a ficar elegível e consuma uma tentativa —
-    sem isso o item ficaria preso em ``running`` para sempre.
+    Só reivindica material da **instância do executor** — uma fila compartilhada
+    não pode misturar instâncias. Cada claim incrementa ``retry_attempts`` e
+    agenda ``next_at`` (backoff). Um ``running`` cujo ``next_at`` venceu é um
+    claim interrompido (processo morreu no meio): ele volta a ficar elegível e
+    consome uma tentativa — sem isso o item ficaria preso em ``running`` para
+    sempre. Quando não há tentativas restantes, é reconciliado para ``exhausted``.
+
+    O valor de ``retry_attempts`` retornado é a **identidade da tentativa**:
+    o executor deve devolvê-lo em ``mark_done``/``mark_failed``/``mark_skipped``
+    para que finalizações de um executor antigo sejam rejeitadas.
     """
     ensure_schema(db)
     moment = now or _utc_now()
+    instance = _worker_instance(db, agent_instance)
+    _reconcile_exhausted_running(
+        db, queue_kind=queue_kind, agent_instance=instance, now=moment
+    )
     claimed: List[Dict[str, Any]] = []
-    for item_id in _due_rows(db, queue_kind=queue_kind, now=moment, limit=limit):
+    for item_id in _due_rows(
+        db, queue_kind=queue_kind, agent_instance=instance, now=moment, limit=limit
+    ):
         backoff = timedelta(minutes=DEFAULT_BACKOFF_MINUTES)
         cursor = db.conn.cursor()
         cursor.execute(
@@ -204,11 +268,15 @@ def claim_due(
                 retry_attempts = retry_attempts + 1,
                 next_at = ?,
                 updated_at = ?
-            WHERE id = ? AND queue_kind = ? AND status IN ({RECOVERABLE_STATUS_SQL})
+            WHERE id = ? AND queue_kind = ? AND agent_instance = ?
+              AND status IN ({RECOVERABLE_STATUS_SQL})
               AND retry_attempts < max_attempts
               AND (next_at IS NULL OR julianday(next_at) <= julianday(?))
             """,
-            (_iso(moment + backoff), _iso(moment), item_id, str(queue_kind), _iso(moment)),
+            (
+                _iso(moment + backoff), _iso(moment), item_id,
+                str(queue_kind), instance, _iso(moment),
+            ),
         )
         if cursor.rowcount != 1:
             continue
@@ -234,37 +302,87 @@ def _fetch(db: Any, item_id: int) -> Optional[Dict[str, Any]]:
     return data
 
 
-def mark_done(db: Any, item_id: int, *, now: Optional[datetime] = None) -> None:
-    moment = now or _utc_now()
+def _finalize(
+    db: Any,
+    item_id: int,
+    *,
+    expected_attempt: int,
+    status: str,
+    last_error: Optional[str],
+    now: datetime,
+) -> bool:
+    """Aplica um destino final SOMENTE se a tentativa ainda for a proprietária.
+
+    ``retry_attempts`` é a identidade da tentativa: o claim o incrementa e o
+    executor carrega o valor. Se outro executor reivindicou o item nesse meio
+    (o ``next_at`` venceu), a finalização antiga vira no-op — sem isso um
+    executor velho sobrescreveria o resultado de um mais novo.
+    """
     cursor = db.conn.cursor()
     cursor.execute(
         """
         UPDATE processing_queue
-        SET status = 'done', next_at = NULL, last_error = NULL, updated_at = ?
-        WHERE id = ?
+        SET status = ?, next_at = ?, last_error = ?, updated_at = ?
+        WHERE id = ? AND retry_attempts = ?
         """,
-        (_iso(moment), int(item_id)),
+        (
+            status,
+            None,
+            last_error,
+            _iso(now),
+            int(item_id),
+            int(expected_attempt),
+        ),
     )
+    applied = cursor.rowcount == 1
     db.conn.commit()
+    if not applied:
+        logger.warning(
+            "processing_queue: finalização obsoleta rejeitada item_id=%s "
+            "tentativa_esperada=%s status_desejado=%s",
+            item_id, expected_attempt, status,
+        )
+    return applied
 
 
-def mark_skipped(db: Any, item_id: int, *, now: Optional[datetime] = None) -> None:
+def mark_done(
+    db: Any,
+    item_id: int,
+    *,
+    expected_attempt: int,
+    now: Optional[datetime] = None,
+) -> bool:
+    """Sucesso. Retorna ``False`` quando a tentativa já foi superada."""
+    return _finalize(
+        db,
+        item_id,
+        expected_attempt=expected_attempt,
+        status="done",
+        last_error=None,
+        now=now or _utc_now(),
+    )
+
+
+def mark_skipped(
+    db: Any,
+    item_id: int,
+    *,
+    expected_attempt: int,
+    now: Optional[datetime] = None,
+) -> bool:
     """Descarte deliberado: terminal, sem retry e sem ``last_error``.
 
     Diferente de ``done``, nada foi produzido; diferente de ``failed``, não é
     erro. Sem este destino o item ficaria preso em ``running`` para sempre.
     """
-    moment = now or _utc_now()
-    cursor = db.conn.cursor()
-    cursor.execute(
-        """
-        UPDATE processing_queue
-        SET status = 'skipped', next_at = NULL, last_error = NULL, updated_at = ?
-        WHERE id = ?
-        """,
-        (_iso(moment), int(item_id)),
+    return _finalize(
+        db,
+        item_id,
+        expected_attempt=expected_attempt,
+        status="skipped",
+        last_error=None,
+        now=now or _utc_now(),
     )
-    db.conn.commit()
 
 
 def mark_failed(
@@ -272,12 +390,14 @@ def mark_failed(
     item_id: int,
     *,
     error: str,
+    expected_attempt: int,
     now: Optional[datetime] = None,
     backoff_minutes: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Registra falha; esgota quando ``retry_attempts >= max_attempts``.
 
-    Retorna o estado resultante (``failed`` ou ``exhausted``).
+    Retorna o estado resultante. ``status='stale'`` significa que a tentativa
+    já foi superada por outro executor e nada foi alterado.
     """
     moment = now or _utc_now()
     row = _fetch(db, item_id)
@@ -285,6 +405,17 @@ def mark_failed(
         raise ValueError("processing_queue_item_missing")
     retry_attempts = int(row.get("retry_attempts") or 0)
     max_attempts = int(row.get("max_attempts") or DEFAULT_MAX_ATTEMPTS)
+    if retry_attempts != int(expected_attempt):
+        logger.warning(
+            "processing_queue: falha obsoleta rejeitada item_id=%s "
+            "tentativa_esperada=%s tentativa_atual=%s",
+            item_id, expected_attempt, retry_attempts,
+        )
+        return {
+            "status": "stale",
+            "retry_attempts": retry_attempts,
+            "max_attempts": max_attempts,
+        }
     exhausted = retry_attempts >= max_attempts
     minutes = (
         backoff_minutes
@@ -298,11 +429,18 @@ def mark_failed(
         """
         UPDATE processing_queue
         SET status = ?, last_error = ?, next_at = ?, updated_at = ?
-        WHERE id = ?
+        WHERE id = ? AND retry_attempts = ?
         """,
-        (status, str(error)[:500], next_at, _iso(moment), int(item_id)),
+        (status, str(error)[:500], next_at, _iso(moment), int(item_id), int(expected_attempt)),
     )
+    applied = cursor.rowcount == 1
     db.conn.commit()
+    if not applied:
+        return {
+            "status": "stale",
+            "retry_attempts": retry_attempts,
+            "max_attempts": max_attempts,
+        }
     return {"status": status, "retry_attempts": retry_attempts, "max_attempts": max_attempts}
 
 
@@ -311,19 +449,33 @@ def drain(
     *,
     queue_kind: str,
     handler: Callable[[Any, Dict[str, Any]], Any],
+    agent_instance: Optional[str] = None,
     now: Optional[datetime] = None,
     limit: int = DEFAULT_BATCH_LIMIT,
 ) -> Dict[str, int]:
     """Executa o ``handler`` sobre itens vencidos com retry/backoff.
 
-    Sucesso → ``done``; falha → ``failed`` com backoff exponencial e
-    ``exhausted`` após ``max_attempts``; ``{"skip": True}`` → ``skipped``
-    (terminal, para o item não ficar preso em ``running``).
+    Drena somente o material da instância do executor. Sucesso → ``done``;
+    falha → ``failed`` com backoff exponencial e ``exhausted`` após
+    ``max_attempts``; ``{"skip": True}`` → ``skipped`` (terminal, para o item
+    não ficar preso em ``running``).
+
+    Cada finalização carrega a identidade da tentativa (``retry_attempts`` no
+    momento do claim). Se outro executor reivindicou o item nesse meio, a
+    finalização vira no-op e é contada em ``stale`` — um executor antigo
+    nunca sobrescreve o resultado de um mais novo.
     """
     moment = now or _utc_now()
-    counts = {"processed": 0, "done": 0, "failed": 0, "exhausted": 0, "skipped": 0}
-    for item in claim_due(db, queue_kind=queue_kind, now=moment, limit=limit):
+    instance = _worker_instance(db, agent_instance)
+    counts = {
+        "processed": 0, "done": 0, "failed": 0, "exhausted": 0,
+        "skipped": 0, "stale": 0,
+    }
+    for item in claim_due(
+        db, queue_kind=queue_kind, agent_instance=instance, now=moment, limit=limit
+    ):
         counts["processed"] += 1
+        attempt = int(item.get("retry_attempts") or 0)
         try:
             outcome = handler(db, item) or {}
         except Exception as exc:
@@ -333,18 +485,28 @@ def drain(
                 item.get("id"),
                 exc,
             )
-            state = mark_failed(db, int(item["id"]), error=str(exc), now=moment)
-            if state["status"] == "exhausted":
+            state = mark_failed(
+                db,
+                int(item["id"]),
+                error=str(exc),
+                expected_attempt=attempt,
+                now=moment,
+            )
+            if state["status"] == "stale":
+                counts["stale"] += 1
+            elif state["status"] == "exhausted":
                 counts["exhausted"] += 1
             else:
                 counts["failed"] += 1
             continue
         if isinstance(outcome, dict) and outcome.get("skip"):
-            mark_skipped(db, int(item["id"]), now=moment)
-            counts["skipped"] += 1
+            applied = mark_skipped(
+                db, int(item["id"]), expected_attempt=attempt, now=moment
+            )
+            counts["skipped" if applied else "stale"] += 1
             continue
-        mark_done(db, int(item["id"]), now=moment)
-        counts["done"] += 1
+        applied = mark_done(db, int(item["id"]), expected_attempt=attempt, now=moment)
+        counts["done" if applied else "stale"] += 1
     return counts
 
 

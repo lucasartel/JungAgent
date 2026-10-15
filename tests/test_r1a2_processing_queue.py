@@ -28,7 +28,9 @@ from core.db.processing_queue import (  # noqa: E402
     drain,
     enqueue,
     ensure_schema,
+    mark_done,
     mark_failed,
+    mark_skipped,
     stats,
 )
 
@@ -130,7 +132,7 @@ class TestQueueCore:
 
         counts = drain(db, queue_kind="q", handler=handler, now=_now())
         assert counts == {"processed": 1, "done": 1, "failed": 0,
-                          "exhausted": 0, "skipped": 0}
+                          "exhausted": 0, "skipped": 0, "stale": 0}
         assert seen == ["k1"]
         assert stats(db, "q") == {"done": 1}
 
@@ -179,7 +181,7 @@ class TestQueueCore:
         db = _DB(_make_queue_db())
         ensure_schema(db)
         with pytest.raises(ValueError, match="processing_queue_item_missing"):
-            mark_failed(db, 9999, error="x")
+            mark_failed(db, 9999, error="x", expected_attempt=1)
 
     def test_max_attempts_defaults(self):
         db = _DB(_make_queue_db())
@@ -196,18 +198,18 @@ class TestExtractionRetryBackfill:
             """
             INSERT INTO work_project_attachments
                 (project_id, filename, stored_path, mime_type, extraction_status,
-                 origin_class, origin_relation_id, uploaded_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 agent_instance, origin_class, origin_relation_id, uploaded_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (1, "a.pdf", "/tmp/a.pdf", "application/pdf", "pending",
-                 "relation_scoped", "rel-A", now),
+                 db.agent_instance, "relation_scoped", "rel-A", now),
                 (1, "b.pdf", "/tmp/b.pdf", "application/pdf", "failed",
-                 "relation_scoped", "rel-A", now),
+                 db.agent_instance, "relation_scoped", "rel-A", now),
                 (1, "c.pdf", "/tmp/c.pdf", "application/pdf", "extracted",
-                 "relation_scoped", "rel-A", now),
+                 db.agent_instance, "relation_scoped", "rel-A", now),
                 (1, "d.csv", "/tmp/d.csv", "text/csv", "failed",
-                 "relation_scoped", "rel-A", now),
+                 db.agent_instance, "relation_scoped", "rel-A", now),
             ],
         )
         db.conn.commit()
@@ -218,7 +220,8 @@ class TestExtractionRetryBackfill:
         # Só PDFs pending/failed (2); extracted e csv ficam de fora.
         assert created == 2
         rows = db.conn.execute(
-            "SELECT dedupe_key, origin_relation_id FROM processing_queue ORDER BY dedupe_key"
+            "SELECT dedupe_key, origin_relation_id, agent_instance "
+            "FROM processing_queue ORDER BY dedupe_key"
         ).fetchall()
         assert [r["dedupe_key"] for r in rows] == [
             "work_project_attachments:1",
@@ -226,15 +229,38 @@ class TestExtractionRetryBackfill:
         ]
         # O dono do anexo é copiado — a fila não reclassifica a origem.
         assert all(r["origin_relation_id"] == "rel-A" for r in rows)
+        assert all(r["agent_instance"] == db.agent_instance for r in rows)
+
+    def test_backfill_ignores_other_instances(self):
+        """P1-1: anexo de OUTRA instância não é enfileirado nem reclassificado."""
+        db = _DB(_make_queue_db())
+        now = _now().isoformat()
+        db.conn.execute(
+            """
+            INSERT INTO work_project_attachments
+                (project_id, filename, stored_path, mime_type, extraction_status,
+                 agent_instance, origin_relation_id, uploaded_at)
+            VALUES (1, 'b.pdf', '/tmp/b.pdf', 'application/pdf', 'pending',
+                    'other_instance', 'rel-B', ?)
+            """,
+            (now,),
+        )
+        db.conn.commit()
+        retry = _load_module(
+            "work.extraction_retry_test", REPO_ROOT / "work" / "extraction_retry.py"
+        )
+        assert retry.enqueue_pending_extractions(db, table="work_project_attachments") == 0
+        assert db.conn.execute("SELECT COUNT(*) FROM processing_queue").fetchone()[0] == 0
 
     def test_backfill_is_idempotent(self):
         db = _DB(_make_queue_db())
         db.conn.execute(
             """
             INSERT INTO work_project_attachments
-                (project_id, stored_path, mime_type, extraction_status)
-            VALUES (1, '/tmp/a.pdf', 'application/pdf', 'pending')
-            """
+                (project_id, stored_path, mime_type, extraction_status, agent_instance)
+            VALUES (1, '/tmp/a.pdf', 'application/pdf', 'pending', ?)
+            """,
+            (db.agent_instance,),
         )
         db.conn.commit()
         retry = _load_module(
@@ -765,13 +791,10 @@ class TestP1SchedulerWithRealSchema:
             "work.extraction_retry_test", REPO_ROOT / "work" / "extraction_retry.py"
         )
         created = retry.enqueue_pending_extractions(db, table="work_task_attachments")
-        assert created == 1
-        row = db.conn.execute(
-            "SELECT origin_relation_id, ownership_class FROM processing_queue"
-        ).fetchone()
-        # Tabela legada sem tenancy: sem origem, sem mentira de carimbo.
-        assert row["origin_relation_id"] is None
-        assert row["ownership_class"] == "instance_global"
+        # Sem ``agent_instance`` a tabela não é atribuível: o backfill a pula
+        # em vez de classificar por aproximação com a instância do processo.
+        assert created == 0
+        assert db.conn.execute("SELECT COUNT(*) FROM processing_queue").fetchone()[0] == 0
 
     def test_backfill_handles_project_attachments_with_tenancy(self, tmp_path):
         db = _real_schema_db(tmp_path)
@@ -780,11 +803,11 @@ class TestP1SchedulerWithRealSchema:
             """
             INSERT INTO work_project_attachments
                 (project_id, filename, stored_path, mime_type, extraction_status,
-                 origin_class, origin_relation_id, uploaded_at)
+                 agent_instance, origin_class, origin_relation_id, uploaded_at)
             VALUES (1, 'novo.pdf', '/tmp/novo.pdf', 'application/pdf', 'pending',
-                    'relation_scoped', 'rel-A', ?)
+                    ?, 'relation_scoped', 'rel-A', ?)
             """,
-            (now,),
+            (db.agent_instance, now),
         )
         db.conn.commit()
         retry = _load_module(
@@ -808,10 +831,11 @@ class TestP1SchedulerWithRealSchema:
         db.conn.execute(
             """
             INSERT INTO work_project_attachments
-                (project_id, filename, stored_path, mime_type, extraction_status)
-            VALUES (1, 'doc.pdf', ?, 'application/pdf', 'failed')
+                (project_id, filename, stored_path, mime_type, extraction_status,
+                 agent_instance)
+            VALUES (1, 'doc.pdf', ?, 'application/pdf', 'failed', ?)
             """,
-            (str(pdf),),
+            (str(pdf), db.agent_instance),
         )
         db.conn.commit()
         att_id = db.conn.execute(
@@ -858,22 +882,24 @@ class TestP1SchedulerWithRealSchema:
         db.conn.execute(
             """
             INSERT INTO work_project_attachments
-                (project_id, filename, stored_path, mime_type, extraction_status, uploaded_at)
-            VALUES (1, 'b.pdf', '/tmp/b.pdf', 'application/pdf', 'pending', ?)
+                (project_id, filename, stored_path, mime_type, extraction_status,
+                 agent_instance, uploaded_at)
+            VALUES (1, 'b.pdf', '/tmp/b.pdf', 'application/pdf', 'pending', ?, ?)
             """,
-            (now,),
+            (db.agent_instance, now),
         )
         db.conn.commit()
         retry = _load_module(
             "work.extraction_retry_test", REPO_ROOT / "work" / "extraction_retry.py"
         )
         # Arquivos inexistentes → falha operacional, mas a rodada NÃO interrompe.
+        # A tabela legada de tarefas é pulada (sem instância atribuível).
         result = retry.run_extraction_retry(db, limit=10)
-        assert result["backfilled"]["work_task_attachments"] == 1
+        assert result["backfilled"]["work_task_attachments"] == 0
         assert result["backfilled"]["work_project_attachments"] == 1
-        assert result["counts"]["failed"] == 2
+        assert result["counts"]["failed"] == 1
         stats_now = stats(db, QUEUE_ATTACHMENT_EXTRACTION)
-        assert stats_now.get("failed") == 2
+        assert stats_now.get("failed") == 1
 
 
 class TestP1InterruptedAndSkip:
@@ -895,18 +921,47 @@ class TestP1InterruptedAndSkip:
         assert len(recovered) == 1
         assert recovered[0]["retry_attempts"] == 2
 
+    def test_interrupted_on_last_attempt_exhausts_not_hangs(self):
+        """P2-3: interrupção na ÚLTIMA tentativa não deixa ``running`` eterno."""
+        db = _DB(_make_queue_db())
+        enqueue(db, queue_kind="q", dedupe_key="k1", max_attempts=1)
+        claimed = claim_due(db, queue_kind="q", now=_now())
+        assert len(claimed) == 1
+        row = db.conn.execute(
+            "SELECT status, retry_attempts FROM processing_queue"
+        ).fetchone()
+        assert row["status"] == "running"
+        assert row["retry_attempts"] == 1
+
+        # Processo morreu. Depois do backoff a seleção jamais alcançaria o
+        # item (attempts == max): a reconciliação o move para ``exhausted``.
+        later = _now() + timedelta(hours=1)
+        assert claim_due(db, queue_kind="q", now=later) == []
+        row = db.conn.execute(
+            "SELECT status, last_error, next_at FROM processing_queue"
+        ).fetchone()
+        assert row["status"] == "exhausted"
+        assert row["last_error"] == "interrupted_attempts_exhausted"
+        assert row["next_at"] is None
+
     def test_interrupted_item_exhausts_instead_of_hanging(self):
         db = _DB(_make_queue_db())
         enqueue(db, queue_kind="q", dedupe_key="k1", max_attempts=2)
         claim_due(db, queue_kind="q", now=_now())
         later = _now() + timedelta(hours=1)
         claim_due(db, queue_kind="q", now=later)
-        row = db.conn.execute("SELECT status FROM processing_queue").fetchone()
-        # Ainda running (claim), mas com tentativas esgotadas: sem novo claim.
-        assert row["status"] == "running"
-        assert claim_due(db, queue_kind="q", now=_now() + timedelta(days=1)) == []
-        row = db.conn.execute("SELECT retry_attempts FROM processing_queue").fetchone()
+        row = db.conn.execute(
+            "SELECT status, retry_attempts FROM processing_queue"
+        ).fetchone()
+        # Segunda tentativa consumida; item segue running até finalizar.
         assert row["retry_attempts"] == 2
+        # Sem tentativas restantes: não há novo claim e não fica pendurado.
+        assert claim_due(db, queue_kind="q", now=_now() + timedelta(days=1)) == []
+        row = db.conn.execute(
+            "SELECT status, last_error FROM processing_queue"
+        ).fetchone()
+        assert row["status"] == "exhausted"
+        assert row["last_error"] == "interrupted_attempts_exhausted"
 
     def test_skip_finalizes_item_as_terminal(self):
         db = _DB(_make_queue_db())
@@ -933,3 +988,74 @@ class TestP1InterruptedAndSkip:
         # Dedupe: não nasce outro item para a mesma chave.
         assert enqueue(db, queue_kind="q", dedupe_key="k1") is None
         assert stats(db, "q") == {"skipped": 1}
+
+    def test_stale_executor_cannot_overwrite_newer_result(self):
+        """P1-2: finalização de executor antigo é rejeitada."""
+        db = _DB(_make_queue_db())
+        enqueue(db, queue_kind="q", dedupe_key="k1")
+
+        # Executor A reivindica (tentativa 1) e fica lento.
+        executor_a = claim_due(db, queue_kind="q", now=_now())
+        assert executor_a[0]["retry_attempts"] == 1
+
+        # O claim de A vence; executor B reivindica (tentativa 2) e conclui.
+        later = _now() + timedelta(hours=1)
+        executor_b = claim_due(db, queue_kind="q", now=later)
+        assert executor_b[0]["retry_attempts"] == 2
+        assert mark_done(
+            db, executor_b[0]["id"], expected_attempt=executor_b[0]["retry_attempts"]
+        ) is True
+
+        row = db.conn.execute("SELECT status FROM processing_queue").fetchone()
+        assert row["status"] == "done"
+
+        # Executor A (tentativa 1) agora registra uma falha: no-op.
+        state = mark_failed(
+            db, executor_a[0]["id"], error="late failure",
+            expected_attempt=executor_a[0]["retry_attempts"],
+        )
+        assert state["status"] == "stale"
+        row = db.conn.execute(
+            "SELECT status, last_error FROM processing_queue"
+        ).fetchone()
+        assert row["status"] == "done"
+        assert row["last_error"] is None
+
+    def test_stale_executor_skip_is_rejected(self):
+        db = _DB(_make_queue_db())
+        enqueue(db, queue_kind="q", dedupe_key="k1")
+        executor_a = claim_due(db, queue_kind="q", now=_now())
+        later = _now() + timedelta(hours=1)
+        executor_b = claim_due(db, queue_kind="q", now=later)
+        assert mark_done(
+            db, executor_b[0]["id"], expected_attempt=executor_b[0]["retry_attempts"]
+        ) is True
+        assert mark_skipped(
+            db, executor_a[0]["id"], expected_attempt=executor_a[0]["retry_attempts"]
+        ) is False
+        row = db.conn.execute("SELECT status FROM processing_queue").fetchone()
+        assert row["status"] == "done"
+
+    def test_drain_counts_stale_finalizations(self):
+        db = _DB(_make_queue_db())
+        enqueue(db, queue_kind="q", dedupe_key="k1")
+        moment = _now() + timedelta(hours=2)
+
+        def slow_then_fail(connection, item):
+            # Enquanto o handler de A roda, o claim de A vence e B reivindica
+            # e conclui. Depois A registra uma falha tardia.
+            later = moment + timedelta(hours=1)
+            other = claim_due(connection, queue_kind="q", now=later)
+            if other:
+                mark_done(
+                    connection,
+                    other[0]["id"],
+                    expected_attempt=other[0]["retry_attempts"],
+                )
+            raise RuntimeError("late failure from A")
+
+        counts = drain(db, queue_kind="q", handler=slow_then_fail, now=moment)
+        assert counts["stale"] == 1
+        assert counts["failed"] == 0
+        row = db.conn.execute("SELECT status FROM processing_queue").fetchone()
+        assert row["status"] == "done"

@@ -26,6 +26,7 @@ from core.db.processing_queue import (
     enqueue,
     ensure_schema,
 )
+from work.tenancy import current_agent_instance
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +36,10 @@ logger = logging.getLogger(__name__)
 RETRYABLE_TABLES = ("work_project_attachments", "work_task_attachments")
 STATUS_IN_SCOPE = ("pending", "failed")
 
-# Colunas de proveniência/tenancy. Só ``work_project_attachments`` as tem;
-# ``work_task_attachments`` é legada e o SELECT as omite por PRAGMA.
-PROVENANCE_COLUMNS = ("org_id", "origin_class", "origin_relation_id")
+# Colunas de proveniência/tenancy. ``agent_instance`` é obrigatória para o
+# backfill atribuir o material; ``work_task_attachments`` é legada e não a
+# tem — por isso o backfill a pula em vez de classificar por aproximação.
+PROVENANCE_COLUMNS = ("agent_instance", "org_id", "origin_class", "origin_relation_id")
 
 
 def _table_scope(table: str) -> str:
@@ -66,6 +68,13 @@ def enqueue_pending_extractions(
 ) -> int:
     """Backfill idempotente: enfileira anexos PDF ainda ``pending``/``failed``.
 
+    **Isolamento por instância**: a seleção só alcança anexos da instância do
+    processo e o item de fila carrega a instância da própria linha — nunca a
+    do processo. Sem isso um anexo da instância B seria enfileirado como
+    pertencente à A. Tabela sem ``agent_instance`` (legado) não tem como ser
+    atribuída: o backfill a pula com registro, em vez de classificá-la por
+    aproximação.
+
     Retorna quantos itens novos foram criados (dedupe não conta).
     """
     table = _table_scope(table)
@@ -74,6 +83,14 @@ def enqueue_pending_extractions(
     missing = {"id", "stored_path", "extraction_status", "mime_type"} - available
     if missing:
         raise ValueError(f"extraction_retry_schema_incomplete:{table}:{sorted(missing)}")
+    if "agent_instance" not in available:
+        logger.warning(
+            "extraction_retry: tabela %s sem agent_instance — material não "
+            "atribuível, backfill pulado (nunca classificado por aproximação)",
+            table,
+        )
+        return 0
+    instance = str(current_agent_instance(db))
     provenance = _provenance_columns(db, table)
     select_columns = ", ".join(["id", "stored_path", *provenance])
     cursor = db.conn.cursor()
@@ -82,8 +99,9 @@ def enqueue_pending_extractions(
         SELECT {select_columns}
         FROM {table}
         WHERE extraction_status IN (?, ?) AND mime_type = 'application/pdf'
+          AND agent_instance = ?
         """,
-        STATUS_IN_SCOPE,
+        (*STATUS_IN_SCOPE, instance),
     )
     cols = [d[0] for d in cursor.description]
     created = 0
@@ -99,7 +117,8 @@ def enqueue_pending_extractions(
             queue_kind=QUEUE_ATTACHMENT_EXTRACTION,
             dedupe_key=f"{table}:{data['id']}",
             payload=payload,
-            agent_instance=getattr(db, "agent_instance", None),
+            # Origem da LINHA, nunca a do processo.
+            agent_instance=str(data.get("agent_instance") or instance),
             org_id=data.get("org_id"),
             ownership_class="instance_global",
             origin_class=data.get("origin_class"),
@@ -259,6 +278,7 @@ def enqueue_extraction_failure(
     table = _table_scope(table)
     provenance = _provenance_columns(db, table)
     org_id = origin_class = origin_relation_id = None
+    row_instance: Optional[str] = None
     if provenance:
         cursor = db.conn.cursor()
         cursor.execute(
@@ -271,6 +291,7 @@ def enqueue_extraction_failure(
             org_id = values.get("org_id")
             origin_class = values.get("origin_class")
             origin_relation_id = values.get("origin_relation_id")
+            row_instance = values.get("agent_instance")
     return enqueue(
         db,
         queue_kind=QUEUE_ATTACHMENT_EXTRACTION,
@@ -280,7 +301,9 @@ def enqueue_extraction_failure(
             "attachment_id": int(attachment_id),
             "stored_path": str(stored_path),
         },
-        agent_instance=getattr(db, "agent_instance", None),
+        # Instância da linha quando existe; a do processo só como último
+        # recurso no caminho de upload (a mesma que gravou o anexo).
+        agent_instance=str(row_instance or current_agent_instance(db)),
         org_id=org_id,
         ownership_class="instance_global",
         origin_class=origin_class,
