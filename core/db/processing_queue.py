@@ -31,7 +31,21 @@ DEFAULT_BATCH_LIMIT = 25
 QUEUE_ATTACHMENT_EXTRACTION = "attachment_extraction"
 QUEUE_MATURATION_INBOX = "maturation_inbox"
 
-VALID_QUEUE_STATUS = ("pending", "running", "done", "failed", "exhausted")
+# pending   → nunca tentado;
+# running   → claim ativo; se o processo morre, ``next_at`` vence e o item
+#             volta a ficar elegível (recuperação de interrupção);
+# failed    → handler falhou, aguarda backoff;
+# done      → processado com sucesso;
+# skipped   → descarte deliberado (nada a fazer: anexo já extraído, linha
+#             apagada, payload sem fonte). Terminal, sem retry;
+# exhausted → esgotou ``max_attempts``. Terminal, sem retry automático.
+VALID_QUEUE_STATUS = (
+    "pending", "running", "done", "failed", "exhausted", "skipped",
+)
+
+# Estados que podem ser (re)ivindicados. ``running`` entra porque um claim
+# interrompido só se recupera pelo vencimento do ``next_at`` gravado no claim.
+RECOVERABLE_STATUS_SQL = "'pending', 'failed', 'running'"
 
 
 def _utc_now() -> datetime:
@@ -150,9 +164,9 @@ def _due_rows(
 ) -> List[int]:
     cursor = db.conn.cursor()
     cursor.execute(
-        """
+        f"""
         SELECT id FROM processing_queue
-        WHERE queue_kind = ? AND status IN ('pending', 'failed')
+        WHERE queue_kind = ? AND status IN ({RECOVERABLE_STATUS_SQL})
           AND retry_attempts < max_attempts
           AND (next_at IS NULL OR julianday(next_at) <= julianday(?))
         ORDER BY id
@@ -172,9 +186,10 @@ def claim_due(
 ) -> List[Dict[str, Any]]:
     """Reivindica atomicamente itens vencidos (``rowcount == 1`` por item).
 
-    Cada claim incrementa ``retry_attempts`` e agenda ``next_at`` (backoff) para o
-    caso de o handler falhar — mesmo se o processo morrer no meio, o item
-    volta a ficar elegível após o backoff.
+    Cada claim incrementa ``retry_attempts`` e agenda ``next_at`` (backoff).
+    Um ``running`` cujo ``next_at`` venceu e um claim interrompido (processo
+    morreu no meio): ele volta a ficar elegível e consuma uma tentativa —
+    sem isso o item ficaria preso em ``running`` para sempre.
     """
     ensure_schema(db)
     moment = now or _utc_now()
@@ -183,13 +198,13 @@ def claim_due(
         backoff = timedelta(minutes=DEFAULT_BACKOFF_MINUTES)
         cursor = db.conn.cursor()
         cursor.execute(
-            """
+            f"""
             UPDATE processing_queue
             SET status = 'running',
                 retry_attempts = retry_attempts + 1,
                 next_at = ?,
                 updated_at = ?
-            WHERE id = ? AND queue_kind = ? AND status IN ('pending', 'failed')
+            WHERE id = ? AND queue_kind = ? AND status IN ({RECOVERABLE_STATUS_SQL})
               AND retry_attempts < max_attempts
               AND (next_at IS NULL OR julianday(next_at) <= julianday(?))
             """,
@@ -226,6 +241,25 @@ def mark_done(db: Any, item_id: int, *, now: Optional[datetime] = None) -> None:
         """
         UPDATE processing_queue
         SET status = 'done', next_at = NULL, last_error = NULL, updated_at = ?
+        WHERE id = ?
+        """,
+        (_iso(moment), int(item_id)),
+    )
+    db.conn.commit()
+
+
+def mark_skipped(db: Any, item_id: int, *, now: Optional[datetime] = None) -> None:
+    """Descarte deliberado: terminal, sem retry e sem ``last_error``.
+
+    Diferente de ``done``, nada foi produzido; diferente de ``failed``, não é
+    erro. Sem este destino o item ficaria preso em ``running`` para sempre.
+    """
+    moment = now or _utc_now()
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """
+        UPDATE processing_queue
+        SET status = 'skipped', next_at = NULL, last_error = NULL, updated_at = ?
         WHERE id = ?
         """,
         (_iso(moment), int(item_id)),
@@ -283,8 +317,8 @@ def drain(
     """Executa o ``handler`` sobre itens vencidos com retry/backoff.
 
     Sucesso → ``done``; falha → ``failed`` com backoff exponencial e
-    ``exhausted`` após ``max_attempts``. ``handler`` pode devolver
-    ``{"skip": True}`` para desistir sem tratar como erro.
+    ``exhausted`` após ``max_attempts``; ``{"skip": True}`` → ``skipped``
+    (terminal, para o item não ficar preso em ``running``).
     """
     moment = now or _utc_now()
     counts = {"processed": 0, "done": 0, "failed": 0, "exhausted": 0, "skipped": 0}
@@ -306,6 +340,7 @@ def drain(
                 counts["failed"] += 1
             continue
         if isinstance(outcome, dict) and outcome.get("skip"):
+            mark_skipped(db, int(item["id"]), now=moment)
             counts["skipped"] += 1
             continue
         mark_done(db, int(item["id"]), now=moment)

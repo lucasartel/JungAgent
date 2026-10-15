@@ -29,15 +29,33 @@ from core.db.processing_queue import (
 
 logger = logging.getLogger(__name__)
 
-# Tabelas com extração single-shot (F-4). A de tarefas é legada (sem tenancy).
+# Tabelas com extração single-shot (F-4). A de tarefas é legada: sem
+# ``project_id`` e sem colunas de tenancy — o SELECT é construído por PRAGMA,
+# nunca com um schema fixo que uma das tabelas não possui.
 RETRYABLE_TABLES = ("work_project_attachments", "work_task_attachments")
 STATUS_IN_SCOPE = ("pending", "failed")
+
+# Colunas de proveniência/tenancy. Só ``work_project_attachments`` as tem;
+# ``work_task_attachments`` é legada e o SELECT as omite por PRAGMA.
+PROVENANCE_COLUMNS = ("org_id", "origin_class", "origin_relation_id")
 
 
 def _table_scope(table: str) -> str:
     if table not in RETRYABLE_TABLES:
         raise ValueError(f"extraction_retry_unknown_table:{table}")
     return table
+
+
+def _table_columns(db: Any, table: str) -> set:
+    cursor = db.conn.cursor()
+    cursor.execute(f"PRAGMA table_info({table})")
+    return {row[1] for row in cursor.fetchall()}
+
+
+def _provenance_columns(db: Any, table: str) -> List[str]:
+    """Colunas de tenancy que a tabela realmente possui (legado não tem)."""
+    available = _table_columns(db, table)
+    return [col for col in PROVENANCE_COLUMNS if col in available]
 
 
 def enqueue_pending_extractions(
@@ -52,10 +70,16 @@ def enqueue_pending_extractions(
     """
     table = _table_scope(table)
     ensure_schema(db)
+    available = _table_columns(db, table)
+    missing = {"id", "stored_path", "extraction_status", "mime_type"} - available
+    if missing:
+        raise ValueError(f"extraction_retry_schema_incomplete:{table}:{sorted(missing)}")
+    provenance = _provenance_columns(db, table)
+    select_columns = ", ".join(["id", "stored_path", *provenance])
     cursor = db.conn.cursor()
     cursor.execute(
         f"""
-        SELECT id, project_id, stored_path, origin_class, origin_relation_id, org_id
+        SELECT {select_columns}
         FROM {table}
         WHERE extraction_status IN (?, ?) AND mime_type = 'application/pdf'
         """,
@@ -106,6 +130,23 @@ def _reattach_exists(db: Any, table: str, attachment_id: int) -> Optional[Dict[s
     return dict(zip(cols, row))
 
 
+def _run_extractor(
+    db: Any, table: str, attachment_id: int, file_path: str
+) -> Dict[str, Any]:
+    """Executa o extrator no objeto certo.
+
+    ``_extract_and_store_project_pdf`` pertence ao ``WorkEngine`` (mixin
+    ``WorkAttachmentMixin``), não ao ``HybridDatabaseManager`` — chamá-la no
+    banco derruba a rodada com ``AttributeError``. A tabela legada de tarefas
+    persiste pelo mixin de banco.
+    """
+    if table == "work_project_attachments":
+        from work import WorkEngine
+
+        return WorkEngine(db)._extract_and_store_project_pdf(attachment_id, file_path)
+    return _extract_task_attachment(db, attachment_id, file_path)
+
+
 def handle_attachment_extraction(db: Any, item: Dict[str, Any]) -> Dict[str, Any]:
     """Handler da fila: reexecuta a extração de um anexo PDF."""
     payload = item.get("payload") or {}
@@ -134,10 +175,7 @@ def handle_attachment_extraction(db: Any, item: Dict[str, Any]) -> Dict[str, Any
         raise FileNotFoundError(f"extraction_file_missing:{file_path}")
 
     try:
-        if table == "work_project_attachments":
-            result = db._extract_and_store_project_pdf(attachment_id, file_path)
-        else:
-            result = _extract_task_attachment(db, attachment_id, file_path)
+        result = _run_extractor(db, table, attachment_id, file_path)
     except Exception as exc:
         logger.warning(
             "extraction_retry: falha table=%s id=%s error=%s",
@@ -219,15 +257,20 @@ def enqueue_extraction_failure(
     sobrescrevê-lo — a proveniência se perderia no caminho mais rápido.
     """
     table = _table_scope(table)
-    cursor = db.conn.cursor()
-    cursor.execute(
-        f"SELECT org_id, origin_class, origin_relation_id FROM {table} WHERE id = ?",
-        (int(attachment_id),),
-    )
-    row = cursor.fetchone()
+    provenance = _provenance_columns(db, table)
     org_id = origin_class = origin_relation_id = None
-    if row:
-        org_id, origin_class, origin_relation_id = row[0], row[1], row[2]
+    if provenance:
+        cursor = db.conn.cursor()
+        cursor.execute(
+            f"SELECT {', '.join(provenance)} FROM {table} WHERE id = ?",
+            (int(attachment_id),),
+        )
+        row = cursor.fetchone()
+        if row:
+            values = dict(zip(provenance, row))
+            org_id = values.get("org_id")
+            origin_class = values.get("origin_class")
+            origin_relation_id = values.get("origin_relation_id")
     return enqueue(
         db,
         queue_kind=QUEUE_ATTACHMENT_EXTRACTION,

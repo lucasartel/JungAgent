@@ -82,11 +82,20 @@ class JungianEngine:
         ``TheoryOfMindEngine.evaluate_message_maturation_policy`` nunca era
         chamado e ``add_maturation_inbox_item`` nunca tinha produtor.
 
-        Retorna ``None`` quando a mensagem responde na hora (admin, curta ou
-        política desligada) ou quando o enfileiramento falhou — nesse caso a
-        disponibilidade do turno vale mais que a supressão: a mensagem
-        segue para a resposta normal. Nunca suprime silenciosamente.
+        **Interceptação desligada por padrão** (``THEORY_OF_MIND_MATURATION_DEFER_ENABLED``):
+        o dreno enfileira o item maduro, mas ainda não há consumidor que gere
+        e entregue a resposta adiada. Com a flag ligada, a mensagem receberia
+        apenas uma promessa de retorno — trocando uma resposta disponível por
+        espera indefinida. A flag existe para testar o circuito sem habilitar
+        envio real; o consumidor de entrega entra em corte posterior.
+
+        Retorna ``None`` quando a mensagem responde na hora (flag desligada,
+        admin, curta ou política desligada) ou quando o enfileiramento falhou
+        — nesse caso a disponibilidade do turno vale mais que a supressão:
+        a mensagem segue para a resposta normal. Nunca suprime silenciosamente.
         """
+        if not getattr(Config, "THEORY_OF_MIND_MATURATION_DEFER_ENABLED", False):
+            return None
         if not getattr(Config, "THEORY_OF_MIND_ENABLED", False):
             return None
         try:

@@ -84,6 +84,22 @@ class _DB:
         self.agent_instance = os.getenv("AGENT_INSTANCE", "test_jung_v0")
 
 
+def _real_schema_db(tmp_path) -> _DB:
+    """DB com o schema CANÔNICO completo (todas as tabelas, inclusive as que
+    o ``WorkEngine`` consulta na construção). Fixture mínimo não serve aqui."""
+    from core.database import HybridDatabaseManager
+
+    db = HybridDatabaseManager.__new__(HybridDatabaseManager)
+    db.conn = sqlite3.connect(str(tmp_path / "real.db"), check_same_thread=False)
+    db.conn.row_factory = sqlite3.Row
+    import threading
+
+    db._lock = threading.Lock()
+    db.agent_instance = os.getenv("AGENT_INSTANCE", "test_jung_v0")
+    db._init_sqlite_schema()
+    return db
+
+
 class TestQueueCore:
     def test_enqueue_and_dedupe(self):
         db = _DB(_make_queue_db())
@@ -247,22 +263,22 @@ class TestExtractionHandler:
         cur = db.conn.execute(
             """
             INSERT INTO work_project_attachments
-                (project_id, stored_path, mime_type, extraction_status)
-            VALUES (1, ?, 'application/pdf', ?)
+                (project_id, filename, stored_path, mime_type, extraction_status)
+            VALUES (1, ?, ?, 'application/pdf', ?)
             """,
-            (path, status),
+            (Path(path).name, path, status),
         )
         db.conn.commit()
         return cur.lastrowid
 
-    def test_handler_extracts_and_completes(self, monkeypatch):
-        db = _DB(_make_queue_db())
+    def test_handler_extracts_and_completes(self, monkeypatch, tmp_path):
+        db = _real_schema_db(tmp_path)
         att_id = self._attach(db)
         retry = _load_module(
             "work.extraction_retry_test", REPO_ROOT / "work" / "extraction_retry.py"
         )
 
-        def fake_extract(attachment_id, file_path):
+        def fake_extract(self, attachment_id, file_path):
             db.conn.execute(
                 "UPDATE work_project_attachments SET extraction_status='extracted', "
                 "extracted_text='ok' WHERE id=?",
@@ -271,7 +287,9 @@ class TestExtractionHandler:
             db.conn.commit()
             return {"status": "extracted", "page_count": 3}
 
-        db._extract_and_store_project_pdf = fake_extract
+        from work import WorkEngine
+
+        monkeypatch.setattr(WorkEngine, "_extract_and_store_project_pdf", fake_extract)
         enqueue(
             db,
             queue_kind=QUEUE_ATTACHMENT_EXTRACTION,
@@ -371,16 +389,19 @@ class TestExtractionHandler:
         )
         assert counts["skipped"] == 1
 
-    def test_handler_raises_when_extrator_returns_failed(self):
-        db = _DB(_make_queue_db())
+    def test_handler_raises_when_extrator_returns_failed(self, monkeypatch, tmp_path):
+        db = _real_schema_db(tmp_path)
         att_id = self._attach(db)
         retry = _load_module(
             "work.extraction_retry_test", REPO_ROOT / "work" / "extraction_retry.py"
         )
-        db._extract_and_store_project_pdf = lambda a, p: {
-            "status": "failed",
-            "error": "bad pdf",
-        }
+
+        def fake_extract(self, attachment_id, file_path):
+            return {"status": "failed", "error": "bad pdf"}
+
+        from work import WorkEngine
+
+        monkeypatch.setattr(WorkEngine, "_extract_and_store_project_pdf", fake_extract)
         enqueue(
             db,
             queue_kind=QUEUE_ATTACHMENT_EXTRACTION,
@@ -501,9 +522,11 @@ class TestMaturationCircuit:
             user_id="participant-1", message_text="tudo bem?"
         )[0] is False
 
-    def test_engine_defer_creates_inbox_item(self, tmp_path):
+    def test_engine_defer_creates_inbox_item(self, tmp_path, monkeypatch):
+        from core.config import Config
         from core.engine import JungianEngine
 
+        monkeypatch.setattr(Config, "THEORY_OF_MIND_MATURATION_DEFER_ENABLED", True)
         db = self._tom_db(tmp_path)
         db.register_agent_relation(
             agent_instance="test_jung",
@@ -527,16 +550,43 @@ class TestMaturationCircuit:
         assert row["status"] == "maturing"
         assert "decepcionado" in row["inbound_message_text"]
 
-    def test_engine_defer_passes_admin(self, tmp_path):
+    def test_engine_defer_passes_admin(self, tmp_path, monkeypatch):
         import instance_config
+        from core.config import Config
         from core.engine import JungianEngine
 
+        monkeypatch.setattr(Config, "THEORY_OF_MIND_MATURATION_DEFER_ENABLED", True)
         db = self._tom_db(tmp_path)
         engine = JungianEngine.__new__(JungianEngine)
         engine.db = db
         assert engine._defer_message_to_maturation(
             user_id=str(instance_config.ADMIN_USER_ID), message="x " * 50
         ) is None
+
+    def test_engine_defer_is_off_by_default(self, tmp_path):
+        """Flag desligada (default) = nenhuma interceptação, resposta preservada."""
+        from core.config import Config
+        from core.engine import JungianEngine
+
+        assert Config.THEORY_OF_MIND_MATURATION_DEFER_ENABLED is False
+        db = self._tom_db(tmp_path)
+        db.register_agent_relation(
+            agent_instance="test_jung",
+            participant_user_id="participant-1",
+            consent_status="granted",
+        )
+        engine = JungianEngine.__new__(JungianEngine)
+        engine.db = db
+        text = (
+            "Tenho pensado sobre o que significa confiar em alguem depois "
+            "de ter sido decepcionado tantas vezes, e queria ouvir voce."
+        )
+        assert engine._defer_message_to_maturation(
+            user_id="participant-1", message=text
+        ) is None
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM async_maturation_inbox"
+        ).fetchone()[0] == 0
 
     def test_drain_enqueues_matured_with_relation_stamp(self, tmp_path, monkeypatch):
         from core.db.processing_queue import QUEUE_MATURATION_INBOX
@@ -693,3 +743,193 @@ class TestMaturationCircuit:
         )
         with pytest.raises(ValueError, match="maturation_queue_item_missing_source"):
             drain_mod.mark_delivered_for_queue_item(db, {"payload": {}})
+
+
+class TestP1SchedulerWithRealSchema:
+    """P1-1/P1-2: o scheduler roda com os schemas REAIS, sem injeção de métodos."""
+
+    def test_backfill_handles_legacy_task_attachments(self, tmp_path):
+        """P1-1: work_task_attachments não tem project_id nem colunas de tenancy."""
+        db = _real_schema_db(tmp_path)
+        now = datetime.now(timezone.utc).isoformat()
+        db.conn.execute(
+            """
+            INSERT INTO work_task_attachments
+                (task_id, filename, stored_path, mime_type, extraction_status, uploaded_at)
+            VALUES (1, 'legado.pdf', '/tmp/legado.pdf', 'application/pdf', 'failed', ?)
+            """,
+            (now,),
+        )
+        db.conn.commit()
+        retry = _load_module(
+            "work.extraction_retry_test", REPO_ROOT / "work" / "extraction_retry.py"
+        )
+        created = retry.enqueue_pending_extractions(db, table="work_task_attachments")
+        assert created == 1
+        row = db.conn.execute(
+            "SELECT origin_relation_id, ownership_class FROM processing_queue"
+        ).fetchone()
+        # Tabela legada sem tenancy: sem origem, sem mentira de carimbo.
+        assert row["origin_relation_id"] is None
+        assert row["ownership_class"] == "instance_global"
+
+    def test_backfill_handles_project_attachments_with_tenancy(self, tmp_path):
+        db = _real_schema_db(tmp_path)
+        now = datetime.now(timezone.utc).isoformat()
+        db.conn.execute(
+            """
+            INSERT INTO work_project_attachments
+                (project_id, filename, stored_path, mime_type, extraction_status,
+                 origin_class, origin_relation_id, uploaded_at)
+            VALUES (1, 'novo.pdf', '/tmp/novo.pdf', 'application/pdf', 'pending',
+                    'relation_scoped', 'rel-A', ?)
+            """,
+            (now,),
+        )
+        db.conn.commit()
+        retry = _load_module(
+            "work.extraction_retry_test", REPO_ROOT / "work" / "extraction_retry.py"
+        )
+        assert retry.enqueue_pending_extractions(db, table="work_project_attachments") == 1
+        row = db.conn.execute(
+            "SELECT origin_relation_id FROM processing_queue"
+        ).fetchone()
+        assert row["origin_relation_id"] == "rel-A"
+
+    def test_full_round_uses_work_engine_not_db(self, tmp_path, monkeypatch):
+        """P1-2: o handler usa WorkEngine; o banco real não tem o extrator."""
+        from work import WorkEngine
+
+        db = _real_schema_db(tmp_path)
+        assert not hasattr(db, "_extract_and_store_project_pdf")
+
+        pdf = tmp_path / "doc.pdf"
+        pdf.write_bytes(b"%PDF-1.4 fake")
+        db.conn.execute(
+            """
+            INSERT INTO work_project_attachments
+                (project_id, filename, stored_path, mime_type, extraction_status)
+            VALUES (1, 'doc.pdf', ?, 'application/pdf', 'failed')
+            """,
+            (str(pdf),),
+        )
+        db.conn.commit()
+        att_id = db.conn.execute(
+            "SELECT id FROM work_project_attachments"
+        ).fetchone()[0]
+
+        retry = _load_module(
+            "work.extraction_retry_test", REPO_ROOT / "work" / "extraction_retry.py"
+        )
+        # Substitui o extrator do WorkEngine (não do banco) por um fake.
+        calls = {}
+
+        def fake_extract(self, attachment_id, file_path):
+            calls["obj"] = type(self).__name__
+            db.conn.execute(
+                "UPDATE work_project_attachments SET extraction_status='extracted' "
+                "WHERE id=?",
+                (attachment_id,),
+            )
+            db.conn.commit()
+            return {"status": "extracted", "page_count": 1}
+
+        monkeypatch.setattr(WorkEngine, "_extract_and_store_project_pdf", fake_extract)
+        result = retry.run_extraction_retry(db, limit=5)
+        assert calls["obj"] == "WorkEngine"
+        assert result["counts"]["done"] == 1
+        assert db.conn.execute(
+            "SELECT extraction_status FROM work_project_attachments WHERE id=?",
+            (att_id,),
+        ).fetchone()[0] == "extracted"
+
+    def test_round_does_not_fail_on_mixed_tables(self, tmp_path):
+        """Backfill das duas tabelas + dreno numa única rodada."""
+        db = _real_schema_db(tmp_path)
+        now = datetime.now(timezone.utc).isoformat()
+        db.conn.execute(
+            """
+            INSERT INTO work_task_attachments
+                (task_id, filename, stored_path, mime_type, extraction_status, uploaded_at)
+            VALUES (1, 'a.pdf', '/tmp/a.pdf', 'application/pdf', 'failed', ?)
+            """,
+            (now,),
+        )
+        db.conn.execute(
+            """
+            INSERT INTO work_project_attachments
+                (project_id, filename, stored_path, mime_type, extraction_status, uploaded_at)
+            VALUES (1, 'b.pdf', '/tmp/b.pdf', 'application/pdf', 'pending', ?)
+            """,
+            (now,),
+        )
+        db.conn.commit()
+        retry = _load_module(
+            "work.extraction_retry_test", REPO_ROOT / "work" / "extraction_retry.py"
+        )
+        # Arquivos inexistentes → falha operacional, mas a rodada NÃO interrompe.
+        result = retry.run_extraction_retry(db, limit=10)
+        assert result["backfilled"]["work_task_attachments"] == 1
+        assert result["backfilled"]["work_project_attachments"] == 1
+        assert result["counts"]["failed"] == 2
+        stats_now = stats(db, QUEUE_ATTACHMENT_EXTRACTION)
+        assert stats_now.get("failed") == 2
+
+
+class TestP1InterruptedAndSkip:
+    """P1-3: claim interrompido é recuperado; skip vira destino terminal."""
+
+    def test_interrupted_running_item_is_recovered(self):
+        db = _DB(_make_queue_db())
+        enqueue(db, queue_kind="q", dedupe_key="k1")
+        claimed = claim_due(db, queue_kind="q", now=_now())
+        assert len(claimed) == 1
+        assert claimed[0]["status"] == "running"
+
+        # Imediatamente depois do claim: não reivindica (dentro do backoff).
+        assert claim_due(db, queue_kind="q", now=_now()) == []
+
+        # Processo morreu; após o backoff o item volta a ficar elegível.
+        later = _now() + timedelta(hours=1)
+        recovered = claim_due(db, queue_kind="q", now=later)
+        assert len(recovered) == 1
+        assert recovered[0]["retry_attempts"] == 2
+
+    def test_interrupted_item_exhausts_instead_of_hanging(self):
+        db = _DB(_make_queue_db())
+        enqueue(db, queue_kind="q", dedupe_key="k1", max_attempts=2)
+        claim_due(db, queue_kind="q", now=_now())
+        later = _now() + timedelta(hours=1)
+        claim_due(db, queue_kind="q", now=later)
+        row = db.conn.execute("SELECT status FROM processing_queue").fetchone()
+        # Ainda running (claim), mas com tentativas esgotadas: sem novo claim.
+        assert row["status"] == "running"
+        assert claim_due(db, queue_kind="q", now=_now() + timedelta(days=1)) == []
+        row = db.conn.execute("SELECT retry_attempts FROM processing_queue").fetchone()
+        assert row["retry_attempts"] == 2
+
+    def test_skip_finalizes_item_as_terminal(self):
+        db = _DB(_make_queue_db())
+        enqueue(db, queue_kind="q", dedupe_key="k1")
+
+        def handler(connection, item):
+            return {"skip": True}
+
+        counts = drain(db, queue_kind="q", handler=handler, now=_now())
+        assert counts["skipped"] == 1
+        row = db.conn.execute(
+            "SELECT status, next_at, last_error FROM processing_queue"
+        ).fetchone()
+        # Terminal: não volta a running nem gera retry.
+        assert row["status"] == "skipped"
+        assert row["next_at"] is None
+        assert row["last_error"] is None
+        assert claim_due(db, queue_kind="q", now=_now() + timedelta(days=1)) == []
+
+    def test_skipped_item_is_not_reprocessed_by_backfill(self):
+        db = _DB(_make_queue_db())
+        enqueue(db, queue_kind="q", dedupe_key="k1")
+        drain(db, queue_kind="q", handler=lambda c, i: {"skip": True}, now=_now())
+        # Dedupe: não nasce outro item para a mesma chave.
+        assert enqueue(db, queue_kind="q", dedupe_key="k1") is None
+        assert stats(db, "q") == {"skipped": 1}
