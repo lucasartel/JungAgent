@@ -313,17 +313,19 @@ def _finalize(
 ) -> bool:
     """Aplica um destino final SOMENTE se a tentativa ainda for a proprietária.
 
-    ``retry_attempts`` é a identidade da tentativa: o claim o incrementa e o
-    executor carrega o valor. Se outro executor reivindicou o item nesse meio
-    (o ``next_at`` venceu), a finalização antiga vira no-op — sem isso um
-    executor velho sobrescreveria o resultado de um mais novo.
+    Duas condições, ambas obrigatórias:
+    - ``retry_attempts`` é a identidade da tentativa: o claim o incrementa e o
+      executor carrega o valor. Se outro executor reivindicou o item (o
+      ``next_at`` venceu), a finalização antiga vira no-op;
+    - o item precisa ainda estar ``running``. Sem isso, a MESMA tentativa
+      poderia sobrescrever um destino terminal (``exhausted`` → ``done``).
     """
     cursor = db.conn.cursor()
     cursor.execute(
         """
         UPDATE processing_queue
         SET status = ?, next_at = ?, last_error = ?, updated_at = ?
-        WHERE id = ? AND retry_attempts = ?
+        WHERE id = ? AND retry_attempts = ? AND status = 'running'
         """,
         (
             status,
@@ -416,6 +418,18 @@ def mark_failed(
             "retry_attempts": retry_attempts,
             "max_attempts": max_attempts,
         }
+    if str(row.get("status") or "") != "running":
+        # Destino terminal já aplicado (ex.: reconciliado para ``exhausted``):
+        # a mesma tentativa não pode sobrescrevê-lo.
+        logger.warning(
+            "processing_queue: falha tardia rejeitada item_id=%s status_atual=%s",
+            item_id, row.get("status"),
+        )
+        return {
+            "status": "stale",
+            "retry_attempts": retry_attempts,
+            "max_attempts": max_attempts,
+        }
     exhausted = retry_attempts >= max_attempts
     minutes = (
         backoff_minutes
@@ -429,7 +443,7 @@ def mark_failed(
         """
         UPDATE processing_queue
         SET status = ?, last_error = ?, next_at = ?, updated_at = ?
-        WHERE id = ? AND retry_attempts = ?
+        WHERE id = ? AND retry_attempts = ? AND status = 'running'
         """,
         (status, str(error)[:500], next_at, _iso(moment), int(item_id), int(expected_attempt)),
     )
@@ -504,6 +518,14 @@ def drain(
                 db, int(item["id"]), expected_attempt=attempt, now=moment
             )
             counts["skipped" if applied else "stale"] += 1
+            continue
+        if isinstance(outcome, dict) and outcome.get("finalized"):
+            # O handler já gravou anexo + fila na mesma transação, sob
+            # validação de posse. Não finalizar de novo.
+            if outcome.get("stale"):
+                counts["stale"] += 1
+            else:
+                counts["done"] += 1
             continue
         applied = mark_done(db, int(item["id"]), expected_attempt=attempt, now=moment)
         counts["done" if applied else "stale"] += 1

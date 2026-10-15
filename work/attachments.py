@@ -111,31 +111,70 @@ class WorkAttachmentMixin:
 
         return self.get_project_attachment(attachment_id) or {"id": attachment_id}
 
+    def extract_project_pdf(self, attachment_id: int, file_path: str) -> Dict[str, Any]:
+        """Extrai o texto do PDF **sem escrever no banco**.
+
+        Separar extração de gravação é o que permite ao retry validar a posse
+        da tentativa ANTES de alterar o anexo: um executor antigo não pode
+        sobrescrever o resultado de um mais novo no próprio anexo.
+        """
+        from engines.work_task_manager import extract_pdf_text
+
+        result = extract_pdf_text(file_path) or {}
+        status = result.get("status", "failed")
+        extracted_text = result.get("text", "") if status == "extracted" else None
+        if extracted_text and len(extracted_text) > 200_000:
+            extracted_text = extracted_text[:200_000] + "\n\n[texto truncado]"
+        return {
+            "status": status,
+            "text": extracted_text,
+            "page_count": result.get("page_count"),
+            "word_count": result.get("word_count"),
+            "error": result.get("error"),
+        }
+
+    def store_project_extraction(
+        self,
+        attachment_id: int,
+        result: Dict[str, Any],
+        *,
+        cursor: Any = None,
+        commit: bool = True,
+    ) -> int:
+        """Persiste o resultado da extração no anexo.
+
+        ``cursor``/``commit`` permitem que o chamador controle a transação
+        (o retry grava anexo e fila juntos). Retorna o número de linhas
+        afetadas — 0 significa que o anexo não existe mais.
+        """
+        status = str(result.get("status") or "failed")
+        extracted_text = result.get("text") if status == "extracted" else None
+        own_cursor = cursor is None
+        cur = cursor or self.db.conn.cursor()
+        cur.execute(
+            """
+            UPDATE work_project_attachments
+            SET extracted_text = ?, extraction_status = ?,
+                page_count = COALESCE(?, page_count),
+                word_count = COALESCE(?, word_count),
+                extracted_at = ?
+            WHERE id = ?
+            """,
+            (extracted_text, status, result.get("page_count"),
+             result.get("word_count"), _now_iso(), int(attachment_id)),
+        )
+        affected = cur.rowcount
+        if own_cursor and commit:
+            self.db.conn.commit()
+        return int(affected)
+
     def _extract_and_store_project_pdf(
         self, attachment_id: int, file_path: str
     ) -> Dict[str, Any]:
         try:
-            from engines.work_task_manager import extract_pdf_text
-            result = extract_pdf_text(file_path)
-            status = result.get("status", "failed")
-            extracted_text = result.get("text", "") if status == "extracted" else None
-            if extracted_text and len(extracted_text) > 200_000:
-                extracted_text = extracted_text[:200_000] + "\n\n[texto truncado]"
-            cursor = self.db.conn.cursor()
-            cursor.execute(
-                """
-                UPDATE work_project_attachments
-                SET extracted_text = ?, extraction_status = ?,
-                    page_count = COALESCE(?, page_count),
-                    word_count = COALESCE(?, word_count),
-                    extracted_at = ?
-                WHERE id = ?
-                """,
-                (extracted_text, status, result.get("page_count"),
-                 result.get("word_count"), _now_iso(), attachment_id),
-            )
-            self.db.conn.commit()
-            if status != "extracted":
+            result = self.extract_project_pdf(attachment_id, file_path)
+            self.store_project_extraction(attachment_id, result)
+            if result.get("status") != "extracted":
                 # Falha sem exceção (extrator devolveu 'failed'): também
                 # entra na fila de retry (F-4).
                 try:

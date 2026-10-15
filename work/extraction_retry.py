@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional
 
 from core.db.processing_queue import (
     QUEUE_ATTACHMENT_EXTRACTION,
+    _iso,
+    _utc_now,
     drain,
     enqueue,
     ensure_schema,
@@ -149,29 +151,145 @@ def _reattach_exists(db: Any, table: str, attachment_id: int) -> Optional[Dict[s
     return dict(zip(cols, row))
 
 
-def _run_extractor(
-    db: Any, table: str, attachment_id: int, file_path: str
+def _extract_only(
+    db: Any, table: str, attachment_id: int, file_path: str, engine: Any = None
 ) -> Dict[str, Any]:
-    """Executa o extrator no objeto certo.
+    """Extrai o texto **sem escrever no banco**.
 
-    ``_extract_and_store_project_pdf`` pertence ao ``WorkEngine`` (mixin
-    ``WorkAttachmentMixin``), não ao ``HybridDatabaseManager`` — chamá-la no
-    banco derruba a rodada com ``AttributeError``. A tabela legada de tarefas
-    persiste pelo mixin de banco.
+    A gravação acontece depois, sob validação atômica de posse da tentativa
+    (`_persist_atomically`) — assim um executor antigo não sobrescreve o
+    resultado de um mais novo no próprio anexo.
     """
     if table == "work_project_attachments":
         from work import WorkEngine
 
-        return WorkEngine(db)._extract_and_store_project_pdf(attachment_id, file_path)
-    return _extract_task_attachment(db, attachment_id, file_path)
+        return (engine or WorkEngine(db)).extract_project_pdf(attachment_id, file_path)
+    return _extract_task_text(file_path)
+
+
+def _extract_task_text(file_path: str) -> Dict[str, Any]:
+    """Caminho legado (work_task_attachments) — só extração, sem gravação."""
+    from engines.work_task_manager import extract_pdf_text
+
+    result = extract_pdf_text(file_path) or {}
+    status = str(result.get("status") or "failed")
+    text = result.get("text", "") if status == "extracted" else None
+    if text and len(text) > 200_000:
+        text = text[:200_000] + "\n\n[texto truncado]"
+    return {
+        "status": status,
+        "text": text,
+        "page_count": result.get("page_count"),
+        "word_count": result.get("word_count"),
+        "error": result.get("error"),
+    }
+
+
+def _store_with_cursor(
+    db: Any, table: str, attachment_id: int, result: Dict[str, Any], cursor: Any, engine: Any = None
+) -> int:
+    """Grava o resultado no anexo usando o cursor do chamador (sem commit)."""
+    if table == "work_project_attachments":
+        from work import WorkEngine
+
+        return (engine or WorkEngine(db)).store_project_extraction(
+            attachment_id, result, cursor=cursor, commit=False
+        )
+    from work.common import _now_iso
+
+    cursor.execute(
+        """
+        UPDATE work_task_attachments
+        SET extracted_text = ?, extraction_status = ?,
+            page_count = COALESCE(?, page_count),
+            word_count = COALESCE(?, word_count),
+            extracted_at = ?
+        WHERE id = ?
+        """,
+        (
+            result.get("text"),
+            str(result.get("status") or "failed"),
+            result.get("page_count"),
+            result.get("word_count"),
+            _now_iso(),
+            int(attachment_id),
+        ),
+    )
+    return int(cursor.rowcount)
+
+
+def _persist_atomically(
+    db: Any,
+    *,
+    queue_item_id: int,
+    expected_attempt: int,
+    table: str,
+    attachment_id: int,
+    result: Dict[str, Any],
+    engine: Any = None,
+) -> str:
+    """Valida a posse da tentativa e grava anexo + fila na MESMA transação.
+
+    Sem isso, o handler gravaria o anexo ANTES da finalização protegida: a
+    fila rejeitaria a finalização antiga, mas o dano ao anexo já teria
+    ocorrido. Retorna ``done``, ``stale`` (posse perdida, nada gravado) ou
+    ``missing`` (anexo apagado entre a checagem e a gravação).
+    """
+    conn = db.conn
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN")
+        cursor.execute(
+            "SELECT status, retry_attempts FROM processing_queue WHERE id = ?",
+            (int(queue_item_id),),
+        )
+        row = cursor.fetchone()
+        if (
+            row is None
+            or str(row[0]) != "running"
+            or int(row[1]) != int(expected_attempt)
+        ):
+            conn.rollback()
+            logger.warning(
+                "extraction_retry: posse perdida antes da gravação item_id=%s "
+                "tentativa_esperada=%s",
+                queue_item_id, expected_attempt,
+            )
+            return "stale"
+        affected = _store_with_cursor(db, table, attachment_id, result, cursor, engine)
+        if affected != 1:
+            conn.rollback()
+            return "missing"
+        cursor.execute(
+            """
+            UPDATE processing_queue
+            SET status = 'done', next_at = NULL, last_error = NULL, updated_at = ?
+            WHERE id = ? AND retry_attempts = ? AND status = 'running'
+            """,
+            (_iso(_utc_now()), int(queue_item_id), int(expected_attempt)),
+        )
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return "stale"
+        conn.commit()
+        return "done"
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def handle_attachment_extraction(db: Any, item: Dict[str, Any]) -> Dict[str, Any]:
-    """Handler da fila: reexecuta a extração de um anexo PDF."""
+    """Handler da fila: reexecuta a extração de um anexo PDF.
+
+    Extração e gravação são separadas; a gravação só ocorre após validação
+    atômica de posse da tentativa, junto com a finalização da fila.
+    """
     payload = item.get("payload") or {}
     table = _table_scope(str(payload.get("table") or "work_project_attachments"))
     attachment_id = int(payload.get("attachment_id") or 0)
-    if attachment_id <= 0:
+    queue_item_id = int(item.get("id") or 0)
+    expected_attempt = int(item.get("retry_attempts") or 0)
+    if attachment_id <= 0 or queue_item_id <= 0:
         return {"skip": True}
 
     record = _reattach_exists(db, table, attachment_id)
@@ -193,8 +311,14 @@ def handle_attachment_extraction(db: Any, item: Dict[str, Any]) -> Dict[str, Any
         # Arquivo sumiu do volume: reporta e deixa a fila esgotar com contexto.
         raise FileNotFoundError(f"extraction_file_missing:{file_path}")
 
+    engine = None
+    if table == "work_project_attachments":
+        from work import WorkEngine
+
+        engine = WorkEngine(db)
+
     try:
-        result = _run_extractor(db, table, attachment_id, file_path)
+        result = _extract_only(db, table, attachment_id, file_path, engine)
     except Exception as exc:
         logger.warning(
             "extraction_retry: falha table=%s id=%s error=%s",
@@ -207,35 +331,32 @@ def handle_attachment_extraction(db: Any, item: Dict[str, Any]) -> Dict[str, Any
     status = str((result or {}).get("status") or "failed")
     if status != "extracted":
         # O extrator respondeu sem exceção mas não extraiu — erro recuperável.
+        # Nada é gravado no anexo: um executor tardio não sobrescreve o
+        # resultado alheio com uma falha.
         raise RuntimeError(
             f"extraction_not_extracted:{status}:{(result or {}).get('error', '')}"
         )
+
+    outcome = _persist_atomically(
+        db,
+        queue_item_id=queue_item_id,
+        expected_attempt=expected_attempt,
+        table=table,
+        attachment_id=attachment_id,
+        result=result,
+        engine=engine,
+    )
+    if outcome == "stale":
+        return {"finalized": True, "stale": True}
+    if outcome == "missing":
+        return {"skip": True}
     logger.info(
         "extraction_retry: extraido table=%s id=%s pages=%s",
         table,
         attachment_id,
         (result or {}).get("page_count"),
     )
-    return {"extracted": True}
-
-
-def _extract_task_attachment(db: Any, attachment_id: int, file_path: str) -> Dict[str, Any]:
-    """Caminho legado (work_task_attachments) — mesmo extrator, outro persist."""
-    from engines.work_task_manager import extract_pdf_text
-
-    result = extract_pdf_text(file_path) or {}
-    status = str(result.get("status") or "failed")
-    text = result.get("text", "") if status == "extracted" else None
-    if text and len(text) > 200_000:
-        text = text[:200_000] + "\n\n[texto truncado]"
-    db.update_work_task_attachment_extraction(
-        attachment_id=attachment_id,
-        extracted_text=text,
-        extraction_status=status,
-        page_count=result.get("page_count"),
-        word_count=result.get("word_count"),
-    )
-    return result
+    return {"extracted": True, "finalized": True}
 
 
 def run_extraction_retry(

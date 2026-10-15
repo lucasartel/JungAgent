@@ -305,17 +305,19 @@ class TestExtractionHandler:
         )
 
         def fake_extract(self, attachment_id, file_path):
-            db.conn.execute(
-                "UPDATE work_project_attachments SET extraction_status='extracted', "
-                "extracted_text='ok' WHERE id=?",
-                (attachment_id,),
-            )
-            db.conn.commit()
-            return {"status": "extracted", "page_count": 3}
+            # Sem gravação: a extração é pura; quem grava é
+            # store_project_extraction, sob validação de posse.
+            return {
+                "status": "extracted",
+                "text": "ok",
+                "page_count": 3,
+                "word_count": 1,
+                "error": None,
+            }
 
         from work import WorkEngine
 
-        monkeypatch.setattr(WorkEngine, "_extract_and_store_project_pdf", fake_extract)
+        monkeypatch.setattr(WorkEngine, "extract_project_pdf", fake_extract)
         enqueue(
             db,
             queue_kind=QUEUE_ATTACHMENT_EXTRACTION,
@@ -423,11 +425,17 @@ class TestExtractionHandler:
         )
 
         def fake_extract(self, attachment_id, file_path):
-            return {"status": "failed", "error": "bad pdf"}
+            return {
+                "status": "failed",
+                "text": None,
+                "page_count": None,
+                "word_count": None,
+                "error": "bad pdf",
+            }
 
         from work import WorkEngine
 
-        monkeypatch.setattr(WorkEngine, "_extract_and_store_project_pdf", fake_extract)
+        monkeypatch.setattr(WorkEngine, "extract_project_pdf", fake_extract)
         enqueue(
             db,
             queue_kind=QUEUE_ATTACHMENT_EXTRACTION,
@@ -845,20 +853,20 @@ class TestP1SchedulerWithRealSchema:
         retry = _load_module(
             "work.extraction_retry_test", REPO_ROOT / "work" / "extraction_retry.py"
         )
-        # Substitui o extrator do WorkEngine (não do banco) por um fake.
+        # Substitui a extração do WorkEngine (não do banco) por um fake.
         calls = {}
 
         def fake_extract(self, attachment_id, file_path):
             calls["obj"] = type(self).__name__
-            db.conn.execute(
-                "UPDATE work_project_attachments SET extraction_status='extracted' "
-                "WHERE id=?",
-                (attachment_id,),
-            )
-            db.conn.commit()
-            return {"status": "extracted", "page_count": 1}
+            return {
+                "status": "extracted",
+                "text": "ok",
+                "page_count": 1,
+                "word_count": 1,
+                "error": None,
+            }
 
-        monkeypatch.setattr(WorkEngine, "_extract_and_store_project_pdf", fake_extract)
+        monkeypatch.setattr(WorkEngine, "extract_project_pdf", fake_extract)
         result = retry.run_extraction_retry(db, limit=5)
         assert calls["obj"] == "WorkEngine"
         assert result["counts"]["done"] == 1
@@ -1059,3 +1067,211 @@ class TestP1InterruptedAndSkip:
         assert counts["failed"] == 0
         row = db.conn.execute("SELECT status FROM processing_queue").fetchone()
         assert row["status"] == "done"
+
+
+class TestAtomicAttachmentAndTerminalStates:
+    """P1/P2 da rodada 4: a proteção alcança o ANEXO e os estados terminais."""
+
+    @staticmethod
+    def _pdf(tmp_path, name="doc.pdf"):
+        pdf = tmp_path / name
+        pdf.write_bytes(b"%PDF-1.4 fake")
+        return pdf
+
+    def test_overlapping_attempts_cannot_clobber_attachment(self, tmp_path, monkeypatch):
+        """Executor antigo não sobrescreve o ANEXO de um mais novo."""
+        from work import WorkEngine
+
+        db = _real_schema_db(tmp_path)
+        pdf = self._pdf(tmp_path)
+        db.conn.execute(
+            """
+            INSERT INTO work_project_attachments
+                (project_id, filename, stored_path, mime_type, extraction_status,
+                 agent_instance)
+            VALUES (1, 'doc.pdf', ?, 'application/pdf', 'failed', ?)
+            """,
+            (str(pdf), db.agent_instance),
+        )
+        db.conn.commit()
+        att_id = db.conn.execute(
+            "SELECT id FROM work_project_attachments"
+        ).fetchone()[0]
+
+        retry = _load_module(
+            "work.extraction_retry_test", REPO_ROOT / "work" / "extraction_retry.py"
+        )
+        enqueue(
+            db,
+            queue_kind=QUEUE_ATTACHMENT_EXTRACTION,
+            dedupe_key=f"work_project_attachments:{att_id}",
+            payload={
+                "table": "work_project_attachments",
+                "attachment_id": att_id,
+                "stored_path": str(pdf),
+            },
+        )
+
+        # Executor A reivindica (tentativa 1) e é lento.
+        executor_a = claim_due(db, queue_kind=QUEUE_ATTACHMENT_EXTRACTION, now=_now())
+        assert executor_a[0]["retry_attempts"] == 1
+
+        # Claim de A vence; executor B reivindica (tentativa 2) e conclui.
+        later = _now() + timedelta(hours=1)
+        executor_b = claim_due(db, queue_kind=QUEUE_ATTACHMENT_EXTRACTION, now=later)
+        assert executor_b[0]["retry_attempts"] == 2
+
+        good = {
+            "status": "extracted",
+            "text": "conteudo bom",
+            "page_count": 2,
+            "word_count": 2,
+            "error": None,
+        }
+        outcome = retry._persist_atomically(
+            db,
+            queue_item_id=executor_b[0]["id"],
+            expected_attempt=executor_b[0]["retry_attempts"],
+            table="work_project_attachments",
+            attachment_id=att_id,
+            result=good,
+        )
+        assert outcome == "done"
+
+        row = db.conn.execute(
+            "SELECT extraction_status, extracted_text FROM work_project_attachments "
+            "WHERE id=?",
+            (att_id,),
+        ).fetchone()
+        assert row["extraction_status"] == "extracted"
+        assert row["extracted_text"] == "conteudo bom"
+
+        # Executor A agora tenta gravar uma FALHA sobre o anexo: rejeitado.
+        bad = {
+            "status": "failed",
+            "text": None,
+            "page_count": None,
+            "word_count": None,
+            "error": "late failure",
+        }
+        stale = retry._persist_atomically(
+            db,
+            queue_item_id=executor_a[0]["id"],
+            expected_attempt=executor_a[0]["retry_attempts"],
+            table="work_project_attachments",
+            attachment_id=att_id,
+            result=bad,
+        )
+        assert stale == "stale"
+
+        row = db.conn.execute(
+            "SELECT extraction_status, extracted_text FROM work_project_attachments "
+            "WHERE id=?",
+            (att_id,),
+        ).fetchone()
+        # O anexo NÃO foi corrompido pelo executor antigo.
+        assert row["extraction_status"] == "extracted"
+        assert row["extracted_text"] == "conteudo bom"
+        qrow = db.conn.execute("SELECT status FROM processing_queue").fetchone()
+        assert qrow["status"] == "done"
+
+    def test_terminal_state_not_overwritten_by_same_attempt(self):
+        """P2: ``exhausted`` não volta a ``done`` pela mesma tentativa."""
+        db = _DB(_make_queue_db())
+        enqueue(db, queue_kind="q", dedupe_key="k1", max_attempts=1)
+        claimed = claim_due(db, queue_kind="q", now=_now())
+        assert claimed[0]["retry_attempts"] == 1
+        # Interrompido na última tentativa → reconciliado para exhausted.
+        assert claim_due(db, queue_kind="q", now=_now() + timedelta(hours=1)) == []
+        row = db.conn.execute("SELECT status FROM processing_queue").fetchone()
+        assert row["status"] == "exhausted"
+
+        # A MESMA tentativa tenta finalizar como done: rejeitado.
+        assert mark_done(
+            db, claimed[0]["id"], expected_attempt=claimed[0]["retry_attempts"]
+        ) is False
+        assert mark_skipped(
+            db, claimed[0]["id"], expected_attempt=claimed[0]["retry_attempts"]
+        ) is False
+        state = mark_failed(
+            db, claimed[0]["id"], error="late",
+            expected_attempt=claimed[0]["retry_attempts"],
+        )
+        assert state["status"] == "stale"
+        row = db.conn.execute("SELECT status FROM processing_queue").fetchone()
+        assert row["status"] == "exhausted"
+
+    def test_done_not_overwritten_by_repeat_finalization(self):
+        db = _DB(_make_queue_db())
+        enqueue(db, queue_kind="q", dedupe_key="k1")
+        claimed = claim_due(db, queue_kind="q", now=_now())
+        attempt = claimed[0]["retry_attempts"]
+        assert mark_done(db, claimed[0]["id"], expected_attempt=attempt) is True
+        # Segunda finalização da MESMA tentativa: no-op (já não é running).
+        assert mark_done(db, claimed[0]["id"], expected_attempt=attempt) is False
+        assert mark_skipped(db, claimed[0]["id"], expected_attempt=attempt) is False
+        row = db.conn.execute("SELECT status FROM processing_queue").fetchone()
+        assert row["status"] == "done"
+
+    def test_extractor_failure_does_not_touch_attachment(self, monkeypatch, tmp_path):
+        """Extrator devolveu failed: nada é gravado no anexo (sem sobrescrita)."""
+        from work import WorkEngine
+
+        db = _real_schema_db(tmp_path)
+        pdf = self._pdf(tmp_path)
+        db.conn.execute(
+            """
+            INSERT INTO work_project_attachments
+                (project_id, filename, stored_path, mime_type, extraction_status,
+                 agent_instance, extracted_text)
+            VALUES (1, 'doc.pdf', ?, 'application/pdf', 'failed', ?, 'texto anterior')
+            """,
+            (str(pdf), db.agent_instance),
+        )
+        db.conn.commit()
+        att_id = db.conn.execute(
+            "SELECT id FROM work_project_attachments"
+        ).fetchone()[0]
+
+        retry = _load_module(
+            "work.extraction_retry_test", REPO_ROOT / "work" / "extraction_retry.py"
+        )
+        item = {
+            "id": enqueue(
+                db,
+                queue_kind=QUEUE_ATTACHMENT_EXTRACTION,
+                dedupe_key=f"work_project_attachments:{att_id}",
+                payload={
+                    "table": "work_project_attachments",
+                    "attachment_id": att_id,
+                    "stored_path": str(pdf),
+                },
+            ),
+            "retry_attempts": 1,
+        }
+
+        def fake_extract(self, attachment_id, file_path):
+            return {
+                "status": "failed",
+                "text": None,
+                "page_count": None,
+                "word_count": None,
+                "error": "bad pdf",
+            }
+
+        monkeypatch.setattr(WorkEngine, "extract_project_pdf", fake_extract)
+        counts = drain(
+            db,
+            queue_kind=QUEUE_ATTACHMENT_EXTRACTION,
+            handler=retry.handle_attachment_extraction,
+            now=_now(),
+        )
+        assert counts["failed"] == 1
+        row = db.conn.execute(
+            "SELECT extraction_status, extracted_text FROM work_project_attachments "
+            "WHERE id=?",
+            (att_id,),
+        ).fetchone()
+        # O texto pré-existente não foi apagado por uma tentativa que falhou.
+        assert row["extraction_status"] == "failed"
+        assert row["extracted_text"] == "texto anterior"
