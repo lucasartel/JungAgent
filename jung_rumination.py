@@ -316,6 +316,21 @@ class RuminationEngine:
             Lista de IDs de fragmentos criados
         """
         user_id = conversation_data['user_id']
+        # R1a-1: origem e taxonomia fechada, validada ANTES de qualquer
+        # curto-circuito. O fallback para 'conversation' e o contrato do
+        # metodo (dado conversacional sem origem explicita); um valor
+        # EXPLICITO desconhecido e recusado, nunca normalizado — origem
+        # desconhecida nao pode virar origem de conversa.
+        from core.db.source_kinds import CONVERSATION, validate_source_kind
+
+        source_kind = validate_source_kind(
+            conversation_data.get("source_kind") or CONVERSATION
+        )
+        source_table = conversation_data.get("source_table")
+        source_id = conversation_data.get("source_id")
+        source_metadata = conversation_data.get("source_metadata") or {}
+        source_metadata_json = json.dumps(source_metadata, ensure_ascii=False) if source_metadata else None
+
         relation_id = self._resolve_relation_id(user_id, conversation_data.get("relation_id"))
 
         if not self._relation_allowed(user_id, relation_id):
@@ -329,11 +344,6 @@ class RuminationEngine:
             return []
 
         user_input = conversation_data['user_input']
-        source_kind = conversation_data.get("source_kind") or "conversation"
-        source_table = conversation_data.get("source_table")
-        source_id = conversation_data.get("source_id")
-        source_metadata = conversation_data.get("source_metadata") or {}
-        source_metadata_json = json.dumps(source_metadata, ensure_ascii=False) if source_metadata else None
 
         # Montar prompt de extração
         prompt = EXTRACTION_PROMPT.format(

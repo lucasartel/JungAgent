@@ -1531,6 +1531,11 @@ class ConsciousnessLoopManager:
                     "user_input": summary,
                     "ai_response": "",
                     "conversation_id": synthetic_id,
+                    # R1a-1: material de loop tem origem propria. Antes caia no
+                    # fallback 'conversation' e ficava indistinguivel de fala do
+                    # interlocutor (F-5). Origem nao e propriedade: isto nao o
+                    # torna global — a via de material autorizado e outro corte.
+                    "source_kind": "loop_material",
                     "tension_level": tension,
                     "affective_charge": affective,
                     "existential_depth": depth,
