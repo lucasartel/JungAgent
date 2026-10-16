@@ -193,6 +193,11 @@ class WorkEngine(
         origin_relation_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         summary = (summary or "").strip()
+        # R1a-1: a origem vem da taxonomia fechada; valor desconhecido e
+        # recusado antes de qualquer gravacao (tabela e espelho ruminal).
+        from core.db.source_kinds import validate_source_kind
+
+        source_kind = validate_source_kind(source_kind)
         if not summary:
             return None
 
