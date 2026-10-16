@@ -55,6 +55,13 @@ class Config:
     SYMBOLIC_GRAPH_MAX_TRIPLES = int(os.getenv("SYMBOLIC_GRAPH_MAX_TRIPLES", "12"))
     THEORY_OF_MIND_ENABLED = os.getenv("THEORY_OF_MIND_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
     THEORY_OF_MIND_ADMIN_ONLY = os.getenv("THEORY_OF_MIND_ADMIN_ONLY", "true").strip().lower() in ("1", "true", "yes", "on")
+    # R1a-2 (F-2): interceptacao de mensagens para a caixa de maturacao.
+    # DESLIGADA por padrão — o dreno enfileira, mas ainda não há consumidor
+    # que gere e entregue a resposta adiada. Ligá-la troca uma resposta
+    # disponível por espera indefinida. Nao habilita envio real.
+    THEORY_OF_MIND_MATURATION_DEFER_ENABLED = os.getenv(
+        "THEORY_OF_MIND_MATURATION_DEFER_ENABLED", "false"
+    ).strip().lower() in ("1", "true", "yes", "on")
     BAKHTINIAN_POLYPHONY_ENABLED = os.getenv("BAKHTINIAN_POLYPHONY_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 
     # mem0/Qdrant is the production semantic memory backend.

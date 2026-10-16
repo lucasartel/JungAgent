@@ -74,7 +74,73 @@ class JungianEngine:
             self.identity_context_builder = None
 
         logger.info("✅ JungianEngine inicializado")
-    
+
+    def _defer_message_to_maturation(self, *, user_id: str, message: str):
+        """R1a-2 (F-2): política de maturação ToM — decide se a mensagem é adiada.
+
+        Conecta o upstream que existia desconectado:
+        ``TheoryOfMindEngine.evaluate_message_maturation_policy`` nunca era
+        chamado e ``add_maturation_inbox_item`` nunca tinha produtor.
+
+        **Interceptação desligada por padrão** (``THEORY_OF_MIND_MATURATION_DEFER_ENABLED``):
+        o dreno enfileira o item maduro, mas ainda não há consumidor que gere
+        e entregue a resposta adiada. Com a flag ligada, a mensagem receberia
+        apenas uma promessa de retorno — trocando uma resposta disponível por
+        espera indefinida. A flag existe para testar o circuito sem habilitar
+        envio real; o consumidor de entrega entra em corte posterior.
+
+        Retorna ``None`` quando a mensagem responde na hora (flag desligada,
+        admin, curta ou política desligada) ou quando o enfileiramento falhou
+        — nesse caso a disponibilidade do turno vale mais que a supressão:
+        a mensagem segue para a resposta normal. Nunca suprime silenciosamente.
+        """
+        if not getattr(Config, "THEORY_OF_MIND_MATURATION_DEFER_ENABLED", False):
+            return None
+        if not getattr(Config, "THEORY_OF_MIND_ENABLED", False):
+            return None
+        try:
+            from engines.theory_of_mind import TheoryOfMindEngine
+
+            tom = TheoryOfMindEngine(
+                self.db,
+                agent_instance=getattr(
+                    self.db, "agent_instance", getattr(Config, "AGENT_INSTANCE", "jung_v1")
+                ),
+            )
+            should_defer, threshold, rationale = tom.evaluate_message_maturation_policy(
+                user_id=user_id, message_text=message,
+            )
+        except Exception as exc:
+            logger.warning("[ToM] Politica de maturacao indisponivel: %s", exc)
+            return None
+        if not should_defer:
+            return None
+        try:
+            item_id = self.db.add_maturation_inbox_item(
+                agent_instance=getattr(
+                    self.db, "agent_instance", getattr(Config, "AGENT_INSTANCE", "jung_v1")
+                ),
+                user_id=user_id,
+                inbound_message_text=message,
+                relational_threshold=float(threshold or 0.0),
+                notes=str(rationale or ""),
+            )
+        except Exception as exc:
+            logger.warning(
+                "[ToM] Falha ao encaixotar mensagem para maturacao user_id=%s: %s",
+                user_id, exc,
+            )
+            return None
+        logger.info(
+            "[ToM] Mensagem adiada para maturacao user_id=%s item_id=%s threshold=%.2f (%s)",
+            user_id, item_id, float(threshold or 0.0), rationale,
+        )
+        return {
+            "item_id": int(item_id),
+            "relational_threshold": float(threshold or 0.0),
+            "rationale": str(rationale or ""),
+        }
+
     def process_message(self, user_id: str, message: str,
                        model: str = None,
                        chat_history: List[Dict] = None) -> Dict:
@@ -108,6 +174,43 @@ class JungianEngine:
         turn_policy = conversational_turn_policy(
             (relational_cadence_decision or {}).get("disposition", "engaged"), message,
         )
+
+        # R1a-2 (F-2): mensagem reflexiva de participante adiada para maturação.
+        # O ack é a resposta real (não usa response_suppressed — o usuário ouve
+        # que o assunto foi recebido e vai amadurecer).
+        maturation = self._defer_message_to_maturation(user_id=user_id, message=message)
+        if maturation is not None:
+            ack = (
+                "Recebi o que voce trouxe. Preciso deixar isso amadurecer "
+                "antes de responder com a profundidade que ele pede — "
+                "volto a ele quando a vontade de relacionar estiver pronta."
+            )
+            conversation_id = self.db.save_conversation(
+                user_id=user_id,
+                user_name=user_name,
+                user_input=message,
+                ai_response=ack,
+                archetype_analyses={},
+                detected_conflicts=[],
+                complexity=complexity,
+                platform=platform,
+                chat_history=chat_history,
+            )
+            logger.info(
+                "✅ Processamento completo por maturação (ID=%s item=%s)",
+                conversation_id, maturation["item_id"],
+            )
+            return {
+                "response": ack,
+                "conflicts": [],
+                "conversation_count": self.db.count_conversations(user_id),
+                "tension_level": 0.0,
+                "affective_charge": 0.0,
+                "existential_depth": 0.0,
+                "conversation_id": conversation_id,
+                "conflict": None,
+                "maturation": maturation,
+            }
 
         if turn_policy["action"] == "rest":
             generation = {"clean_response": "", "display_response": ""}

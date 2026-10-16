@@ -85,7 +85,11 @@ _ERASE_CHILD_FIELDS: Dict[str, list] = {
 # linhas da MESMA Relation (IntegrityError). A linha inteira da Relation
 # e apagada (contrato C12g: delete or anonymize), com contagem auditada;
 # outras Relations nunca sao tocadas.
-_ERASE_DELETE_TABLES = ("symbolic_triples",)
+#
+# R1a-2: processing_queue segue o mesmo contrato — item de fila carimbo com
+# a Relation aponta material que o expurgo remove; manter a linha deixaria
+# trabalho pendente sobre conteudo ja apagado. Linha apagada, nao redigida.
+_ERASE_DELETE_TABLES = ("symbolic_triples", "processing_queue")
 
 # Revisao da PR #59 (Rodada 5, conferencia de produtores): conteudo
 # vinculado a Relation escondido em tabela SEM coluna relation_id —
@@ -379,6 +383,10 @@ _ERASE_FIELDS: Dict[str, list] = {
         "metadata_json",
     ],
     "symbolic_triples": ["predicate", "confidence"],
+    # R1a-2: fila de processamento. payload_json e last_error carregam
+    # conteudo (identificadores/arquivos e texto de erro). queue_kind e
+    # dedupe_key sao classificadores audit-safe (nao entram aqui).
+    "processing_queue": ["payload_json", "last_error"],
     # Revisao r4 (Rodada 5): registros proativos carimbados com a Relation
     # (topic/insight/facts privados; INSERT de will_proactive_record).
     "proactive_approaches": [
