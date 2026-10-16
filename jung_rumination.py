@@ -317,14 +317,15 @@ class RuminationEngine:
         """
         user_id = conversation_data['user_id']
         # R1a-1: origem e taxonomia fechada, validada ANTES de qualquer
-        # curto-circuito. O fallback para 'conversation' e o contrato do
-        # metodo (dado conversacional sem origem explicita); um valor
-        # EXPLICITO desconhecido e recusado, nunca normalizado — origem
-        # desconhecida nao pode virar origem de conversa.
+        # curto-circuito. O fallback para 'conversation' vale APENAS quando a
+        # chave esta AUSENTE (dado conversacional sem origem declarada).
+        # Um valor EXPLICITO — inclusive None, '', False ou 0 — e validado e
+        # recusado se invalido: origem desconhecida nao vira origem de
+        # conversa por operador `or`.
         from core.db.source_kinds import CONVERSATION, validate_source_kind
 
         source_kind = validate_source_kind(
-            conversation_data.get("source_kind") or CONVERSATION
+            conversation_data.get("source_kind", CONVERSATION)
         )
         source_table = conversation_data.get("source_table")
         source_id = conversation_data.get("source_id")

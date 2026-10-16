@@ -135,6 +135,45 @@ class TestProducerValidation:
                 }
             )
 
+    @pytest.mark.parametrize("explicit", [None, "", False, 0, "   "])
+    def test_ingest_rejects_explicit_falsy_origin(self, tmp_path, explicit):
+        """Valor EXPLICITO falsy não recebe o fallback: é validado e recusado.
+
+        O operador `or` convertiria None/''/False/0 em 'conversation' antes da
+        validação, deixando origem inválida virar origem de conversa.
+        """
+        jung_rumination = _load_module(
+            "jung_rumination_test", REPO_ROOT / "jung_rumination.py"
+        )
+        db = _schema_db(tmp_path)
+        engine = jung_rumination.RuminationEngine(db)
+        with pytest.raises(ValueError, match="source_kind_"):
+            engine.ingest(
+                {
+                    "user_id": "admin",
+                    "user_input": "mensagem longa o suficiente para ativar",
+                    "ai_response": "",
+                    "source_kind": explicit,
+                }
+            )
+
+    def test_ingest_absent_origin_still_falls_back(self, tmp_path):
+        """Chave ausente continua caindo em 'conversation' (contrato do método)."""
+        jung_rumination = _load_module(
+            "jung_rumination_test", REPO_ROOT / "jung_rumination.py"
+        )
+        db = _schema_db(tmp_path)
+        engine = jung_rumination.RuminationEngine(db)
+        # Sem 'source_kind' na chave: não deve levantar.
+        result = engine.ingest(
+            {
+                "user_id": "admin",
+                "user_input": "mensagem longa o suficiente para ativar",
+                "ai_response": "",
+            }
+        )
+        assert isinstance(result, list)
+
     def test_work_experience_rejects_unknown_kind(self, tmp_path):
         from work import WorkEngine
 
