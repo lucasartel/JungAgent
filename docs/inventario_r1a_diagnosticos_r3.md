@@ -216,8 +216,8 @@ Escopo: `agent_instance` + `origin_relation_id` via `_identity_origin`.
 | Subcorte | Escopo | Entrega |
 |---|---|---|
 | **R1a-1** | **Inventário + vias de origem.** ~~Criar enum explícito de `source_kind`~~ *(ajustado: não substituir fonte por propriedade — `source_kind` diz de onde veio; `ownership_class` já representa propriedade)*. **Parcial**: bug do flush corrigido (subcorte, ver F-3). **Pendentes**: enum/taxonomia de `source_kind` combinando origem × propriedade, mapeamento dos produtores (Tabelas 2.1-2.7) para a nova taxonomia, contrato documental. **Sem migração de dados históricos.** | Bug flush ✅ · Taxonomia e mapeamento pendentes |
-| **R1a-2** ✅ | **Fila de processamento para material global.** ~~Criar fila explícita (`processing_queue` ou equivalente) para material global autorizado, separada de material privado.~~ **Entregue**: `processing_queue` (`core/db/processing_queue.py`, também no schema canônico) com claim atômico, teto de tentativas e backoff. Cada item carrega `ownership_class`/`origin_class`/`origin_relation_id` próprios — a fila **não promove origem**; quem enfileira decide a classe de propriedade e o material privado (`relation_private`) continua privado. F-1 aposentado, F-2 conectado até o gate de envio, F-4 com retry real. `processing_queue` é *delete-table* no expurgo de Relation (item aponta material que o expurgo remove). | Fila + retry + órfãos decididos ✅ |
-| **R1a-3** | **Corrigir leitores sem escopo P1-1..P1-4 + P2-1..P2-4.** Aplicar `_relation_scope`/`scope_context`/`legacy_quarantine_clause` nas 8 leituras identificadas. | 8 correções escopadas + testes de isolamento |
+| **R1a-2** ✅ *(implementado · testado · publicado)* | **Fila de processamento para material global.** ~~Criar fila explícita (`processing_queue` ou equivalente) para material global autorizado, separada de material privado.~~ **Entregue**: `processing_queue` (`core/db/processing_queue.py`, também no schema canônico) com claim atômico, teto de tentativas e backoff. Cada item carrega `ownership_class`/`origin_class`/`origin_relation_id` próprios — a fila **não promove origem**; quem enfileira decide a classe de propriedade e o material privado (`relation_private`) continua privado. F-1 aposentado, F-2 conectado até o gate de envio, F-4 com retry real. `processing_queue` é *delete-table* no expurgo de Relation (item aponta material que o expurgo remove). | Fila + retry + órfãos decididos ✅ (PR #62, merge `8245d63`) |
+| **R1a-3** ✅ *(implementado · testado · publicado)* | **Corrigir leitores sem escopo P1-1..P1-4 + P2-1..P2-4.** Aplicar `_relation_scope`/`scope_context`/`legacy_quarantine_clause` nas 8 leituras identificadas. | 8 correções escopadas + testes de isolamento ✅ (PR #61, merge `fa56e05`) |
 | **R1a-4** | **Consolidação conceitual (R1b pontual).** Conectar `source_kind` → `knowledge_gaps` com `origin_class` distinto (os 2 caminhos da Tabela 2.6). Indexação idempotente. | Fonte, qualidade e incerteza por entrada |
 
 ### R3 — Corretivos (3 subcortes)
@@ -238,15 +238,28 @@ R1a-1 (vias de origem + bug flush) → R1a-3 (correções P1/P2)
 
 R1a-3 pode correr em paralelo com R1a-2 (não se sobrepõem). R3 pode iniciar após R1a-1, pois depende da taxonomia de origem para a política de confiança.
 
-### Progresso
+### Progresso — quatro dimensões separadas (mestre §4.1)
 
-| Corte | Estado |
-|---|---|
-| R1a-1 | Parcial (bug flush ✅ / taxonomia de `source_kind` pendente) |
-| R1a-2 | ✅ Fila + retry + órfãos (F-1 aposentado, F-2 conectado, F-4 resolvido) — PR #62 |
-| R1a-3 | ✅ Correções de isolamento P1 — PR #61 |
-| R1a-4 | Pendente (consolidação `source_kind` → `knowledge_gaps`) |
-| R3a–R3c | Pendentes |
+O mestre exige que **implementado · testado · publicado · validado em
+operacao** sejam registrados à parte: "uma dimensao nao implica as demais".
+CI verde não encerra circuito cognitivo, e os cortes abaixo **não** estão
+validados em operação — nenhum probe de produção foi executado para
+confirmar comportamento depois do deploy.
+
+| Corte | Implementado | Testado | Publicado | Validado em operação |
+|---|---|---|---|---|
+| **R1a-1** | Parcial — só o reparo do `memory_flush` (subcorte) | ✅ 10 testes com SQLite real | ✅ `6ece048` | ❌ |
+| | **Pendente**: taxonomia de `source_kind`, mapeamento dos produtores (Tabelas 2.1–2.7), contrato documental | | | |
+| **R1a-2** | ✅ `processing_queue`, retry F-4, órfãos F-1/F-2 | ✅ 45 testes + regressão 20/20 | ✅ `8245d63` (PR #62) | ❌ |
+| **R1a-3** | ✅ correções de isolamento P1 | ✅ testes de isolamento | ✅ `fa56e05` (PR #61) | ❌ |
+| **R1a-4** | ❌ | ❌ | ❌ | ❌ |
+| **R3a–R3c** | ❌ | ❌ | ❌ | ❌ |
+
+**Validação em operação pendente para R1a-2/R1a-3**: após o deploy destas
+PRs, um probe read-only deve confirmar (a) que nenhum item de `processing_queue`
+carrega instância/Relation trocados, (b) que o retry de anexo `failed` de fato
+recupera material e (c) que nenhum leitor P1 corrigido voltou a vazar entre
+Relations. Isso é evidência separada e não foi executado aqui.
 
 **F-5 permanece aberto** de propósito: é o alvo da taxonomia de origem (R1a-1 pendente / R1a-4), e o Princípio Áureo procura criar a via de "material global autorizado" antes de alimentá-la.
 
