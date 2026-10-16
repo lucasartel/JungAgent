@@ -32,6 +32,14 @@ from work.tenancy import current_agent_instance
 
 logger = logging.getLogger(__name__)
 
+
+class _StaleOwnership(Exception):
+    """Posse da tentativa perdida: a transação deve ser revertida."""
+
+
+class _MissingAttachment(Exception):
+    """Anexo apagado entre a checagem e a gravação: reverter e descartar."""
+
 # Tabelas com extração single-shot (F-4). A de tarefas é legada: sem
 # ``project_id`` e sem colunas de tenancy — o SELECT é construído por PRAGMA,
 # nunca com um schema fixo que uma das tabelas não possui.
@@ -228,54 +236,70 @@ def _persist_atomically(
     result: Dict[str, Any],
     engine: Any = None,
 ) -> str:
-    """Valida a posse da tentativa e grava anexo + fila na MESMA transação.
+    """Valida a posse da tentativa e grava anexo + fila numa transação PRIVADA.
 
-    Sem isso, o handler gravaria o anexo ANTES da finalização protegida: a
-    fila rejeitaria a finalização antiga, mas o dano ao anexo já teria
-    ocorrido. Retorna ``done``, ``stale`` (posse perdida, nada gravado) ou
-    ``missing`` (anexo apagado entre a checagem e a gravação).
+    Três garantias, nesta ordem:
+
+    1. **Conexão privada** (padrão ``engines/will_delivery_receipt``): o
+       scheduler roda em outra thread e ``db.conn`` é compartilhado. Sem uma
+       conexão própria, um ``commit()`` de outra operação poderia confirmar a
+       gravação parcial do anexo antes de a fila ser finalizada — e o
+       ``rollback`` não desfaria mais nada.
+    2. **Validação de posse antes de tocar no anexo**: ``status='running'``
+       AND ``retry_attempts=?``. Executor antigo → rollback, nada gravado.
+    3. **Anexo e fila na mesma transação**: ou ambos persistem, ou nenhum.
+
+    Retorna ``done``, ``stale`` (posse perdida) ou ``missing`` (anexo apagado).
     """
-    conn = db.conn
-    cursor = conn.cursor()
+    from engines.will_delivery_receipt import atomic, delivery_connection
+
+    # Construir o WorkEngine ANTES da transação: sua inicialização pode tocar
+    # o banco compartilhado e ``BEGIN IMMEDIATE`` já segura o lock de escrita.
+    if engine is None and table == "work_project_attachments":
+        from work import WorkEngine
+
+        engine = WorkEngine(db)
+
     try:
-        cursor.execute("BEGIN")
-        cursor.execute(
-            "SELECT status, retry_attempts FROM processing_queue WHERE id = ?",
-            (int(queue_item_id),),
-        )
-        row = cursor.fetchone()
-        if (
-            row is None
-            or str(row[0]) != "running"
-            or int(row[1]) != int(expected_attempt)
-        ):
-            conn.rollback()
-            logger.warning(
-                "extraction_retry: posse perdida antes da gravação item_id=%s "
-                "tentativa_esperada=%s",
-                queue_item_id, expected_attempt,
+        with delivery_connection(db) as conn, atomic(conn):
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT status, retry_attempts FROM processing_queue WHERE id = ?",
+                (int(queue_item_id),),
             )
-            return "stale"
-        affected = _store_with_cursor(db, table, attachment_id, result, cursor, engine)
-        if affected != 1:
-            conn.rollback()
-            return "missing"
-        cursor.execute(
-            """
-            UPDATE processing_queue
-            SET status = 'done', next_at = NULL, last_error = NULL, updated_at = ?
-            WHERE id = ? AND retry_attempts = ? AND status = 'running'
-            """,
-            (_iso(_utc_now()), int(queue_item_id), int(expected_attempt)),
-        )
-        if cursor.rowcount != 1:
-            conn.rollback()
-            return "stale"
-        conn.commit()
-        return "done"
-    except Exception:
-        conn.rollback()
-        raise
+            row = cursor.fetchone()
+            if (
+                row is None
+                or str(row[0]) != "running"
+                or int(row[1]) != int(expected_attempt)
+            ):
+                logger.warning(
+                    "extraction_retry: posse perdida antes da gravação item_id=%s "
+                    "tentativa_esperada=%s",
+                    queue_item_id, expected_attempt,
+                )
+                # ``atomic`` faz rollback ao levantar.
+                raise _StaleOwnership()
+            affected = _store_with_cursor(
+                db, table, attachment_id, result, cursor, engine
+            )
+            if affected != 1:
+                raise _MissingAttachment()
+            cursor.execute(
+                """
+                UPDATE processing_queue
+                SET status = 'done', next_at = NULL, last_error = NULL, updated_at = ?
+                WHERE id = ? AND retry_attempts = ? AND status = 'running'
+                """,
+                (_iso(_utc_now()), int(queue_item_id), int(expected_attempt)),
+            )
+            if cursor.rowcount != 1:
+                raise _StaleOwnership()
+    except _StaleOwnership:
+        return "stale"
+    except _MissingAttachment:
+        return "missing"
+    return "done"
 
 
 def handle_attachment_extraction(db: Any, item: Dict[str, Any]) -> Dict[str, Any]:

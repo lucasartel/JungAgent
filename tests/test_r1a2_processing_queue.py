@@ -1275,3 +1275,97 @@ class TestAtomicAttachmentAndTerminalStates:
         # O texto pré-existente não foi apagado por uma tentativa que falhou.
         assert row["extraction_status"] == "failed"
         assert row["extracted_text"] == "texto anterior"
+
+    def test_joint_rollback_survives_concurrent_shared_commit(self, tmp_path, monkeypatch):
+        """Rollback conjunto (anexo + fila) mesmo com commit na conexão compartilhada.
+
+        Reproduz o cenário do reviewer: o scheduler roda em outra thread e
+        ``db.conn`` é compartilhado. Uma outra operação que dê ``commit()`` na
+        conexão compartilhada DURANTE a nossa transação confirmaria a gravação
+        parcial do anexo — e o rollback posterior não desfaria mais nada:
+        anexo ``extracted`` com fila ``running``. Com conexão privada o
+        commit alheio não alcança o nosso trabalho.
+        """
+        from work import WorkEngine
+
+        db = _real_schema_db(tmp_path)
+        pdf = tmp_path / "doc.pdf"
+        pdf.write_bytes(b"%PDF-1.4 fake")
+        db.conn.execute(
+            """
+            INSERT INTO work_project_attachments
+                (project_id, filename, stored_path, mime_type, extraction_status,
+                 agent_instance, extracted_text)
+            VALUES (1, 'doc.pdf', ?, 'application/pdf', 'failed', ?, 'texto original')
+            """,
+            (str(pdf), db.agent_instance),
+        )
+        db.conn.commit()
+        att_id = db.conn.execute(
+            "SELECT id FROM work_project_attachments"
+        ).fetchone()[0]
+
+        retry = _load_module(
+            "work.extraction_retry_test", REPO_ROOT / "work" / "extraction_retry.py"
+        )
+        enqueue(
+            db,
+            queue_kind=QUEUE_ATTACHMENT_EXTRACTION,
+            dedupe_key=f"work_project_attachments:{att_id}",
+            payload={
+                "table": "work_project_attachments",
+                "attachment_id": att_id,
+                "stored_path": str(pdf),
+            },
+        )
+        claimed = claim_due(db, queue_kind=QUEUE_ATTACHMENT_EXTRACTION, now=_now())
+        item_id = claimed[0]["id"]
+        attempt = claimed[0]["retry_attempts"]
+
+        original_store = retry._store_with_cursor
+
+        def store_then_shared_commit(connection, table, attachment_id, result, cursor, engine=None):
+            affected = original_store(
+                connection, table, attachment_id, result, cursor, engine
+            )
+            # Outra operação, na MESMA conexão compartilhada, dá commit no
+            # meio da nossa transação — é exatamente o risco reportado.
+            connection.conn.commit()
+            return affected
+
+        monkeypatch.setattr(retry, "_store_with_cursor", store_then_shared_commit)
+
+        # Falha induzida na atualização da fila, DEPOIS da gravação do anexo.
+        def boom(value):
+            raise RuntimeError("induced queue update failure")
+
+        monkeypatch.setattr(retry, "_iso", boom)
+
+        with pytest.raises(RuntimeError, match="induced queue update failure"):
+            retry._persist_atomically(
+                db,
+                queue_item_id=item_id,
+                expected_attempt=attempt,
+                table="work_project_attachments",
+                attachment_id=att_id,
+                result={
+                    "status": "extracted",
+                    "text": "conteudo novo",
+                    "page_count": 1,
+                    "word_count": 1,
+                    "error": None,
+                },
+            )
+
+        # Rollback conjunto: nem o anexo nem a fila avançaram.
+        row = db.conn.execute(
+            "SELECT extraction_status, extracted_text FROM work_project_attachments "
+            "WHERE id=?",
+            (att_id,),
+        ).fetchone()
+        assert row["extraction_status"] == "failed"
+        assert row["extracted_text"] == "texto original"
+        qrow = db.conn.execute(
+            "SELECT status FROM processing_queue WHERE id=?", (item_id,)
+        ).fetchone()
+        assert qrow["status"] == "running"
