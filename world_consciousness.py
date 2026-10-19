@@ -386,19 +386,26 @@ class WorldConsciousnessFetcher:
                 # propriedade do caminho do mundo. Qualquer status casa — o
                 # material do mundo nao nasce de novo porque a pergunta mudou
                 # de caixa ou porque a anterior foi encerrada.
-                from core.db.knowledge_gaps import gap_fingerprint
+                from core.db.knowledge_gaps import gap_fingerprint, gap_identity_key
 
-                fingerprint = gap_fingerprint(gap_question)
+                # Chave composta (origem + Relation + participante + texto
+                # normalizado): o indice UNIQUE e que garante a unicidade
+                # entre conexoes — este caminho usa conexao propria.
+                identity_key = gap_identity_key(
+                    origin_class="authorized_aggregate",
+                    relation_id=None,
+                    participant=user_id,
+                    fingerprint=gap_fingerprint(gap_question),
+                )
                 cursor.execute(
                     """
                     SELECT id, source_refs_json, observation_count
                     FROM knowledge_gaps
-                    WHERE agent_instance = ? AND origin_class = 'authorized_aggregate'
-                      AND dedup_key = ?
+                    WHERE agent_instance = ? AND dedup_key = ?
                     ORDER BY id
                     LIMIT 1
                     """,
-                    (self.agent_instance, fingerprint),
+                    (self.agent_instance, identity_key),
                 )
                 row = cursor.fetchone()
                 now_iso = datetime.now(timezone.utc).isoformat()
@@ -436,10 +443,11 @@ class WorldConsciousnessFetcher:
                             source_origin, knowledge_kind, target_area, target_scope,
                             focus_terms_json, source_reason, public_question,
                             source_refs_json, provenance_json, status,
-                            source_kind, dedup_key, observation_count, last_observed_at
+                            source_kind, dedup_key, observation_count, last_observed_at,
+                        origin_quarantined
                         ) VALUES (?, ?, 'instance_global', 'authorized_aggregate', ?,
                                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open',
-                                  'world', ?, 1, ?)
+                                  'world', ?, 1, ?, 0)
                         """,
                         (
                             user_id, self.agent_instance, user_id, topic, gap_question,
@@ -450,7 +458,7 @@ class WorldConsciousnessFetcher:
                             json.dumps(knowledge_gap.get("focus_terms") or [], ensure_ascii=False),
                             knowledge_gap.get("source_reason") or knowledge_gap.get("psychic_motive"),
                             gap_question, json.dumps(source_refs), json.dumps(provenance),
-                            fingerprint, now_iso,
+                            identity_key, now_iso,
                         ),
                     )
                     gap_id = int(cursor.lastrowid)

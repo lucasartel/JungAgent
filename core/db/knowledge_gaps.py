@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import json
+import sqlite3
 import importlib.util
 import unicodedata
 from datetime import datetime, timezone
@@ -44,18 +45,44 @@ logger = logging.getLogger(__name__)
 INDETERMINATE_ORIGIN_KEY = "origin_indeterminate"
 
 
+# Pontuacao de FRASE removida apenas nas extremidades. Só isso: ponto,
+# virgula, ponto e virgula, dois-pontos, exclamacao, interrogacao, reticencias
+# e aspas. Sinais de valor (-, +, %, #, R$…) ficam intocados: "Temperatura
+# -5?" e "Temperatura 5?" nao podem virar a mesma chave.
+_EDGE_SENTENCE_PUNCT = ".,;:!?…\"'“”‘’"
+
+
 def gap_fingerprint(text: Any) -> str:
     """Chave de identidade de uma pergunta — normalizacao conservadora.
 
-    Ortografica, sem semantica: NFKC, casefold, pontuacao (categoria Unicode
-    ``P*``) vira espaco, espacos colapsados. Sem stemming, sem stopwords, sem
-    similaridade entre frases. O ``the_gap`` original nunca e reescrito.
+    Ortografica, sem semantica: NFKC, casefold, espacos colapsados e
+    pontuacao de frase removida **somente nas extremidades**. Ponto INTERNO
+    e mantido (hifen, mais, porcentagem fazem parte do sentido). Sem
+    stemming, sem stopwords, sem similaridade entre frases. O ``the_gap``
+    original nunca e reescrito.
     """
     normalized = unicodedata.normalize("NFKC", str(text or "")).casefold()
-    without_punct = "".join(
-        " " if unicodedata.category(ch).startswith("P") else ch for ch in normalized
+    collapsed = " ".join(normalized.split())
+    return collapsed.strip(_EDGE_SENTENCE_PUNCT).strip()
+
+
+def gap_identity_key(
+    *, origin_class: str, relation_id: Optional[str], participant: Optional[str], fingerprint: str
+) -> str:
+    """Escopo completo de identidade de uma lacuna.
+
+    Inclui origem, Relation e participante: ``legacy_unscoped`` nao tem
+    Relation que identifique o dono, entao sem o participante dois usuarios
+    distintos fundiriam a mesma pergunta e as ancoras de conversa um do outro.
+    """
+    return "|".join(
+        [
+            str(origin_class or ""),
+            str(relation_id or ""),
+            str(participant or ""),
+            str(fingerprint or ""),
+        ]
     )
-    return " ".join(without_punct.split())
 
 
 def _now_iso() -> str:
@@ -65,16 +92,21 @@ def _now_iso() -> str:
 def _gap_provenance(
     base: Dict[str, Any],
     *,
-    source_kind: Optional[str],
     indeterminate_reason: Optional[str],
-) -> Dict[str, Any]:
-    """Proveniencia da lacuna, com marcador quando o produtor e indeterminado."""
+) -> Tuple[Dict[str, Any], int]:
+    """Proveniencia da lacuna + flag de quarentena.
+
+    O marcador informativo fica em ``provenance_json`` (motivo e pendencia);
+    a bloqueio de consumo e a coluna ``origin_quarantined`` — as duas sao
+    gravadas juntas para nunca divergirem.
+    """
     payload = dict(base or {})
     if indeterminate_reason:
         payload[INDETERMINATE_ORIGIN_KEY] = True
         payload[f"{INDETERMINATE_ORIGIN_KEY}_reason"] = indeterminate_reason
         payload[f"{INDETERMINATE_ORIGIN_KEY}_pending"] = "R1a-4"
-    return payload
+        return payload, 1
+    return payload, 0
 
 
 class KnowledgeGapDatabaseMixin:
@@ -103,16 +135,16 @@ class KnowledgeGapDatabaseMixin:
         cursor: Any,
         *,
         instance: str,
-        origin_class: str,
-        relation_id: Optional[str],
-        fingerprint: str,
+        identity_key: str,
         incoming_refs: List[str],
     ) -> Optional[Tuple[int, str]]:
         """Procura a mesma pergunta no MESMO escopo de propriedade.
 
-        Escopo: ``agent_instance`` + ``origin_class`` + ``relation_id`` + o
-        ``fingerprint`` normalizado. Nunca cruza instancia, classe de
-        propriedade ou Relation.
+        Escopo embutido em ``dedup_key`` (``origin_class`` + ``relation`` +
+        ``participante`` + fingerprint), mais um indice UNIQUE em
+        ``(agent_instance, dedup_key)`` — a unicidade e garantida pelo
+        SQLite entre conexoes e processos, nao pelo lock do objeto. Linhas
+        historicas (``dedup_key`` NULL) nunca sao alcancadas: nao ha backfill.
 
         Comportamento por status (contrato R1a-4):
         - ``open`` / ``investigating`` / ``resolved`` / ``rejected``: a linha
@@ -122,21 +154,16 @@ class KnowledgeGapDatabaseMixin:
           ``last_observed_at`` e ancoras anexadas;
         - retry do mesmo evento (ancora ja conhecida ou nenhuma ancora nova)
           -> sem efeito no contador.
-
-        Linhas historicas (``dedup_key`` NULL) nunca sao alcancadas: nao ha
-        backfill, entao dados pre-existentes nao sao alterados.
         """
         cursor.execute(
             """
             SELECT id, source_refs_json, observation_count
             FROM knowledge_gaps
-            WHERE agent_instance = ? AND origin_class = ?
-              AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
-              AND dedup_key = ?
+            WHERE agent_instance = ? AND dedup_key = ?
             ORDER BY id
             LIMIT 1
             """,
-            (instance, origin_class, relation_id, fingerprint),
+            (instance, identity_key),
         )
         row = cursor.fetchone()
         if row is None:
@@ -183,60 +210,79 @@ class KnowledgeGapDatabaseMixin:
                 origin_class=origin_class,
                 agent_instance=agent_instance,
             )
-            gap_kind, kind_reason = validate_gap_source_kind(
-                source_kind, allow_null=source_kind is None
-            )
-            if kind_reason and source_kind is not None:
-                # Proveniencia desconhecida numa escrita nova: quarentena de
-                # origem (marcador explicito), sem promover a global autorizado
-                # e sem interromper quem chamou.
+            if not (the_gap or "").strip():
+                logger.warning("knowledge_gap sem texto user_id=%s — recusado", user_id)
+                return None
+            # allow_null=False: escrita NOVA sem produtor validado vai para
+            # quarentena (marcador + coluna). Legado historico nao passa por
+            # aqui, entao as duas situacoes nunca se confundem.
+            gap_kind, kind_reason = validate_gap_source_kind(source_kind, allow_null=False)
+            if kind_reason:
                 logger.warning(
-                    "knowledge_gap proveniencia indeterminada user_id=%s motivo=%s",
+                    "knowledge_gap proveniencia indeterminada user_id=%s motivo=%s "
+                    "— entrada preservada e bloqueada ate classificacao valida",
                     user_id, kind_reason,
                 )
             refs = normalize_source_refs(source_refs)
-            provenance_payload = _gap_provenance(
+            provenance_payload, quarantined = _gap_provenance(
                 cognitive_provenance(
                     origin_class=resolved_origin,
                     relation_id=resolved_relation,
                     participant_user_id=participant,
                     extra=provenance,
                 ),
-                source_kind=gap_kind,
                 indeterminate_reason=kind_reason,
             )
-            fingerprint = gap_fingerprint(the_gap)
+            identity_key = gap_identity_key(
+                origin_class=resolved_origin,
+                relation_id=resolved_relation,
+                participant=participant,
+                fingerprint=gap_fingerprint(the_gap),
+            )
             cursor = self.conn.cursor()
 
             observed = self._observe_existing_gap(
                 cursor,
                 instance=instance,
-                origin_class=resolved_origin,
-                relation_id=resolved_relation,
-                fingerprint=fingerprint,
+                identity_key=identity_key,
                 incoming_refs=refs,
             )
             if observed:
                 self.conn.commit()
                 return observed[0]
 
-            cursor.execute("""
-                INSERT INTO knowledge_gaps (
-                    user_id, agent_instance, ownership_class, origin_class,
-                    origin_relation_id, origin_participant_user_id,
-                    source_refs_json, provenance_json, topic, the_gap,
-                    importance_score, public_question, private_trigger_json,
-                    status, source_kind, dedup_key, observation_count,
-                    last_observed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, 1, ?)
-            """, (
-                user_id, instance, INSTANCE_GLOBAL, resolved_origin,
-                resolved_relation, participant,
-                json_payload(refs, []),
-                json_payload(provenance_payload, {}), topic, the_gap, importance,
-                public_question, json_payload(private_trigger, {}) if private_trigger else None,
-                gap_kind, fingerprint, _now_iso(),
-            ))
+            try:
+                cursor.execute("""
+                    INSERT INTO knowledge_gaps (
+                        user_id, agent_instance, ownership_class, origin_class,
+                        origin_relation_id, origin_participant_user_id,
+                        source_refs_json, provenance_json, topic, the_gap,
+                        importance_score, public_question, private_trigger_json,
+                        status, source_kind, dedup_key, observation_count,
+                        last_observed_at, origin_quarantined
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open',
+                              ?, ?, 1, ?, ?)
+                """, (
+                    user_id, instance, INSTANCE_GLOBAL, resolved_origin,
+                    resolved_relation, participant,
+                    json_payload(refs, []),
+                    json_payload(provenance_payload, {}), topic, the_gap, importance,
+                    public_question, json_payload(private_trigger, {}) if private_trigger else None,
+                    gap_kind, identity_key, _now_iso(), quarantined,
+                ))
+            except sqlite3.IntegrityError:
+                # Outra conexao venceu a corrida: o indice UNIQUE e a
+                # garantia transacional entre conexoes/processos.
+                observed = self._observe_existing_gap(
+                    cursor,
+                    instance=instance,
+                    identity_key=identity_key,
+                    incoming_refs=refs,
+                )
+                self.conn.commit()
+                if observed:
+                    return observed[0]
+                raise
 
             self.conn.commit()
             return cursor.lastrowid
@@ -276,12 +322,13 @@ class KnowledgeGapDatabaseMixin:
             agent_instance=agent_instance,
         )
         declared_kind = source_kind or knowledge_gap.get("source_kind")
-        gap_kind, kind_reason = validate_gap_source_kind(
-            declared_kind, allow_null=declared_kind is None
-        )
-        if kind_reason and declared_kind is not None:
+        # allow_null=False: escrita NOVA sem produtor validado vai para
+        # quarentena, distinta do legado historico (que nao passa por aqui).
+        gap_kind, kind_reason = validate_gap_source_kind(declared_kind, allow_null=False)
+        if kind_reason:
             logger.warning(
-                "knowledge_gap proveniencia indeterminada user_id=%s motivo=%s",
+                "knowledge_gap proveniencia indeterminada user_id=%s motivo=%s "
+                "— entrada preservada e bloqueada ate classificacao valida",
                 user_id, kind_reason,
             )
         public_question = (knowledge_gap.get("public_question") or "").strip() or None
@@ -289,26 +336,28 @@ class KnowledgeGapDatabaseMixin:
             public_question = the_gap
         private_trigger = knowledge_gap.get("private_trigger")
         refs = normalize_source_refs(source_refs)
-        provenance_payload = _gap_provenance(
+        provenance_payload, quarantined = _gap_provenance(
             cognitive_provenance(
                 origin_class=resolved_origin,
                 relation_id=resolved_relation,
                 participant_user_id=participant,
                 extra=provenance,
             ),
-            source_kind=gap_kind,
             indeterminate_reason=kind_reason,
         )
-        fingerprint = gap_fingerprint(the_gap)
+        identity_key = gap_identity_key(
+            origin_class=resolved_origin,
+            relation_id=resolved_relation,
+            participant=participant,
+            fingerprint=gap_fingerprint(the_gap),
+        )
 
         with self._lock:
             cursor = self.conn.cursor()
             observed = self._observe_existing_gap(
                 cursor,
                 instance=instance,
-                origin_class=resolved_origin,
-                relation_id=resolved_relation,
-                fingerprint=fingerprint,
+                identity_key=identity_key,
                 incoming_refs=refs,
             )
             if observed:
@@ -329,25 +378,40 @@ class KnowledgeGapDatabaseMixin:
                 json_payload(refs, []),
                 json_payload(provenance_payload, {}),
             )
-            cursor.execute(
-                """
-                INSERT INTO knowledge_gaps (
-                    user_id, agent_instance, ownership_class, origin_class,
-                    origin_relation_id, origin_participant_user_id,
-                    topic, the_gap, importance_score,
-                    source_origin, knowledge_kind, target_area, target_scope,
-                    focus_terms_json, source_reason, public_question,
-                    private_trigger_json, source_refs_json, provenance_json, status,
-                    source_kind, dedup_key, observation_count, last_observed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open',
-                          ?, ?, 1, ?)
-                """,
-                (
-                    user_id, instance, INSTANCE_GLOBAL, resolved_origin,
-                    resolved_relation, participant, topic, the_gap, *payload[1:],
-                    gap_kind, fingerprint, _now_iso(),
-                ),
-            )
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO knowledge_gaps (
+                        user_id, agent_instance, ownership_class, origin_class,
+                        origin_relation_id, origin_participant_user_id,
+                        topic, the_gap, importance_score,
+                        source_origin, knowledge_kind, target_area, target_scope,
+                        focus_terms_json, source_reason, public_question,
+                        private_trigger_json, source_refs_json, provenance_json, status,
+                        source_kind, dedup_key, observation_count, last_observed_at,
+                        origin_quarantined
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open',
+                              ?, ?, 1, ?, ?)
+                    """,
+                    (
+                        user_id, instance, INSTANCE_GLOBAL, resolved_origin,
+                        resolved_relation, participant, topic, the_gap, *payload[1:],
+                        gap_kind, identity_key, _now_iso(), quarantined,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                # Outra conexao/processo venceu a corrida — o indice UNIQUE
+                # e a garantia transacional, nao o lock do objeto.
+                observed = self._observe_existing_gap(
+                    cursor,
+                    instance=instance,
+                    identity_key=identity_key,
+                    incoming_refs=refs,
+                )
+                self.conn.commit()
+                if observed:
+                    return observed[0]
+                raise
             gap_id = int(cursor.lastrowid)
             self.conn.commit()
             return gap_id
@@ -428,6 +492,7 @@ class KnowledgeGapDatabaseMixin:
             cursor.execute(f"""
                 SELECT * FROM knowledge_gaps
                 WHERE agent_instance = ? AND status = 'open' AND {visibility}
+                  AND origin_quarantined = 0
                 ORDER BY importance_score DESC, created_at DESC
                 LIMIT ?
             """, params)

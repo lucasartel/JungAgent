@@ -297,3 +297,177 @@ class TestUpsertContract:
         assert row["source_kind"] == "goal_manager"
         assert json.loads(row["source_refs_json"]) == ["will#7", "knowledge_gap#9"]
         assert row["observation_count"] == 1
+
+
+class TestReviewerFindings:
+    """Os quatro casos reproduzidos offline na revisao da PR #65."""
+
+    # -- 1. quarentena bloqueia consumo ------------------------------------
+    def test_quarantined_gap_is_not_consumed_even_if_global(self, tmp_path):
+        db = _db(tmp_path)
+        gap_id = db.add_knowledge_gap(
+            "u1", "t", "Pergunta com origem desconhecida", 0.9,
+            origin_class="authorized_aggregate",  # escrito como global
+            source_kind="telegram",               # produtor fora do conjunto
+        )
+        row = _row(db, gap_id)
+        assert row["origin_class"] == "authorized_aggregate"
+        assert row["origin_quarantined"] == 1
+        # ... mas bloqueada para qualquer leitor.
+        assert db.get_active_knowledge_gaps("u1", limit=10) == []
+        assert db.get_active_knowledge_gaps("system", limit=10) == []
+
+    def test_new_write_without_source_kind_is_quarantined_and_marked(self, tmp_path):
+        """source_kind ausente em escrita NOVA: marcado, nao confundido com legado."""
+        db = _db(tmp_path)
+        gap_id = db.add_knowledge_gap("u1", "t", "Escrita sem produtor", 0.5)
+        row = _row(db, gap_id)
+        prov = json.loads(row["provenance_json"])
+        assert row["origin_quarantined"] == 1
+        assert prov[INDETERMINATE_ORIGIN_KEY] is True
+        assert prov[f"{INDETERMINATE_ORIGIN_KEY}_reason"] == "source_kind_unset"
+        assert db.get_active_knowledge_gaps("u1", limit=10) == []
+
+    def test_classified_gap_is_still_consumed(self, tmp_path):
+        db = _db(tmp_path)
+        rid = db.register_agent_relation(
+            agent_instance="test_jung", participant_user_id="u1", consent_status="granted"
+        )
+        gap_id = db.add_knowledge_gap(
+            "u1", "t", "Pergunta classificada", 0.5,
+            relation_id=rid, source_kind="conversation",
+        )
+        visible = db.get_active_knowledge_gaps("u1", relation_id=rid, limit=10)
+        assert [item["id"] for item in visible] == [gap_id]
+
+    def test_historical_row_has_no_quarantine_flag(self, tmp_path):
+        db = _db(tmp_path)
+        db.conn.execute(
+            """
+            INSERT INTO knowledge_gaps (
+                user_id, agent_instance, ownership_class, origin_class,
+                topic, the_gap, importance_score, status
+            ) VALUES ('u1', 'test_jung', 'legacy_unscoped', 'legacy_unscoped',
+                      'antiga', 'Lacuna legada', 0.5, 'open')
+            """
+        )
+        db.conn.commit()
+        row = db.conn.execute("SELECT * FROM knowledge_gaps").fetchone()
+        assert row["origin_quarantined"] == 0  # legado != proveniencia indeterminada
+
+    # -- 2. normalizacao nao funde perguntas diferentes --------------------
+    def test_internal_punctuation_is_meaningful(self, tmp_path):
+        """'-5' e '5' nao podem virar a mesma chave."""
+        assert gap_fingerprint("Temperatura -5?") != gap_fingerprint("Temperatura 5?")
+        assert gap_fingerprint("Temperatura +5?") != gap_fingerprint("Temperatura 5?")
+        assert gap_fingerprint("Custo 100%") != gap_fingerprint("Custo 100")
+
+        db = _db(tmp_path)
+        a = db.add_knowledge_gap("u1", "t", "Temperatura -5?", 0.5, source_kind="world")
+        b = db.add_knowledge_gap("u1", "t", "Temperatura 5?", 0.5, source_kind="world")
+        assert a != b
+
+    def test_edge_punctuation_still_normalizes(self, tmp_path):
+        """Pontuacao de frase nas extremidades continua sendo normalizada."""
+        assert gap_fingerprint("Quem e este usuario?") == gap_fingerprint("Quem e este usuario")
+        db = _db(tmp_path)
+        a = db.add_knowledge_gap("u1", "t", "Quem e este usuario?", 0.5, source_kind="world")
+        b = db.add_knowledge_gap("u1", "t", "Quem e este usuario", 0.5, source_kind="world")
+        assert a == b
+
+    # -- 3. participantes sem Relation nao misturam evidencias --------------
+    def test_participants_without_relation_do_not_merge(self, tmp_path):
+        db = _db(tmp_path)
+        # Ambos legacy_unscoped (sem Relation): a identidade deve preservar
+        # o participante, senao as ancoras de conversa se fundiriam.
+        a = db.add_knowledge_gap(
+            "user-a", "t", "Qual e a rotina dessa pessoa?", 0.5,
+            source_kind="conversation", source_refs=["conversation#1"],
+        )
+        b = db.add_knowledge_gap(
+            "user-b", "t", "Qual e a rotina dessa pessoa?", 0.5,
+            source_kind="conversation", source_refs=["conversation#2"],
+        )
+        assert a != b
+        assert _row(a and db, a)["source_refs_json"] == json.dumps(["conversation#1"])
+        assert _row(db, b)["source_refs_json"] == json.dumps(["conversation#2"])
+
+    def test_same_relation_still_merges(self, tmp_path):
+        db = _db(tmp_path)
+        rid = db.register_agent_relation(
+            agent_instance="test_jung", participant_user_id="u1", consent_status="granted"
+        )
+        a = db.add_knowledge_gap(
+            "u1", "t", "Mesma Relation, mesma pergunta", 0.5,
+            relation_id=rid, source_kind="conversation", source_refs=["conversation#1"],
+        )
+        b = db.add_knowledge_gap(
+            "u1", "t", "MESMA RELATION, MESMA PERGUNTA!", 0.5,
+            relation_id=rid, source_kind="conversation", source_refs=["conversation#2"],
+        )
+        assert a == b
+        assert _row(db, a)["observation_count"] == 2
+
+    # -- 4. idempotencia atomica entre conexoes -----------------------------
+    def test_dedup_is_atomic_across_connections(self, tmp_path):
+        """O lock do objeto nao protege outro escritor: o indice UNIQUE sim."""
+        import threading
+
+        db_file = tmp_path / "shared.db"
+        first = _db(tmp_path, name="shared.db")
+        # Segundo objeto, SEGUNDA conexao — mesmo arquivo.
+        second = HybridDatabaseManagerRef(db_file, instance="test_jung")
+
+        barrier = threading.Barrier(2)
+        results = []
+
+        def writer(db):
+            barrier.wait()
+            try:
+                results.append(
+                    db.add_knowledge_gap(
+                        "u1", "t", "Pergunta concorrente", 0.5, source_kind="conversation"
+                    )
+                )
+            except Exception as exc:  # pragma: no cover - diagnostic
+                results.append(f"error:{type(exc).__name__}")
+
+        threads = [
+            threading.Thread(target=writer, args=(first,)),
+            threading.Thread(target=writer, args=(second,)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        ids = [r for r in results if isinstance(r, int)]
+        assert len(ids) >= 1, results
+        # Unica linha: o SQLite nao deixou a segunda vencer.
+        count = first.conn.execute("SELECT COUNT(*) FROM knowledge_gaps").fetchone()[0]
+        assert count == 1, f"esperava 1 linha, ha {count} (resultados: {results})"
+
+    def test_unique_index_exists(self, tmp_path):
+        db = _db(tmp_path)
+        indexes = {
+            row[0]
+            for row in db.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            )
+        }
+        assert "uq_knowledge_gaps_dedup" in indexes
+
+
+def HybridDatabaseManagerRef(db_file, *, instance):
+    """Segunda conexao real para o mesmo arquivo SQLite."""
+    import threading as _threading
+
+    from core.database import HybridDatabaseManager
+
+    db = HybridDatabaseManager.__new__(HybridDatabaseManager)
+    db.conn = sqlite3.connect(str(db_file), check_same_thread=False)
+    db.conn.row_factory = sqlite3.Row
+    db._lock = _threading.Lock()
+    db.agent_instance = instance
+    db._init_sqlite_schema()
+    return db

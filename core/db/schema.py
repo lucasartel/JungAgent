@@ -765,6 +765,11 @@ class SchemaDatabaseMixin:
             # observacao. Recorrencia NUNCA prova descoberta nem eleva confianca.
             "observation_count INTEGER",
             "last_observed_at DATETIME",
+            # R1a-4: quarentena de PROVENIENCIA. Escrita nova sem produtor
+            # validado fica bloqueada para consumo ate ser classificada;
+            # linhas historicas nascem 0 (legado nao e proveniencia
+            # indeterminada — situacoes diferentes).
+            "origin_quarantined INTEGER NOT NULL DEFAULT 0",
         ]:
             try:
                 cursor.execute(f"ALTER TABLE knowledge_gaps ADD COLUMN {column_def}")
@@ -774,6 +779,15 @@ class SchemaDatabaseMixin:
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_knowledge_gaps_cognitive_scope "
             "ON knowledge_gaps(agent_instance, origin_relation_id, origin_class, status, importance_score DESC)"
+        )
+        # R1a-4: idempotencia garantida pelo proprio SQLite, entre conexoes e
+        # processos. O ``dedup_key`` carrega o escopo completo, entao a
+        # restricao NAO funde Relations/participantes diferentes. Linhas
+        # historicas tem dedup_key NULL e o UNIQUE do SQLite considera NULLs
+        # distintos — o historico e preservado.
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_gaps_dedup "
+            "ON knowledge_gaps(agent_instance, dedup_key)"
         )
 
         # ========== LOOP DE CONSCIENCIA ==========
