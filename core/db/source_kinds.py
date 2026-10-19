@@ -34,6 +34,25 @@ eixo distinto: ela identifica a evidencia que sustentou uma decisao, nao o
 material cognitivo. Seus conjuntos fechados permanecem nos proprios modulos
 (``engines/will_decision_store.SOURCES``, ``engines/reconciliation_review``).
 
+Conjuntos aceitos por dominio
+
+Cada dominio tem o SEU conjunto fechado — nao ha um enum universal de
+proveniencia, porque produtores diferentes gravam em tabelas diferentes:
+
+============================ ==========================================
+Dominio                      Conjunto aceito (funcao validadora)
+============================ ==========================================
+``rumination_fragments``     ``CONTENT_SOURCE_KINDS`` / ``validate_source_kind``
+``work_experience_events``   ``CONTENT_SOURCE_KINDS`` / ``validate_source_kind``
+``knowledge_gaps``           ``KNOWLEDGE_GAP_SOURCE_KINDS`` / ``validate_gap_source_kind``
+``agent_will_decisions``     ``engines/will_decision_store.SOURCES``
+``reconciliation_...``       literais de ``engines/reconciliation_review``
+============================ ==========================================
+
+Identificar o produtor de uma lacuna **nao** comprova pesquisa online,
+descoberta nem autorizacao global: propriedade, autorizacao e Relation seguem
+em ``ownership_class`` / ``origin_class`` / ``origin_relation_id``.
+
 Fora de escopo deliberado
 
 - Nenhuma migracao de dados historicos: linhas ja gravadas mantem o valor que
@@ -44,7 +63,7 @@ Fora de escopo deliberado
 """
 from __future__ import annotations
 
-from typing import Any, FrozenSet, Optional
+from typing import Any, FrozenSet, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Proveniencia de conteudo (fechada)
@@ -106,3 +125,50 @@ def validate_source_kind(value: Any, *, allow_null: bool = False) -> Optional[st
     if normalized not in CONTENT_SOURCE_KINDS:
         raise ValueError(f"source_kind_unknown:{normalized}")
     return normalized
+
+
+# ---------------------------------------------------------------------------
+# Proveniencia de lacunas epistemicas (fechada) — R1a-4
+# ---------------------------------------------------------------------------
+# Conjunto proprio: as lacunas tem produtores diferentes dos fragmentos
+# ruminados. Identificar o produtor NAO comprova pesquisa online, descoberta
+# nem autorizacao global — propriedade continua em origin_class.
+CONVERSATION_GAP = "conversation"
+WORLD_GAP = "world"
+GOAL_MANAGER_GAP = "goal_manager"
+
+KNOWLEDGE_GAP_SOURCE_KINDS: FrozenSet[str] = frozenset(
+    {CONVERSATION_GAP, WORLD_GAP, GOAL_MANAGER_GAP}
+)
+
+
+def validate_gap_source_kind(
+    value: Any, *, allow_null: bool = False
+) -> Tuple[Optional[str], Optional[str]]:
+    """Valida a proveniencia de uma lacuna epistemica.
+
+    Diferente de ``validate_source_kind``, NUNCA lanca: uma escrita de lacuna
+    acontece dentro da conversa (``save_conversation`` chama
+    ``extract_and_save_facts_v2`` sem try/except), e interromper ali custaria
+    a resposta ao usuario.
+
+    Devolve ``(source_kind, motivo)``:
+    - valor conhecido    -> ``(valor, None)``;
+    - ausente/nulo       -> ``(None, None)`` quando ``allow_null=True`` (leitura
+      de legado historico), senao ``(None, "source_kind_unset")``;
+    - desconhecido       -> ``(None, "source_kind_unknown:<valor>")``.
+
+    Em ``None`` com motivo, o chamador grava a lacuna **em quarentena de
+    proveniencia** (marcador em ``provenance_json``), sem promover a material
+    global autorizado e sem descartar em silencio. Legado historico (nunca
+    registrado) e proveniencia desconhecida (recusada) sao situacoes
+    diferentes: so a segunda carrega o marcador.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if allow_null:
+            return None, None
+        return None, "source_kind_unset"
+    normalized = str(value).strip()
+    if normalized not in KNOWLEDGE_GAP_SOURCE_KINDS:
+        return None, f"source_kind_unknown:{normalized}"
+    return normalized, None

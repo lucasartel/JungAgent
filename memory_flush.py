@@ -167,6 +167,10 @@ def _extract_and_persist(
                         topic=gap.topic,
                         the_gap=gap.the_gap,
                         importance=gap.importance,
+                        # R1a-4: origem declarada. Sem ancora de conversa — o
+                        # flush trabalha sobre mensagens ja descartadas, sem id
+                        # recuperavel; fica sem source_refs em vez de inventado.
+                        source_kind="conversation",
                     )
                 except Exception as gap_exc:
                     logger.warning(f"⚠️ [FLUSH] Erro ao salvar knowledge gap: {gap_exc}")

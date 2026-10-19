@@ -238,9 +238,16 @@ class FactExtractionDatabaseMixin:
 
             # ETAPA 2.5: Salvar Knowledge Gaps
             if gaps:
-                logger.info(f"   ðŸ¤¯ LLM encontrou {len(gaps)} Knowledge Gaps")
+                logger.info(f"   \U0001f4af LLM encontrou {len(gaps)} Knowledge Gaps")
+                # R1a-4: proveniencia ('conversation') e ancora de origem para
+                # distinguir recorrencia real de retry do mesmo evento.
+                gap_refs = [f"conversation#{conversation_id}"] if conversation_id else []
                 for gap in gaps:
-                    self.add_knowledge_gap(user_id, gap.topic, gap.the_gap, gap.importance)
+                    self.add_knowledge_gap(
+                        user_id, gap.topic, gap.the_gap, gap.importance,
+                        source_kind="conversation",
+                        source_refs=gap_refs,
+                    )
 
 
             # ETAPA 3: Processar correÃ§Ãµes detectadas

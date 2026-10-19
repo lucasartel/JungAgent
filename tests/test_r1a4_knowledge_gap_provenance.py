@@ -1,0 +1,299 @@
+"""R1a-4: proveniencia, identidade e observacao de ``knowledge_gaps``.
+
+Cobre o contrato aprovado pelo mantenedor: normalizacao conservadora com
+preservacao do texto original, isolamento por instancia/propriedade/Relation,
+comportamento por status (open / investigating / encerrada), distincao entre
+recorrencia real e retry do mesmo evento, e quarentena de proveniencia
+indeterminada sem promover a material global autorizado.
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+import sys
+import threading
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+if "openai" in sys.modules:
+    if not hasattr(sys.modules["openai"], "OpenAI"):
+        sys.modules["openai"].OpenAI = object
+else:
+    _oai = type(sys)("openai")
+    _oai.OpenAI = object
+    sys.modules["openai"] = _oai
+
+from core.db.knowledge_gaps import (  # noqa: E402
+    INDETERMINATE_ORIGIN_KEY,
+    gap_fingerprint,
+)
+from core.db.source_kinds import (  # noqa: E402
+    KNOWLEDGE_GAP_SOURCE_KINDS,
+    validate_gap_source_kind,
+)
+
+
+def _db(tmp_path, name="gaps.db", instance="test_jung"):
+    from core.database import HybridDatabaseManager
+
+    db = HybridDatabaseManager.__new__(HybridDatabaseManager)
+    db.conn = sqlite3.connect(str(tmp_path / name), check_same_thread=False)
+    db.conn.row_factory = sqlite3.Row
+    db._lock = threading.Lock()
+    db.agent_instance = instance
+    db._init_sqlite_schema()
+    return db
+
+
+def _row(db, gap_id):
+    return db.conn.execute("SELECT * FROM knowledge_gaps WHERE id = ?", (gap_id,)).fetchone()
+
+
+class TestFingerprint:
+    def test_case_punctuation_and_spacing_collapse(self):
+        assert gap_fingerprint("Quem é este usuário?") == gap_fingerprint(
+            "QUEM É ESTE USUÁRIO"
+        )
+        assert gap_fingerprint("  o que   faz? ") == gap_fingerprint("o que faz")
+
+    def test_accented_and_unaccented_are_different(self):
+        """Conservador: acento NÃO é removido (isso já seria mais que ortográfico)."""
+        assert gap_fingerprint("é") != gap_fingerprint("e")
+
+
+class TestDedupContract:
+    def test_same_question_single_row(self, tmp_path):
+        db = _db(tmp_path)
+        first = db.add_knowledge_gap("u1", "t", "Quem e este usuario?", 0.6)
+        # Difere so em caixa e pontuacao — acento NAO e unificado (conservador).
+        second = db.add_knowledge_gap("u1", "t", "QUEM E ESTE USUARIO?", 0.6)
+        assert second == first
+        assert db.conn.execute("SELECT COUNT(*) FROM knowledge_gaps").fetchone()[0] == 1
+        # Sem ancora nao da para distinguir recorrencia de replay: o contador
+        # NAO sobe. Criacao conta (e, por definicao, uma observacao); chegadas
+        # posteriores sem evidencia nova nao sao contadas.
+        assert _row(db, first)["observation_count"] == 1
+        # Texto original preservado byte a byte.
+        assert _row(db, first)["the_gap"] == "Quem e este usuario?"
+
+    def test_anchorless_arrival_does_not_claim_recurrence(self, tmp_path):
+        """Sem ancora, repeticao e indistinguivel de retry: nao infla contador."""
+        db = _db(tmp_path)
+        gap_id = db.add_knowledge_gap("u1", "t", "Pergunta sem ancora", 0.5)
+        for _ in range(3):
+            db.add_knowledge_gap("u1", "t", "Pergunta sem ancora", 0.5)
+        assert _row(db, gap_id)["observation_count"] == 1
+        assert db.conn.execute("SELECT COUNT(*) FROM knowledge_gaps").fetchone()[0] == 1
+
+    def test_accented_variant_is_a_distinct_identity(self, tmp_path):
+        """Acento diferente = identidade diferente (sem dedup semantico)."""
+        db = _db(tmp_path)
+        a = db.add_knowledge_gap("u1", "t", "Quem e este usuario?", 0.6)
+        b = db.add_knowledge_gap("u1", "t", "Quem é este usuário?", 0.6)
+        assert a != b
+        assert db.conn.execute("SELECT COUNT(*) FROM knowledge_gaps").fetchone()[0] == 2
+
+    def test_importance_untouched_by_recurrence(self, tmp_path):
+        db = _db(tmp_path)
+        first = db.add_knowledge_gap("u1", "t", "Quem e este usuario?", 0.4)
+        db.add_knowledge_gap(
+            "u1", "t", "QUEM E ESTE USUARIO?", 0.9,
+            source_refs=["conversation#2"],
+        )
+        assert _row(db, first)["importance_score"] == 0.4
+
+    @pytest.mark.parametrize("status", ["investigating", "resolved", "rejected"])
+    def test_status_never_changes_on_recurrence(self, tmp_path, status):
+        db = _db(tmp_path)
+        gap_id = db.add_knowledge_gap("u1", "t", "Quem e este usuario?", 0.5)
+        db.conn.execute("UPDATE knowledge_gaps SET status = ? WHERE id = ?", (status, gap_id))
+        db.conn.commit()
+
+        again = db.add_knowledge_gap(
+            "u1", "t", "Quem e este usuario?", 0.9, source_refs=["conversation#2"]
+        )
+        assert again == gap_id
+        row = _row(db, gap_id)
+        assert row["status"] == status  # nunca reabre, nunca duplica
+        assert row["importance_score"] == 0.5
+        assert row["observation_count"] == 2
+
+    def test_retry_same_event_does_not_inflate_counter(self, tmp_path):
+        db = _db(tmp_path)
+        gap_id = db.add_knowledge_gap(
+            "u1", "t", "Quem e este usuario?", 0.5, source_refs=["conversation#1"]
+        )
+        assert _row(db, gap_id)["observation_count"] == 1
+        # Mesma ancora de novo = reprocessamento/replay do MESMO evento.
+        db.add_knowledge_gap("u1", "t", "Quem e este usuario?", 0.5,
+                             source_refs=["conversation#1"])
+        assert _row(db, gap_id)["observation_count"] == 1
+
+    def test_recurrence_new_anchor_increments_and_merges(self, tmp_path):
+        db = _db(tmp_path)
+        gap_id = db.add_knowledge_gap(
+            "u1", "t", "Quem e este usuario?", 0.5, source_refs=["conversation#1"]
+        )
+        db.add_knowledge_gap("u1", "t", "Quem e este usuario?", 0.5,
+                             source_refs=["conversation#1", "conversation#9"])
+        row = _row(db, gap_id)
+        assert row["observation_count"] == 2
+        assert json.loads(row["source_refs_json"]) == ["conversation#1", "conversation#9"]
+        assert row["last_observed_at"] is not None
+
+
+class TestIsolation:
+    def test_two_relations_two_gaps(self, tmp_path):
+        db = _db(tmp_path)
+        r1 = db.register_agent_relation(
+            agent_instance="test_jung", participant_user_id="u1", consent_status="granted"
+        )
+        r2 = db.register_agent_relation(
+            agent_instance="test_jung", participant_user_id="u2", consent_status="granted"
+        )
+        a = db.add_knowledge_gap("u1", "t", "Qual e o sentido disso?", 0.5, relation_id=r1)
+        b = db.add_knowledge_gap("u2", "t", "Qual e o sentido disso?", 0.5, relation_id=r2)
+        assert a != b
+        assert _row(db, a)["origin_relation_id"] == r1
+        assert _row(db, b)["origin_relation_id"] == r2
+
+    def test_two_instances_two_gaps(self, tmp_path):
+        a = _db(tmp_path, name="a.db", instance="inst_a")
+        b = _db(tmp_path, name="b.db", instance="inst_b")
+        first = a.add_knowledge_gap("u1", "t", "Pergunta igual", 0.5)
+        second = b.add_knowledge_gap("u1", "t", "Pergunta igual", 0.5)
+        assert first is not None and second is not None
+
+    def test_world_and_conversation_never_merge(self, tmp_path):
+        """Mesmo texto: lacuna privada nunca funde na global autorizada."""
+        db = _db(tmp_path)
+        rid = db.register_agent_relation(
+            agent_instance="test_jung", participant_user_id="u1", consent_status="granted"
+        )
+        private = db.add_knowledge_gap(
+            "u1", "t", "O que mudou na politica publica?", 0.5, relation_id=rid
+        )
+        public = db.add_knowledge_gap(
+            "u1", "t", "O que mudou na politica publica?", 0.5,
+            origin_class="authorized_aggregate",
+        )
+        assert private != public
+        assert _row(db, private)["origin_class"] == "relation_private"
+        assert _row(db, public)["origin_class"] == "authorized_aggregate"
+
+
+class TestProvenanceQuarantine:
+    def test_gap_source_kinds_closed(self):
+        assert KNOWLEDGE_GAP_SOURCE_KINDS == frozenset(
+            {"conversation", "world", "goal_manager"}
+        )
+
+    @pytest.mark.parametrize("kind", ["conversation", "world", "goal_manager"])
+    def test_known_kinds_accepted(self, kind):
+        assert validate_gap_source_kind(kind) == (kind, None)
+
+    @pytest.mark.parametrize(
+        "declared,reason",
+        [
+            ("telegram", "source_kind_unknown:telegram"),
+            ("rumination", "source_kind_unknown:rumination"),
+            (0, "source_kind_unknown:0"),
+        ],
+    )
+    def test_unknown_kind_quarantined_not_raised(self, tmp_path, declared, reason):
+        """Nao lanca (interromperia a conversa) e nao descarta em silencio."""
+        db = _db(tmp_path)
+        gap_id = db.add_knowledge_gap(
+            "u1", "t", "Pergunta com origem estranha", 0.5, source_kind=declared
+        )
+        assert gap_id is not None  # entrada preservada, nao descartada
+        row = _row(db, gap_id)
+        prov = json.loads(row["provenance_json"])
+        assert row["source_kind"] is None
+        assert prov[INDETERMINATE_ORIGIN_KEY] is True
+        assert prov[f"{INDETERMINATE_ORIGIN_KEY}_reason"] == reason
+        assert prov[f"{INDETERMINATE_ORIGIN_KEY}_pending"] == "R1a-4"
+
+    def test_indeterminate_is_not_promoted_to_global(self, tmp_path):
+        """Quarentena de proveniencia != material global autorizado."""
+        db = _db(tmp_path)
+        gap_id = db.add_knowledge_gap(
+            "u1", "t", "Pergunta com origem estranha", 0.5, source_kind="nada_disso"
+        )
+        row = _row(db, gap_id)
+        assert row["origin_class"] != "authorized_aggregate"
+        assert row["ownership_class"] != "instance_global" or row["origin_class"] == "legacy_unscoped"
+
+    def test_historical_legacy_has_no_indeterminate_marker(self, tmp_path):
+        """Legado historico e proveniencia desconhecida sao situacoes distintas."""
+        db = _db(tmp_path)
+        # Linha "historica": sem dedup_key, sem source_kind, sem marcador.
+        db.conn.execute(
+            """
+            INSERT INTO knowledge_gaps (
+                user_id, agent_instance, ownership_class, origin_class,
+                topic, the_gap, importance_score, status
+            ) VALUES ('u1', 'test_jung', 'legacy_unscoped', 'legacy_unscoped',
+                      'antiga', 'Lacuna antiga sem proveniencia registrada', 0.5, 'open')
+            """
+        )
+        db.conn.commit()
+        row = db.conn.execute("SELECT * FROM knowledge_gaps").fetchone()
+        prov = json.loads(row["provenance_json"])
+        assert row["dedup_key"] is None
+        assert INDETERMINATE_ORIGIN_KEY not in prov
+
+    def test_historical_row_not_touched_by_new_write(self, tmp_path):
+        db = _db(tmp_path)
+        db.conn.execute(
+            """
+            INSERT INTO knowledge_gaps (
+                user_id, agent_instance, ownership_class, origin_class,
+                topic, the_gap, importance_score, status, dedup_key
+            ) VALUES ('u1', 'test_jung', 'legacy_unscoped', 'legacy_unscoped',
+                      'antiga', 'Quem e este usuario?', 0.5, 'open', NULL)
+            """
+        )
+        db.conn.commit()
+        before = db.conn.execute(
+            "SELECT * FROM knowledge_gaps WHERE dedup_key IS NULL"
+        ).fetchone()
+        # Escrita nova com o MESMO texto: nao alcanca a linha historica.
+        db.add_knowledge_gap("u1", "t", "Quem e este usuario?", 0.5)
+        after = db.conn.execute(
+            "SELECT * FROM knowledge_gaps WHERE dedup_key IS NULL"
+        ).fetchone()
+        assert dict(before) == dict(after)
+
+
+class TestUpsertContract:
+    def test_upsert_does_not_duplicate_across_status(self, tmp_path):
+        """O bug reproduzido: investigating fora da chave -> linha nova."""
+        db = _db(tmp_path)
+        Q = "Que evidencia minima permite fechar o passo 'x' do objetivo 'y'?"
+        first = db.upsert_epistemic_knowledge_gap(
+            "u1", {"gap_question": Q, "gap_label": "acao"}, source_kind="goal_manager"
+        )
+        db.conn.execute("UPDATE knowledge_gaps SET status='investigating' WHERE id=?", (first,))
+        db.conn.commit()
+        second = db.upsert_epistemic_knowledge_gap(
+            "u1", {"gap_question": Q, "gap_label": "acao"}, source_kind="goal_manager"
+        )
+        assert second == first
+        assert db.conn.execute("SELECT COUNT(*) FROM knowledge_gaps").fetchone()[0] == 1
+
+    def test_upsert_records_source_kind_and_refs(self, tmp_path):
+        db = _db(tmp_path)
+        gap_id = db.upsert_epistemic_knowledge_gap(
+            "u1",
+            {"gap_question": "Pergunta do gerador de metas", "gap_label": "m"},
+            source_kind="goal_manager",
+            source_refs=["will#7", "knowledge_gap#9"],  # tipos do SOURCE_REF_RE
+        )
+        row = _row(db, gap_id)
+        assert row["source_kind"] == "goal_manager"
+        assert json.loads(row["source_refs_json"]) == ["will#7", "knowledge_gap#9"]
+        assert row["observation_count"] == 1

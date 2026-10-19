@@ -753,6 +753,18 @@ class SchemaDatabaseMixin:
             "provenance_json TEXT NOT NULL DEFAULT '{}'",
             "public_question TEXT",
             "private_trigger_json TEXT",
+            # R1a-4: proveniencia (origem) distinta de propriedade.
+            # NULL = nao registrado — linhas historicas ficam como estao (sem
+            # backfill). Uma ESCRITA NOVA com origem indeterminada tambem
+            # nasce NULL, mas e distinguida por provenance_json.origin_indeterminate.
+            "source_kind TEXT",
+            # R1a-4: chave de identidade normalizada (dedup). NULL nas linhas
+            # historicas: o dedup vale entre escritas posteriores ao corte.
+            "dedup_key TEXT",
+            # Contagem de observacoes: NULL = nao contado (legado), 1 = primeira
+            # observacao. Recorrencia NUNCA prova descoberta nem eleva confianca.
+            "observation_count INTEGER",
+            "last_observed_at DATETIME",
         ]:
             try:
                 cursor.execute(f"ALTER TABLE knowledge_gaps ADD COLUMN {column_def}")

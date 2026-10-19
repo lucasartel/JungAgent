@@ -7,7 +7,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from instance_settings import get_setting_value_with_options
@@ -382,48 +382,51 @@ class WorldConsciousnessFetcher:
                     "private_derived": False,
                     "raw_relational_text_used": False,
                 }
+                # R1a-4: identidade por fingerprint normalizado, no escopo de
+                # propriedade do caminho do mundo. Qualquer status casa — o
+                # material do mundo nao nasce de novo porque a pergunta mudou
+                # de caixa ou porque a anterior foi encerrada.
+                from core.db.knowledge_gaps import gap_fingerprint
+
+                fingerprint = gap_fingerprint(gap_question)
                 cursor.execute(
                     """
-                    SELECT id
+                    SELECT id, source_refs_json, observation_count
                     FROM knowledge_gaps
-                    WHERE agent_instance = ? AND the_gap = ? AND status = 'open'
-                      AND origin_class = 'authorized_aggregate'
-                    ORDER BY id DESC
+                    WHERE agent_instance = ? AND origin_class = 'authorized_aggregate'
+                      AND dedup_key = ?
+                    ORDER BY id
                     LIMIT 1
                     """,
-                    (self.agent_instance, gap_question),
+                    (self.agent_instance, fingerprint),
                 )
                 row = cursor.fetchone()
-                values = (
-                    topic,
-                    importance,
-                    knowledge_gap.get("source_origin"),
-                    knowledge_gap.get("knowledge_kind"),
-                    knowledge_gap.get("target_area"),
-                    knowledge_gap.get("target_scope"),
-                    json.dumps(knowledge_gap.get("focus_terms") or [], ensure_ascii=False),
-                    knowledge_gap.get("source_reason") or knowledge_gap.get("psychic_motive"),
-                )
+                now_iso = datetime.now(timezone.utc).isoformat()
                 if row:
+                    # Recorrencia (ancora nova) atualiza observacao; retry do
+                    # mesmo evento nao infla contador. Conteudo, status e
+                    # importance_score ficam intocados.
                     gap_id = int(row["id"])
-                    cursor.execute(
-                        """
-                        UPDATE knowledge_gaps
-                        SET topic = ?,
-                            importance_score = ?,
-                            source_origin = ?,
-                            knowledge_kind = ?,
-                            target_area = ?,
-                            target_scope = ?,
-                            focus_terms_json = ?,
-                            source_reason = ?,
-                            public_question = ?,
-                            source_refs_json = ?,
-                            provenance_json = ?
-                        WHERE id = ?
-                        """,
-                        (*values, gap_question, json.dumps(source_refs), json.dumps(provenance), gap_id),
-                    )
+                    stored_refs = json.loads(row["source_refs_json"] or "[]")
+                    merged = list(stored_refs)
+                    known = set(stored_refs)
+                    has_new_anchor = False
+                    for ref in source_refs:
+                        if ref and ref not in known:
+                            known.add(ref)
+                            merged.append(ref)
+                            has_new_anchor = True
+                    if has_new_anchor:
+                        cursor.execute(
+                            """
+                            UPDATE knowledge_gaps
+                            SET observation_count = COALESCE(observation_count, 0) + 1,
+                                last_observed_at = ?,
+                                source_refs_json = ?
+                            WHERE id = ?
+                            """,
+                            (now_iso, json.dumps(merged), gap_id),
+                        )
                 else:
                     cursor.execute(
                         """
@@ -432,12 +435,22 @@ class WorldConsciousnessFetcher:
                             origin_participant_user_id, topic, the_gap, importance_score,
                             source_origin, knowledge_kind, target_area, target_scope,
                             focus_terms_json, source_reason, public_question,
-                            source_refs_json, provenance_json, status
-                        ) VALUES (?, ?, 'instance_global', 'authorized_aggregate', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+                            source_refs_json, provenance_json, status,
+                            source_kind, dedup_key, observation_count, last_observed_at
+                        ) VALUES (?, ?, 'instance_global', 'authorized_aggregate', ?,
+                                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open',
+                                  'world', ?, 1, ?)
                         """,
                         (
                             user_id, self.agent_instance, user_id, topic, gap_question,
-                            *values[1:], gap_question, json.dumps(source_refs), json.dumps(provenance),
+                            importance, knowledge_gap.get("source_origin"),
+                            knowledge_gap.get("knowledge_kind"),
+                            knowledge_gap.get("target_area"),
+                            knowledge_gap.get("target_scope"),
+                            json.dumps(knowledge_gap.get("focus_terms") or [], ensure_ascii=False),
+                            knowledge_gap.get("source_reason") or knowledge_gap.get("psychic_motive"),
+                            gap_question, json.dumps(source_refs), json.dumps(provenance),
+                            fingerprint, now_iso,
                         ),
                     )
                     gap_id = int(cursor.lastrowid)
