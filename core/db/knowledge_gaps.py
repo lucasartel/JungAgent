@@ -44,6 +44,9 @@ logger = logging.getLogger(__name__)
 # autorizado — so distingue as duas situacoes.
 INDETERMINATE_ORIGIN_KEY = "origin_indeterminate"
 
+# Tentativas de recorrencia com compare-and-swap (leitura+mesclagem+contador).
+_OBSERVE_MAX_ATTEMPTS = 5
+
 
 # Pontuacao de FRASE removida apenas nas extremidades. Só isso: ponto,
 # virgula, ponto e virgula, dois-pontos, exclamacao, interrogacao, reticencias
@@ -137,6 +140,7 @@ class KnowledgeGapDatabaseMixin:
         instance: str,
         identity_key: str,
         incoming_refs: List[str],
+        incoming_quarantined: bool = False,
     ) -> Optional[Tuple[int, str]]:
         """Procura a mesma pergunta no MESMO escopo de propriedade.
 
@@ -154,35 +158,73 @@ class KnowledgeGapDatabaseMixin:
           ``last_observed_at`` e ancoras anexadas;
         - retry do mesmo evento (ancora ja conhecida ou nenhuma ancora nova)
           -> sem efeito no contador.
+
+        Duas protecoes transversais:
+
+        * ``incoming_quarantined``: escrita cuja proveniencia nao foi
+          validada **nao escreve em registro existente** — nem ancora nem
+          contador. A quarentena protege a ATUALIZACAO, nao so a criacao;
+          sem isso uma ancora invalida entraria numa lacuna valida e
+          ficaria visivel a outros usuarios.
+        * Leitura + mesclagem + contador numa **operacao atomica**: o
+          ``UPDATE`` so acontece se ``source_refs_json`` ainda for o que foi
+          lido (compare-and-swap). Se outra conexao mudou, relee — assim o
+          mesmo evento nunca e contado duas vezes.
         """
-        cursor.execute(
-            """
-            SELECT id, source_refs_json, observation_count
-            FROM knowledge_gaps
-            WHERE agent_instance = ? AND dedup_key = ?
-            ORDER BY id
-            LIMIT 1
-            """,
-            (instance, identity_key),
-        )
-        row = cursor.fetchone()
-        if row is None:
-            return None
-        gap_id = int(row["id"])
-        stored_refs = json.loads(row["source_refs_json"] or "[]")
-        merged, has_new_anchor = self._merge_gap_refs(stored_refs, incoming_refs)
-        if has_new_anchor:
+        gap_id: Optional[int] = None
+        for _ in range(_OBSERVE_MAX_ATTEMPTS):
+            cursor.execute(
+                """
+                SELECT id, source_refs_json, observation_count
+                FROM knowledge_gaps
+                WHERE agent_instance = ? AND dedup_key = ?
+                ORDER BY id
+                LIMIT 1
+                """,
+                (instance, identity_key),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            gap_id = int(row["id"])
+
+            if incoming_quarantined:
+                logger.warning(
+                    "knowledge_gap em quarentena nao anexa ancora/contador "
+                    "em registro existente gap_id=%s",
+                    gap_id,
+                )
+                return gap_id, "quarantined"
+
+            raw_refs = row["source_refs_json"] or "[]"
+            merged, has_new_anchor = self._merge_gap_refs(
+                json.loads(raw_refs), incoming_refs
+            )
+            if not has_new_anchor:
+                return gap_id, "retry"
             cursor.execute(
                 """
                 UPDATE knowledge_gaps
                 SET observation_count = COALESCE(observation_count, 0) + 1,
                     last_observed_at = ?,
                     source_refs_json = ?
-                WHERE id = ?
+                WHERE id = ? AND source_refs_json IS ?
                 """,
-                (_now_iso(), json.dumps(merged, ensure_ascii=False), gap_id),
+                (
+                    _now_iso(),
+                    json.dumps(merged, ensure_ascii=False),
+                    gap_id,
+                    row["source_refs_json"],
+                ),
             )
-            return gap_id, "recurrence"
+            if cursor.rowcount == 1:
+                return gap_id, "recurrence"
+            # CAS perdida: outra conexao atualizou antes da gente. Releer.
+        logger.warning(
+            "knowledge_gap recorrencia nao atomica gap_id=%s — tentativas "
+            "esgotadas, sem contar o evento",
+            gap_id,
+        )
         return gap_id, "retry"
 
     def add_knowledge_gap(
@@ -246,6 +288,7 @@ class KnowledgeGapDatabaseMixin:
                 instance=instance,
                 identity_key=identity_key,
                 incoming_refs=refs,
+                incoming_quarantined=bool(kind_reason),
             )
             if observed:
                 self.conn.commit()
@@ -278,6 +321,7 @@ class KnowledgeGapDatabaseMixin:
                     instance=instance,
                     identity_key=identity_key,
                     incoming_refs=refs,
+                    incoming_quarantined=bool(kind_reason),
                 )
                 self.conn.commit()
                 if observed:
@@ -359,6 +403,7 @@ class KnowledgeGapDatabaseMixin:
                 instance=instance,
                 identity_key=identity_key,
                 incoming_refs=refs,
+                incoming_quarantined=bool(kind_reason),
             )
             if observed:
                 self.conn.commit()
@@ -407,6 +452,7 @@ class KnowledgeGapDatabaseMixin:
                     instance=instance,
                     identity_key=identity_key,
                     incoming_refs=refs,
+                    incoming_quarantined=bool(kind_reason),
                 )
                 self.conn.commit()
                 if observed:

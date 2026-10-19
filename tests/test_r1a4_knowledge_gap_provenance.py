@@ -108,12 +108,15 @@ class TestDedupContract:
     @pytest.mark.parametrize("status", ["investigating", "resolved", "rejected"])
     def test_status_never_changes_on_recurrence(self, tmp_path, status):
         db = _db(tmp_path)
-        gap_id = db.add_knowledge_gap("u1", "t", "Quem e este usuario?", 0.5)
+        gap_id = db.add_knowledge_gap(
+            "u1", "t", "Quem e este usuario?", 0.5, source_kind="conversation"
+        )
         db.conn.execute("UPDATE knowledge_gaps SET status = ? WHERE id = ?", (status, gap_id))
         db.conn.commit()
 
         again = db.add_knowledge_gap(
-            "u1", "t", "Quem e este usuario?", 0.9, source_refs=["conversation#2"]
+            "u1", "t", "Quem e este usuario?", 0.9,
+            source_kind="conversation", source_refs=["conversation#2"],
         )
         assert again == gap_id
         row = _row(db, gap_id)
@@ -135,10 +138,14 @@ class TestDedupContract:
     def test_recurrence_new_anchor_increments_and_merges(self, tmp_path):
         db = _db(tmp_path)
         gap_id = db.add_knowledge_gap(
-            "u1", "t", "Quem e este usuario?", 0.5, source_refs=["conversation#1"]
+            "u1", "t", "Quem e este usuario?", 0.5,
+            source_kind="conversation", source_refs=["conversation#1"],
         )
-        db.add_knowledge_gap("u1", "t", "Quem e este usuario?", 0.5,
-                             source_refs=["conversation#1", "conversation#9"])
+        db.add_knowledge_gap(
+            "u1", "t", "Quem e este usuario?", 0.5,
+            source_kind="conversation",
+            source_refs=["conversation#1", "conversation#9"],
+        )
         row = _row(db, gap_id)
         assert row["observation_count"] == 2
         assert json.loads(row["source_refs_json"]) == ["conversation#1", "conversation#9"]
@@ -471,3 +478,108 @@ def HybridDatabaseManagerRef(db_file, *, instance):
     db.agent_instance = instance
     db._init_sqlite_schema()
     return db
+
+
+class TestQuarantineProtectsUpdates:
+    def test_quarantined_write_never_pollutes_existing_valid_gap(self, tmp_path):
+        """Reproducao do P2: ancora invalida entrando em lacuna valida."""
+        db = _db(tmp_path)
+        valid = db.add_knowledge_gap(
+            "u1", "t", "Pergunta ja classificada", 0.5,
+            origin_class="authorized_aggregate",
+            source_kind="world", source_refs=["will#31"],
+        )
+        # Mesmo texto, mas produtor desconhecido e ancora de outro sistema.
+        same_key = db.add_knowledge_gap(
+            "u1", "t", "Pergunta ja classificada", 0.9,
+            origin_class="authorized_aggregate",
+            source_kind="telegram", source_refs=["conversation#999"],
+        )
+        assert same_key == valid
+        row = _row(db, valid)
+        # A ancora invalida NAO entrou, o contador NAO subiu e a lacuna
+        # valida NAO foi colocada em quarentena.
+        assert json.loads(row["source_refs_json"]) == ["will#31"]
+        assert row["observation_count"] == 1
+        assert row["origin_quarantined"] == 0
+        assert row["importance_score"] == 0.5  # nem a prioridade foi sobrescrita
+
+    def test_quarantined_write_does_not_block_valid_reader(self, tmp_path):
+        db = _db(tmp_path)
+        rid = db.register_agent_relation(
+            agent_instance="test_jung", participant_user_id="u1", consent_status="granted"
+        )
+        valid = db.add_knowledge_gap(
+            "u1", "t", "Pergunta da Relation", 0.5,
+            relation_id=rid, source_kind="conversation", source_refs=["conversation#1"],
+        )
+        db.add_knowledge_gap(
+            "u1", "t", "Pergunta da Relation", 0.5,
+            relation_id=rid, source_kind="nada", source_refs=["conversation#777"],
+        )
+        visible = db.get_active_knowledge_gaps("u1", relation_id=rid, limit=10)
+        assert [g["id"] for g in visible] == [valid]
+        assert json.loads(_row(db, valid)["source_refs_json"]) == ["conversation#1"]
+
+
+class TestRecurrenceAtomicity:
+    def test_concurrent_recurrence_counts_the_event_once(self, tmp_path):
+        """Duas conexoes com a MESMA ancora nova contam o evento UMA vez."""
+        import threading
+
+        db_file = tmp_path / "race.db"
+        a = _db(tmp_path, name="race.db")
+        from core.database import HybridDatabaseManager
+
+        b = HybridDatabaseManager.__new__(HybridDatabaseManager)
+        b.conn = sqlite3.connect(str(db_file), check_same_thread=False)
+        b.conn.row_factory = sqlite3.Row
+        b._lock = threading.Lock()
+        b.agent_instance = "test_jung"
+        b._init_sqlite_schema()
+
+        gap_id = a.add_knowledge_gap(
+            "u1", "t", "Pergunta observada", 0.5,
+            source_kind="conversation", source_refs=["conversation#1"],
+        )
+        assert _row(a, gap_id)["observation_count"] == 1
+
+        barrier = threading.Barrier(2)
+        outcomes = []
+
+        def recur(db):
+            barrier.wait()
+            try:
+                db.add_knowledge_gap(
+                    "u1", "t", "Pergunta observada", 0.5,
+                    source_kind="conversation", source_refs=["conversation#1", "conversation#2"],
+                )
+                outcomes.append("ok")
+            except Exception as exc:  # pragma: no cover - diagnostico
+                outcomes.append(type(exc).__name__)
+
+        threads = [
+            threading.Thread(target=recur, args=(a,)),
+            threading.Thread(target=recur, args=(b,)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        count = _row(a, gap_id)["observation_count"]
+        # 1 (criacao) + 1 (evento) = 2. Nunca 3: o CAS impede a dupla contagem.
+        assert count == 2, f"observation_count={count} (esperado 2) outcomes={outcomes}"
+
+    def test_repeated_identical_replay_never_bumps(self, tmp_path):
+        db = _db(tmp_path)
+        gap_id = db.add_knowledge_gap(
+            "u1", "t", "Pergunta qualquer", 0.5,
+            source_kind="conversation", source_refs=["conversation#1"],
+        )
+        for _ in range(5):
+            db.add_knowledge_gap(
+                "u1", "t", "Pergunta qualquer", 0.5,
+                source_kind="conversation", source_refs=["conversation#1"],
+            )
+        assert _row(db, gap_id)["observation_count"] == 1
