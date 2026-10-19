@@ -583,3 +583,151 @@ class TestRecurrenceAtomicity:
                 source_kind="conversation", source_refs=["conversation#1"],
             )
         assert _row(db, gap_id)["observation_count"] == 1
+
+
+def _world_fetcher(tmp_path, db_file, instance="test_jung"):
+    from world_consciousness import WorldConsciousnessFetcher
+
+    world = WorldConsciousnessFetcher(str(tmp_path), agent_instance=instance)
+    world._resolve_sqlite_path = lambda: str(db_file)
+    return world
+
+
+_WORLD_GAP = {
+    "gap_label": "politica",
+    "gap_question": "O que mudou na politica publica?",
+    "source_origin": "will",
+    "knowledge_kind": "factual",
+    "target_area": "sociedade",
+    "target_scope": "mundo",
+    "focus_terms": ["politica"],
+    "source_reason": "pressao de saber",
+}
+
+
+class TestWorldSharedOperation:
+    """O caminho do mundo reusa a operacao protegida (P2 da revisao)."""
+
+    def test_world_and_world_concurrent_recurrence_counts_once(self, tmp_path):
+        """World x World: duas conexoes, mesma ancora nova -> contador 2 (nao 3)."""
+        db_file = tmp_path / "world_race.db"
+        db = _db(tmp_path, name="world_race.db")
+
+        seed = _world_fetcher(tmp_path, db_file)._persist_epistemic_knowledge_gap(
+            "admin", _WORLD_GAP, {"id": 30, "saber_pressure": 70}
+        )
+        assert seed is not None
+        assert _row(db, seed)["observation_count"] == 1
+
+        barrier = threading.Barrier(2)
+        outcomes = []
+
+        def recur():
+            world = _world_fetcher(tmp_path, db_file)
+            barrier.wait()
+            try:
+                world._persist_epistemic_knowledge_gap(
+                    "admin", _WORLD_GAP, {"id": 31, "saber_pressure": 70}
+                )
+                outcomes.append("ok")
+            except Exception as exc:  # pragma: no cover - diagnostico
+                outcomes.append(type(exc).__name__)
+
+        threads = [threading.Thread(target=recur) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        row = _row(db, seed)
+        # 1 (criacao) + 1 (evento) = 2. O SQL proprio sem CAS daria 3.
+        assert row["observation_count"] == 2, (
+            f"observation_count={row['observation_count']} outcomes={outcomes}"
+        )
+        assert json.loads(row["source_refs_json"]) == ["will#30", "will#31"]
+        count = db.conn.execute("SELECT COUNT(*) FROM knowledge_gaps").fetchone()[0]
+        assert count == 1
+
+    def test_world_and_mixin_share_identity_without_duplicating(self, tmp_path):
+        """World x mixin: mesmo escopo e mesma pergunta = mesma lacuna."""
+        db_file = tmp_path / "world_mixin.db"
+        db = _db(tmp_path, name="world_mixin.db")
+
+        world_id = _world_fetcher(tmp_path, db_file)._persist_epistemic_knowledge_gap(
+            "admin", _WORLD_GAP, {"id": 30, "saber_pressure": 70}
+        )
+        assert world_id is not None
+        assert _row(db, world_id)["observation_count"] == 1
+
+        # O mixin, com o MESMO escopo (authorized_aggregate + mesmo
+        # participante) e a MESMA pergunta, reusa a linha e registra a nova
+        # ancora — e a contagem passa pela mesma operacao protegida.
+        mixin_id = db.add_knowledge_gap(
+            "admin",
+            "politica",
+            "O que mudou na politica publica?",
+            0.7,
+            origin_class="authorized_aggregate",
+            source_kind="world",
+            source_refs=["will#31"],
+        )
+        assert mixin_id == world_id
+        row = _row(db, world_id)
+        assert row["observation_count"] == 2
+        assert json.loads(row["source_refs_json"]) == ["will#30", "will#31"]
+        assert row["origin_quarantined"] == 0
+        assert row["status"] == "open"
+        assert db.conn.execute("SELECT COUNT(*) FROM knowledge_gaps").fetchone()[0] == 1
+
+    def test_world_concurrent_mixin_recurrence_counts_once(self, tmp_path):
+        """World x mixin em corrida: o CAS impede a dupla contagem."""
+        db_file = tmp_path / "race_wm.db"
+        db = _db(tmp_path, name="race_wm.db")
+
+        seed = _world_fetcher(tmp_path, db_file)._persist_epistemic_knowledge_gap(
+            "admin", _WORLD_GAP, {"id": 30, "saber_pressure": 70}
+        )
+        assert _row(db, seed)["observation_count"] == 1
+
+        barrier = threading.Barrier(2)
+        outcomes = []
+
+        def world_side():
+            world = _world_fetcher(tmp_path, db_file)
+            barrier.wait()
+            try:
+                world._persist_epistemic_knowledge_gap(
+                    "admin", _WORLD_GAP, {"id": 31, "saber_pressure": 70}
+                )
+                outcomes.append("world_ok")
+            except Exception as exc:  # pragma: no cover
+                outcomes.append(f"world_{type(exc).__name__}")
+
+        def mixin_side():
+            barrier.wait()
+            try:
+                db.add_knowledge_gap(
+                    "admin",
+                    "politica",
+                    "O que mudou na politica publica?",
+                    0.7,
+                    origin_class="authorized_aggregate",
+                    source_kind="world",
+                    source_refs=["will#31"],
+                )
+                outcomes.append("mixin_ok")
+            except Exception as exc:  # pragma: no cover
+                outcomes.append(f"mixin_{type(exc).__name__}")
+
+        threads = [threading.Thread(target=world_side), threading.Thread(target=mixin_side)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        row = _row(db, seed)
+        assert row["observation_count"] == 2, (
+            f"observation_count={row['observation_count']} outcomes={outcomes}"
+        )
+        assert json.loads(row["source_refs_json"]) == ["will#30", "will#31"]
+        assert db.conn.execute("SELECT COUNT(*) FROM knowledge_gaps").fetchone()[0] == 1

@@ -386,82 +386,64 @@ class WorldConsciousnessFetcher:
                 # propriedade do caminho do mundo. Qualquer status casa — o
                 # material do mundo nao nasce de novo porque a pergunta mudou
                 # de caixa ou porque a anterior foi encerrada.
-                from core.db.knowledge_gaps import gap_fingerprint, gap_identity_key
+                # R1a-4: REUSA a operacao protegida do mixin. Manter SQL
+                # proprio aqui foi o que produziu recorrencia nao atomica —
+                # duas conexoes do mundo contavam o mesmo evento duas vezes.
+                from core.db.knowledge_gaps import (
+                    gap_fingerprint,
+                    gap_identity_key,
+                    observe_gap_occurrence,
+                )
 
                 # Chave composta (origem + Relation + participante + texto
-                # normalizado): o indice UNIQUE e que garante a unicidade
-                # entre conexoes — este caminho usa conexao propria.
+                # normalizado): o indice UNIQUE garante a unicidade entre
+                # conexoes — este caminho usa conexao propria.
                 identity_key = gap_identity_key(
                     origin_class="authorized_aggregate",
                     relation_id=None,
                     participant=user_id,
                     fingerprint=gap_fingerprint(gap_question),
                 )
+                now_iso = datetime.now(timezone.utc).isoformat()
+                observed = observe_gap_occurrence(
+                    connection,
+                    instance=self.agent_instance,
+                    identity_key=identity_key,
+                    incoming_refs=source_refs,
+                )
+                if observed:
+                    # Recorrencia (ancora nova) ou retry: a funcao decide com
+                    # compare-and-swap. Conteudo, status e importance_score
+                    # ficam intocados.
+                    connection.commit()
+                    return observed[0]
                 cursor.execute(
                     """
-                    SELECT id, source_refs_json, observation_count
-                    FROM knowledge_gaps
-                    WHERE agent_instance = ? AND dedup_key = ?
-                    ORDER BY id
-                    LIMIT 1
-                    """,
-                    (self.agent_instance, identity_key),
-                )
-                row = cursor.fetchone()
-                now_iso = datetime.now(timezone.utc).isoformat()
-                if row:
-                    # Recorrencia (ancora nova) atualiza observacao; retry do
-                    # mesmo evento nao infla contador. Conteudo, status e
-                    # importance_score ficam intocados.
-                    gap_id = int(row["id"])
-                    stored_refs = json.loads(row["source_refs_json"] or "[]")
-                    merged = list(stored_refs)
-                    known = set(stored_refs)
-                    has_new_anchor = False
-                    for ref in source_refs:
-                        if ref and ref not in known:
-                            known.add(ref)
-                            merged.append(ref)
-                            has_new_anchor = True
-                    if has_new_anchor:
-                        cursor.execute(
-                            """
-                            UPDATE knowledge_gaps
-                            SET observation_count = COALESCE(observation_count, 0) + 1,
-                                last_observed_at = ?,
-                                source_refs_json = ?
-                            WHERE id = ?
-                            """,
-                            (now_iso, json.dumps(merged), gap_id),
-                        )
-                else:
-                    cursor.execute(
-                        """
-                        INSERT INTO knowledge_gaps (
-                            user_id, agent_instance, ownership_class, origin_class,
-                            origin_participant_user_id, topic, the_gap, importance_score,
-                            source_origin, knowledge_kind, target_area, target_scope,
-                            focus_terms_json, source_reason, public_question,
-                            source_refs_json, provenance_json, status,
-                            source_kind, dedup_key, observation_count, last_observed_at,
+                    INSERT INTO knowledge_gaps (
+                        user_id, agent_instance, ownership_class, origin_class,
+                        origin_participant_user_id, topic, the_gap, importance_score,
+                        source_origin, knowledge_kind, target_area, target_scope,
+                        focus_terms_json, source_reason, public_question,
+                        source_refs_json, provenance_json, status,
+                        source_kind, dedup_key, observation_count, last_observed_at,
                         origin_quarantined
-                        ) VALUES (?, ?, 'instance_global', 'authorized_aggregate', ?,
-                                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open',
-                                  'world', ?, 1, ?, 0)
-                        """,
-                        (
-                            user_id, self.agent_instance, user_id, topic, gap_question,
-                            importance, knowledge_gap.get("source_origin"),
-                            knowledge_gap.get("knowledge_kind"),
-                            knowledge_gap.get("target_area"),
-                            knowledge_gap.get("target_scope"),
-                            json.dumps(knowledge_gap.get("focus_terms") or [], ensure_ascii=False),
-                            knowledge_gap.get("source_reason") or knowledge_gap.get("psychic_motive"),
-                            gap_question, json.dumps(source_refs), json.dumps(provenance),
-                            identity_key, now_iso,
-                        ),
-                    )
-                    gap_id = int(cursor.lastrowid)
+                    ) VALUES (?, ?, 'instance_global', 'authorized_aggregate', ?,
+                              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open',
+                              'world', ?, 1, ?, 0)
+                    """,
+                    (
+                        user_id, self.agent_instance, user_id, topic, gap_question,
+                        importance, knowledge_gap.get("source_origin"),
+                        knowledge_gap.get("knowledge_kind"),
+                        knowledge_gap.get("target_area"),
+                        knowledge_gap.get("target_scope"),
+                        json.dumps(knowledge_gap.get("focus_terms") or [], ensure_ascii=False),
+                        knowledge_gap.get("source_reason") or knowledge_gap.get("psychic_motive"),
+                        gap_question, json.dumps(source_refs), json.dumps(provenance),
+                        identity_key, now_iso,
+                    ),
+                )
+                gap_id = int(cursor.lastrowid)
                 connection.commit()
                 return gap_id
         except sqlite3.OperationalError as exc:

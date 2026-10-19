@@ -112,121 +112,120 @@ def _gap_provenance(
     return payload, 0
 
 
-class KnowledgeGapDatabaseMixin:
-    # ------------------------------------------------------------------
-    # R1a-4: identidade, recorrencia e observacao de uma lacuna
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _merge_gap_refs(stored: Any, incoming: Iterable[str]) -> Tuple[List[str], bool]:
-        """Une ancoras preservando a ordem; ``(mescladas, ha_ancora_nova)``."""
-        merged: List[str] = []
-        known = set()
-        for ref in list(stored or []):
-            if ref not in known:
-                known.add(ref)
-                merged.append(ref)
-        has_new = False
-        for ref in list(incoming or []):
-            if ref and ref not in known:
-                known.add(ref)
-                merged.append(ref)
-                has_new = True
-        return merged, has_new
+# ---------------------------------------------------------------------------
+# R1a-4: identidade, recorrencia e observacao de uma lacuna
+#
+# Funcoes de modulo (nao do mixin) de proposito: o caminho do
+# world_consciousness grava numa conexao propria e SEMPRE reusar esta
+# implementacao. Manter SQL independente ali repetiu o bug de recorrencia
+# nao atomica — ver revisao da PR #65.
+# ---------------------------------------------------------------------------
+def merge_gap_refs(stored: Any, incoming: Iterable[str]) -> Tuple[List[str], bool]:
+    """Une ancoras preservando a ordem; ``(mescladas, ha_ancora_nova)``."""
+    merged: List[str] = []
+    known = set()
+    for ref in list(stored or []):
+        if ref not in known:
+            known.add(ref)
+            merged.append(ref)
+    has_new = False
+    for ref in list(incoming or []):
+        if ref and ref not in known:
+            known.add(ref)
+            merged.append(ref)
+            has_new = True
+    return merged, has_new
 
-    def _observe_existing_gap(
-        self,
-        cursor: Any,
-        *,
-        instance: str,
-        identity_key: str,
-        incoming_refs: List[str],
-        incoming_quarantined: bool = False,
-    ) -> Optional[Tuple[int, str]]:
-        """Procura a mesma pergunta no MESMO escopo de propriedade.
 
-        Escopo embutido em ``dedup_key`` (``origin_class`` + ``relation`` +
-        ``participante`` + fingerprint), mais um indice UNIQUE em
-        ``(agent_instance, dedup_key)`` — a unicidade e garantida pelo
-        SQLite entre conexoes e processos, nao pelo lock do objeto. Linhas
-        historicas (``dedup_key`` NULL) nunca sao alcancadas: nao ha backfill.
+def observe_gap_occurrence(
+    conn: Any,
+    *,
+    instance: str,
+    identity_key: str,
+    incoming_refs: List[str],
+    incoming_quarantined: bool = False,
+) -> Optional[Tuple[int, str]]:
+    """Procura a mesma pergunta no MESMO escopo de propriedade.
 
-        Comportamento por status (contrato R1a-4):
-        - ``open`` / ``investigating`` / ``resolved`` / ``rejected``: a linha
-          e reutilizada. O status **nao muda**, ``the_gap`` **nao e
-          reescrito**, ``importance_score`` **nao e tocado**.
-        - recorrencia real (ancora nova) -> ``observation_count + 1``,
-          ``last_observed_at`` e ancoras anexadas;
-        - retry do mesmo evento (ancora ja conhecida ou nenhuma ancora nova)
-          -> sem efeito no contador.
+    Escopo embutido em ``dedup_key`` (``origin_class`` + ``relation`` +
+    ``participante`` + fingerprint), mais um indice UNIQUE em
+    ``(agent_instance, dedup_key)`` — a unicidade e garantida pelo SQLite
+    entre conexoes e processos, nao pelo lock do objeto. Linhas historicas
+    (``dedup_key`` NULL) nunca sao alcancadas: nao ha backfill.
 
-        Duas protecoes transversais:
+    Comportamento por status (contrato R1a-4):
+    - ``open`` / ``investigating`` / ``resolved`` / ``rejected``: a linha e
+      reutilizada. Status nao muda, ``the_gap`` nao e reescrito,
+      ``importance_score`` nao e tocado.
+    - recorrencia real (ancora nova) -> contador +1 e ancora anexada;
+    - retry do mesmo evento -> sem efeito no contador.
 
-        * ``incoming_quarantined``: escrita cuja proveniencia nao foi
-          validada **nao escreve em registro existente** — nem ancora nem
-          contador. A quarentena protege a ATUALIZACAO, nao so a criacao;
-          sem isso uma ancora invalida entraria numa lacuna valida e
-          ficaria visivel a outros usuarios.
-        * Leitura + mesclagem + contador numa **operacao atomica**: o
-          ``UPDATE`` so acontece se ``source_refs_json`` ainda for o que foi
-          lido (compare-and-swap). Se outra conexao mudou, relee — assim o
-          mesmo evento nunca e contado duas vezes.
-        """
-        gap_id: Optional[int] = None
-        for _ in range(_OBSERVE_MAX_ATTEMPTS):
-            cursor.execute(
-                """
-                SELECT id, source_refs_json, observation_count
-                FROM knowledge_gaps
-                WHERE agent_instance = ? AND dedup_key = ?
-                ORDER BY id
-                LIMIT 1
-                """,
-                (instance, identity_key),
-            )
-            row = cursor.fetchone()
-            if row is None:
-                return None
-            gap_id = int(row["id"])
+    Duas protecoes transversais:
 
-            if incoming_quarantined:
-                logger.warning(
-                    "knowledge_gap em quarentena nao anexa ancora/contador "
-                    "em registro existente gap_id=%s",
-                    gap_id,
-                )
-                return gap_id, "quarantined"
-
-            raw_refs = row["source_refs_json"] or "[]"
-            merged, has_new_anchor = self._merge_gap_refs(
-                json.loads(raw_refs), incoming_refs
-            )
-            if not has_new_anchor:
-                return gap_id, "retry"
-            cursor.execute(
-                """
-                UPDATE knowledge_gaps
-                SET observation_count = COALESCE(observation_count, 0) + 1,
-                    last_observed_at = ?,
-                    source_refs_json = ?
-                WHERE id = ? AND source_refs_json IS ?
-                """,
-                (
-                    _now_iso(),
-                    json.dumps(merged, ensure_ascii=False),
-                    gap_id,
-                    row["source_refs_json"],
-                ),
-            )
-            if cursor.rowcount == 1:
-                return gap_id, "recurrence"
-            # CAS perdida: outra conexao atualizou antes da gente. Releer.
-        logger.warning(
-            "knowledge_gap recorrencia nao atomica gap_id=%s — tentativas "
-            "esgotadas, sem contar o evento",
-            gap_id,
+    * ``incoming_quarantined``: escrita cuja proveniencia nao foi validada
+      NAO escreve em registro existente (nem ancora nem contador).
+    * Leitura + mesclagem + contador numa **operacao atomica**: o ``UPDATE``
+      so acontece se ``source_refs_json`` ainda for o que foi lido
+      (compare-and-swap); se outra conexao mudou, relee. O mesmo evento
+      nunca e contado duas vezes.
+    """
+    cursor = conn.cursor()
+    gap_id: Optional[int] = None
+    for _ in range(_OBSERVE_MAX_ATTEMPTS):
+        cursor.execute(
+            """
+            SELECT id, source_refs_json, observation_count
+            FROM knowledge_gaps
+            WHERE agent_instance = ? AND dedup_key = ?
+            ORDER BY id
+            LIMIT 1
+            """,
+            (instance, identity_key),
         )
-        return gap_id, "retry"
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        gap_id = int(row["id"])
 
+        if incoming_quarantined:
+            logger.warning(
+                "knowledge_gap em quarentena nao anexa ancora/contador "
+                "em registro existente gap_id=%s",
+                gap_id,
+            )
+            return gap_id, "quarantined"
+
+        raw_refs = row["source_refs_json"] or "[]"
+        merged, has_new_anchor = merge_gap_refs(json.loads(raw_refs), incoming_refs)
+        if not has_new_anchor:
+            return gap_id, "retry"
+        cursor.execute(
+            """
+            UPDATE knowledge_gaps
+            SET observation_count = COALESCE(observation_count, 0) + 1,
+                last_observed_at = ?,
+                source_refs_json = ?
+            WHERE id = ? AND source_refs_json IS ?
+            """,
+            (
+                _now_iso(),
+                json.dumps(merged, ensure_ascii=False),
+                gap_id,
+                row["source_refs_json"],
+            ),
+        )
+        if cursor.rowcount == 1:
+            return gap_id, "recurrence"
+        # CAS perdida: outra conexao atualizou antes da gente. Releer.
+    logger.warning(
+        "knowledge_gap recorrencia nao atomica gap_id=%s — tentativas "
+        "esgotadas, sem contar o evento",
+        gap_id,
+    )
+    return gap_id, "retry"
+
+
+class KnowledgeGapDatabaseMixin:
     def add_knowledge_gap(
         self,
         user_id: str,
@@ -283,8 +282,8 @@ class KnowledgeGapDatabaseMixin:
             )
             cursor = self.conn.cursor()
 
-            observed = self._observe_existing_gap(
-                cursor,
+            observed = observe_gap_occurrence(
+                self.conn,
                 instance=instance,
                 identity_key=identity_key,
                 incoming_refs=refs,
@@ -316,8 +315,8 @@ class KnowledgeGapDatabaseMixin:
             except sqlite3.IntegrityError:
                 # Outra conexao venceu a corrida: o indice UNIQUE e a
                 # garantia transacional entre conexoes/processos.
-                observed = self._observe_existing_gap(
-                    cursor,
+                observed = observe_gap_occurrence(
+                    self.conn,
                     instance=instance,
                     identity_key=identity_key,
                     incoming_refs=refs,
@@ -398,8 +397,8 @@ class KnowledgeGapDatabaseMixin:
 
         with self._lock:
             cursor = self.conn.cursor()
-            observed = self._observe_existing_gap(
-                cursor,
+            observed = observe_gap_occurrence(
+                self.conn,
                 instance=instance,
                 identity_key=identity_key,
                 incoming_refs=refs,
@@ -447,8 +446,8 @@ class KnowledgeGapDatabaseMixin:
             except sqlite3.IntegrityError:
                 # Outra conexao/processo venceu a corrida — o indice UNIQUE
                 # e a garantia transacional, nao o lock do objeto.
-                observed = self._observe_existing_gap(
-                    cursor,
+                observed = observe_gap_occurrence(
+                    self.conn,
                     instance=instance,
                     identity_key=identity_key,
                     incoming_refs=refs,
