@@ -47,6 +47,7 @@ _PRESERVED_FIELD = re.compile(
     r"|_method$|_by$"
     r"|_platform$|^platform$|provider$|_model$|_key$|_level$|_class$"
     r"|threshold|_until|_code$|_order$"
+    r"|_quarantined$"  # R1a-4: flag operacional de quarentena, nao conteudo
     r"|^consent_|provenance_json$|_per_hour$"
 )
 

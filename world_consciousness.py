@@ -7,7 +7,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from instance_settings import get_setting_value_with_options
@@ -382,49 +382,42 @@ class WorldConsciousnessFetcher:
                     "private_derived": False,
                     "raw_relational_text_used": False,
                 }
-                cursor.execute(
-                    """
-                    SELECT id
-                    FROM knowledge_gaps
-                    WHERE agent_instance = ? AND the_gap = ? AND status = 'open'
-                      AND origin_class = 'authorized_aggregate'
-                    ORDER BY id DESC
-                    LIMIT 1
-                    """,
-                    (self.agent_instance, gap_question),
+                # R1a-4: identidade por fingerprint normalizado, no escopo de
+                # propriedade do caminho do mundo. Qualquer status casa — o
+                # material do mundo nao nasce de novo porque a pergunta mudou
+                # de caixa ou porque a anterior foi encerrada.
+                # R1a-4: REUSA a operacao protegida do mixin. Manter SQL
+                # proprio aqui foi o que produziu recorrencia nao atomica —
+                # duas conexoes do mundo contavam o mesmo evento duas vezes.
+                from core.db.knowledge_gaps import (
+                    gap_fingerprint,
+                    gap_identity_key,
+                    observe_gap_occurrence,
                 )
-                row = cursor.fetchone()
-                values = (
-                    topic,
-                    importance,
-                    knowledge_gap.get("source_origin"),
-                    knowledge_gap.get("knowledge_kind"),
-                    knowledge_gap.get("target_area"),
-                    knowledge_gap.get("target_scope"),
-                    json.dumps(knowledge_gap.get("focus_terms") or [], ensure_ascii=False),
-                    knowledge_gap.get("source_reason") or knowledge_gap.get("psychic_motive"),
+
+                # Chave composta (origem + Relation + participante + texto
+                # normalizado): o indice UNIQUE garante a unicidade entre
+                # conexoes — este caminho usa conexao propria.
+                identity_key = gap_identity_key(
+                    origin_class="authorized_aggregate",
+                    relation_id=None,
+                    participant=user_id,
+                    fingerprint=gap_fingerprint(gap_question),
                 )
-                if row:
-                    gap_id = int(row["id"])
-                    cursor.execute(
-                        """
-                        UPDATE knowledge_gaps
-                        SET topic = ?,
-                            importance_score = ?,
-                            source_origin = ?,
-                            knowledge_kind = ?,
-                            target_area = ?,
-                            target_scope = ?,
-                            focus_terms_json = ?,
-                            source_reason = ?,
-                            public_question = ?,
-                            source_refs_json = ?,
-                            provenance_json = ?
-                        WHERE id = ?
-                        """,
-                        (*values, gap_question, json.dumps(source_refs), json.dumps(provenance), gap_id),
-                    )
-                else:
+                now_iso = datetime.now(timezone.utc).isoformat()
+                observed = observe_gap_occurrence(
+                    connection,
+                    instance=self.agent_instance,
+                    identity_key=identity_key,
+                    incoming_refs=source_refs,
+                )
+                if observed:
+                    # Recorrencia (ancora nova) ou retry: a funcao decide com
+                    # compare-and-swap. Conteudo, status e importance_score
+                    # ficam intocados.
+                    connection.commit()
+                    return observed[0]
+                try:
                     cursor.execute(
                         """
                         INSERT INTO knowledge_gaps (
@@ -432,17 +425,57 @@ class WorldConsciousnessFetcher:
                             origin_participant_user_id, topic, the_gap, importance_score,
                             source_origin, knowledge_kind, target_area, target_scope,
                             focus_terms_json, source_reason, public_question,
-                            source_refs_json, provenance_json, status
-                        ) VALUES (?, ?, 'instance_global', 'authorized_aggregate', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+                            source_refs_json, provenance_json, status,
+                            source_kind, dedup_key, observation_count, last_observed_at,
+                            origin_quarantined
+                        ) VALUES (?, ?, 'instance_global', 'authorized_aggregate', ?,
+                                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open',
+                                  'world', ?, 1, ?, 0)
                         """,
                         (
                             user_id, self.agent_instance, user_id, topic, gap_question,
-                            *values[1:], gap_question, json.dumps(source_refs), json.dumps(provenance),
+                            importance, knowledge_gap.get("source_origin"),
+                            knowledge_gap.get("knowledge_kind"),
+                            knowledge_gap.get("target_area"),
+                            knowledge_gap.get("target_scope"),
+                            json.dumps(knowledge_gap.get("focus_terms") or [], ensure_ascii=False),
+                            knowledge_gap.get("source_reason") or knowledge_gap.get("psychic_motive"),
+                            gap_question, json.dumps(source_refs), json.dumps(provenance),
+                            identity_key, now_iso,
                         ),
                     )
-                    gap_id = int(cursor.lastrowid)
+                except sqlite3.IntegrityError:
+                    # Outra conexao criou esta mesma pergunta antes da gente:
+                    # o indice UNIQUE e a garantia de unicidade. Localizar a
+                    # linha vencedora e registrar NELA esta observacao pela
+                    # funcao protegida — sem isso a perdedora voltaria None
+                    # e a ancora dela se perderia.
+                    connection.rollback()
+                    observed = observe_gap_occurrence(
+                        connection,
+                        instance=self.agent_instance,
+                        identity_key=identity_key,
+                        incoming_refs=source_refs,
+                    )
+                    if observed:
+                        connection.commit()
+                        logger.info(
+                            "World Consciousness: criacao concorrente resolvida "
+                            "na linha vencedora gap_id=%s (%s)",
+                            observed[0], observed[1],
+                        )
+                        return observed[0]
+                    raise
+                gap_id = int(cursor.lastrowid)
                 connection.commit()
                 return gap_id
+        except sqlite3.IntegrityError:
+            # Criacao concorrente perdida sem linha encontrada para observar.
+            logger.warning(
+                "World Consciousness: criacao concorrente nao resolvida user_id=%s",
+                user_id,
+            )
+            return None
         except sqlite3.OperationalError as exc:
             logger.warning("World Consciousness: schema de knowledge_gaps indisponivel para persistencia: %s", exc)
             return None

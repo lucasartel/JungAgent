@@ -753,6 +753,23 @@ class SchemaDatabaseMixin:
             "provenance_json TEXT NOT NULL DEFAULT '{}'",
             "public_question TEXT",
             "private_trigger_json TEXT",
+            # R1a-4: proveniencia (origem) distinta de propriedade.
+            # NULL = nao registrado — linhas historicas ficam como estao (sem
+            # backfill). Uma ESCRITA NOVA com origem indeterminada tambem
+            # nasce NULL, mas e distinguida por provenance_json.origin_indeterminate.
+            "source_kind TEXT",
+            # R1a-4: chave de identidade normalizada (dedup). NULL nas linhas
+            # historicas: o dedup vale entre escritas posteriores ao corte.
+            "dedup_key TEXT",
+            # Contagem de observacoes: NULL = nao contado (legado), 1 = primeira
+            # observacao. Recorrencia NUNCA prova descoberta nem eleva confianca.
+            "observation_count INTEGER",
+            "last_observed_at DATETIME",
+            # R1a-4: quarentena de PROVENIENCIA. Escrita nova sem produtor
+            # validado fica bloqueada para consumo ate ser classificada;
+            # linhas historicas nascem 0 (legado nao e proveniencia
+            # indeterminada — situacoes diferentes).
+            "origin_quarantined INTEGER NOT NULL DEFAULT 0",
         ]:
             try:
                 cursor.execute(f"ALTER TABLE knowledge_gaps ADD COLUMN {column_def}")
@@ -762,6 +779,15 @@ class SchemaDatabaseMixin:
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_knowledge_gaps_cognitive_scope "
             "ON knowledge_gaps(agent_instance, origin_relation_id, origin_class, status, importance_score DESC)"
+        )
+        # R1a-4: idempotencia garantida pelo proprio SQLite, entre conexoes e
+        # processos. O ``dedup_key`` carrega o escopo completo, entao a
+        # restricao NAO funde Relations/participantes diferentes. Linhas
+        # historicas tem dedup_key NULL e o UNIQUE do SQLite considera NULLs
+        # distintos — o historico e preservado.
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_gaps_dedup "
+            "ON knowledge_gaps(agent_instance, dedup_key)"
         )
 
         # ========== LOOP DE CONSCIENCIA ==========
