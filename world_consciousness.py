@@ -417,35 +417,65 @@ class WorldConsciousnessFetcher:
                     # ficam intocados.
                     connection.commit()
                     return observed[0]
-                cursor.execute(
-                    """
-                    INSERT INTO knowledge_gaps (
-                        user_id, agent_instance, ownership_class, origin_class,
-                        origin_participant_user_id, topic, the_gap, importance_score,
-                        source_origin, knowledge_kind, target_area, target_scope,
-                        focus_terms_json, source_reason, public_question,
-                        source_refs_json, provenance_json, status,
-                        source_kind, dedup_key, observation_count, last_observed_at,
-                        origin_quarantined
-                    ) VALUES (?, ?, 'instance_global', 'authorized_aggregate', ?,
-                              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open',
-                              'world', ?, 1, ?, 0)
-                    """,
-                    (
-                        user_id, self.agent_instance, user_id, topic, gap_question,
-                        importance, knowledge_gap.get("source_origin"),
-                        knowledge_gap.get("knowledge_kind"),
-                        knowledge_gap.get("target_area"),
-                        knowledge_gap.get("target_scope"),
-                        json.dumps(knowledge_gap.get("focus_terms") or [], ensure_ascii=False),
-                        knowledge_gap.get("source_reason") or knowledge_gap.get("psychic_motive"),
-                        gap_question, json.dumps(source_refs), json.dumps(provenance),
-                        identity_key, now_iso,
-                    ),
-                )
+                try:
+                    cursor.execute(
+                        """
+                        INSERT INTO knowledge_gaps (
+                            user_id, agent_instance, ownership_class, origin_class,
+                            origin_participant_user_id, topic, the_gap, importance_score,
+                            source_origin, knowledge_kind, target_area, target_scope,
+                            focus_terms_json, source_reason, public_question,
+                            source_refs_json, provenance_json, status,
+                            source_kind, dedup_key, observation_count, last_observed_at,
+                            origin_quarantined
+                        ) VALUES (?, ?, 'instance_global', 'authorized_aggregate', ?,
+                                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open',
+                                  'world', ?, 1, ?, 0)
+                        """,
+                        (
+                            user_id, self.agent_instance, user_id, topic, gap_question,
+                            importance, knowledge_gap.get("source_origin"),
+                            knowledge_gap.get("knowledge_kind"),
+                            knowledge_gap.get("target_area"),
+                            knowledge_gap.get("target_scope"),
+                            json.dumps(knowledge_gap.get("focus_terms") or [], ensure_ascii=False),
+                            knowledge_gap.get("source_reason") or knowledge_gap.get("psychic_motive"),
+                            gap_question, json.dumps(source_refs), json.dumps(provenance),
+                            identity_key, now_iso,
+                        ),
+                    )
+                except sqlite3.IntegrityError:
+                    # Outra conexao criou esta mesma pergunta antes da gente:
+                    # o indice UNIQUE e a garantia de unicidade. Localizar a
+                    # linha vencedora e registrar NELA esta observacao pela
+                    # funcao protegida — sem isso a perdedora voltaria None
+                    # e a ancora dela se perderia.
+                    connection.rollback()
+                    observed = observe_gap_occurrence(
+                        connection,
+                        instance=self.agent_instance,
+                        identity_key=identity_key,
+                        incoming_refs=source_refs,
+                    )
+                    if observed:
+                        connection.commit()
+                        logger.info(
+                            "World Consciousness: criacao concorrente resolvida "
+                            "na linha vencedora gap_id=%s (%s)",
+                            observed[0], observed[1],
+                        )
+                        return observed[0]
+                    raise
                 gap_id = int(cursor.lastrowid)
                 connection.commit()
                 return gap_id
+        except sqlite3.IntegrityError:
+            # Criacao concorrente perdida sem linha encontrada para observar.
+            logger.warning(
+                "World Consciousness: criacao concorrente nao resolvida user_id=%s",
+                user_id,
+            )
+            return None
         except sqlite3.OperationalError as exc:
             logger.warning("World Consciousness: schema de knowledge_gaps indisponivel para persistencia: %s", exc)
             return None

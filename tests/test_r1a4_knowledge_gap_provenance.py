@@ -731,3 +731,191 @@ class TestWorldSharedOperation:
         )
         assert json.loads(row["source_refs_json"]) == ["will#30", "will#31"]
         assert db.conn.execute("SELECT COUNT(*) FROM knowledge_gaps").fetchone()[0] == 1
+
+
+class TestWorldConcurrentCreation:
+    """P2 da revisao: INSERT do mundo vs. indice UNIQUE, sem lacuna previa.
+
+    Sem o tratamento de ``IntegrityError`` a perdedora voltava ``None`` e a
+    ancora dela se perdia — duas primeiras observacoes simultaneas deixavam
+    contador 1 e uma unica ancora.
+    """
+
+    @staticmethod
+    def _gap_for(anchor_id: int) -> dict:
+        return dict(_WORLD_GAP)
+
+    def test_world_and_world_concurrent_creation_keeps_both_anchors(self, tmp_path):
+        db_file = tmp_path / "world_create.db"
+        db = _db(tmp_path, name="world_create.db")
+
+        barrier = threading.Barrier(2)
+        results = []
+        anchors = [30, 31]
+
+        def create(anchor_id):
+            world = _world_fetcher(tmp_path, db_file)
+            barrier.wait()
+            try:
+                results.append(
+                    world._persist_epistemic_knowledge_gap(
+                        "admin", self._gap_for(anchor_id),
+                        {"id": anchor_id, "saber_pressure": 70},
+                    )
+                )
+            except Exception as exc:  # pragma: no cover - diagnostico
+                results.append(f"error:{type(exc).__name__}")
+
+        threads = [threading.Thread(target=create, args=(a,)) for a in anchors]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        rows = db.conn.execute("SELECT * FROM knowledge_gaps").fetchall()
+        assert len(rows) == 1, f"esperava 1 linha, ha {len(rows)}"
+        row = rows[0]
+        # As DUAS ancoras foram preservadas, uma de cada vencedora/perdedora.
+        assert set(json.loads(row["source_refs_json"])) == {"will#30", "will#31"}
+        # 1 (criacao) + 1 (observacao registrada na linha vencedora) = 2.
+        assert row["observation_count"] == 2, (
+            f"observation_count={row['observation_count']} results={results}"
+        )
+        # Nenhuma chamada perde a linha: as duas devolvem o MESMO id.
+        assert not any(r is None or isinstance(r, str) for r in results), results
+        assert len(set(results)) == 1, results
+
+    def test_world_and_mixin_concurrent_creation_keeps_both_anchors(self, tmp_path):
+        db_file = tmp_path / "wm_create.db"
+        db = _db(tmp_path, name="wm_create.db")
+
+        barrier = threading.Barrier(2)
+        results = []
+
+        def world_side():
+            world = _world_fetcher(tmp_path, db_file)
+            barrier.wait()
+            try:
+                results.append(
+                    ("world", world._persist_epistemic_knowledge_gap(
+                        "admin", self._gap_for(30),
+                        {"id": 30, "saber_pressure": 70},
+                    ))
+                )
+            except Exception as exc:  # pragma: no cover
+                results.append(("world", f"error:{type(exc).__name__}"))
+
+        def mixin_side():
+            barrier.wait()
+            try:
+                results.append(("mixin", db.add_knowledge_gap(
+                    "admin",
+                    "politica",
+                    "O que mudou na politica publica?",
+                    0.7,
+                    origin_class="authorized_aggregate",
+                    source_kind="world",
+                    source_refs=["will#31"],
+                )))
+            except Exception as exc:  # pragma: no cover
+                results.append(("mixin", f"error:{type(exc).__name__}"))
+
+        threads = [threading.Thread(target=world_side), threading.Thread(target=mixin_side)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        rows = db.conn.execute("SELECT * FROM knowledge_gaps").fetchall()
+        assert len(rows) == 1, f"esperava 1 linha, ha {len(rows)} results={results}"
+        row = rows[0]
+        assert set(json.loads(row["source_refs_json"])) == {"will#30", "will#31"}
+        assert row["observation_count"] == 2, (
+            f"observation_count={row['observation_count']} results={results}"
+        )
+        ids = [v for _, v in results]
+        assert not any(v is None or isinstance(v, str) for v in ids), results
+        assert len(set(ids)) == 1, results
+
+    def test_sequential_creation_still_counts_one(self, tmp_path):
+        """Sem corrida: criacao vale 1 observacao, sem bump extra."""
+        db_file = tmp_path / "world_seq.db"
+        db = _db(tmp_path, name="world_seq.db")
+        gap_id = _world_fetcher(tmp_path, db_file)._persist_epistemic_knowledge_gap(
+            "admin", self._gap_for(30), {"id": 30, "saber_pressure": 70}
+        )
+        row = _row(db, gap_id)
+        assert row["observation_count"] == 1
+        assert json.loads(row["source_refs_json"]) == ["will#30"]
+
+
+class TestWorldInsertRaceDeterministic:
+    """O caminho do INSERT perdendo a corrida, sem depender de sorte de agenda.
+
+    Simula a leitura obsoleta (``observe_gap_occurrence`` devolve ``None``)
+    para forcar o ``IntegrityError`` no INSERT e verificar que o handler
+    localiza a linha vencedora e registra a observacao nela.
+    """
+
+    @staticmethod
+    def _patch_stale_first_read(monkeypatch):
+        import core.db.knowledge_gaps as gaps_mod
+
+        real = gaps_mod.observe_gap_occurrence
+        calls = {"n": 0}
+
+        def stale_first(conn, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return None  # leitura obsoleta: "a lacuna ainda nao existe"
+            return real(conn, **kwargs)
+
+        monkeypatch.setattr(gaps_mod, "observe_gap_occurrence", stale_first)
+
+    def test_world_losing_race_resolves_to_existing_world_row(self, tmp_path, monkeypatch):
+        db_file = tmp_path / "race_lose_w.db"
+        db = _db(tmp_path, name="race_lose_w.db")
+
+        # Linha ja existe, criada pela vencedora.
+        winner = _world_fetcher(tmp_path, db_file)._persist_epistemic_knowledge_gap(
+            "admin", _WORLD_GAP, {"id": 30, "saber_pressure": 70}
+        )
+        assert _row(db, winner)["observation_count"] == 1
+
+        self._patch_stale_first_read(monkeypatch)
+        loser = _world_fetcher(tmp_path, db_file)._persist_epistemic_knowledge_gap(
+            "admin", _WORLD_GAP, {"id": 31, "saber_pressure": 70}
+        )
+
+        # Perdedora devolve o id da vencedora (nao None) e a ancora dela
+        # e registrada na linha existente.
+        assert loser == winner
+        row = _row(db, winner)
+        assert row["observation_count"] == 2
+        assert set(json.loads(row["source_refs_json"])) == {"will#30", "will#31"}
+        assert db.conn.execute("SELECT COUNT(*) FROM knowledge_gaps").fetchone()[0] == 1
+
+    def test_world_losing_race_to_mixin_resolves_to_existing_row(self, tmp_path, monkeypatch):
+        db_file = tmp_path / "race_lose_m.db"
+        db = _db(tmp_path, name="race_lose_m.db")
+
+        winner = db.add_knowledge_gap(
+            "admin",
+            "politica",
+            "O que mudou na politica publica?",
+            0.7,
+            origin_class="authorized_aggregate",
+            source_kind="world",
+            source_refs=["will#30"],
+        )
+
+        self._patch_stale_first_read(monkeypatch)
+        loser = _world_fetcher(tmp_path, db_file)._persist_epistemic_knowledge_gap(
+            "admin", _WORLD_GAP, {"id": 31, "saber_pressure": 70}
+        )
+
+        assert loser == winner
+        row = _row(db, winner)
+        assert row["observation_count"] == 2
+        assert set(json.loads(row["source_refs_json"])) == {"will#30", "will#31"}
+        assert db.conn.execute("SELECT COUNT(*) FROM knowledge_gaps").fetchone()[0] == 1
