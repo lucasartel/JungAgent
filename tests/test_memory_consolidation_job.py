@@ -4,10 +4,27 @@ Relation elegivel e o scheduler diario do /meu_perfil."""
 
 import asyncio
 import sqlite3
+from datetime import datetime, timedelta
 
 import pytest
 
 import jung_memory_consolidation as jmc
+
+
+def _days_ago(days: float) -> str:
+    """Timestamp relativo a agora, com precisao de segundos.
+
+    A janela de consolidacao e rolante (90 dias atras de ``datetime.now()``),
+    entao qualquer data fixa eventualmente sai dela e o teste falha sem
+    relacao com o que deveria verificar. Todas as datas deste arquivo sao
+    geradas por aqui para nunca envelhecerem.
+    """
+    return (datetime.now() - timedelta(days=days)).replace(microsecond=0).isoformat()
+
+
+def _window_timestamps(count: int) -> list:
+    """``count`` conversas em ordem cronologica, a mais antiga ``count`` dias atras."""
+    return [_days_ago(days) for days in range(count, 0, -1)]
 
 
 class _PoisonConn:
@@ -105,7 +122,7 @@ def test_consolidation_accepts_active_granted_relation():
 
 def test_no_new_conversations_skips_llm(monkeypatch):
     """Janela identica a da ultima consolidacao nao refaz resumos (custo)."""
-    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 7)]
+    timestamps = _window_timestamps(6)
     db = _memory_db(_relation("active", "granted"), timestamps)
     consolidator = jmc.MemoryConsolidator(db)
     consolidator._save_progress(
@@ -123,7 +140,7 @@ def test_no_new_conversations_skips_llm(monkeypatch):
 
 def test_progress_saved_and_second_run_is_idempotent(monkeypatch):
     """A marca de progresso e gravada e protege a re-execucao (boot/deploy)."""
-    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 7)]
+    timestamps = _window_timestamps(6)
     db = _memory_db(_relation("active", "granted"), timestamps)
     consolidator = jmc.MemoryConsolidator(db)
 
@@ -162,13 +179,13 @@ def test_integer_conversation_ids_do_not_repeat_consolidation(monkeypatch):
         )
         """
     )
-    for day in range(1, 7):
+    for timestamp in _window_timestamps(6):
         conn.execute(
             """INSERT INTO conversations
                (user_id, user_input, ai_response, timestamp, keywords,
                 tension_level, affective_charge, existential_depth, relation_id)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("user_a", "in", "out", f"2026-09-{day:02d}T10:00:00", "k", 0.0, 0.0, 0.0, "rel_1"),
+            ("user_a", "in", "out", timestamp, "k", 0.0, 0.0, 0.0, "rel_1"),
         )
     conn.commit()
     consolidator = jmc.MemoryConsolidator(_StubRelationDB(_relation("active", "granted"), conn))
@@ -189,7 +206,7 @@ def test_integer_conversation_ids_do_not_repeat_consolidation(monkeypatch):
 
 
 def test_new_conversations_reopen_the_window(monkeypatch):
-    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 7)]
+    timestamps = _window_timestamps(6)
     db = _memory_db(_relation("active", "granted"), timestamps)
     consolidator = jmc.MemoryConsolidator(db)
     consolidator._save_progress(
@@ -199,7 +216,7 @@ def test_new_conversations_reopen_the_window(monkeypatch):
 
     db.conn.execute(
         "INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?)",
-        ("c99", "user_a", "in", "out", "2026-09-09T10:00:00", "k", 0.0, 0.0, 0.0, "rel_1"),
+        ("c99", "user_a", "in", "out", _days_ago(0), "k", 0.0, 0.0, 0.0, "rel_1"),
     )
     db.conn.commit()
 
@@ -216,7 +233,7 @@ def test_new_conversations_reopen_the_window(monkeypatch):
 
 
 def test_fewer_than_five_memories_skips_everything(monkeypatch):
-    db = _memory_db(_relation("active", "granted"), ["2026-09-01T10:00:00"])
+    db = _memory_db(_relation("active", "granted"), [_days_ago(30)])
     consolidator = jmc.MemoryConsolidator(db)
 
     def _forbidden_cluster(self, memories):
@@ -246,7 +263,7 @@ def test_llm_error_raises_instead_of_generic_summary():
     with pytest.raises(jmc.LLMSummaryError, match="llm_summary_failed"):
         consolidator._generate_summary_with_llm(
             "trabalho",
-            [{"timestamp": "2026-09-01T10:00:00", "user_input": "x", "ai_response": "y"}],
+            [{"timestamp": _days_ago(30), "user_input": "x", "ai_response": "y"}],
         )
 
 
@@ -256,13 +273,13 @@ def test_no_client_keeps_designed_generic_fallback():
 
     summary = consolidator._generate_summary_with_llm(
         "trabalho",
-        [{"timestamp": "2026-09-01T10:00:00", "user_input": "x", "ai_response": "y"}],
+        [{"timestamp": _days_ago(30), "user_input": "x", "ai_response": "y"}],
     )
     assert "trabalho" in summary
 
 
 def test_llm_failure_is_not_recorded_as_success(monkeypatch):
-    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 7)]
+    timestamps = _window_timestamps(6)
     db = _memory_db(_relation("active", "granted"), timestamps)
     consolidator = jmc.MemoryConsolidator(db)
 
@@ -282,7 +299,7 @@ def test_llm_failure_is_not_recorded_as_success(monkeypatch):
 
 def test_failed_summary_is_retried_without_new_conversations(monkeypatch):
     """Recuperacao: falha sem marca permite refazer o resumo sem entrada nova."""
-    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 7)]
+    timestamps = _window_timestamps(6)
     db = _memory_db(_relation("active", "granted"), timestamps)
     consolidator = jmc.MemoryConsolidator(db)
 
@@ -311,7 +328,7 @@ def test_failed_summary_is_retried_without_new_conversations(monkeypatch):
     # 2) entrada nova + falha do LLM: a marca NAO cobre a nova entrada
     db.conn.execute(
         "INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?)",
-        ("c99", "user_a", "in", "out", "2026-09-09T10:00:00", "k", 0.0, 0.0, 0.0, "rel_1"),
+        ("c99", "user_a", "in", "out", _days_ago(0), "k", 0.0, 0.0, 0.0, "rel_1"),
     )
     db.conn.commit()
     monkeypatch.setattr(jmc.MemoryConsolidator, "_create_consolidated_memory", _fail)
@@ -327,7 +344,7 @@ def test_failed_summary_is_retried_without_new_conversations(monkeypatch):
 
 
 def test_partial_failure_blocks_progress_mark(monkeypatch):
-    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 13)]
+    timestamps = _window_timestamps(12)
     db = _memory_db(_relation("active", "granted"), timestamps)
     consolidator = jmc.MemoryConsolidator(db)
 
@@ -358,7 +375,7 @@ def test_partial_failure_blocks_progress_mark(monkeypatch):
 
 def test_rolling_window_outflow_does_not_retrigger(monkeypatch):
     """Conversa antiga saindo da janela nao deve refazer os resumos pagos."""
-    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 8)]
+    timestamps = _window_timestamps(7)
     db = _memory_db(_relation("active", "granted"), timestamps)
     consolidator = jmc.MemoryConsolidator(db)
 
@@ -380,7 +397,7 @@ def test_rolling_window_outflow_does_not_retrigger(monkeypatch):
 
 def test_backfilled_conversation_retriggers(monkeypatch):
     """Entrada nova (mesmo antiga) aumenta a contagem e reabre o ciclo."""
-    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 8)]
+    timestamps = _window_timestamps(7)
     db = _memory_db(_relation("active", "granted"), timestamps)
     consolidator = jmc.MemoryConsolidator(db)
 
@@ -392,7 +409,7 @@ def test_backfilled_conversation_retriggers(monkeypatch):
 
     db.conn.execute(
         "INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?)",
-        ("c_old", "user_a", "in", "out", "2026-08-01T10:00:00", "k", 0.0, 0.0, 0.0, "rel_1"),
+        ("c_old", "user_a", "in", "out", _days_ago(30), "k", 0.0, 0.0, 0.0, "rel_1"),
     )
     db.conn.commit()
 
@@ -411,7 +428,7 @@ def test_backfilled_conversation_retriggers(monkeypatch):
 def test_swap_with_backdated_entry_retriggers(monkeypatch):
     """Borda exata: sai uma antiga, entra uma retroativa — count e max iguais,
     mas ha entrada nova (por id) e o ciclo precisa rodar."""
-    timestamps = [f"2026-09-{day:02d}T10:00:00" for day in range(1, 8)]
+    timestamps = _window_timestamps(7)
     db = _memory_db(_relation("active", "granted"), timestamps)
     consolidator = jmc.MemoryConsolidator(db)
 
@@ -425,7 +442,7 @@ def test_swap_with_backdated_entry_retriggers(monkeypatch):
     db.conn.execute("DELETE FROM conversations WHERE timestamp = ?", (timestamps[0],))
     db.conn.execute(
         "INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?)",
-        ("c_back", "user_a", "in", "out", "2026-08-15T10:00:00", "k", 0.0, 0.0, 0.0, "rel_1"),
+        ("c_back", "user_a", "in", "out", _days_ago(30), "k", 0.0, 0.0, 0.0, "rel_1"),
     )
     db.conn.commit()
 
@@ -475,7 +492,7 @@ def _fake_memories(n=6):
     return [
         {
             "id": f"c{i}",
-            "timestamp": f"2026-09-{i + 1:02d}T10:00:00",
+            "timestamp": _days_ago(n - i),
             "user_input": "in",
             "ai_response": "out",
         }
