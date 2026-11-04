@@ -136,7 +136,9 @@ class _RealDB(FactExtractionDatabaseMixin):
     def _get_current_facts(self, user_id: str):
         return []
 
-    def add_knowledge_gap(self, user_id, topic, the_gap, importance=0.5):
+    def add_knowledge_gap(self, user_id, topic, the_gap, importance=0.5, **kwargs):
+        # R1a-4: registra a proveniencia recebida para poder asserta-la.
+        self.last_gap_kwargs = kwargs
         cursor = self.conn.cursor()
         cursor.execute(
             "INSERT INTO knowledge_gaps (user_id, topic, the_gap, importance) VALUES (?, ?, ?, ?)",

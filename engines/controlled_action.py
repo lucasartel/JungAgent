@@ -128,7 +128,15 @@ class ControlledActionRunner:
         goal, step = self._select_goal_and_step(goal_id=goal_id, step_id=step_id)
         initial_refs = self._unique_refs(goal.get("source_refs") or [], step.get("source_refs") or [])
         gap_payload = self._build_gap_payload(goal, step)
-        gap_id = self.db.upsert_epistemic_knowledge_gap(user_id, gap_payload)
+        # R1a-4: o produtor ja era declarado no payload (source_origin) e as
+        # ancoras do objetivo/passo eram lidas aqui mas nao chegam ao registro;
+        # passa-las permite distinguir recorrencia de retry do mesmo evento.
+        gap_id = self.db.upsert_epistemic_knowledge_gap(
+            user_id,
+            gap_payload,
+            source_kind="goal_manager",
+            source_refs=initial_refs,
+        )
         if not gap_id:
             raise ValueError("knowledge_gap_not_created")
 

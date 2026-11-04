@@ -117,12 +117,15 @@ def test_dream_residue_does_not_cross_relations(in_memory_conn):
 
 def test_private_gap_requires_same_relation_while_global_gap_is_shared(in_memory_conn):
     db = _CognitiveDB(in_memory_conn)
+    # R1a-4: toda escrita nova declara a proveniencia; sem ela a entrada vai
+    # para quarentena e fica invisivel aos leitores.
     private_id = db.add_knowledge_gap(
         "user-a",
         "private",
         "What did this relationship reveal?",
         relation_id="rel-a",
         private_trigger={"conversation_ref": "conversation#8"},
+        source_kind="conversation",
     )
     global_id = db.add_knowledge_gap(
         "system",
@@ -131,6 +134,7 @@ def test_private_gap_requires_same_relation_while_global_gap_is_shared(in_memory
         origin_class="authorized_aggregate",
         public_question="What changed in public AI policy?",
         source_refs=["will#9"],
+        source_kind="world",
     )
 
     same_relation = db.get_active_knowledge_gaps("user-a", relation_id="rel-a", limit=10)
