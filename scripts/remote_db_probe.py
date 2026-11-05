@@ -3,7 +3,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 
 DEFAULT_ADMIN_USER_ID = "367f9e509e396d51"
@@ -1979,6 +1979,218 @@ def _latest_raw_phase(cursor: sqlite3.Cursor, phase: str, limit: int = 1) -> Lis
     return rows
 
 
+# ---------------------------------------------------------------------------
+# R1a-2 — observabilidade da fila de material autorizado.
+#
+# O aceite de R1a exige que "fila e idade dos pendentes ficam observaveis" e
+# o complemento R1 pede que cockpit/probes distingam material recebido,
+# elaborado, consolidado, indexado, recuperado, revisado e bloqueado, por
+# origem e escopo, com idade da fila e falhas — sem expor texto privado.
+#
+# Privacidade: ``payload_json`` nunca e selecionado, e ``last_error`` so sai
+# se estiver na lista EXPLICITA de codigos do proprio sistema. A revisao de
+# 05/11/2026 rejeitou a regex anterior (``^[A-Za-z]...$``): ela aceitava
+# frases curtas em ASCII e deixou ``"User Maria has depression"`` passar
+# integral. Texto livre, JSON, mensagens de provedor ou de excecao ficam
+# retidos — a falha continua visivel por ``has_last_error``; o texto completo
+# permanece nos logs do container, nunca nesta sonda.
+# ---------------------------------------------------------------------------
+_QUEUE_OPEN_SQL = "'pending', 'failed', 'running'"
+_QUEUE_REQUIRED_COLUMNS = (
+    "queue_kind",
+    "dedupe_key",
+    "payload_json",
+    "status",
+    "retry_attempts",
+    "max_attempts",
+    "next_at",
+    "last_error",
+    "org_id",
+    "agent_instance",
+    "ownership_class",
+    "origin_class",
+    "origin_relation_id",
+    "created_at",
+    "updated_at",
+)
+# Lista EXPLICITA de codigos que o proprio sistema escreve deliberadamente em
+# ``last_error``. Adicionar aqui e mudanca de contrato, nao ajuste de filtro —
+# nao existe regra generica segura para texto livre (frase curta em ASCII
+# tambem e texto livre). Codigos atuais: o literal gravado pelo scheduler da
+# fila e o ``ValueError`` estruturado do proprio modulo.
+ALLOWED_QUEUE_ERROR_CODES = frozenset(
+    {
+        "interrupted_attempts_exhausted",
+        "processing_queue_item_missing",
+    }
+)
+
+
+def _queue_error_view(raw: Any) -> Tuple[Optional[str], bool]:
+    """Devolve ``(codigo_permitido, ha_erro)`` de um ``last_error``.
+
+    Só devolve o que está na lista ``ALLOWED_QUEUE_ERROR_CODES``. Qualquer
+    outro valor — frase, JSON, mensagem de provedor ou de exceção — vira
+    ``None``; ``ha_erro`` continua True para não esconder a falha em nome da
+    privacidade.
+    """
+    if raw in (None, ""):
+        return None, False
+    if str(raw) in ALLOWED_QUEUE_ERROR_CODES:
+        return str(raw), True
+    return None, True
+
+
+def query_processing_queue(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
+    """Fila de processamento (R1a-2): status, idade, tentativas e escopo.
+
+    Saida somente de metadados. Privacidade em ``_queue_error_view``; a
+    secao ``scope_integrity`` e a da validacao de tenancy do R1a-2.
+    """
+    table = "processing_queue"
+    if not table_exists(cursor, table):
+        return {
+            "probe": "processing_queue",
+            "available": False,
+            "assessment": "processing_queue table is not available yet",
+            "status_counts": [],
+        }
+
+    columns = table_columns(cursor, table)
+    scope_where, scope_params = _will_scope_filter(cursor, table, args)
+
+    # (a) Tenancy: SEM filtro de Relation, de proposito — o objetivo e pegar
+    # item de instancia trocada ou sem instancia, que o proprio filtro de
+    # escopo excluiria. So identificadores de instancia e contagens; nenhum
+    # payload e nenhum conteudo de Relation.
+    scope_integrity = {
+        "note": "metadados de tenancy sem filtro de Relation; nenhum payload",
+        "rows_total": count_rows(cursor, table),
+        "rows_in_scope": count_rows(cursor, table, f"1=1{scope_where}", scope_params),
+        "by_agent_instance": grouped_counts(cursor, table, "agent_instance"),
+        "rows_missing_instance": count_rows(cursor, table, "agent_instance IS NULL"),
+        "rows_missing_ownership_class": count_rows(cursor, table, "ownership_class IS NULL"),
+        "rows_missing_origin_class": count_rows(cursor, table, "origin_class IS NULL"),
+        "rows_with_relation": count_rows(cursor, table, "origin_relation_id IS NOT NULL"),
+    }
+
+    base_where = f"1=1{scope_where}"
+    status_counts = grouped_counts(
+        cursor, table, "status", where=base_where, params=scope_params
+    )
+    kind_counts = grouped_counts(
+        cursor, table, "queue_kind", where=base_where, params=scope_params
+    )
+    ownership_counts = grouped_counts(
+        cursor, table, "ownership_class", where=base_where, params=scope_params
+    )
+    origin_counts = grouped_counts(
+        cursor, table, "origin_class", where=base_where, params=scope_params
+    )
+
+    # Idade dos pendentes — criterio literal de aceite de R1a.
+    cursor.execute(
+        f"""
+        SELECT COUNT(*) AS open_count,
+               MIN(created_at) AS oldest_open_at,
+               MAX(created_at) AS newest_open_at,
+               SUM(CASE WHEN julianday(created_at) <= julianday('now', '-1 day')
+                        THEN 1 ELSE 0 END) AS open_over_24h,
+               SUM(CASE WHEN julianday(created_at) <= julianday('now', '-7 days')
+                        THEN 1 ELSE 0 END) AS open_over_7d
+        FROM {table}
+        WHERE 1 = 1 AND status IN ({_QUEUE_OPEN_SQL}){scope_where}
+        """,
+        scope_params,
+    )
+    raw_age = dict(cursor.fetchone() or {})
+    age = {
+        "open_count": int(raw_age.get("open_count") or 0),
+        "oldest_open_at": raw_age.get("oldest_open_at"),
+        "newest_open_at": raw_age.get("newest_open_at"),
+        "open_over_24h": int(raw_age.get("open_over_24h") or 0),
+        "open_over_7d": int(raw_age.get("open_over_7d") or 0),
+    }
+
+    # Tentativas: o que ja foi reprocessado, o que vence agora e o que esta
+    # perto de esgotar — a parte de "falhas" da observabilidade pedida pelo R1.
+    cursor.execute(
+        f"""
+        SELECT COUNT(*) AS open_count,
+               SUM(CASE WHEN retry_attempts < max_attempts
+                         AND (next_at IS NULL OR julianday(next_at) <= julianday('now'))
+                        THEN 1 ELSE 0 END) AS due_count,
+               MIN(CASE WHEN retry_attempts < max_attempts
+                         AND (next_at IS NULL OR julianday(next_at) <= julianday('now'))
+                        THEN next_at END) AS next_due_at,
+               SUM(CASE WHEN retry_attempts > 0 THEN 1 ELSE 0 END) AS retried_count,
+               SUM(CASE WHEN retry_attempts >= max_attempts - 1 THEN 1 ELSE 0 END)
+                   AS near_exhaustion_count
+        FROM {table}
+        WHERE 1 = 1 AND status IN ({_QUEUE_OPEN_SQL}){scope_where}
+        """,
+        scope_params,
+    )
+    raw_retry = dict(cursor.fetchone() or {})
+    retry = {
+        "open_count": int(raw_retry.get("open_count") or 0),
+        "due_count": int(raw_retry.get("due_count") or 0),
+        "next_due_at": raw_retry.get("next_due_at"),
+        "retried_count": int(raw_retry.get("retried_count") or 0),
+        "near_exhaustion_count": int(raw_retry.get("near_exhaustion_count") or 0),
+    }
+
+    # Itens recentes: sem payload_json e com last_error sanitizado.
+    cursor.execute(
+        f"""
+        SELECT id, queue_kind, dedupe_key, status, retry_attempts, max_attempts,
+               next_at, last_error, org_id, agent_instance, ownership_class,
+               origin_class, origin_relation_id, created_at, updated_at,
+               CAST(ROUND((julianday('now') - julianday(created_at)) * 24)
+                    AS INTEGER) AS age_hours,
+               CASE WHEN status IN ({_QUEUE_OPEN_SQL})
+                         AND retry_attempts < max_attempts
+                         AND (next_at IS NULL OR julianday(next_at) <= julianday('now'))
+                    THEN 1 ELSE 0 END AS due
+        FROM {table}
+        WHERE 1 = 1{scope_where}
+        ORDER BY updated_at DESC, id DESC
+        LIMIT ?
+        """,
+        (*scope_params, int(args.limit)),
+    )
+    recent_items: List[Dict[str, Any]] = []
+    for item in rows_to_dicts(cursor.fetchall()):
+        token, has_error = _queue_error_view(item.pop("last_error", None))
+        item["last_error"] = token
+        item["has_last_error"] = has_error
+        item["due"] = bool(item.get("due"))
+        item["requires_review"] = item.get("status") in {"failed", "exhausted"}
+        recent_items.append(item)
+
+    return {
+        "probe": "processing_queue",
+        "available": True,
+        "agent_instance": args.agent_instance,
+        "scope_kind": getattr(args, "scope_kind", "global"),
+        "relation_id": getattr(args, "relation_id", None),
+        "schema": {
+            "columns": columns,
+            "missing_required_columns": [
+                column for column in _QUEUE_REQUIRED_COLUMNS if column not in columns
+            ],
+        },
+        "scope_integrity": scope_integrity,
+        "status_counts": status_counts,
+        "kind_counts": kind_counts,
+        "ownership_counts": ownership_counts,
+        "origin_counts": origin_counts,
+        "age": age,
+        "retry": retry,
+        "recent_items": recent_items,
+    }
+
+
 def query_integration(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
     will_payload = query_will(cursor, args) if table_exists(cursor, "agent_will_states") else {"rows": []}
     pressure_payload = query_pressure(cursor, args) if table_exists(cursor, "agent_will_pressure_state") else {"latest_state": None, "events": []}
@@ -2241,6 +2453,7 @@ PROBES: Dict[str, Callable[[sqlite3.Cursor, argparse.Namespace], Dict[str, Any]]
     "phase_pulses": query_phase_pulses,
     "phase_satisfaction": query_phase_satisfaction,
     "pressure": query_pressure,
+    "processing_queue": query_processing_queue,
     "relational_state": query_relational_state,
     "relations": query_relations,
     "rumination": query_rumination,

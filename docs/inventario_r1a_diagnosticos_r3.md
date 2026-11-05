@@ -250,12 +250,31 @@ foi verificado aqui, então essa coluna é ❌ em todos os cortes — não por
 código ausente, mas por ausência de verificação. CI verde não encerra circuito
 cognitivo.
 
+> **Atualização 2026-11-04 — primeira verificação de pós-deploy.**
+> Ambiente: deploy `fdf8e817` (2026-11-04 20:21 -03:00), 3 s após o merge de
+> #65; healthcheck `ok` (loop `running / rumination_extro`, tabelas
+> obrigatórias presentes). **`railway run` não alcança o volume** (`/data`
+> não existe localmente), então tudo rodou via `railway ssh` em modo `mode=ro`
+> e só metadados: o probe local abriria um SQLite vazio e registraria
+> "produção" falsamente.
+>
+> - **R1a-4 → habilitado ✅ (schema)**: `source_kind`, `dedup_key`,
+>   `observation_count`, `last_observed_at`, `origin_quarantined` — todos
+>   `PRESENT` em `knowledge_gaps` de produção. **Validado em operação segue
+>   ❌**: 0 linhas com `dedup_key` (1763 históricas) — a via nova ainda não
+>   rodou, e o mestre manda *"aguardar uma ocorrência natural, sem mensagem ou
+>   ação artificial para fabricar evidência"*.
+> - **R1a-2 → habilitado parcial**: `processing_queue` existe com tenancy
+>   completo; o worker de retry agendado em `main.py` **não** foi verificado.
+> - **R1a-1 e R1a-3 → ❌** não verificados nesta rodada.
+
 | Corte | Implementado | Testado | Habilitado | Publicado | Validado em operação |
 |---|---|---|---|---|---|
-| **R1a-1** | ✅ reparo do `memory_flush` **+** taxonomia de `source_kind` (PR #64, em revisão) | ✅ 10 testes do flush + 20 da taxonomia | ❌ não verificado | Parcial — flush em `6ece048`; taxonomia ainda em revisão | ❌ |
-| **R1a-2** | ✅ `processing_queue`, retry F-4, órfãos F-1/F-2 | ✅ 45 testes + regressão 20/20 | ❌ não verificado | ✅ `8245d63` (PR #62) | ❌ |
-| **R1a-3** | ✅ correções de isolamento P1 | ✅ testes de isolamento | ❌ não verificado | ✅ `fa56e05` (PR #61) | ❌ |
-| **R1a-4** | ✅ proveniência + dedup por escopo + observação (PR #65, em revisão) | ✅ 26 testes novos | ❌ não verificado | ❌ em revisão | ❌ |
+| **R1a-1** | ✅ reparo do `memory_flush` **+** taxonomia de `source_kind` | ✅ 10 testes do flush + 20 da taxonomia | ❌ não verificado | ✅ `480d94f` (PR #64) | ❌ |
+| **R1a-2** | ✅ `processing_queue`, retry F-4, órfãos F-1/F-2 | ✅ 45 testes + regressão 20/20 | ⚠️ tabela no ar (04/11); worker ❌ | ✅ `8245d63` (PR #62) | ❌ (fila vazia — vacuamente) |
+| **R1a-3** | ✅ correções de isolamento P1 | ✅ testes de isolamento | ❌ não verificado | ✅ `fa56e05` (PR #61) | ❌ (não sondável) |
+| **R1a-4** | ✅ proveniência + dedup por escopo + observação | ✅ 26 testes novos | ✅ schema (04/11) | ✅ `0637788` (PR #65) | ❌ (0 escritas novas) |
+| **Observabilidade da fila** (aceite R1a / validação R1a-2) | ✅ sonda `processing_queue` (`scope_integrity`/`age`/`retry`) | ✅ 6 testes | ❌ não verificado | ❌ em revisão (PR #67) | ❌ (fila vazia) |
 | **R3a–R3c** | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 **O que é incondicional e o que é gateado** (para quando a verificação de
@@ -275,6 +294,23 @@ PRs, um probe read-only deve confirmar (a) que nenhum item de `processing_queue`
 carrega instância/Relation trocados, (b) que o retry de anexo `failed` de fato
 recupera material e (c) que nenhum leitor P1 corrigido voltou a vazar entre
 Relations. Isso é evidência separada e não foi executado aqui.
+
+> **Atualização 2026-11-04 — a (a) ganhou ferramenta, mas segue ❌.**
+> A validação era **inexecutável**: `processing_queue` não tinha probe algum
+> (nem superfície no cockpit). A **PR #67** adiciona a sonda
+> `processing_queue` (`scope_integrity`, `age`, `retry`), atendendo ao aceite
+> literal do R1a — *"fila e idade dos pendentes ficam observáveis"*. Primeira
+> leitura de produção no mesmo dia (dentro do container, `mode=ro`, só
+> metadados; nenhum `payload_json`, `the_gap` ou `content` lido):
+>
+> - **(a)** `rows_missing_instance=0`, `by_agent_instance` só `jung_v1`,
+>   `rows_in_scope = rows_total` — **porém a fila está vazia (0 linhas)**:
+>   é *vacuamente* verdadeira, não *demonstrada* — nunca houve item para
+>   inspecionar. Continua ❌ até a fila ter conteúdo real.
+> - **(b)** não exercitada: anexos 5 + 1 todos `extracted`, nenhum `failed`
+>   para o retry recuperar. Não se fabrica falha para provar. Continua ❌.
+> - **(c)** não é sondável — propriedade de caminho de código, coberta pelos
+>   testes de isolamento do R1a-3; sonda não a altera.
 
 **F-5 permanece aberto** de propósito: é o alvo da taxonomia de origem (R1a-1 pendente / R1a-4), e o Princípio Áureo procura criar a via de "material global autorizado" antes de alimentá-la.
 
