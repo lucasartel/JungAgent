@@ -323,12 +323,27 @@ registradas antes dele. Script pronto e somente-leitura (só contagens, `mode=ro
 | **F-5b** | **Admissão nos writers.** Passar os caminhos auto-declarados pelo predicado (começando por `world_consciousness`). Quem não passar → `relation_private` ou quarentena com motivo (**condição 1: `legacy_unscoped` proibido como destino de recusa nova**). | ✅ recusa · instâncias distintas · consentimento revogado |
 | **F-5c** | **Verificação integrada.** Duas Relations × duas instâncias; revogação/apagamento retiram a contribuição. | — (é a verificação integrada) |
 | **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha a PR #67 (metadados, sem conteúdo). | — |
-| **F-5e** ⚠️ | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | recusa de leitura sem autorização verificável |
+| **F-5e** (requisito de encerramento) | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | recusa de leitura sem autorização verificável |
 
-> **F-5e está além de F-5a…F-5d**, que foi o intervalo aprovado — foi nomeado
-> para que a condição 4 tenha casa própria em vez de ficar solta no contrato.
-> **Confirmar o rótulo antes de implementar.** As condições 1–5 continuam
-> valendo para F-5a..d mesmo sem F-5e.
+> **F-5e é requisito de encerramento do F-5** — decisão do mantenedor em
+> 05/11/2026, que aceitou o rótulo e rejeitou o enquadramento anterior como
+> "complemento opcional". Controlar só os writers novos deixa os registros
+> antigos autodeclarados expostos nos 13 sítios de leitura; **sem F-5e, o F-5
+> não pode ser declarado encerrado.** As condições 1–5 continuam valendo para
+> F-5a..d desde a entrega deles.
+
+**Revisão de 05/11/2026 — 4 achados, todos corrigidos:**
+
+| PR | Sev. | Achado | Correção |
+|---|---|---|---|
+| #69 | **P1** | Consentimento geral era tratado como autorização global: o predicado exigia `consent_status="granted"` e não pedia `scope_json.global_interiority` | rota relação passa a exigir o opt-in; sem ele → `keep_private` (`global_interiority_not_granted`) |
+| #69 | **P1** | Origem ausente ou desconhecida passava pela rota pública (`source_kind="unknown"` + `conversation#123` → `admit_global`); âncora sintaticamente válida não comprova fonte pública | lista explícita `PUBLIC_SOURCE_KINDS` = `{world, work_reading}`; ausente → `public_source_kind_missing`, desconhecida → `public_source_kind_not_allowed` |
+| #69 | P2 | `relation_id` sem `relation_agent_instance` era aceito — ausência presumia pertencimento à instância | instância comprovada obrigatória em qualquer rota que declare vínculo; ausência → `quarantine` (`relation_instance_unverified`) |
+| #67 | P2 | A regex de `last_error` aceitava frases curtas em ASCII: `"User Maria has depression"` saía integral (reproduzida) | lista explícita `ALLOWED_QUEUE_ERROR_CODES`; todo o resto → `has_last_error=True` sem texto |
+
+**F-5a permanece aberto para revisão** e **F-5b segue bloqueado** até #69 ser
+aceita — a orientação do mantenedor foi corrigir #67 e #69 **antes** de
+iniciar F-5b.
 
 **Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
 revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
