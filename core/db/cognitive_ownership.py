@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import asdict, dataclass
-from typing import Iterable, Tuple
+from typing import Iterable, Optional, Tuple
 
 RELATION_PRIVATE = "relation_private"
 INSTANCE_GLOBAL = "instance_global"
@@ -226,6 +226,193 @@ OWNERSHIP_CONTRACTS: Tuple[CognitiveOwnershipContract, ...] = (
        "(writers stamp origin, readers relation-strict); legacy rows stay in "
        "the admin quarantine. output/ files and publication scope follow in C12g."),
 )
+
+
+# ---------------------------------------------------------------------------
+# F-5a — admissao de material global (condicoes do mantenedor, 04/11/2026)
+#
+# Contrato puro: sem banco, sem escrita de dados. Decide se um material PODE
+# NASCER ``authorized_aggregate`` — hoje o rotulo e autodeclarado pelo writer
+# e 13 sitios de leitura confiam nele (inventario F-5).
+#
+# As cinco condicoes do mantenedor ficam codificadas aqui:
+#
+#  1. RECUSA NUNCA vira ``legacy_unscoped``: com vinculo valido -> privado;
+#     sem vinculo -> quarentena com motivo (o writer persiste o marcador).
+#  2. DUAS ROTAS distintas: fonte publica/livro por criterios proprios, SEM
+#     Relation artificial; contribuicao derivada de Relation com
+#     consentimento e proveniencia.
+#  3. CONSENTIMENTO NAO SIGNIFICA DIVULGACAO: admitir como global nao abre
+#     leitura interpessoal, e fala de uma pessoa nao entra pela rota publica.
+#  4. LEITURAS: a regra para material sem autorizacao verificavel e a de
+#     ``UNVERIFIED_GLOBAL_MATERIAL_POLICY``, aplicada aos 13 sitios em F-5e.
+#     Nada aqui reclassifica historico.
+#  5. ISOLAMENTO: recusa, instancias distintas e consentimento revogado sao
+#     testados NESTA entrega (``tests/test_f5a_global_admission.py``).
+#
+# Limite de escopo (decisao do mantenedor): F-5 fecha a ADMISSAO segura do
+# material global. Nao comprova que leituras foram assimiladas nem utilizadas
+# nas conversas — esse aceite e do R1d e continua registrado a parte.
+# ---------------------------------------------------------------------------
+ROUTE_PUBLIC_SOURCE = "public_source"
+ROUTE_RELATION_DERIVED = "relation_derived"
+ADMISSION_ROUTES: Tuple[str, ...] = (ROUTE_PUBLIC_SOURCE, ROUTE_RELATION_DERIVED)
+
+OUTCOME_ADMIT_GLOBAL = "admit_global"
+OUTCOME_KEEP_PRIVATE = "keep_private"
+OUTCOME_QUARANTINE = "quarantine"
+ADMISSION_OUTCOMES: Tuple[str, ...] = (
+    OUTCOME_ADMIT_GLOBAL,
+    OUTCOME_KEEP_PRIVATE,
+    OUTCOME_QUARANTINE,
+)
+
+
+@dataclass(frozen=True)
+class UnverifiedGlobalMaterialPolicy:
+    """Regra de leitura para material global SEM autorizacao verificavel (cond. 4).
+
+    O rótulo ``authorized_aggregate`` gravado sem lastro (registros antigos
+    autodeclarados) **não** é tratado como autorização. As quatro flags abaixo
+    são o que os leitores devem observar — a aplicação aos 13 sítios é F-5e.
+
+    Invariante: ``reclassify_history=False`` — o histórico não é reclassificado
+    automaticamente; ele passa a ser *lido como não verificado*, não apagado.
+    """
+
+    reclassify_history: bool = False
+    instance_scope_readable: bool = True
+    interpersonal_exposure: bool = False
+    counts_as_authorization_evidence: bool = False
+
+
+UNVERIFIED_GLOBAL_MATERIAL_POLICY = UnverifiedGlobalMaterialPolicy()
+
+
+@dataclass(frozen=True)
+class GlobalAdmissionDecision:
+    """Resultado puro da admissão (nenhum dado é escrito por este contrato)."""
+
+    agent_instance: str
+    route: str
+    outcome: str
+    reason: str
+
+    @property
+    def admits_global(self) -> bool:
+        return self.outcome == OUTCOME_ADMIT_GLOBAL
+
+    @property
+    def keeps_private(self) -> bool:
+        return self.outcome == OUTCOME_KEEP_PRIVATE
+
+    @property
+    def requires_quarantine_marker(self) -> bool:
+        return self.outcome == OUTCOME_QUARANTINE
+
+    @property
+    def origin_class(self) -> Optional[str]:
+        """Classe a gravar; ``None`` quando exige marcador de quarentena.
+
+        Invariante da condição 1: o retorno **nunca** é
+        ``legacy_unscoped`` — o writer persiste marcador + motivo quando
+        ``None``, em vez de cair no legado.
+        """
+        if self.admits_global:
+            return AUTHORIZED_AGGREGATE
+        if self.keeps_private:
+            return RELATION_PRIVATE
+        return None
+
+
+def assess_global_admission(
+    *,
+    agent_instance: str,
+    route: str,
+    relation_id: Optional[str] = None,
+    relation_agent_instance: Optional[str] = None,
+    relation_status: Optional[str] = None,
+    consent_status: Optional[str] = None,
+    source_kind: Optional[str] = None,
+    source_refs: Optional[Iterable[str]] = None,
+    private_derived: bool = False,
+) -> GlobalAdmissionDecision:
+    """Avalia se ``material`` pode nascer ``authorized_aggregate``.
+
+    Puro (sem banco): quem chama fornece o estado da Relation e a
+    proveniência. Falha fechada com ``ValueError`` para instância ausente ou
+    rota desconhecida, no mesmo espírito de ``resolve_cognitive_origin``.
+
+    Rotas (condição 2):
+
+    * ``public_source`` — livro/fonte pública por critérios próprios, **sem
+      exigir Relation artificial**; exige origem identificável (refs
+      normalizadas) e material não derivado de conteúdo privado.
+    * ``relation_derived`` — exige vínculo **desta instância**, consentimento
+      ``granted``, relação ``active`` e proveniência.
+
+    Qualquer recusa obedece à condição 1: **com** vínculo válido da própria
+    instância → ``keep_private``; **sem** vínculo → ``quarantine`` (marcador +
+    motivo). ``legacy_unscoped`` nunca é retorno possível.
+    """
+    instance = str(agent_instance or "").strip()
+    if not instance:
+        raise ValueError("agent_instance_required")
+    if route not in ADMISSION_ROUTES:
+        raise ValueError(f"invalid_admission_route:{route}")
+
+    # Import lazy: o modulo continua "runtime-neutral" e o teste de contrato
+    # existente o carrega fora do pacote ``core``.
+    from core.db.cognitive_provenance import normalize_source_refs
+
+    def refuse(reason: str, *, linked: bool) -> GlobalAdmissionDecision:
+        outcome = OUTCOME_KEEP_PRIVATE if linked else OUTCOME_QUARANTINE
+        return GlobalAdmissionDecision(instance, route, outcome, reason)
+
+    linked = bool(str(relation_id or "").strip())
+    foreign = linked and bool(str(relation_agent_instance or "").strip()) and (
+        str(relation_agent_instance).strip() != instance
+    )
+    has_provenance = bool(normalize_source_refs(source_refs))
+
+    # Vínculo de OUTRA instância não é vínculo desta: instâncias distintas
+    # nunca compartilham autorização (condição 5).
+    if foreign:
+        return refuse("relation_from_other_instance", linked=False)
+
+    relation_routed = route == ROUTE_RELATION_DERIVED or private_derived
+
+    if relation_routed:
+        if not linked:
+            reason = (
+                "private_derived_without_relation"
+                if private_derived
+                else "relation_route_without_relation"
+            )
+            return refuse(reason, linked=False)
+        # Vínculo válido desta instância: recusa mantém PRIVADO (condição 1).
+        if str(consent_status or "").strip().lower() != "granted":
+            return refuse("consent_not_granted", linked=True)
+        if str(relation_status or "").strip().lower() != "active":
+            return refuse("relation_not_active", linked=True)
+        if not has_provenance:
+            return refuse("missing_provenance", linked=True)
+        return GlobalAdmissionDecision(
+            instance, route, OUTCOME_ADMIT_GLOBAL, "relation_consent_and_provenance"
+        )
+
+    # Rota pública (condição 2): critérios próprios, sem Relation.
+    # `private_derived` já forçou a rota relação acima — aqui é sempre False.
+    from core.db.source_kinds import CONVERSATION
+
+    if str(source_kind or "").strip() == CONVERSATION:
+        # Condição 3: fala de uma pessoa não vira global pela rota pública.
+        return refuse("route_mismatch_use_relation_route", linked=linked)
+    if not has_provenance:
+        return refuse("public_source_not_identified", linked=linked)
+    return GlobalAdmissionDecision(
+        instance, route, OUTCOME_ADMIT_GLOBAL, "public_source_identified"
+    )
 
 
 def validate_ownership_contracts(
