@@ -321,7 +321,7 @@ registradas antes dele. Script pronto e somente-leitura (só contagens, `mode=ro
 |---|---|---|
 | **F-5a** | **Contrato de elegibilidade.** Predicado no contrato canônico com **duas rotas** (condição 2): **(A)** fonte pública/livro → `authorized_aggregate` por **critérios próprios**, **sem Relation artificial**; **(B)** contribuição derivada de Relation → exige consentimento vigente **e** proveniência. **Recusa** (condição 1): com vínculo válido → mantém `relation_private`; sem vínculo → **quarentena explícita com motivo persistido** — **nunca `legacy_unscoped`**. Define ainda a **regra de leitura** (condição 4) para material sem autorização verificável. Sem escrita de dados. | ✅ recusa · instâncias distintas · consentimento revogado |
 | **F-5b** | **Admissão nos writers.** Passar os caminhos auto-declarados pelo predicado (começando por `world_consciousness`). Quem não passar → `relation_private` ou quarentena com motivo (**condição 1: `legacy_unscoped` proibido como destino de recusa nova**). | ✅ recusa · instâncias distintas · consentimento revogado |
-| **F-5c** | **Verificação integrada.** Duas Relations × duas instâncias; revogação/apagamento retiram a contribuição. | **Entregue: 18 passam — P1 de revogação corrigida com o gate canônico (sentinela verde, sem `xfail`); 1 falha apresentada sem reparo (produtor escreve após revogação)** |
+| **F-5c** | **Verificação integrada.** Duas Relations × duas instâncias; revogação/apagamento retiram a contribuição. | **Entregue: 27 testes sem `xfail` — P1 do reader E do produtor corrigidos com o gate canônico; ambos os casos pegos pelas sentinelas** |
 | **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha a PR #67 (metadados, sem conteúdo). | — |
 | **F-5e** (requisito de encerramento) | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | recusa de leitura sem autorização verificável |
 
@@ -418,11 +418,14 @@ completa de leitores do F-5e, conforme orientação do mantenedor.
 
 #### F-5c — Verificação integrada (05/11/2026)
 
-**Status (revisão do mantenedor, 05/11/2026)**: a **P1 de revogação foi
-corrigida nesta entrega** com o gate canônico e a sentinela passa
-**normalmente** (sem `xfail`) — é condição de aprovação do F-5c. Uma nova
-falha foi **confirmada e apresentada sem reparo** (ver abaixo). F-5d e F-5e
-continuam **pendentes e obrigatórios** para o encerramento do F-5.
+**Status (revisão do mantenedor, 05/11/2026)**: **ambas as P1 foram
+corrigidas nesta entrega** com o gate canônico — o **reader** (revogação) e
+os **produtores** (`add_knowledge_gap`, `upsert_epistemic_knowledge_gap`).
+As sentinelas passam **normalmente, sem `xfail`** — condição de aprovação do
+F-5c. A falha do produtor foi **apresentada antes** do reparo e reparada
+**depois da autorização**, no mesmo limite: produtores de `knowledge_gaps`,
+sem reforma geral. F-5d e F-5e continuam **pendentes e obrigatórios** para o
+encerramento do F-5.
 Nenhuma alteração de ambiente de produção nesta entrega: Railway não foi
 tocado; o deploy segue sendo responsabilidade do mantenedor.
 
@@ -443,8 +446,8 @@ writers que podem nascer `authorized_aggregate`:
 
 | Dimensão | Estado |
 |---|---|
-| **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c (esta entrega): 18 sentinelas **+ reparo do reader** `core/db/knowledge_gaps.py` (gate canônico) |
-| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c **18 (sentinela de revogação verde)** · regressão mock 20/20 · suíte completa **1410 passed** |
+| **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c (esta entrega): **reader + produtores** (`add_knowledge_gap`, `upsert_epistemic_knowledge_gap`) protegidos pelo gate canônico em `core/db/knowledge_gaps.py` |
+| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c **27 (18 sentinelas + 9 dos produtores, nenhum `xfail`)** · regressão mock 20/20 · suíte completa **1419 passed** |
 | **Publicado** | ✅ F-5a/b mergeadas em `main` com deploy Railway `SUCCESS` |
 | **Validado em operação** | ❌ **não verificado** — o deploy confirma *execução*, não aceite operacional; sondas de produção seguem pendentes de `railway login` |
 
@@ -487,11 +490,9 @@ inelegivel, e que a recusa de Relation **nao** cai no escopo global.
 admissao sem consentimento; `test_raw_scope_value_is_never_coerced_by_truthiness`
 trava isso com `scope={"global_interiority": "false"}` → `ValueError`.
 
-##### Falha CONFIRMADA em outro ponto — apresentada antes de ampliar o reparo
+##### [P1] O produtor escrevia após revogação — CORRIGIDO nesta entrega
 
-**[P1] O produtor de lacunas continua escrevendo após revogação.**
-
-Reprodução (executada):
+**Como foi encontrada** (reprodução executada):
 
 ```python
 rel = db.register_agent_relation(..., consent_status="granted")
@@ -506,15 +507,35 @@ n1 = COUNT(knowledge_gaps)                                    # → 1  ✗
 **Causa**: `add_knowledge_gap` → `resolve_cognitive_origin` → `resolve_relation_id`,
 que devolve o id **sem checar elegibilidade**. A política C12g diz
 "uma Relation só **lê/produz** conteúdo quando ativa e com consentimento
-concedido" — a leitura passou a obedecer (reparo acima); a **produção** ainda não.
+concedido" — a leitura já obedecia (reparo acima); a **produção** ainda não.
 
-**Corte responsável**: mesmo gate único de revogação C12g (`a657f94`) — o
-lado da escrita ficou de fora da varredura.
+**Reparo (aprovado pelo mantenedor em 05/11/2026)**: `add_knowledge_gap` e
+`upsert_epistemic_knowledge_gap` agora chamam o **gate canônico**
+`require_eligible_relation` **após** resolver/validar o vínculo e **antes** de
+qualquer `INSERT` ou atualização por deduplicação (`observe_gap_occurrence`).
+O import é o protegido no topo do módulo, seguindo o padrão *direct-file*
+já usado por `cognitive_provenance` e `source_kinds` — sem quebrar os testes
+que carregam `knowledge_gaps.py` isolado.
 
-**Tratamento**: **apresentado, não reparado** — conforme a orientação do
-mantenedor, nenhuma ampliação do reparo antes de decisão. Nenhum teste
-pendente de `xfail` foi criado para ele; o reparo e a sentinela vêm juntos,
-após aprovação.
+**Na recusa**: `logger.warning` com usuário, instância, relação e motivo —
+**sem conteúdo pessoal** — e retorno `None` (contrato `Optional[int]`): nunca
+um ID que pareça sucesso. Vínculo de outra instância continua `ValueError`
+(`relation_agent_instance_mismatch`): argumento inválido, não política de
+consentimento.
+
+**Sentinelas — `tests/test_f5c_producer_gate.py`, 9 testes, SEM `xfail`:**
+
+| Cenário | O que prova |
+|---|---|
+| revogação · pausa · consentimento pendente | **nenhuma linha nova** **e** nenhuma mutação de âncoras, contadores e timestamps na linha existente (`observation_count`, `source_refs_json`, `last_observed_at`) |
+| vínculo explícito | gate nos dois produtores |
+| resolução automática (sem `relation_id`) | gate vale igualmente |
+| outra instância | `ValueError`, sem nenhuma linha |
+| sem fallback | a recusa não produz linha em `authorized_aggregate`, `instance_global` **nem** `legacy_unscoped` |
+| **controles** | fonte pública independente e Relation elegível seguem gravando e deduplicando |
+
+**Prova de que as sentinelas pegam o bug**: com os dois gates removidos
+temporariamente, **6 dos 9 testes falham**; restaurados, 9/9 verdes.
 
 ##### Correção de expectativa no teste de apagamento
 
