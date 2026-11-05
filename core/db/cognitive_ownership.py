@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import asdict, dataclass
-from typing import Iterable, Tuple
+from typing import Any, Iterable, Optional, Tuple
 
 RELATION_PRIVATE = "relation_private"
 INSTANCE_GLOBAL = "instance_global"
@@ -226,6 +226,296 @@ OWNERSHIP_CONTRACTS: Tuple[CognitiveOwnershipContract, ...] = (
        "(writers stamp origin, readers relation-strict); legacy rows stay in "
        "the admin quarantine. output/ files and publication scope follow in C12g."),
 )
+
+
+# ---------------------------------------------------------------------------
+# F-5a — admissao de material global (condicoes do mantenedor, 04/11/2026)
+#
+# Contrato puro: sem banco, sem escrita de dados. Decide se um material PODE
+# NASCER ``authorized_aggregate`` — hoje o rotulo e autodeclarado pelo writer
+# e 13 sitios de leitura confiam nele (inventario F-5).
+#
+# As cinco condicoes do mantenedor ficam codificadas aqui:
+#
+#  1. RECUSA NUNCA vira ``legacy_unscoped``: com vinculo valido -> privado;
+#     sem vinculo -> quarentena com motivo (o writer persiste o marcador).
+#  2. DUAS ROTAS distintas: fonte publica/livro por criterios proprios, SEM
+#     Relation artificial; contribuicao derivada de Relation com
+#     consentimento e proveniencia.
+#  3. CONSENTIMENTO NAO SIGNIFICA DIVULGACAO: admitir como global nao abre
+#     leitura interpessoal, e fala de uma pessoa nao entra pela rota publica.
+#  4. LEITURAS: a regra para material sem autorizacao verificavel e a de
+#     ``UNVERIFIED_GLOBAL_MATERIAL_POLICY``, aplicada aos 13 sitios em F-5e.
+#     Nada aqui reclassifica historico.
+#  5. ISOLAMENTO: recusa, instancias distintas e consentimento revogado sao
+#     testados NESTA entrega (``tests/test_f5a_global_admission.py``).
+#
+# Revisao 05/11/2026 (4 achados corrigidos aqui):
+#  - P1: consentimento GERAL nao e autorizacao global — a rota relacao
+#        exige tambem o opt-in ``scope_json.global_interiority``;
+#  - P1: origem ausente/desconhecida passava pela rota publica — agora e
+#        lista explicita ``PUBLIC_SOURCE_KINDS``;
+#  - P1: ``if not global_interiority`` usava a verdade generica de Python
+#        (``"false"``/``"0"``/``[False]`` eram truthy e admitiam) — agora e
+#        ``explicit_flag``, com conjunto afirmativo ``{True, 1}``;
+#  - P2: ``relation_id`` sem ``relation_agent_instance`` era aceito —
+#        ausencia de instancia comprovada recusa em vez de presumir.
+#
+# Limite de escopo (decisao do mantenedor): F-5 fecha a ADMISSAO segura do
+# material global. Nao comprova que leituras foram assimiladas nem utilizadas
+# nas conversas — esse aceite e do R1d e continua registrado a parte.
+# ---------------------------------------------------------------------------
+ROUTE_PUBLIC_SOURCE = "public_source"
+ROUTE_RELATION_DERIVED = "relation_derived"
+ADMISSION_ROUTES: Tuple[str, ...] = (ROUTE_PUBLIC_SOURCE, ROUTE_RELATION_DERIVED)
+
+# Lista EXPLICITA de ``source_kind`` que a rota publica aceita (cond. 2 +
+# revisao 05/11/2026): referencia sintaticamente valida nao comprova fonte
+# publica, e origem ausente tambem e recusada. Add aqui e mudanca de
+# contrato, nao ajuste de filtro. Valores verificados nos writers reais:
+# ``world`` (world_consciousness) e ``work_reading`` (work/persistence).
+PUBLIC_SOURCE_KINDS = frozenset({"world", "work_reading"})
+
+OUTCOME_ADMIT_GLOBAL = "admit_global"
+OUTCOME_KEEP_PRIVATE = "keep_private"
+OUTCOME_QUARANTINE = "quarantine"
+ADMISSION_OUTCOMES: Tuple[str, ...] = (
+    OUTCOME_ADMIT_GLOBAL,
+    OUTCOME_KEEP_PRIVATE,
+    OUTCOME_QUARANTINE,
+)
+
+
+@dataclass(frozen=True)
+class UnverifiedGlobalMaterialPolicy:
+    """Regra de leitura para material global SEM autorizacao verificavel (cond. 4).
+
+    O rótulo ``authorized_aggregate`` gravado sem lastro (registros antigos
+    autodeclarados) **não** é tratado como autorização. As quatro flags abaixo
+    são o que os leitores devem observar — a aplicação aos 13 sítios é F-5e.
+
+    Invariante: ``reclassify_history=False`` — o histórico não é reclassificado
+    automaticamente; ele passa a ser *lido como não verificado*, não apagado.
+    """
+
+    reclassify_history: bool = False
+    instance_scope_readable: bool = True
+    interpersonal_exposure: bool = False
+    counts_as_authorization_evidence: bool = False
+
+
+UNVERIFIED_GLOBAL_MATERIAL_POLICY = UnverifiedGlobalMaterialPolicy()
+
+
+@dataclass(frozen=True)
+class GlobalAdmissionDecision:
+    """Resultado puro da admissão (nenhum dado é escrito por este contrato)."""
+
+    agent_instance: str
+    route: str
+    outcome: str
+    reason: str
+
+    @property
+    def admits_global(self) -> bool:
+        return self.outcome == OUTCOME_ADMIT_GLOBAL
+
+    @property
+    def keeps_private(self) -> bool:
+        return self.outcome == OUTCOME_KEEP_PRIVATE
+
+    @property
+    def requires_quarantine_marker(self) -> bool:
+        return self.outcome == OUTCOME_QUARANTINE
+
+    @property
+    def origin_class(self) -> Optional[str]:
+        """Classe a gravar; ``None`` quando exige marcador de quarentena.
+
+        Invariante da condição 1: o retorno **nunca** é
+        ``legacy_unscoped`` — o writer persiste marcador + motivo quando
+        ``None``, em vez de cair no legado.
+        """
+        if self.admits_global:
+            return AUTHORIZED_AGGREGATE
+        if self.keeps_private:
+            return RELATION_PRIVATE
+        return None
+
+
+# Representacoes afirmativas EXPLICITAS para flags booleanas.
+#
+# Coerente com a regra SQL de ``core/rumination_interiority.py``:
+#     json_extract(scope_json, '$.global_interiority') = 1
+# ``json_extract`` devolve o inteiro ``1`` para JSON ``true`` — dai o
+# conjunto ``{True, 1}``. Ele e **subconjunto** do que o SQL aceita (o SQL
+# tambem casa ``'1'`` e ``1.0`` por afinidade): o predicado e deliberadamente
+# mais estrito, nunca admitindo o que a regra SQL negaria.
+AFFIRMATIVE_FLAG_VALUES = frozenset({True, 1})
+NEGATIVE_FLAG_VALUES = frozenset({False, 0})
+
+
+def explicit_flag(value: Any, *, param: str, absent: bool) -> bool:
+    """Interpreta uma flag booleana sem a verdade generica de Python.
+
+    Revisao 05/11/2026 (P1): ``if not global_interiority`` usava a avaliacao
+    booleana generica — ``"false"``, ``"0"`` e ``[False]`` sao *truthy* e
+    fariam o predicado ADMITIR material sem consentimento. A anotacao ``bool``
+    nao valida nada em tempo de execucao.
+
+    Regras:
+
+    * ``True``/``1`` → afirmativa; ``False``/``0`` → negativa;
+    * ``None`` → ``absent``: ausência de consentimento não é consentimento,
+      e ausência de flag de privacidade assume o lado seguro;
+    * qualquer outro tipo (str, list, dict, float, int fora de 0/1) é
+      **ambíguo** e recusado com ``ValueError`` — nunca é interpretado como
+      consentimento.
+    """
+    if isinstance(value, bool):  # antes de int: bool subclasse de int
+        return value
+    if isinstance(value, int):  # inteiro nao-bool
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        raise ValueError(f"ambiguous_flag:{param}")
+    if value is None:
+        return absent
+    raise ValueError(f"ambiguous_flag:{param}")
+
+
+def assess_global_admission(
+    *,
+    agent_instance: str,
+    route: str,
+    relation_id: Optional[str] = None,
+    relation_agent_instance: Optional[str] = None,
+    relation_status: Optional[str] = None,
+    consent_status: Optional[str] = None,
+    global_interiority: bool = False,
+    source_kind: Optional[str] = None,
+    source_refs: Optional[Iterable[str]] = None,
+    private_derived: bool = False,
+) -> GlobalAdmissionDecision:
+    """Avalia se ``material`` pode nascer ``authorized_aggregate``.
+
+    Puro (sem banco): quem chama fornece o estado da Relation e a
+    proveniência. Falha fechada com ``ValueError`` para instância ausente ou
+    rota desconhecida, no mesmo espírito de ``resolve_cognitive_origin``.
+
+    Rotas (condição 2):
+
+    * ``public_source`` — livro/fonte pública por critérios próprios, **sem
+      exigir Relation artificial**; exige ``source_kind`` na lista explícita
+      ``PUBLIC_SOURCE_KINDS``, origem identificável (refs normalizadas) e
+      material não derivado de conteúdo privado. **Origem ausente ou
+      desconhecida é recusada** — uma referência sintaticamente válida não
+      comprova fonte pública.
+    * ``relation_derived`` — exige vínculo **desta instância comprovado**
+      (``relation_agent_instance`` obrigatório quando há ``relation_id``),
+      consentimento ``granted``, opt-in ``global_interiority``, relação
+      ``active`` e proveniência.
+
+    Consentimento geral ≠ autorização global: sem ``global_interiority``
+    (``agent_relations.scope_json``) o material fica privado nesta Relation.
+    Flags booleanas passam por ``explicit_flag``: só ``True``/``1`` e
+    ``False``/``0``; tipos ambíguos (``"false"``, ``"0"``, ``[False]``) são
+    recusados com ``ValueError`` e nunca interpretados como consentimento.
+
+    Qualquer recusa obedece à condição 1: **com** vínculo comprovado da
+    própria instância → ``keep_private``; **sem** vínculo comprovado →
+    ``quarantine`` (marcador + motivo). ``legacy_unscoped`` nunca é retorno
+    possível.
+    """
+    instance = str(agent_instance or "").strip()
+    if not instance:
+        raise ValueError("agent_instance_required")
+    if route not in ADMISSION_ROUTES:
+        raise ValueError(f"invalid_admission_route:{route}")
+
+    # Flags validadas de forma EXPLICITA (revisao 05/11/2026): a anotacao
+    # ``bool`` nao valida em execucao e a verdade generica de Python admitiria
+    # ``"false"``/``"0"``/``[False]`` como consentimento. Ausencia resolve
+    # para o lado seguro de cada flag.
+    interiority = explicit_flag(
+        global_interiority, param="global_interiority", absent=False
+    )
+    derived = explicit_flag(private_derived, param="private_derived", absent=True)
+
+    # Import lazy: o modulo continua "runtime-neutral" e o teste de contrato
+    # existente o carrega fora do pacote ``core``.
+    from core.db.cognitive_provenance import normalize_source_refs
+
+    def refuse(reason: str, *, linked: bool) -> GlobalAdmissionDecision:
+        outcome = OUTCOME_KEEP_PRIVATE if linked else OUTCOME_QUARANTINE
+        return GlobalAdmissionDecision(instance, route, outcome, reason)
+
+    linked = bool(str(relation_id or "").strip())
+    link_instance = str(relation_agent_instance or "").strip()
+    has_provenance = bool(normalize_source_refs(source_refs))
+
+    # Revisão 05/11/2026 (P2): vínculo SEM instância comprovada não admite.
+    # A ausência de ``relation_agent_instance`` não prova que a Relation
+    # pertence a esta instância — recusa em vez de presumir.
+    if linked and not link_instance:
+        return refuse("relation_instance_unverified", linked=False)
+
+    foreign = linked and link_instance != instance
+
+    # Vínculo de OUTRA instância não é vínculo desta: instâncias distintas
+    # nunca compartilham autorização (condição 5).
+    if foreign:
+        return refuse("relation_from_other_instance", linked=False)
+
+    relation_routed = route == ROUTE_RELATION_DERIVED or derived
+
+    if relation_routed:
+        if not linked:
+            reason = (
+                "private_derived_without_relation"
+                if derived
+                else "relation_route_without_relation"
+            )
+            return refuse(reason, linked=False)
+        # Vínculo válido desta instância: recusa mantém PRIVADO (condição 1).
+        if str(consent_status or "").strip().lower() != "granted":
+            return refuse("consent_not_granted", linked=True)
+        # Revisão 05/11/2026 (P1): consentimento GERAL para interagir não é
+        # autorização de contribuir ao global. O opt-in específico
+        # ``scope_json.global_interiority`` é a autorização real (inventário
+        # F-5); sem ele o material fica PRIVADO nesta Relation. A comparação
+        # usa ``interiority`` (validada por ``explicit_flag``), nunca a
+        # verdade genérica de Python.
+        if not interiority:
+            return refuse("global_interiority_not_granted", linked=True)
+        if str(relation_status or "").strip().lower() != "active":
+            return refuse("relation_not_active", linked=True)
+        if not has_provenance:
+            return refuse("missing_provenance", linked=True)
+        return GlobalAdmissionDecision(
+            instance, route, OUTCOME_ADMIT_GLOBAL, "relation_consent_and_provenance"
+        )
+
+    # Rota pública (condição 2): critérios próprios, sem Relation.
+    # `private_derived` já forçou a rota relação acima — aqui é sempre False.
+    from core.db.source_kinds import CONVERSATION
+
+    kind = str(source_kind or "").strip()
+    if not kind:
+        # Revisão 05/11/2026 (P1): origem AUSENTE também é recusada.
+        return refuse("public_source_kind_missing", linked=linked)
+    if kind == CONVERSATION:
+        # Condição 3: fala de uma pessoa não vira global pela rota pública.
+        return refuse("route_mismatch_use_relation_route", linked=linked)
+    if kind not in PUBLIC_SOURCE_KINDS:
+        # Revisão 05/11/2026 (P1): fonte desconhecida não é fonte pública.
+        return refuse("public_source_kind_not_allowed", linked=linked)
+    if not has_provenance:
+        return refuse("public_source_not_identified", linked=linked)
+    return GlobalAdmissionDecision(
+        instance, route, OUTCOME_ADMIT_GLOBAL, "public_source_identified"
+    )
 
 
 def validate_ownership_contracts(
