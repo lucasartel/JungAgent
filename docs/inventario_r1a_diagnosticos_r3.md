@@ -230,6 +230,40 @@ propósito na R1a-4 — o Princípio Áureo procura *criar* a via antes de alime
 *"Implementar uma via explícita para material global autorizado, distinta da via
 privada e do legado sem classificação"*. Não abre capacidade nova.
 
+#### Limite de escopo (registrado a pedido do mantenedor)
+
+F-5 fecha a **admissão segura** do material global — *quem pode nascer global*.
+**Não comprova** que leituras do Work foram **assimiladas nem utilizadas nas
+conversas**. Essa é uma afirmação diferente, com aceite próprio (**R1d**):
+continuidade de investigação, transferência e uso conversacional. Nada em F-5
+pode ser lido como esse aceite, e os dois status continuam registrados à parte.
+
+#### Condições do mantenedor (04/11/2026) — incorporadas ao contrato
+
+Aprovação da decomposição **com cinco ajustes**, que passam a valer como
+requisitos de cada subcorte:
+
+1. **Recusa não vira legado.** `legacy_unscoped` é destino **apenas** de
+   histórico não classificado, nunca de falha nova. Material novo recusado
+   **permanece privado** quando houver vínculo válido, ou entra em
+   **quarentena explícita com motivo persistido**. `legacy_unscoped` não pode
+   funcionar como destino conveniente para admissão negada.
+2. **Duas rotas de admissão distintas.** (A) **livros e fontes públicas** podem
+   nascer global mediante **critérios próprios** — sem exigir uma Relation
+   artificial para um livro; (B) **contribuições derivadas de relações** exigem
+   consentimento e proveniência.
+3. **Consentimento não significa divulgação.** O opt-in de interioridade
+   autoriza **contribuir com a interioridade agregada**; **não** autoriza expor
+   conteúdo pessoal a outros interlocutores. Admissão global não abre leitura
+   interpessoal.
+4. **Leituras também protegidas.** Controlar writers novos **não** corrige
+   registros antigos autodeclarados. O plano **define** o tratamento das
+   leituras para material **sem autorização verificável**, **sem reclassificar
+   o histórico automaticamente**.
+5. **Testes de isolamento em cada entrega.** F-5c é a verificação integrada,
+   mas **F-5a e F-5b já entregam** testes de recusa, instâncias distintas e
+   consentimento revogado.
+
 #### Achado central
 
 **Não existe predicado de elegibilidade para material global autorizado.** O
@@ -267,23 +301,43 @@ caminho cuja declaração tem lastro.
 #### ⚠️ Medições de produção pendentes
 
 Contagens reais de `ownership_class`/`origin_class` por tabela e o nº de
-Relations com `global_interiority=true` **não foram coletadas**: o token do
-Railway expirou (`railway login` — credencial/keychain local, não é minha de
-resolver). Script pronto e somente-leitura (só contagens, mode=ro): registrar
-os números antes do aceite.
+Relations com `global_interiority=true` **não foram coletadas**.
 
-#### Decomposição proposta — para aprovação antes de codar
+**Diagnóstico de acesso (corrigido em 04/11/2026 — a leitura anterior estava
+forte demais).** `railway status` funciona (config cacheado), mas `whoami` e
+`ssh` falham com `failed to refresh OAuth token: Operation not permitted
+(os error 1)`; `~/.railway/config.json` existe e é legível. **EPERM no refresh
+não comprova token expirado** — indica que a CLI não conseguiu renovar
+(permissão/keychain do SO). A verificação de acesso é ação do mantenedor
+(`railway login`), **sem contornar a proteção de credenciais**.
 
-| Subcorte | Escopo | Entrega |
+**Não bloqueia o desenvolvimento**: F-5a–F-5b se desenvolvem e testam offline.
+As contagens são **necessárias para o aceite operacional** e devem ser
+registradas antes dele. Script pronto e somente-leitura (só contagens, `mode=ro`).
+
+#### Decomposição revisada (aprovada em 04/11/2026 com as 5 condições)
+
+| Subcorte | Escopo | Testes já nesta entrega |
 |---|---|---|
-| **F-5a** | **Contrato de elegibilidade.** Predicado `is_global_material_authorized(...)` no contrato canônico: quais origens podem nascer `authorized_aggregate`; convergência com `global_interiority` quando a origem é relacional; recusa explícita de `relation_private → global` e de `origem desconhecida → global`. Sem escrita de dados. | Predicado + testes estruturais |
-| **F-5b** | **Admissão nos writers.** Passar os caminhos auto-declarados pelo predicado (começando por `world_consciousness`, o maior). Quem não passar nasce `legacy_unscoped`/`relation_private`, nunca `authorized_aggregate`. | Gates por caminho + testes |
-| **F-5c** | **Sentinelas.** Duas Relations × duas instâncias: nenhum conteúdo privado vira global; revogação/apagamento retiram a contribuição. | Sentinelas |
-| **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha o padrão da PR #67 (metadados, sem conteúdo). | Probe |
+| **F-5a** | **Contrato de elegibilidade.** Predicado no contrato canônico com **duas rotas** (condição 2): **(A)** fonte pública/livro → `authorized_aggregate` por **critérios próprios**, **sem Relation artificial**; **(B)** contribuição derivada de Relation → exige consentimento vigente **e** proveniência. **Recusa** (condição 1): com vínculo válido → mantém `relation_private`; sem vínculo → **quarentena explícita com motivo persistido** — **nunca `legacy_unscoped`**. Define ainda a **regra de leitura** (condição 4) para material sem autorização verificável. Sem escrita de dados. | ✅ recusa · instâncias distintas · consentimento revogado |
+| **F-5b** | **Admissão nos writers.** Passar os caminhos auto-declarados pelo predicado (começando por `world_consciousness`). Quem não passar → `relation_private` ou quarentena com motivo (**condição 1: `legacy_unscoped` proibido como destino de recusa nova**). | ✅ recusa · instâncias distintas · consentimento revogado |
+| **F-5c** | **Verificação integrada.** Duas Relations × duas instâncias; revogação/apagamento retiram a contribuição. | — (é a verificação integrada) |
+| **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha a PR #67 (metadados, sem conteúdo). | — |
+| **F-5e** ⚠️ | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | recusa de leitura sem autorização verificável |
+
+> **F-5e está além de F-5a…F-5d**, que foi o intervalo aprovado — foi nomeado
+> para que a condição 4 tenha casa própria em vez de ficar solta no contrato.
+> **Confirmar o rótulo antes de implementar.** As condições 1–5 continuam
+> valendo para F-5a..d mesmo sem F-5e.
+
+**Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
+revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
 
 **Fora do escopo de F-5**: projeção de conteúdo privado → global com revisão e
 política de retratação. Isso é o R1 completo (R1b/R1c) e exige decisão própria;
 F-5 só fecha *quem pode declarar* global, não converte privado em global.
+Além disso — e por decisão do mantenedor — F-5 **não** comprova assimilação nem
+uso das leituras nas conversas (ver *Limite de escopo* acima).
 
 ### R3 — Corretivos (3 subcortes)
 
