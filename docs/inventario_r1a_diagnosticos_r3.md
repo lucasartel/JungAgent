@@ -341,9 +341,53 @@ registradas antes dele. Script pronto e somente-leitura (só contagens, `mode=ro
 | #69 | P2 | `relation_id` sem `relation_agent_instance` era aceito — ausência presumia pertencimento à instância | instância comprovada obrigatória em qualquer rota que declare vínculo; ausência → `quarantine` (`relation_instance_unverified`) |
 | #67 | P2 | A regex de `last_error` aceitava frases curtas em ASCII: `"User Maria has depression"` saía integral (reproduzida) | lista explícita `ALLOWED_QUEUE_ERROR_CODES`; todo o resto → `has_last_error=True` sem texto |
 
-**F-5a permanece aberto para revisão** e **F-5b segue bloqueado** até #69 ser
-aceita — a orientação do mantenedor foi corrigir #67 e #69 **antes** de
-iniciar F-5b.
+**Status em 05/11/2026**: F-5a foi **aceito e mergeado** — #67 `9805798`,
+#68 `f91c0dc`, #69 `92b8f7a`; deploy Railway `SUCCESS`, endpoint `healthy`,
+bot e agendadores iniciados. **F-5b está em andamento.**
+
+#### F-5b — Fluxo do writer `world_consciousness` (registrado antes de codar)
+
+**Branch** `feat/f5b-world-admission` · **Escopo** apenas
+`_persist_epistemic_knowledge_gap` · registrado em 05/11/2026 **antes de
+qualquer alteração de código**.
+
+**Pontos de escrita atuais**
+
+| Ponto | O que faz hoje |
+|---|---|
+| `world_consciousness.py:423` (`INSERT INTO knowledge_gaps`) | único INSERT do arquivo; caminho de conexão próprio; **sempre** `ownership_class='instance_global'`, `origin_class='authorized_aggregate'` (literal), `source_kind='world'`, `origin_quarantined=0` |
+| `world_consciousness.py:566` (`UPDATE`) | fechamento de lacuna — **fora** do F-5b |
+| chamador `:2429` | fase `world`; repassa `resolved_will_state` de `_resolve_will_state` |
+| recorrência (R1a-4) | `observe_gap_occurrence` antes do INSERT; `IntegrityError` → observa na linha vencedora |
+
+Hoje **não há consulta de elegibilidade**: o rótulo é autodeclarado — exatamente a lacuna F-5.
+
+**Fluxo alvo**
+
+1. `source_refs = ["will#<id>"]` quando `will_state.id` é numérico; **sem id → lista vazia**;
+2. `assess_global_admission(route=public_source, source_kind="world", source_refs, private_derived=False)`;
+3. `ValueError` → `logger.warning` com contexto (instância, usuário, motivo) → `return None`: **sem escrita, sem fallback de promoção, sem propagar erro à conversa**;
+4. `admits_global` → `origin_class='authorized_aggregate'`, `origin_quarantined=0`;
+5. recusa → `origin_class='instance_global'`, `origin_quarantined=1`, motivo persistido em `provenance_json`;
+6. dedup, âncoras e contadores: **inalterados** (R1a-4).
+
+**Resultados esperados**
+
+| Situação | `source_refs` | Decisão | Gravação |
+|---|---|---|---|
+| `will_state.id` numérico | `["will#N"]` | `admit_global` | `authorized_aggregate` · `origin_quarantined=0` |
+| sem id ou id não numérico | `[]` | `quarantine` (`public_source_not_identified`) | `instance_global` · `origin_quarantined=1` + motivo |
+| entrada inválida (flag ambígua, instância vazia, rota desconhecida) | — | `ValueError` | **nenhuma escrita** — log rastreável, conversa segue |
+| mesma pergunta chegando de novo | — | recorrência R1a-4 | mesma linha: âncoras somadas, contador +1 |
+
+**Decisão de design explícita — ponto de revisão**
+
+- **`dedup_key` mantém o token `origin_class='authorized_aggregate'`**, inalterado, enquanto a **coluna** passa a refletir o resultado da admissão. Motivo: a chave embute `origin_class`, e trocá-la por `instance_global` **quebraria garantia do R1a-4** — `test_world_and_mixin_concurrent_recurrence_counts_once` escreve via mixin com `authorized_aggregate`; duas chaves distintas dariam **duas linhas** para a mesma pergunta. Verificado que **nada faz parse de `dedup_key`** (token de unicidade opaco). O estado de autorização vive em `origin_class` + `origin_quarantined`.
+- Recusa grava `instance_global`, **não** `authorized_aggregate`: o predicado devolve `origin_class=None` (nenhuma classe concedida) e `legacy_unscoped` é proibido pela condição 1. `instance_global` é a única classe restante que **não afirma autorização** nem pertence a Relation. Confirmado que `get_active_knowledge_gaps` aceita as duas classes igualmente e bloqueia pelo flag `origin_quarantined = 0` — ou seja, o flag é o mecanismo; a classe é honestidade do registro.
+
+**Achado para F-5e** (não é deste corte): `engines/integrative_self.py:361` lê `knowledge_gaps` **sem** filtrar `origin_quarantined` — uma lacuna em quarentena com `status='resolved'` seria exposta pelo ISM; `admin_web/routes/research_lab_memory.py:179` idem (atrás de `require_master`). Tratar em F-5e.
+
+**Fora do escopo**: nenhuma reclassificação ou reprocessamento de histórico; nenhum envio de mensagem; nenhuma alteração de produção. **F-5e continua obrigatório para encerrar F-5**, e este corte **não comprova assimilação nem uso das leituras nas conversas**.
 
 **Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
 revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
