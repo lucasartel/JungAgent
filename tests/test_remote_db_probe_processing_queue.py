@@ -2,12 +2,13 @@
 
 Cobre o criterio de aceite de R1a — "fila e idade dos pendentes ficam
 observáveis" — e a validacao de tenancy pendente do R1a-2 (nenhum item com
-instancia/Relation trocados). A regra de privacidade (payload_nunca e
-last_error so como token estruturado) e travada aqui.
+instancia/Relation trocados). A regra de privacidade (payload nunca e
+last_error so da lista EXPLICITITA de codigos do sistema) e travada aqui.
 
 A semantica de escrita da fila (claim, backoff, esgotamento) e coberta por
 `tests/test_r1a2_processing_queue.py`; estes testes cuidam da LEITURA.
 """
+import json
 import sys
 from argparse import Namespace
 from datetime import datetime, timedelta, timezone
@@ -108,13 +109,15 @@ def test_probe_reports_status_age_and_attempts_without_payload(in_memory_conn):
     # e coberta em test_r1a2_processing_queue; aqui so a LEITURA importa.
     cursor.execute(
         "UPDATE processing_queue SET status='failed', retry_attempts=1, "
-        "last_error='ProcessingError: extraction timeout' WHERE id=?",
+        "last_error='interrupted_attempts_exhausted' WHERE id=?",
         (failing,),
     )
+    # Reproducao da revisao 05/11/2026: frase curta em ASCII passava pela
+    # regex antiga e saia integral. Agora e retida.
     cursor.execute(
         "UPDATE processing_queue SET status='failed', "
         "last_error=? WHERE id=?",
-        ('{"snippet": "texto privado do usuario que nao pode vazar"}', recent),
+        ("User Maria has depression", recent),
     )
     in_memory_conn.commit()
 
@@ -140,13 +143,15 @@ def test_probe_reports_status_age_and_attempts_without_payload(in_memory_conn):
     assert items[recent]["dedupe_key"] == "work_project_attachments:11"
     assert items[recent]["ownership_class"] == "instance_global"
 
-    # last_error: token estruturado sai; texto livre e retido, mas a falha
-    # continua visivel via has_last_error.
-    assert items[failing]["last_error"] == "ProcessingError: extraction timeout"
+    # last_error: so sai codigo da lista explicita; frase de PII (reproducao
+    # da revisao) fica retida, mas a falha continua visivel via has_last_error.
+    assert items[failing]["last_error"] == "interrupted_attempts_exhausted"
     assert items[failing]["has_last_error"] is True
     assert items[failing]["requires_review"] is True
     assert items[recent]["last_error"] is None
     assert items[recent]["has_last_error"] is True
+    # A frase reproduzida nunca aparece em lugar algum da saida.
+    assert "User Maria has depression" not in json.dumps(payload)
 
     assert stale  # criado, so para compor a idade
 
@@ -213,17 +218,25 @@ def test_probe_scope_separates_relation_rows_and_fails_closed(in_memory_conn):
     assert closed["recent_items"] == []
 
 
-def test_queue_error_view_withholds_free_text_only():
-    # Token estruturado curto sai literal.
-    assert _queue_error_view("interrupted_attempts_exhausted") == (
-        "interrupted_attempts_exhausted",
-        True,
-    )
-    # Texto livre/longo/com JSON e retido, mas a falha continua visivel.
-    token, has_error = _queue_error_view('{"snippet": "privado"}')
-    assert token is None and has_error is True
-    token, has_error = _queue_error_view("x" * 200)
-    assert token is None and has_error is True
+def test_queue_error_view_uses_explicit_allowlist_only():
+    # Codigos da lista explicita saem literais.
+    for code in ("interrupted_attempts_exhausted", "processing_queue_item_missing"):
+        assert _queue_error_view(code) == (code, True)
+
+    # Revisao 05/11/2026: a regex anterior aceitava frase curta em ASCII e
+    # deixou "User Maria has depression" passar integral. Agora so a lista
+    # vale — todo o resto fica retido, mas a falha continua visivel.
+    for withheld in (
+        "User Maria has depression",              # reproducao exata do revisor
+        '{"snippet": "privado"}',                 # JSON
+        "ProcessingError: extraction timeout",    # mensagem de excecao
+        "interrupted_attempts_exhausted ",        # quase-codigo (com espaco)
+        "x" * 200,                                # texto longo
+    ):
+        token, has_error = _queue_error_view(withheld)
+        assert token is None, withheld
+        assert has_error is True, withheld
+
     # Ausencia de erro e ausencia de erro.
     assert _queue_error_view(None) == (None, False)
     assert _queue_error_view("") == (None, False)

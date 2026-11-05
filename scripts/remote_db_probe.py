@@ -1,7 +1,6 @@
 import argparse
 import json
 import os
-import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -1989,9 +1988,12 @@ def _latest_raw_phase(cursor: sqlite3.Cursor, phase: str, limit: int = 1) -> Lis
 # origem e escopo, com idade da fila e falhas — sem expor texto privado.
 #
 # Privacidade: ``payload_json`` nunca e selecionado, e ``last_error`` so sai
-# quando e token estruturado curto (mesmo criterio de codigos estruturais do
-# ledger do C11): ``str(exc)`` pode embutir payload, entao texto livre vira
-# ``None`` com ``has_last_error=True`` — a falha fica visivel, o texto nao.
+# se estiver na lista EXPLICITA de codigos do proprio sistema. A revisao de
+# 05/11/2026 rejeitou a regex anterior (``^[A-Za-z]...$``): ela aceitava
+# frases curtas em ASCII e deixou ``"User Maria has depression"`` passar
+# integral. Texto livre, JSON, mensagens de provedor ou de excecao ficam
+# retidos — a falha continua visivel por ``has_last_error``; o texto completo
+# permanece nos logs do container, nunca nesta sonda.
 # ---------------------------------------------------------------------------
 _QUEUE_OPEN_SQL = "'pending', 'failed', 'running'"
 _QUEUE_REQUIRED_COLUMNS = (
@@ -2011,22 +2013,31 @@ _QUEUE_REQUIRED_COLUMNS = (
     "created_at",
     "updated_at",
 )
-_STRUCTURED_ERROR_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:\- ]{0,79}$")
+# Lista EXPLICITA de codigos que o proprio sistema escreve deliberadamente em
+# ``last_error``. Adicionar aqui e mudanca de contrato, nao ajuste de filtro —
+# nao existe regra generica segura para texto livre (frase curta em ASCII
+# tambem e texto livre). Codigos atuais: o literal gravado pelo scheduler da
+# fila e o ``ValueError`` estruturado do proprio modulo.
+ALLOWED_QUEUE_ERROR_CODES = frozenset(
+    {
+        "interrupted_attempts_exhausted",
+        "processing_queue_item_missing",
+    }
+)
 
 
 def _queue_error_view(raw: Any) -> Tuple[Optional[str], bool]:
-    """Devolve ``(token_estruturado, ha_erro)`` de um ``last_error``.
+    """Devolve ``(codigo_permitido, ha_erro)`` de um ``last_error``.
 
-    Token estruturado curto sai literal (``interrupted_attempts_exhausted``,
-    nomes de excecao). Qualquer outro texto — longo, com ``{``/``[`` de JSON,
-    ou vindo de provedor — e retido como ``None``; ``ha_erro`` continua True
-    para nao esconder a falha em nome da privacidade.
+    Só devolve o que está na lista ``ALLOWED_QUEUE_ERROR_CODES``. Qualquer
+    outro valor — frase, JSON, mensagem de provedor ou de exceção — vira
+    ``None``; ``ha_erro`` continua True para não esconder a falha em nome da
+    privacidade.
     """
     if raw in (None, ""):
         return None, False
-    text = str(raw)
-    if _STRUCTURED_ERROR_RE.match(text):
-        return text, True
+    if str(raw) in ALLOWED_QUEUE_ERROR_CODES:
+        return str(raw), True
     return None, True
 
 
