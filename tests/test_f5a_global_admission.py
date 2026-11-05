@@ -39,6 +39,7 @@ _CONSENTED = dict(
     relation_agent_instance="jung_v1",
     relation_status="active",
     consent_status="granted",
+    global_interiority=True,
     source_refs=["knowledge_gap#12"],
 )
 
@@ -230,6 +231,75 @@ def test_unverified_global_material_policy_never_reclassifies_history():
     assert policy.interpersonal_exposure is False  # cond. 3
     assert policy.counts_as_authorization_evidence is False
     assert policy.instance_scope_readable is True  # historico continua legivel
+
+
+# ---------------------------------------------------------------------------
+# Revisao 05/11/2026 — as tres reproducoes do revisor
+# ---------------------------------------------------------------------------
+def test_global_interiority_opt_in_is_required():
+    """P1: consentimento geral para interagir NAO autoriza contribuicao global."""
+    decision = _assess(global_interiority=False)
+
+    assert decision.outcome == "keep_private"
+    assert decision.reason == "global_interiority_not_granted"
+    assert decision.origin_class == RELATION_PRIVATE
+
+
+def test_unknown_source_kind_is_refused_on_public_route():
+    """P1 reproduzido: source_kind='unknown' com ancora valida passava."""
+    decision = assess_global_admission(
+        agent_instance="jung_v1",
+        route=ROUTE_PUBLIC_SOURCE,
+        source_kind="unknown",
+        source_refs=["conversation#123"],
+    )
+
+    assert decision.admits_global is False
+    assert decision.reason == "public_source_kind_not_allowed"
+    assert decision.outcome == "quarantine"  # sem vinculo comprovado
+
+
+def test_missing_source_kind_is_refused_on_public_route():
+    """P1: origem ausente tambem e recusada."""
+    decision = assess_global_admission(
+        agent_instance="jung_v1",
+        route=ROUTE_PUBLIC_SOURCE,
+        source_refs=["research#1"],
+    )
+
+    assert decision.admits_global is False
+    assert decision.reason == "public_source_kind_missing"
+
+
+def test_relation_without_instance_proof_is_quarantined():
+    """P2 reproduzido: relation_id sem relation_agent_instance era aceito."""
+    decision = assess_global_admission(
+        agent_instance="jung_v1",
+        route=ROUTE_RELATION_DERIVED,
+        relation_id="rel-1",
+        consent_status="granted",
+        global_interiority=True,
+        relation_status="active",
+        source_refs=["knowledge_gap#12"],
+    )
+
+    assert decision.outcome == "quarantine"
+    assert decision.reason == "relation_instance_unverified"
+    assert decision.origin_class is None
+
+
+def test_public_route_with_unproven_relation_is_also_blocked():
+    """A exigencia de instancia vale para qualquer rota que declare vinculo."""
+    decision = assess_global_admission(
+        agent_instance="jung_v1",
+        route=ROUTE_PUBLIC_SOURCE,
+        source_kind="world",
+        source_refs=["research#1"],
+        relation_id="rel-1",
+    )
+
+    assert decision.outcome == "quarantine"
+    assert decision.reason == "relation_instance_unverified"
 
 
 # ---------------------------------------------------------------------------

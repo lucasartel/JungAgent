@@ -250,6 +250,14 @@ OWNERSHIP_CONTRACTS: Tuple[CognitiveOwnershipContract, ...] = (
 #  5. ISOLAMENTO: recusa, instancias distintas e consentimento revogado sao
 #     testados NESTA entrega (``tests/test_f5a_global_admission.py``).
 #
+# Revisao 05/11/2026 (3 achados corrigidos aqui):
+#  - P1: consentimento GERAL nao e autorizacao global — a rota relacao
+#        exige tambem o opt-in ``scope_json.global_interiority``;
+#  - P1: origem ausente/desconhecida passava pela rota publica — agora e
+#        lista explicita ``PUBLIC_SOURCE_KINDS``;
+#  - P2: ``relation_id`` sem ``relation_agent_instance`` era aceito —
+#        ausencia de instancia comprovada recusa em vez de presumir.
+#
 # Limite de escopo (decisao do mantenedor): F-5 fecha a ADMISSAO segura do
 # material global. Nao comprova que leituras foram assimiladas nem utilizadas
 # nas conversas — esse aceite e do R1d e continua registrado a parte.
@@ -257,6 +265,13 @@ OWNERSHIP_CONTRACTS: Tuple[CognitiveOwnershipContract, ...] = (
 ROUTE_PUBLIC_SOURCE = "public_source"
 ROUTE_RELATION_DERIVED = "relation_derived"
 ADMISSION_ROUTES: Tuple[str, ...] = (ROUTE_PUBLIC_SOURCE, ROUTE_RELATION_DERIVED)
+
+# Lista EXPLICITA de ``source_kind`` que a rota publica aceita (cond. 2 +
+# revisao 05/11/2026): referencia sintaticamente valida nao comprova fonte
+# publica, e origem ausente tambem e recusada. Add aqui e mudanca de
+# contrato, nao ajuste de filtro. Valores verificados nos writers reais:
+# ``world`` (world_consciousness) e ``work_reading`` (work/persistence).
+PUBLIC_SOURCE_KINDS = frozenset({"world", "work_reading"})
 
 OUTCOME_ADMIT_GLOBAL = "admit_global"
 OUTCOME_KEEP_PRIVATE = "keep_private"
@@ -333,6 +348,7 @@ def assess_global_admission(
     relation_agent_instance: Optional[str] = None,
     relation_status: Optional[str] = None,
     consent_status: Optional[str] = None,
+    global_interiority: bool = False,
     source_kind: Optional[str] = None,
     source_refs: Optional[Iterable[str]] = None,
     private_derived: bool = False,
@@ -346,14 +362,23 @@ def assess_global_admission(
     Rotas (condição 2):
 
     * ``public_source`` — livro/fonte pública por critérios próprios, **sem
-      exigir Relation artificial**; exige origem identificável (refs
-      normalizadas) e material não derivado de conteúdo privado.
-    * ``relation_derived`` — exige vínculo **desta instância**, consentimento
-      ``granted``, relação ``active`` e proveniência.
+      exigir Relation artificial**; exige ``source_kind`` na lista explícita
+      ``PUBLIC_SOURCE_KINDS``, origem identificável (refs normalizadas) e
+      material não derivado de conteúdo privado. **Origem ausente ou
+      desconhecida é recusada** — uma referência sintaticamente válida não
+      comprova fonte pública.
+    * ``relation_derived`` — exige vínculo **desta instância comprovado**
+      (``relation_agent_instance`` obrigatório quando há ``relation_id``),
+      consentimento ``granted``, opt-in ``global_interiority``, relação
+      ``active`` e proveniência.
 
-    Qualquer recusa obedece à condição 1: **com** vínculo válido da própria
-    instância → ``keep_private``; **sem** vínculo → ``quarantine`` (marcador +
-    motivo). ``legacy_unscoped`` nunca é retorno possível.
+    Consentimento geral ≠ autorização global: sem ``global_interiority``
+    (``agent_relations.scope_json``) o material fica privado nesta Relation.
+
+    Qualquer recusa obedece à condição 1: **com** vínculo comprovado da
+    própria instância → ``keep_private``; **sem** vínculo comprovado →
+    ``quarantine`` (marcador + motivo). ``legacy_unscoped`` nunca é retorno
+    possível.
     """
     instance = str(agent_instance or "").strip()
     if not instance:
@@ -370,10 +395,16 @@ def assess_global_admission(
         return GlobalAdmissionDecision(instance, route, outcome, reason)
 
     linked = bool(str(relation_id or "").strip())
-    foreign = linked and bool(str(relation_agent_instance or "").strip()) and (
-        str(relation_agent_instance).strip() != instance
-    )
+    link_instance = str(relation_agent_instance or "").strip()
     has_provenance = bool(normalize_source_refs(source_refs))
+
+    # Revisão 05/11/2026 (P2): vínculo SEM instância comprovada não admite.
+    # A ausência de ``relation_agent_instance`` não prova que a Relation
+    # pertence a esta instância — recusa em vez de presumir.
+    if linked and not link_instance:
+        return refuse("relation_instance_unverified", linked=False)
+
+    foreign = linked and link_instance != instance
 
     # Vínculo de OUTRA instância não é vínculo desta: instâncias distintas
     # nunca compartilham autorização (condição 5).
@@ -393,6 +424,12 @@ def assess_global_admission(
         # Vínculo válido desta instância: recusa mantém PRIVADO (condição 1).
         if str(consent_status or "").strip().lower() != "granted":
             return refuse("consent_not_granted", linked=True)
+        # Revisão 05/11/2026 (P1): consentimento GERAL para interagir não é
+        # autorização de contribuir ao global. O opt-in específico
+        # ``scope_json.global_interiority`` é a autorização real (inventário
+        # F-5); sem ele o material fica PRIVADO nesta Relation.
+        if not global_interiority:
+            return refuse("global_interiority_not_granted", linked=True)
         if str(relation_status or "").strip().lower() != "active":
             return refuse("relation_not_active", linked=True)
         if not has_provenance:
@@ -405,9 +442,16 @@ def assess_global_admission(
     # `private_derived` já forçou a rota relação acima — aqui é sempre False.
     from core.db.source_kinds import CONVERSATION
 
-    if str(source_kind or "").strip() == CONVERSATION:
+    kind = str(source_kind or "").strip()
+    if not kind:
+        # Revisão 05/11/2026 (P1): origem AUSENTE também é recusada.
+        return refuse("public_source_kind_missing", linked=linked)
+    if kind == CONVERSATION:
         # Condição 3: fala de uma pessoa não vira global pela rota pública.
         return refuse("route_mismatch_use_relation_route", linked=linked)
+    if kind not in PUBLIC_SOURCE_KINDS:
+        # Revisão 05/11/2026 (P1): fonte desconhecida não é fonte pública.
+        return refuse("public_source_kind_not_allowed", linked=linked)
     if not has_provenance:
         return refuse("public_source_not_identified", linked=linked)
     return GlobalAdmissionDecision(
