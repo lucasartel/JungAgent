@@ -220,6 +220,140 @@ Escopo: `agent_instance` + `origin_relation_id` via `_identity_origin`.
 | **R1a-3** ✅ *(implementado · testado · publicado; habilitado não verificado)* | **Corrigir leitores sem escopo P1-1..P1-4 + P2-1..P2-4.** Aplicar `_relation_scope`/`scope_context`/`legacy_quarantine_clause` nas 8 leituras identificadas. | 8 correções escopadas + testes de isolamento ✅ (PR #61, merge `fa56e05`) |
 | **R1a-4** ✅ *(implementado · testado; habilitado não verificado; em revisão)* | **Consolidação conceitual (R1b pontual).** **Entregue**: `knowledge_gaps` ganha `source_kind` (conjunto fechado `conversation` · `world` · `goal_manager`, derivado dos produtores reais), `dedup_key` (normalização conservadora: NFKC + casefold + pontuação, **sem semântica**; `the_gap` original nunca reescrito) e contagem de observações. Chave de dedup única por escopo `(agent_instance, origin_class, relation_id, fingerprint)` — fecha o bug em que `status='investigating'` saía da chave e a mesma pergunta virava linha nova. Comportamento por status definido: `open`/`investigating`/encerradas são reutilizadas, nunca reabertas nem duplicadas; recorrência ≠ retry (ancora nova vs. repetida) e **nenhuma delas altera `importance_score` nem apresenta confiança**. Proveniência indeterminada vai à quarentena explícita (`provenance_json.origin_indeterminate` + motivo + pendência), **sem promoção a material global autorizado** e sem interromper a conversa. **Sem backfill**: linhas históricas não são tocadas. | Fila + origem por entrada + dedup por escopo ✅ |
 
+### F-5 — Via de material global autorizado: inventário e decomposição (04/11/2026)
+
+**Status**: inventário feito (leitura estática), decomposição **proposta para aprovação**;
+implementação, testes, habilitação e aceite **pendentes**. Ficou em aberto de
+propósito na R1a-4 — o Princípio Áureo procura *criar* a via antes de alimentá-la.
+
+É o fechamento da lacuna `F-5` da Seção 5 e do trecho da spec de R1a que manda
+*"Implementar uma via explícita para material global autorizado, distinta da via
+privada e do legado sem classificação"*. Não abre capacidade nova.
+
+#### Limite de escopo (registrado a pedido do mantenedor)
+
+F-5 fecha a **admissão segura** do material global — *quem pode nascer global*.
+**Não comprova** que leituras do Work foram **assimiladas nem utilizadas nas
+conversas**. Essa é uma afirmação diferente, com aceite próprio (**R1d**):
+continuidade de investigação, transferência e uso conversacional. Nada em F-5
+pode ser lido como esse aceite, e os dois status continuam registrados à parte.
+
+#### Condições do mantenedor (04/11/2026) — incorporadas ao contrato
+
+Aprovação da decomposição **com cinco ajustes**, que passam a valer como
+requisitos de cada subcorte:
+
+1. **Recusa não vira legado.** `legacy_unscoped` é destino **apenas** de
+   histórico não classificado, nunca de falha nova. Material novo recusado
+   **permanece privado** quando houver vínculo válido, ou entra em
+   **quarentena explícita com motivo persistido**. `legacy_unscoped` não pode
+   funcionar como destino conveniente para admissão negada.
+2. **Duas rotas de admissão distintas.** (A) **livros e fontes públicas** podem
+   nascer global mediante **critérios próprios** — sem exigir uma Relation
+   artificial para um livro; (B) **contribuições derivadas de relações** exigem
+   consentimento e proveniência.
+3. **Consentimento não significa divulgação.** O opt-in de interioridade
+   autoriza **contribuir com a interioridade agregada**; **não** autoriza expor
+   conteúdo pessoal a outros interlocutores. Admissão global não abre leitura
+   interpessoal.
+4. **Leituras também protegidas.** Controlar writers novos **não** corrige
+   registros antigos autodeclarados. O plano **define** o tratamento das
+   leituras para material **sem autorização verificável**, **sem reclassificar
+   o histórico automaticamente**.
+5. **Testes de isolamento em cada entrega.** F-5c é a verificação integrada,
+   mas **F-5a e F-5b já entregam** testes de recusa, instâncias distintas e
+   consentimento revogado.
+
+#### Achado central
+
+**Não existe predicado de elegibilidade para material global autorizado.** O
+rótulo `authorized_aggregate` é **auto-declarado por quem escreve**, e 13 sítios
+de leitura confiam nele.
+
+| Mecanismo | O que valida | Alcance |
+|---|---|---|
+| `resolve_cognitive_origin` (`core/db/cognitive_provenance.py`) | **só consistência**: Relation ⇒ `relation_private`; `relation_private` ⇒ exige Relation; classe desconhecida ⇒ `ValueError`. **Não pergunta** se o material é elegível a ser global. Sem Relation, cai em `requested_class ou legacy_unscoped`. | **5 chamadores**: `knowledge_gaps` (2), `dreams`, `scholar_engine` (2) — e **nenhum deles pede** `authorized_aggregate` hoje |
+| Auto-declaração do writer | nada — literal na instrução | `world_consciousness._persist_epistemic_knowledge_gap` grava `'instance_global','authorized_aggregate'` **direto no `INSERT`**, sem passar pelo resolver |
+| `agent_relations.scope_json.global_interiority = 1` | **a única autorização real**: opt-in explícito por Relation | consultado por **1 leitor** (`core/rumination_interiority.global_rumination_influence`, agregado *text-free*) e por **nenhum writer** |
+| `cognitive_ownership.py` | vocabulário + contrato dos 23 domínios + `validate_ownership_contracts` (valida a própria tabela de contratos) | **nenhuma função de elegibilidade** — `grep` por *authoriz/elegib/admit/promot* = 0 |
+
+Os 13 sítios que confiam no rótulo (`origin_class IN ('instance_global','authorized_aggregate')`
+ou equivalente): `core/cognitive_context.py` (montador C12f), `agent_identity_context_builder`
+(2), `core/db/essays`, `core/db/meta_cognition`, `core/db/symbolic_graph` (2),
+`core/db/working_memory`, `engines/integrative_self` (3), `engines/symbolic_graph`,
+`scholar_engine`.
+
+Legítimo e distinto: `core/engine.py:1018` grava `authorized_aggregate` vindo de
+`global_rumination_influence`, que **sim** consulta o opt-in — mas é o único
+caminho cuja declaração tem lastro.
+
+#### Onde resta `NULL` / legado
+
+- Schema: quase todas as tabelas usam `ownership_class TEXT NOT NULL DEFAULT
+  'legacy_unscoped'` (e `origin_class` idem) — **`NULL` não é o problema**; o
+  padrão já é honesto e `resolve_cognitive_origin` nunca devolve `NULL`.
+- Exceção real: **`processing_queue.origin_class` é nullable sem `default`** —
+  item enfileirado pode nascer sem origem. Já é contabilizado por
+  `rows_missing_origin_class` na sonda da PR #67.
+- O `NULL` que importa é o histórico (`dedup_key`, `source_kind`) da R1a-4:
+  sem backfill, **por desenho** — e por isso nunca é alcançado pelo dedup.
+
+#### ⚠️ Medições de produção pendentes
+
+Contagens reais de `ownership_class`/`origin_class` por tabela e o nº de
+Relations com `global_interiority=true` **não foram coletadas**.
+
+**Diagnóstico de acesso (corrigido em 04/11/2026 — a leitura anterior estava
+forte demais).** `railway status` funciona (config cacheado), mas `whoami` e
+`ssh` falham com `failed to refresh OAuth token: Operation not permitted
+(os error 1)`; `~/.railway/config.json` existe e é legível. **EPERM no refresh
+não comprova token expirado** — indica que a CLI não conseguiu renovar
+(permissão/keychain do SO). A verificação de acesso é ação do mantenedor
+(`railway login`), **sem contornar a proteção de credenciais**.
+
+**Não bloqueia o desenvolvimento**: F-5a–F-5b se desenvolvem e testam offline.
+As contagens são **necessárias para o aceite operacional** e devem ser
+registradas antes dele. Script pronto e somente-leitura (só contagens, `mode=ro`).
+
+#### Decomposição revisada (aprovada em 04/11/2026 com as 5 condições)
+
+| Subcorte | Escopo | Testes já nesta entrega |
+|---|---|---|
+| **F-5a** | **Contrato de elegibilidade.** Predicado no contrato canônico com **duas rotas** (condição 2): **(A)** fonte pública/livro → `authorized_aggregate` por **critérios próprios**, **sem Relation artificial**; **(B)** contribuição derivada de Relation → exige consentimento vigente **e** proveniência. **Recusa** (condição 1): com vínculo válido → mantém `relation_private`; sem vínculo → **quarentena explícita com motivo persistido** — **nunca `legacy_unscoped`**. Define ainda a **regra de leitura** (condição 4) para material sem autorização verificável. Sem escrita de dados. | ✅ recusa · instâncias distintas · consentimento revogado |
+| **F-5b** | **Admissão nos writers.** Passar os caminhos auto-declarados pelo predicado (começando por `world_consciousness`). Quem não passar → `relation_private` ou quarentena com motivo (**condição 1: `legacy_unscoped` proibido como destino de recusa nova**). | ✅ recusa · instâncias distintas · consentimento revogado |
+| **F-5c** | **Verificação integrada.** Duas Relations × duas instâncias; revogação/apagamento retiram a contribuição. | — (é a verificação integrada) |
+| **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha a PR #67 (metadados, sem conteúdo). | — |
+| **F-5e** (requisito de encerramento) | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | recusa de leitura sem autorização verificável |
+
+> **F-5e é requisito de encerramento do F-5** — decisão do mantenedor em
+> 05/11/2026, que aceitou o rótulo e rejeitou o enquadramento anterior como
+> "complemento opcional". Controlar só os writers novos deixa os registros
+> antigos autodeclarados expostos nos 13 sítios de leitura; **sem F-5e, o F-5
+> não pode ser declarado encerrado.** As condições 1–5 continuam valendo para
+> F-5a..d desde a entrega deles.
+
+**Revisão de 05/11/2026 — 4 achados, todos corrigidos:**
+
+| PR | Sev. | Achado | Correção |
+|---|---|---|---|
+| #69 | **P1** | Consentimento geral era tratado como autorização global: o predicado exigia `consent_status="granted"` e não pedia `scope_json.global_interiority` | rota relação passa a exigir o opt-in; sem ele → `keep_private` (`global_interiority_not_granted`) |
+| #69 | **P1** | Origem ausente ou desconhecida passava pela rota pública (`source_kind="unknown"` + `conversation#123` → `admit_global`); âncora sintaticamente válida não comprova fonte pública | lista explícita `PUBLIC_SOURCE_KINDS` = `{world, work_reading}`; ausente → `public_source_kind_missing`, desconhecida → `public_source_kind_not_allowed` |
+| #69 | P2 | `relation_id` sem `relation_agent_instance` era aceito — ausência presumia pertencimento à instância | instância comprovada obrigatória em qualquer rota que declare vínculo; ausência → `quarantine` (`relation_instance_unverified`) |
+| #67 | P2 | A regex de `last_error` aceitava frases curtas em ASCII: `"User Maria has depression"` saía integral (reproduzida) | lista explícita `ALLOWED_QUEUE_ERROR_CODES`; todo o resto → `has_last_error=True` sem texto |
+
+**F-5a permanece aberto para revisão** e **F-5b segue bloqueado** até #69 ser
+aceita — a orientação do mantenedor foi corrigir #67 e #69 **antes** de
+iniciar F-5b.
+
+**Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
+revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
+
+**Fora do escopo de F-5**: projeção de conteúdo privado → global com revisão e
+política de retratação. Isso é o R1 completo (R1b/R1c) e exige decisão própria;
+F-5 só fecha *quem pode declarar* global, não converte privado em global.
+Além disso — e por decisão do mantenedor — F-5 **não** comprova assimilação nem
+uso das leituras nas conversas (ver *Limite de escopo* acima).
+
 ### R3 — Corretivos (3 subcortes)
 
 | Subcorte | Escopo | Entrega |
