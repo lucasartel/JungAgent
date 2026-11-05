@@ -382,10 +382,37 @@ Hoje **não há consulta de elegibilidade**: o rótulo é autodeclarado — exat
 
 **Decisão de design explícita — ponto de revisão**
 
+> **Aceita pelo mantenedor em 05/11/2026**: preservar a chave temporariamente
+> **por compatibilidade**, **sem atribuir a ela significado de autorização**.
+> A chave é token de unicidade; a autorização vive exclusivamente em
+> `origin_class` + `origin_quarantined`. A remoção da dependência de
+> compatibilidade fica registrada como dívida, não como decisão silenciosa.
+
 - **`dedup_key` mantém o token `origin_class='authorized_aggregate'`**, inalterado, enquanto a **coluna** passa a refletir o resultado da admissão. Motivo: a chave embute `origin_class`, e trocá-la por `instance_global` **quebraria garantia do R1a-4** — `test_world_and_mixin_concurrent_recurrence_counts_once` escreve via mixin com `authorized_aggregate`; duas chaves distintas dariam **duas linhas** para a mesma pergunta. Verificado que **nada faz parse de `dedup_key`** (token de unicidade opaco). O estado de autorização vive em `origin_class` + `origin_quarantined`.
 - Recusa grava `instance_global`, **não** `authorized_aggregate`: o predicado devolve `origin_class=None` (nenhuma classe concedida) e `legacy_unscoped` é proibido pela condição 1. `instance_global` é a única classe restante que **não afirma autorização** nem pertence a Relation. Confirmado que `get_active_knowledge_gaps` aceita as duas classes igualmente e bloqueia pelo flag `origin_quarantined = 0` — ou seja, o flag é o mecanismo; a classe é honestidade do registro.
 
-**Achado para F-5e** (não é deste corte): `engines/integrative_self.py:361` lê `knowledge_gaps` **sem** filtrar `origin_quarantined` — uma lacuna em quarentena com `status='resolved'` seria exposta pelo ISM; `admin_web/routes/research_lab_memory.py:179` idem (atrás de `require_master`). Tratar em F-5e.
+**Proteção do caminho completo (exigência do mantenedor, 05/11/2026)**
+
+> *"Material em quarentena não pode ser consumido pelo ISM, **mesmo após
+> fechamento**. Fechamento epistemológico não equivale a autorização."*
+
+- **Corrigido em F-5b**: `engines/integrative_self.py` — as **duas** branches
+  da leitura de `knowledge_gaps` (principal e fallback legado) agora filtram
+  `origin_quarantined = 0`. O fallback só aplica o filtro quando a coluna
+  existe (schema pré-R1a-4 não a tem).
+- **Teste real**: criação recusada → fechamento (`status='resolved'`) →
+  leitura ISM **bloqueada**; com controle (`test_admitted_creation_stays_readable_after_closure`)
+  provando que o filtro não bloqueia material legitimamente admitido.
+  Verificado que **os dois testes falham sem a correção** e passam com ela.
+- **Duas ordens cobertas**: admitida→recusada (`test_admission_then_refusal_keeps_the_first_decision`)
+  e recusada→admitida (`test_refusal_then_admission_keeps_the_first_decision`).
+  Em ambas a classe é decidida **na criação**; a recorrência soma âncora e
+  contador e **nunca** libera quarentena automaticamente nem reclassifica.
+
+**Achado restante para F-5e**: `admin_web/routes/research_lab_memory.py:179`
+lê `knowledge_gaps` sem filtrar `origin_quarantined` (atrás de
+`require_master`) — **fora** do caminho do ISM e mantido na auditoria
+completa de leitores do F-5e, conforme orientação do mantenedor.
 
 **Fora do escopo**: nenhuma reclassificação ou reprocessamento de histórico; nenhum envio de mensagem; nenhuma alteração de produção. **F-5e continua obrigatório para encerrar F-5**, e este corte **não comprova assimilação nem uso das leituras nas conversas**.
 

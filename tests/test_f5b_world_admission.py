@@ -171,21 +171,109 @@ def test_recurrence_preserves_dedup_anchors_and_counters(tmp_path):
     assert set(json.loads(row["source_refs_json"])) == {"will#30", "will#31"}
 
 
-def test_recurrence_does_not_reclassify_a_quarantined_row(tmp_path):
-    """Recorrência preserva o estado: não promove nem reclassifica."""
+# ---------------------------------------------------------------------------
+# As DUAS ORDES de admissão/recusa + leitura após fechamento
+# (orientação do mantenedor 05/11/2026: fechamento epistemico != autorizacao)
+# ---------------------------------------------------------------------------
+def _close(db, gap_id):
+    """Fecha epistemicamente a lacuna — nada muda na propriedade."""
+    db.conn.execute(
+        """
+        UPDATE knowledge_gaps
+        SET status = 'resolved', closure_summary = 'fechado com evidencia',
+            closure_source_type = 'goal_step', resolved_at = '2026-11-05T12:00:00'
+        WHERE id = ?
+        """,
+        (gap_id,),
+    )
+    db.conn.commit()
+
+
+def _ism_gap_refs(db, user_id="admin"):
+    """source_refs das lacunas que o ISM devolveria neste instante."""
+    from engines.integrative_self import IntegrativeSelfModel
+
+    model = IntegrativeSelfModel(db, agent_instance=db.agent_instance)
+    return [
+        component.get("source_ref")
+        for component in model._latest_components(user_id=user_id, relation_id=None)
+        if component and component.get("key") == "knowledge_gap"
+    ]
+
+
+def test_refused_creation_is_blocked_even_after_closure(tmp_path):
+    """Exigencia: quarentena nao e consumida pelo ISM mesmo com status='resolved'."""
     db = _db(tmp_path)
     world = _world(tmp_path, tmp_path / "gaps.db")
 
-    first = _persist(world, will_id=None)  # recusado
-    second = _persist(world, will_id=30)   # com âncora, mas é recorrência
+    gap_id = _persist(world, will_id=None)  # recusado: sem ancora
+    assert _row(db, gap_id)["origin_quarantined"] == 1
+
+    _close(db, gap_id)
+    assert _row(db, gap_id)["status"] == "resolved"
+
+    # Fechamento epistemico nao vira autorizacao.
+    assert f"knowledge_gap#{gap_id}" not in _ism_gap_refs(db)
+
+
+def test_admitted_creation_stays_readable_after_closure(tmp_path):
+    """Controle: o filtro nao bloqueia material legitimamente admitido."""
+    db = _db(tmp_path)
+    world = _world(tmp_path, tmp_path / "gaps.db")
+
+    gap_id = _persist(world, will_id=30)  # admitido
+    assert _row(db, gap_id)["origin_quarantined"] == 0
+
+    _close(db, gap_id)
+
+    assert f"knowledge_gap#{gap_id}" in _ism_gap_refs(db)
+
+
+def test_admission_then_refusal_keeps_the_first_decision(tmp_path):
+    """Ordem 1: admitida primeiro, tentativa recusada depois — segue admitida."""
+    db = _db(tmp_path)
+    world = _world(tmp_path, tmp_path / "gaps.db")
+
+    first = _persist(world, will_id=30)      # admitida
+    second = _persist(world, will_id=None)   # recusada (recorrencia)
 
     assert second == first
     assert _count(db) == 1
     row = _row(db, first)
-    # Recorrência soma âncora/contador; a classe só é decidida na criação.
+    assert row["origin_class"] == "authorized_aggregate"
+    assert row["origin_quarantined"] == 0
+    # Recusa sem ancora nao soma contador nem reclassifica.
+    assert row["observation_count"] == 1
+    assert json.loads(row["source_refs_json"]) == ["will#30"]
+
+    _close(db, first)
+    assert f"knowledge_gap#{first}" in _ism_gap_refs(db)
+
+
+def test_refusal_then_admission_keeps_the_first_decision(tmp_path):
+    """Ordem 2: recusada primeiro, tentativa admitida depois — segue recusada.
+
+    A classe e decidida na criacao; a recorrencia soma ancora/contador e
+    nunca libera quarentena automaticamente (condicao: sem retroclassificacao
+    de historico, sem liberacao automatica).
+    """
+    db = _db(tmp_path)
+    world = _world(tmp_path, tmp_path / "gaps.db")
+
+    first = _persist(world, will_id=None)   # recusada
+    second = _persist(world, will_id=30)    # admitida (recorrencia)
+
+    assert second == first
+    assert _count(db) == 1
+    row = _row(db, first)
+    assert row["origin_class"] == "instance_global"
+    assert row["origin_quarantined"] == 1
+    # Recorrencia com ancora nova soma contador e ancora, mas NAO a classe.
     assert row["observation_count"] == 2
     assert json.loads(row["source_refs_json"]) == ["will#30"]
-    assert row["origin_quarantined"] == 1  # quarentena é sticky (ver inventário)
+
+    _close(db, first)
+    assert f"knowledge_gap#{first}" not in _ism_gap_refs(db)
 
 
 # ---------------------------------------------------------------------------

@@ -353,28 +353,36 @@ class IntegrativeSelfModel:
 
         if self._table_exists("knowledge_gaps"):
             gap_columns = self._table_columns("knowledge_gaps")
+            # F-5b: FECHAMENTO EPISTEMICO NAO E AUTORIZACAO. Uma lacuna em
+            # quarentena nao entra aqui nem com status='resolved' — e o flag
+            # vale em TODOS os caminhos de leitura, inclusive o fallback
+            # legado, que so e alcancado quando faltam colunas de escopo.
+            # Sem a coluna nao ha o que filtrar (schema pre-R1a-4).
+            quarantine_sql = (
+                " AND origin_quarantined = 0" if "origin_quarantined" in gap_columns else ""
+            )
             if {"agent_instance", "origin_relation_id", "origin_class"}.issubset(gap_columns):
                 row = cursor.execute(
-                """
-                SELECT id, topic, the_gap, status, closure_summary,
-                       closure_source_type, resolved_at
-                FROM knowledge_gaps
-                WHERE agent_instance = ? AND user_id = ? AND status = 'resolved'
-                  AND (
-                    origin_relation_id = ?
-                    OR (origin_relation_id IS NULL AND origin_class IN ('instance_global', 'authorized_aggregate'))
-                    OR (? IS NULL AND origin_relation_id IS NULL AND origin_class = 'legacy_unscoped')
-                  )
-                ORDER BY resolved_at DESC, id DESC
-                LIMIT 1
-                """,
-                (self.agent_instance, user_id, relation_id, relation_id),
+                    f"""
+                    SELECT id, topic, the_gap, status, closure_summary,
+                           closure_source_type, resolved_at
+                    FROM knowledge_gaps
+                    WHERE agent_instance = ? AND user_id = ? AND status = 'resolved'
+                      AND (
+                        origin_relation_id = ?
+                        OR (origin_relation_id IS NULL AND origin_class IN ('instance_global', 'authorized_aggregate'))
+                        OR (? IS NULL AND origin_relation_id IS NULL AND origin_class = 'legacy_unscoped')
+                      ){quarantine_sql}
+                    ORDER BY resolved_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (self.agent_instance, user_id, relation_id, relation_id),
                 ).fetchone()
             else:
                 row = cursor.execute(
-                    """SELECT id, topic, the_gap, status, closure_summary,
+                    f"""SELECT id, topic, the_gap, status, closure_summary,
                               closure_source_type, resolved_at
-                       FROM knowledge_gaps WHERE user_id = ? AND status = 'resolved'
+                       FROM knowledge_gaps WHERE user_id = ? AND status = 'resolved'{quarantine_sql}
                        ORDER BY resolved_at DESC, id DESC LIMIT 1""",
                     (user_id,),
                 ).fetchone()
