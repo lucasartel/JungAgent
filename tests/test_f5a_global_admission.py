@@ -303,6 +303,66 @@ def test_public_route_with_unproven_relation_is_also_blocked():
 
 
 # ---------------------------------------------------------------------------
+# Revisao 05/11/2026 (2a rodada) — flag booleana sem verdade generica
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "ambiguous",
+    ["false", "0", [False], "true", "1", 1.0, {}, "yes"],
+)
+def test_ambiguous_flag_types_are_refused(ambiguous):
+    """P1: `bool` nao valida em execucao; a verdade generica ADMITIA.
+
+    Reproducoes do revisor: ``"false"``, ``"0"`` e ``[False]`` eram *truthy*
+    e passavam pelo ``if not global_interiority``.
+    """
+    with pytest.raises(ValueError, match="ambiguous_flag:global_interiority"):
+        _assess(global_interiority=ambiguous)
+
+
+def test_integer_flag_matches_sql_rule():
+    """Coerencia com ``json_extract(scope_json,'$.global_interiority') = 1``."""
+    assert _assess(global_interiority=1).admits_global is True
+
+    denied = _assess(global_interiority=0)
+    assert denied.outcome == "keep_private"
+    assert denied.reason == "global_interiority_not_granted"
+
+
+def test_absent_opt_in_is_not_consent():
+    """``None`` = ausencia de opt-in, nao consentimento."""
+    decision = _assess(global_interiority=None)
+    assert decision.outcome == "keep_private"
+    assert decision.admits_global is False
+
+
+@pytest.mark.parametrize("ambiguous", ["true", "1", [True], 1.0])
+def test_ambiguous_private_derived_fails_closed(ambiguous):
+    """Flag negativa: tipo ambiguo e recusado, nunca lido como 'nao privado'."""
+    with pytest.raises(ValueError, match="ambiguous_flag:private_derived"):
+        assess_global_admission(
+            agent_instance="jung_v1",
+            route=ROUTE_PUBLIC_SOURCE,
+            source_kind="world",
+            source_refs=["research#1"],
+            private_derived=ambiguous,
+        )
+
+
+def test_absent_private_derived_assumes_the_safe_side():
+    """``None`` na flag negativa assume derivado de conteudo privado."""
+    decision = assess_global_admission(
+        agent_instance="jung_v1",
+        route=ROUTE_PUBLIC_SOURCE,
+        source_kind="world",
+        source_refs=["research#1"],
+        private_derived=None,
+    )
+
+    assert decision.outcome == "quarantine"
+    assert decision.reason == "private_derived_without_relation"
+
+
+# ---------------------------------------------------------------------------
 # Falha fechada
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize(

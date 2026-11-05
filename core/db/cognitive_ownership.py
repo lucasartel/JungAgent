@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import asdict, dataclass
-from typing import Iterable, Optional, Tuple
+from typing import Any, Iterable, Optional, Tuple
 
 RELATION_PRIVATE = "relation_private"
 INSTANCE_GLOBAL = "instance_global"
@@ -250,11 +250,14 @@ OWNERSHIP_CONTRACTS: Tuple[CognitiveOwnershipContract, ...] = (
 #  5. ISOLAMENTO: recusa, instancias distintas e consentimento revogado sao
 #     testados NESTA entrega (``tests/test_f5a_global_admission.py``).
 #
-# Revisao 05/11/2026 (3 achados corrigidos aqui):
+# Revisao 05/11/2026 (4 achados corrigidos aqui):
 #  - P1: consentimento GERAL nao e autorizacao global — a rota relacao
 #        exige tambem o opt-in ``scope_json.global_interiority``;
 #  - P1: origem ausente/desconhecida passava pela rota publica — agora e
 #        lista explicita ``PUBLIC_SOURCE_KINDS``;
+#  - P1: ``if not global_interiority`` usava a verdade generica de Python
+#        (``"false"``/``"0"``/``[False]`` eram truthy e admitiam) — agora e
+#        ``explicit_flag``, com conjunto afirmativo ``{True, 1}``;
 #  - P2: ``relation_id`` sem ``relation_agent_instance`` era aceito —
 #        ausencia de instancia comprovada recusa em vez de presumir.
 #
@@ -340,6 +343,48 @@ class GlobalAdmissionDecision:
         return None
 
 
+# Representacoes afirmativas EXPLICITAS para flags booleanas.
+#
+# Coerente com a regra SQL de ``core/rumination_interiority.py``:
+#     json_extract(scope_json, '$.global_interiority') = 1
+# ``json_extract`` devolve o inteiro ``1`` para JSON ``true`` — dai o
+# conjunto ``{True, 1}``. Ele e **subconjunto** do que o SQL aceita (o SQL
+# tambem casa ``'1'`` e ``1.0`` por afinidade): o predicado e deliberadamente
+# mais estrito, nunca admitindo o que a regra SQL negaria.
+AFFIRMATIVE_FLAG_VALUES = frozenset({True, 1})
+NEGATIVE_FLAG_VALUES = frozenset({False, 0})
+
+
+def explicit_flag(value: Any, *, param: str, absent: bool) -> bool:
+    """Interpreta uma flag booleana sem a verdade generica de Python.
+
+    Revisao 05/11/2026 (P1): ``if not global_interiority`` usava a avaliacao
+    booleana generica — ``"false"``, ``"0"`` e ``[False]`` sao *truthy* e
+    fariam o predicado ADMITIR material sem consentimento. A anotacao ``bool``
+    nao valida nada em tempo de execucao.
+
+    Regras:
+
+    * ``True``/``1`` → afirmativa; ``False``/``0`` → negativa;
+    * ``None`` → ``absent``: ausência de consentimento não é consentimento,
+      e ausência de flag de privacidade assume o lado seguro;
+    * qualquer outro tipo (str, list, dict, float, int fora de 0/1) é
+      **ambíguo** e recusado com ``ValueError`` — nunca é interpretado como
+      consentimento.
+    """
+    if isinstance(value, bool):  # antes de int: bool subclasse de int
+        return value
+    if isinstance(value, int):  # inteiro nao-bool
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        raise ValueError(f"ambiguous_flag:{param}")
+    if value is None:
+        return absent
+    raise ValueError(f"ambiguous_flag:{param}")
+
+
 def assess_global_admission(
     *,
     agent_instance: str,
@@ -374,6 +419,9 @@ def assess_global_admission(
 
     Consentimento geral ≠ autorização global: sem ``global_interiority``
     (``agent_relations.scope_json``) o material fica privado nesta Relation.
+    Flags booleanas passam por ``explicit_flag``: só ``True``/``1`` e
+    ``False``/``0``; tipos ambíguos (``"false"``, ``"0"``, ``[False]``) são
+    recusados com ``ValueError`` e nunca interpretados como consentimento.
 
     Qualquer recusa obedece à condição 1: **com** vínculo comprovado da
     própria instância → ``keep_private``; **sem** vínculo comprovado →
@@ -385,6 +433,15 @@ def assess_global_admission(
         raise ValueError("agent_instance_required")
     if route not in ADMISSION_ROUTES:
         raise ValueError(f"invalid_admission_route:{route}")
+
+    # Flags validadas de forma EXPLICITA (revisao 05/11/2026): a anotacao
+    # ``bool`` nao valida em execucao e a verdade generica de Python admitiria
+    # ``"false"``/``"0"``/``[False]`` como consentimento. Ausencia resolve
+    # para o lado seguro de cada flag.
+    interiority = explicit_flag(
+        global_interiority, param="global_interiority", absent=False
+    )
+    derived = explicit_flag(private_derived, param="private_derived", absent=True)
 
     # Import lazy: o modulo continua "runtime-neutral" e o teste de contrato
     # existente o carrega fora do pacote ``core``.
@@ -411,13 +468,13 @@ def assess_global_admission(
     if foreign:
         return refuse("relation_from_other_instance", linked=False)
 
-    relation_routed = route == ROUTE_RELATION_DERIVED or private_derived
+    relation_routed = route == ROUTE_RELATION_DERIVED or derived
 
     if relation_routed:
         if not linked:
             reason = (
                 "private_derived_without_relation"
-                if private_derived
+                if derived
                 else "relation_route_without_relation"
             )
             return refuse(reason, linked=False)
@@ -427,8 +484,10 @@ def assess_global_admission(
         # Revisão 05/11/2026 (P1): consentimento GERAL para interagir não é
         # autorização de contribuir ao global. O opt-in específico
         # ``scope_json.global_interiority`` é a autorização real (inventário
-        # F-5); sem ele o material fica PRIVADO nesta Relation.
-        if not global_interiority:
+        # F-5); sem ele o material fica PRIVADO nesta Relation. A comparação
+        # usa ``interiority`` (validada por ``explicit_flag``), nunca a
+        # verdade genérica de Python.
+        if not interiority:
             return refuse("global_interiority_not_granted", linked=True)
         if str(relation_status or "").strip().lower() != "active":
             return refuse("relation_not_active", linked=True)
