@@ -321,7 +321,7 @@ registradas antes dele. Script pronto e somente-leitura (só contagens, `mode=ro
 |---|---|---|
 | **F-5a** | **Contrato de elegibilidade.** Predicado no contrato canônico com **duas rotas** (condição 2): **(A)** fonte pública/livro → `authorized_aggregate` por **critérios próprios**, **sem Relation artificial**; **(B)** contribuição derivada de Relation → exige consentimento vigente **e** proveniência. **Recusa** (condição 1): com vínculo válido → mantém `relation_private`; sem vínculo → **quarentena explícita com motivo persistido** — **nunca `legacy_unscoped`**. Define ainda a **regra de leitura** (condição 4) para material sem autorização verificável. Sem escrita de dados. | ✅ recusa · instâncias distintas · consentimento revogado |
 | **F-5b** | **Admissão nos writers.** Passar os caminhos auto-declarados pelo predicado (começando por `world_consciousness`). Quem não passar → `relation_private` ou quarentena com motivo (**condição 1: `legacy_unscoped` proibido como destino de recusa nova**). | ✅ recusa · instâncias distintas · consentimento revogado |
-| **F-5c** | **Verificação integrada.** Duas Relations × duas instâncias; revogação/apagamento retiram a contribuição. | — (é a verificação integrada) |
+| **F-5c** | **Verificação integrada.** Duas Relations × duas instâncias; revogação/apagamento retiram a contribuição. | **Entregue: 11 passam + 1 `xfail` — revogação não bloqueia `get_active_knowledge_gaps` (ver seção F-5c)** |
 | **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha a PR #67 (metadados, sem conteúdo). | — |
 | **F-5e** (requisito de encerramento) | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | recusa de leitura sem autorização verificável |
 
@@ -415,6 +415,75 @@ lê `knowledge_gaps` sem filtrar `origin_quarantined` (atrás de
 completa de leitores do F-5e, conforme orientação do mantenedor.
 
 **Fora do escopo**: nenhuma reclassificação ou reprocessamento de histórico; nenhum envio de mensagem; nenhuma alteração de produção. **F-5e continua obrigatório para encerrar F-5**, e este corte **não comprova assimilação nem uso das leituras nas conversas**.
+
+#### F-5c — Verificação integrada (05/11/2026)
+
+**Status**: sentinelas entregues; **1 falha encontrada** e apresentada abaixo
+antes de qualquer ampliação de escopo. F-5d e F-5e continuam **pendentes e
+obrigatórios** para o encerramento do F-5.
+
+##### Cobertura da admissão — quem já usa e quem continua pendente
+
+**Não se declara todos concluídos pela alteração no World.** Inventário dos
+writers que podem nascer `authorized_aggregate`:
+
+| Writer | Alvo | Usa `assess_global_admission`? | Estado |
+|---|---|---|---|
+| `world_consciousness._persist_epistemic_knowledge_gap` | `knowledge_gaps` | **sim** (F-5b) | **Gated** |
+| `core/engine.py:1018` (`rumination_influence`) | contexto de prompt (não grava classe) | não — mas tem **lastro próprio**: só inclui Relations com `scope_json.global_interiority = 1` | Legítimo, **fora** do predicado |
+| mixin `add_knowledge_gap` / `upsert_epistemic_knowledge_gap` (chamadores `fact_extraction`, `memory_flush`, `controlled_action`) | `knowledge_gaps` | **não** — só `resolve_cognitive_origin`, que valida **consistência** e não elegibilidade | **Pendente**: hoje nenhum chamador passa `authorized_aggregate`, mas **nada impede** |
+| `core/db/dreams`, `scholar_engine` | próprias tabelas | **não** (mesmo resolver) | **Pendente** |
+| `world_state` (`world_consciousness.py:2634`) | cache JSON do mundo | **não** | **Pendente** |
+
+##### Dimensões separadas (mestre §4.1)
+
+| Dimensão | Estado |
+|---|---|
+| **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c (esta entrega) |
+| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 11 + 1 `xfail` · regressão mock 20/20 |
+| **Publicado** | ✅ F-5a/b mergeadas em `main` com deploy Railway `SUCCESS` |
+| **Validado em operação** | ❌ **não verificado** — o deploy confirma *execução*, não aceite operacional; sondas de produção seguem pendentes de `railway login` |
+
+##### Falha encontrada — apresentada antes de ampliar escopo
+
+**[P1] Revogação não bloqueia `get_active_knowledge_gaps`.**
+
+Reprodução (executada, não deduzida):
+
+```python
+rel = db.register_agent_relation(..., consent_status="granted")
+db.add_knowledge_gap(..., relation_id=rel, origin_class="relation_private", ...)
+db.get_active_knowledge_gaps("alice", relation_id=rel)   # → 1 item
+db.conn.execute("UPDATE agent_relations SET status='revoked',
+                 consent_status='revoked' WHERE relation_id=?", (rel,))
+db.get_active_knowledge_gaps("alice", relation_id=rel)   # → AINDA 1 item ✗
+```
+
+**Causa**: `get_active_knowledge_gaps` resolve o escopo com `resolve_relation_id`,
+que **não** checa `status`/`consent_status` (valida apenas instância e
+participante), em vez do gate canônico `require_eligible_relation` — plugado
+em **13** pontos (`facts`, `dreams`, `working_memory`, `psychometrics`,
+`relational_state`, `cognitive_context`, `agent_identity_context_builder`,
+rotas admin…) e **ausente** em `core/db/knowledge_gaps.py`.
+
+**Corte responsável**: gate único de revogação C12g (commit `a657f94`,
+"Aplicar gate unico de revogacao C12g em todos os caminhos que resolvem
+Relation") — este caminho ficou de fora da varredura.
+
+**Tratamento**: marcado `xfail(strict=True)` em
+`tests/test_f5c_admission_integration.py::test_revoked_relation_material_must_not_be_readable`.
+O contrato está escrito no teste; `strict` faz a CI falhar por XPASS quando o
+defeito for corrigido, obrigando a remoção da marca. **Nenhum contrato foi
+afrouxado** e nada foi corrigido aqui — ampliação de escopo depende de decisão
+do mantenedor.
+
+##### Correção de expectativa no teste de apagamento
+
+`erase_relation` **redige conteúdo e preserva a linha** como registro auditado
+(docstring: *"Redige o conteudo… Retorna contagem de celulas redigidas"*), não
+exclui. Meu primeiro teste esperava exclusão e falhou; a correção garante o que
+o apagamento assegura de fato: **o material original não sobrevive em nenhuma
+leitura** (`the_gap`, `topic`, `public_question` sem o texto original).
 
 **Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
 revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
