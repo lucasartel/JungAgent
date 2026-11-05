@@ -193,7 +193,7 @@ def test_general_consent_without_opt_in_does_not_admit(tmp_path):
         relation_agent_instance=stored["agent_instance"],
         relation_status=stored["status"],
         consent_status=stored["consent_status"],
-        global_interiority=bool((stored.get("scope") or {}).get("global_interiority")),
+        global_interiority=(stored.get("scope") or {}).get("global_interiority"),
         source_kind="world",
         source_refs=["knowledge_gap#1"],
     )
@@ -219,50 +219,170 @@ def test_explicit_opt_in_allows_admission(tmp_path):
         relation_agent_instance=stored["agent_instance"],
         relation_status=stored["status"],
         consent_status=stored["consent_status"],
-        global_interiority=bool((stored.get("scope") or {}).get("global_interiority")),
+        global_interiority=(stored.get("scope") or {}).get("global_interiority"),
         source_kind="world",
         source_refs=["knowledge_gap#1"],
     )
     assert decision.admits_global is True
 
 
-# ---------------------------------------------------------------------------
-# Revogação — FALHA ENCONTRADA no F-5c (ver xfail)
-# ---------------------------------------------------------------------------
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FALHA ENCONTRADA no F-5c (05/11/2026), NAO corrigida aqui: "
-        "get_active_knowledge_gaps usa resolve_relation_id, que nao checa "
-        "status/consentimento, em vez do gate canonico require_eligible_relation "
-        "(plugado em 13 outros pontos e ausente em knowledge_gaps). "
-        "Corte responsavel: gate unico de revogacao C12g (commit a657f94). "
-        "Reproducao: relation revogada continua devolvendo material na leitura."
-    ),
-)
-def test_revoked_relation_material_must_not_be_readable(tmp_path):
-    """Contrato C12g: Relation revogada nao produz nem expoe conteudo."""
+def test_raw_scope_value_is_never_coerced_by_truthiness(tmp_path):
+    """Por que os testes passam o valor BRUTO de opt-in: ``bool("false")``
+    seria ``True`` e abriria admissão sem consentimento.
+
+    Um ``scope_json`` malformado guardando a string ``"false"`` tem de ser
+    recusado pelo ``explicit_flag`` (``ValueError``), nunca lido como opt-in.
+    """
     db = _db(tmp_path)
     rel = db.register_agent_relation(
-        agent_instance=_INSTANCE, participant_user_id="alice", consent_status="granted"
+        agent_instance=_INSTANCE, participant_user_id="dave",
+        consent_status="granted", status="active",
+        scope={"global_interiority": "false"},
     )
-    db.add_knowledge_gap(
-        "alice", "politica", "Pergunta da alice", 0.7,
+    stored = db.get_agent_relation(rel)
+
+    with pytest.raises(ValueError, match="ambiguous_flag"):
+        assess_global_admission(
+            agent_instance=_INSTANCE,
+            route=ROUTE_RELATION_DERIVED,
+            relation_id=rel,
+            relation_agent_instance=stored["agent_instance"],
+            relation_status=stored["status"],
+            consent_status=stored["consent_status"],
+            global_interiority=(stored.get("scope") or {}).get("global_interiority"),
+            source_kind="world",
+            source_refs=["knowledge_gap#1"],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Revogação e demais estados inelegíveis — sentinela que passa NORMALMENTE
+# ---------------------------------------------------------------------------
+def _seed_relation_with_gap(db, *, status="active", consent="granted",
+                            participant="alice", instance=_INSTANCE):
+    rel = db.register_agent_relation(
+        agent_instance=instance, participant_user_id=participant,
+        status=status, consent_status=consent,
+    )
+    gap_id = db.add_knowledge_gap(
+        participant, "politica", "Pergunta da alice", 0.7,
         relation_id=rel, origin_class="relation_private",
         source_kind="conversation", source_refs=["conversation#1"],
     )
-    assert db.get_active_knowledge_gaps("alice", relation_id=rel, limit=10)
+    assert gap_id
+    return rel, gap_id
 
+
+def _set_relation_state(db, relation_id, *, status=None, consent=None):
+    updates, params = [], []
+    if status is not None:
+        updates.append("status = ?")
+        params.append(status)
+    if consent is not None:
+        updates.append("consent_status = ?")
+        params.append(consent)
+    if status == "revoked" or consent == "revoked":
+        updates.append("revoked_at = ?")
+        params.append("2026-11-05T12:00:00")
     db.conn.execute(
-        "UPDATE agent_relations SET status = 'revoked', consent_status = 'revoked', "
-        "revoked_at = '2026-11-05T12:00:00' WHERE relation_id = ?",
-        (rel,),
+        f"UPDATE agent_relations SET {', '.join(updates)} WHERE relation_id = ?",
+        (*params, relation_id),
     )
     db.conn.commit()
 
-    # Apos revogacao, nada pode sair — nem pelo escopo da Relation...
+
+def test_revoked_relation_material_is_not_readable(tmp_path):
+    """Gate canonico: Relation revogada nao expoe conteudo (lê e produz)."""
+    db = _db(tmp_path)
+    rel, gap_id = _seed_relation_with_gap(db)
+    assert db.get_active_knowledge_gaps("alice", relation_id=rel, limit=10)
+
+    _set_relation_state(db, rel, status="revoked", consent="revoked")
+
+    # Pelo vinculo explicito...
     assert db.get_active_knowledge_gaps("alice", relation_id=rel, limit=10) == []
-    # ...nem por nenhuma outra via.
+    # ...e pela resolucao automatica a partir do participante.
+    assert db.get_active_knowledge_gaps("alice", limit=10) == []
+
+
+def test_paused_relation_material_is_not_readable(tmp_path):
+    db = _db(tmp_path)
+    rel, _ = _seed_relation_with_gap(db)
+    assert db.get_active_knowledge_gaps("alice", relation_id=rel, limit=10)
+
+    _set_relation_state(db, rel, status="paused")
+
+    assert db.get_active_knowledge_gaps("alice", relation_id=rel, limit=10) == []
+
+
+def test_pending_consent_material_is_not_readable(tmp_path):
+    """Consentimento pendente nunca e consentimento."""
+    db = _db(tmp_path)
+    rel, _ = _seed_relation_with_gap(db)
+    assert db.get_active_knowledge_gaps("alice", relation_id=rel, limit=10)
+
+    _set_relation_state(db, rel, consent="pending")
+
+    assert db.get_active_knowledge_gaps("alice", relation_id=rel, limit=10) == []
+    assert db.get_active_knowledge_gaps("alice", limit=10) == []
+
+
+def test_auto_resolved_relation_is_gated_too(tmp_path):
+    """Resolução automática (sem relation_id) passa pelo mesmo gate."""
+    db = _db(tmp_path)
+    rel, _ = _seed_relation_with_gap(db, participant="carol")
+
+    # Sem relation_id: o leitor resolve a Relation do participante.
+    assert db.get_active_knowledge_gaps("carol", limit=10)
+
+    _set_relation_state(db, rel, status="revoked", consent="revoked")
+
+    assert db.get_active_knowledge_gaps("carol", limit=10) == []
+
+
+def test_relation_from_another_instance_is_refused(tmp_path):
+    """Vinculo de outra instancia: recusado na leitura e na escrita."""
+    db = _db(tmp_path)
+
+    # Material criado NA instancia dona do vinculo (a escrita ja recusa
+    # vinculo alheio — `relation_agent_instance_mismatch`).
+    db.agent_instance = "inst_b"
+    foreign_rel, _ = _seed_relation_with_gap(db, participant="bob", instance="inst_b")
+
+    # Instancia local: nao pode ler o vinculo alheio, nem vazar o material.
+    db.agent_instance = _INSTANCE
+    assert db.get_active_knowledge_gaps("bob", relation_id=foreign_rel, limit=10) == []
+    assert db.get_active_knowledge_gaps("bob", limit=10) == []
+
+    # E a escrita segue recusando vinculo de outra instancia.
+    with pytest.raises(ValueError, match="relation_agent_instance_mismatch"):
+        db.add_knowledge_gap(
+            "bob", "politica", "Tentativa com vinculo alheio", 0.7,
+            relation_id=foreign_rel, origin_class="relation_private",
+            source_kind="conversation", source_refs=["conversation#9"],
+        )
+
+
+def test_refused_relation_does_not_fall_back_to_global_scope(tmp_path):
+    """Sem fallback para escopo global na recusa; fonte publica legitima
+    continua legivel para quem nao tem vinculo inelegivel."""
+    db_file = tmp_path / "fb.db"
+    db = _db(tmp_path, name="fb.db")
+
+    # Material global (mundo, admitido) + material privado da Relation.
+    global_id = _persist(_world(tmp_path, db_file), will_id=30)
+    rel, private_id = _seed_relation_with_gap(db)
+
+    # Relation elegivel: vê as duas.
+    both = db.get_active_knowledge_gaps("alice", relation_id=rel, limit=10)
+    assert {item["id"] for item in both} == {global_id, private_id}
+
+    # Participante sem vinculo: a fonte publica continua legivel.
+    assert [item["id"] for item in db.get_active_knowledge_gaps("carol", limit=10)] == [global_id]
+
+    # Relation inelegivel: NAO se cai no escopo global — recusa total.
+    _set_relation_state(db, rel, status="revoked", consent="revoked")
+    assert db.get_active_knowledge_gaps("alice", relation_id=rel, limit=10) == []
     assert db.get_active_knowledge_gaps("alice", limit=10) == []
 
 

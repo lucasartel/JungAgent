@@ -508,20 +508,40 @@ class KnowledgeGapDatabaseMixin:
         relation_id: Optional[str] = None,
         agent_instance: Optional[str] = None,
     ) -> List[Dict]:
-        """Busca lacunas globais e, quando explicitado, as da mesma Relation."""
+        """Busca lacunas globais e, quando explicitado, as da mesma Relation.
+
+        F-5c: o escopo de Relation passa pelo **gate canonico C12g**
+        (``require_eligible_relation``). Sem elegibilidade — revogada,
+        pausada, consentimento pendente, vinculo de outra instancia ou leitor
+        indisponivel — a leitura e recusada e devolve ``[]``: **sem fallback
+        para o escopo global** e sem cair no legado. A recusa e registrada
+        com contexto, nunca silenciada (AGENTS.md, regra 5).
+        """
         with self._lock:
             cursor = self.conn.cursor()
             instance = cognitive_agent_instance(self, agent_instance)
             resolved_relation = None
             resolver = getattr(self, "resolve_relation_id", None)
-            if callable(resolver):
-                resolved_relation = resolver(
-                    agent_instance=instance,
-                    participant_user_id=user_id,
-                    relation_id=relation_id,
+            try:
+                if callable(resolver):
+                    resolved_relation = resolver(
+                        agent_instance=instance,
+                        participant_user_id=user_id,
+                        relation_id=relation_id,
+                    )
+                elif relation_id:
+                    resolved_relation = relation_id
+                if resolved_relation:
+                    from core.db.relations import require_eligible_relation
+
+                    require_eligible_relation(self, resolved_relation)
+            except ValueError as exc:
+                logger.warning(
+                    "get_active_knowledge_gaps: escopo de Relation recusado "
+                    "user_id=%s relation=%s motivo=%s",
+                    user_id, resolved_relation, exc,
                 )
-            elif relation_id:
-                resolved_relation = relation_id
+                return []
             visibility = "origin_class IN (?, ?)"
             params: list[Any] = [instance, INSTANCE_GLOBAL, AUTHORIZED_AGGREGATE]
             if resolved_relation:
