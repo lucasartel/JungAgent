@@ -220,6 +220,71 @@ Escopo: `agent_instance` + `origin_relation_id` via `_identity_origin`.
 | **R1a-3** ✅ *(implementado · testado · publicado; habilitado não verificado)* | **Corrigir leitores sem escopo P1-1..P1-4 + P2-1..P2-4.** Aplicar `_relation_scope`/`scope_context`/`legacy_quarantine_clause` nas 8 leituras identificadas. | 8 correções escopadas + testes de isolamento ✅ (PR #61, merge `fa56e05`) |
 | **R1a-4** ✅ *(implementado · testado; habilitado não verificado; em revisão)* | **Consolidação conceitual (R1b pontual).** **Entregue**: `knowledge_gaps` ganha `source_kind` (conjunto fechado `conversation` · `world` · `goal_manager`, derivado dos produtores reais), `dedup_key` (normalização conservadora: NFKC + casefold + pontuação, **sem semântica**; `the_gap` original nunca reescrito) e contagem de observações. Chave de dedup única por escopo `(agent_instance, origin_class, relation_id, fingerprint)` — fecha o bug em que `status='investigating'` saía da chave e a mesma pergunta virava linha nova. Comportamento por status definido: `open`/`investigating`/encerradas são reutilizadas, nunca reabertas nem duplicadas; recorrência ≠ retry (ancora nova vs. repetida) e **nenhuma delas altera `importance_score` nem apresenta confiança**. Proveniência indeterminada vai à quarentena explícita (`provenance_json.origin_indeterminate` + motivo + pendência), **sem promoção a material global autorizado** e sem interromper a conversa. **Sem backfill**: linhas históricas não são tocadas. | Fila + origem por entrada + dedup por escopo ✅ |
 
+### F-5 — Via de material global autorizado: inventário e decomposição (04/11/2026)
+
+**Status**: inventário feito (leitura estática), decomposição **proposta para aprovação**;
+implementação, testes, habilitação e aceite **pendentes**. Ficou em aberto de
+propósito na R1a-4 — o Princípio Áureo procura *criar* a via antes de alimentá-la.
+
+É o fechamento da lacuna `F-5` da Seção 5 e do trecho da spec de R1a que manda
+*"Implementar uma via explícita para material global autorizado, distinta da via
+privada e do legado sem classificação"*. Não abre capacidade nova.
+
+#### Achado central
+
+**Não existe predicado de elegibilidade para material global autorizado.** O
+rótulo `authorized_aggregate` é **auto-declarado por quem escreve**, e 13 sítios
+de leitura confiam nele.
+
+| Mecanismo | O que valida | Alcance |
+|---|---|---|
+| `resolve_cognitive_origin` (`core/db/cognitive_provenance.py`) | **só consistência**: Relation ⇒ `relation_private`; `relation_private` ⇒ exige Relation; classe desconhecida ⇒ `ValueError`. **Não pergunta** se o material é elegível a ser global. Sem Relation, cai em `requested_class ou legacy_unscoped`. | **5 chamadores**: `knowledge_gaps` (2), `dreams`, `scholar_engine` (2) — e **nenhum deles pede** `authorized_aggregate` hoje |
+| Auto-declaração do writer | nada — literal na instrução | `world_consciousness._persist_epistemic_knowledge_gap` grava `'instance_global','authorized_aggregate'` **direto no `INSERT`**, sem passar pelo resolver |
+| `agent_relations.scope_json.global_interiority = 1` | **a única autorização real**: opt-in explícito por Relation | consultado por **1 leitor** (`core/rumination_interiority.global_rumination_influence`, agregado *text-free*) e por **nenhum writer** |
+| `cognitive_ownership.py` | vocabulário + contrato dos 23 domínios + `validate_ownership_contracts` (valida a própria tabela de contratos) | **nenhuma função de elegibilidade** — `grep` por *authoriz/elegib/admit/promot* = 0 |
+
+Os 13 sítios que confiam no rótulo (`origin_class IN ('instance_global','authorized_aggregate')`
+ou equivalente): `core/cognitive_context.py` (montador C12f), `agent_identity_context_builder`
+(2), `core/db/essays`, `core/db/meta_cognition`, `core/db/symbolic_graph` (2),
+`core/db/working_memory`, `engines/integrative_self` (3), `engines/symbolic_graph`,
+`scholar_engine`.
+
+Legítimo e distinto: `core/engine.py:1018` grava `authorized_aggregate` vindo de
+`global_rumination_influence`, que **sim** consulta o opt-in — mas é o único
+caminho cuja declaração tem lastro.
+
+#### Onde resta `NULL` / legado
+
+- Schema: quase todas as tabelas usam `ownership_class TEXT NOT NULL DEFAULT
+  'legacy_unscoped'` (e `origin_class` idem) — **`NULL` não é o problema**; o
+  padrão já é honesto e `resolve_cognitive_origin` nunca devolve `NULL`.
+- Exceção real: **`processing_queue.origin_class` é nullable sem `default`** —
+  item enfileirado pode nascer sem origem. Já é contabilizado por
+  `rows_missing_origin_class` na sonda da PR #67.
+- O `NULL` que importa é o histórico (`dedup_key`, `source_kind`) da R1a-4:
+  sem backfill, **por desenho** — e por isso nunca é alcançado pelo dedup.
+
+#### ⚠️ Medições de produção pendentes
+
+Contagens reais de `ownership_class`/`origin_class` por tabela e o nº de
+Relations com `global_interiority=true` **não foram coletadas**: o token do
+Railway expirou (`railway login` — credencial/keychain local, não é minha de
+resolver). Script pronto e somente-leitura (só contagens, mode=ro): registrar
+os números antes do aceite.
+
+#### Decomposição proposta — para aprovação antes de codar
+
+| Subcorte | Escopo | Entrega |
+|---|---|---|
+| **F-5a** | **Contrato de elegibilidade.** Predicado `is_global_material_authorized(...)` no contrato canônico: quais origens podem nascer `authorized_aggregate`; convergência com `global_interiority` quando a origem é relacional; recusa explícita de `relation_private → global` e de `origem desconhecida → global`. Sem escrita de dados. | Predicado + testes estruturais |
+| **F-5b** | **Admissão nos writers.** Passar os caminhos auto-declarados pelo predicado (começando por `world_consciousness`, o maior). Quem não passar nasce `legacy_unscoped`/`relation_private`, nunca `authorized_aggregate`. | Gates por caminho + testes |
+| **F-5c** | **Sentinelas.** Duas Relations × duas instâncias: nenhum conteúdo privado vira global; revogação/apagamento retiram a contribuição. | Sentinelas |
+| **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha o padrão da PR #67 (metadados, sem conteúdo). | Probe |
+
+**Fora do escopo de F-5**: projeção de conteúdo privado → global com revisão e
+política de retratação. Isso é o R1 completo (R1b/R1c) e exige decisão própria;
+F-5 só fecha *quem pode declarar* global, não converte privado em global.
+
 ### R3 — Corretivos (3 subcortes)
 
 | Subcorte | Escopo | Entrega |
