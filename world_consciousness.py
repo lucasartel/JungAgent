@@ -372,16 +372,54 @@ class WorldConsciousnessFetcher:
         except (TypeError, ValueError):
             importance = 0.72
 
+        # F-5b: a ADMISSAO e decidida ANTES de qualquer escrita (inventario
+        # F-5b, 05/11/2026). Rota publica com proveniencia real: sem ancora
+        # (`source_refs` vazio) o predicado recusa, e o material e preservado
+        # em QUARENTENA com motivo — nunca promovido a `authorized_aggregate`
+        # e nunca jogado em `legacy_unscoped` (condicao 1).
+        will_id = will_state.get("id")
+        source_refs = [f"will#{will_id}"] if str(will_id or "").isdigit() else []
+        provenance = {
+            "producer": "world_consciousness",
+            "private_derived": False,
+            "raw_relational_text_used": False,
+        }
+
+        from core.db.cognitive_ownership import (
+            ROUTE_PUBLIC_SOURCE,
+            assess_global_admission,
+        )
+
+        try:
+            decision = assess_global_admission(
+                agent_instance=self.agent_instance,
+                route=ROUTE_PUBLIC_SOURCE,
+                source_kind="world",
+                source_refs=source_refs,
+                private_derived=False,
+            )
+        except ValueError as exc:
+            # Falha de admissao rastreavel (condicao 3 da orientacao F-5b):
+            # nada e gravado, nenhum fallback promove material, e a conversa
+            # nao e derrubada — o chamador ja trata `None`.
+            logger.warning(
+                "World Consciousness: admissao recusada por entrada invalida "
+                "user_id=%s instance=%s motivo=%s",
+                user_id, self.agent_instance, exc,
+            )
+            return None
+
+        admitted = decision.admits_global
+        if not admitted:
+            provenance = {
+                **provenance,
+                "admission_refused": decision.reason,
+                "admission_route": decision.route,
+            }
+
         try:
             with self._connect_world_db() as connection:
                 cursor = connection.cursor()
-                will_id = will_state.get("id")
-                source_refs = [f"will#{will_id}"] if str(will_id or "").isdigit() else []
-                provenance = {
-                    "producer": "world_consciousness",
-                    "private_derived": False,
-                    "raw_relational_text_used": False,
-                }
                 # R1a-4: identidade por fingerprint normalizado, no escopo de
                 # propriedade do caminho do mundo. Qualquer status casa — o
                 # material do mundo nao nasce de novo porque a pergunta mudou
@@ -428,12 +466,20 @@ class WorldConsciousnessFetcher:
                             source_refs_json, provenance_json, status,
                             source_kind, dedup_key, observation_count, last_observed_at,
                             origin_quarantined
-                        ) VALUES (?, ?, 'instance_global', 'authorized_aggregate', ?,
+                        ) VALUES (?, ?, 'instance_global', ?, ?,
                                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open',
-                                  'world', ?, 1, ?, 0)
+                                  'world', ?, 1, ?, ?)
                         """,
                         (
-                            user_id, self.agent_instance, user_id, topic, gap_question,
+                            user_id, self.agent_instance,
+                            # F-5b: a COLUNA reflete a decisao de admissao —
+                            # recusa grava instance_global, nunca
+                            # authorized_aggregate e nunca legacy_unscoped
+                            # (condicao 1). A CHAVE de dedup continua
+                            # estavel: troca-la quebraria o dedup world x
+                            # mixin garantido pelo R1a-4 (ver inventario).
+                            "authorized_aggregate" if admitted else "instance_global",
+                            user_id, topic, gap_question,
                             importance, knowledge_gap.get("source_origin"),
                             knowledge_gap.get("knowledge_kind"),
                             knowledge_gap.get("target_area"),
@@ -442,6 +488,7 @@ class WorldConsciousnessFetcher:
                             knowledge_gap.get("source_reason") or knowledge_gap.get("psychic_motive"),
                             gap_question, json.dumps(source_refs), json.dumps(provenance),
                             identity_key, now_iso,
+                            0 if admitted else 1,
                         ),
                     )
                 except sqlite3.IntegrityError:
