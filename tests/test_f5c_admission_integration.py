@@ -10,8 +10,10 @@ Cobre a orientação do mantenedor (05/11/2026):
 - criação → recorrência → fechamento → leitura, nas **duas ordens** e sob
   **concorrência**; quarentena nunca é liberada automaticamente.
 
-Falhas encontradas são marcadas ``xfail(strict=True)`` com o corte
-responsável — o contrato NÃO é afrouxado para o teste passar.
+A P1 de revogação foi corrigida com o **gate canônico** e a sentinela passa
+**normalmente, sem `xfail`** — condição de aprovação do F-5c. A falha
+confirmada nos **produtores** (escrita após revogação) está apresentada no
+inventário, **sem reparo** aqui: reparo e sentinela vêm juntos, após aprovação.
 Nenhum histórico é reprocessado e nenhuma quarentena é liberada aqui.
 """
 import json
