@@ -243,3 +243,134 @@ def test_eligible_relation_writes_stay_private(tmp_path):
     assert [g["id"] for g in db.get_active_knowledge_gaps(
         "alice", relation_id=rel, limit=10
     )] == [gap_id]
+
+
+# ---------------------------------------------------------------------------
+# P1 (06/11/2026): `instance_global` tambem e globalmente legivel
+# ---------------------------------------------------------------------------
+def test_instance_global_declaration_is_gated_too(tmp_path):
+    """Declarar ``instance_global`` nao contorna a admissao. A prova e a
+    leitura por OUTRO participante — nao a coluna."""
+    db = _db(tmp_path)
+    gap_id = db.add_knowledge_gap(
+        "carol", "politica", "Pergunta da carol", 0.7,
+        origin_class="instance_global",
+        source_kind="conversation",
+    )
+
+    row = _row(db, gap_id)
+    assert row["origin_quarantined"] == 1
+    assert json.loads(row["provenance_json"])["admission_refused"] == (
+        "route_mismatch_use_relation_route"
+    )
+    # Ninguem le: nem a propria carol, nem outro participante.
+    assert db.get_active_knowledge_gaps("carol", limit=10) == []
+    assert db.get_active_knowledge_gaps("dave", limit=10) == []
+
+
+def test_instance_global_with_public_source_stays_readable(tmp_path):
+    """Controle: ``instance_global`` com fonte publica conprovada continua
+    globalmente legivel — o contrato nao bloqueia o legitimo."""
+    db = _db(tmp_path)
+    gap_id = db.add_knowledge_gap(
+        "carol", "economia", "Indice de precos", 0.7,
+        origin_class="instance_global",
+        source_kind="world", source_refs=["will#31"],
+    )
+
+    row = _row(db, gap_id)
+    assert row["origin_class"] == "instance_global"
+    assert row["origin_quarantined"] == 0
+    # Legivel por OUTRO participante: fonte publica legitima.
+    assert [g["id"] for g in db.get_active_knowledge_gaps("dave", limit=10)] == [
+        gap_id
+    ]
+
+
+# ---------------------------------------------------------------------------
+# P1 (06/11/2026): evidencia de origem privada ignorada
+# ---------------------------------------------------------------------------
+def test_private_derived_evidence_forces_refusal(tmp_path):
+    """``provenance={"private_derived": True}`` e EVIDENCIA de origem
+    privada: o writer nao a substitui por afirmacao fixa de fonte publica."""
+    db = _db(tmp_path)
+    gap_id = db.add_knowledge_gap(
+        "carol", "politica", "Pergunta da carol", 0.7,
+        origin_class="authorized_aggregate",
+        source_kind="world", source_refs=["will#30"],
+        provenance={"private_derived": True},
+    )
+
+    row = _row(db, gap_id)
+    assert row["origin_quarantined"] == 1
+    prov = json.loads(row["provenance_json"])
+    assert prov["admission_refused"] == "private_derived_without_relation"
+    assert prov["private_derived"] is True  # evidencia preservada, nao apagada
+    # Nao legivel por outro participante.
+    assert db.get_active_knowledge_gaps("dave", limit=10) == []
+    assert db.get_active_knowledge_gaps("carol", limit=10) == []
+
+
+def test_private_derived_evidence_also_gates_instance_global(tmp_path):
+    """Mesma evidencia declarando ``instance_global``."""
+    db = _db(tmp_path)
+    gap_id = db.add_knowledge_gap(
+        "carol", "politica", "Pergunta da carol", 0.7,
+        origin_class="instance_global",
+        source_kind="world", source_refs=["will#30"],
+        provenance={"private_derived": True},
+    )
+
+    assert _row(db, gap_id)["origin_quarantined"] == 1
+    assert db.get_active_knowledge_gaps("dave", limit=10) == []
+
+
+def test_absent_or_false_private_derived_keeps_public_source(tmp_path):
+    """Chave ausente mantem a propria declaracao; ``False`` explicito tambem.
+    Fonte publica legitima segue admitida e lida por outro participante."""
+    db = _db(tmp_path)
+    absent = db.add_knowledge_gap(
+        "carol", "politica", "Sem chave", 0.7,
+        origin_class="authorized_aggregate",
+        source_kind="world", source_refs=["will#30"],
+    )
+    explicit = db.add_knowledge_gap(
+        "carol", "economia", "Com False", 0.7,
+        origin_class="authorized_aggregate",
+        source_kind="world", source_refs=["will#31"],
+        provenance={"private_derived": False},
+    )
+
+    for gap_id in (absent, explicit):
+        row = _row(db, gap_id)
+        assert row["origin_class"] == "authorized_aggregate"
+        assert row["origin_quarantined"] == 0
+    assert {g["id"] for g in db.get_active_knowledge_gaps("dave", limit=10)} == {
+        absent, explicit,
+    }
+
+
+def test_upsert_honors_both_p1_guards(tmp_path):
+    """Paridade: ``upsert_epistemic_knowledge_gap`` obedece aos dois P1."""
+    db = _db(tmp_path)
+    bypass = db.upsert_epistemic_knowledge_gap(
+        "carol",
+        {"gap_label": "politica", "gap_question": "Pergunta da carol"},
+        origin_class="instance_global",
+        source_kind="conversation",
+    )
+    assert _row(db, bypass)["origin_quarantined"] == 1
+    assert db.get_active_knowledge_gaps("dave", limit=10) == []
+
+    private = db.upsert_epistemic_knowledge_gap(
+        "carol",
+        {"gap_label": "economia", "gap_question": "Pergunta derivada de privado"},
+        origin_class="authorized_aggregate",
+        source_kind="world", source_refs=["will#31"],
+        provenance={"private_derived": True},
+    )
+    assert _row(db, private)["origin_quarantined"] == 1
+    assert json.loads(_row(db, private)["provenance_json"])["admission_refused"] == (
+        "private_derived_without_relation"
+    )
+    assert db.get_active_knowledge_gaps("dave", limit=10) == []

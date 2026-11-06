@@ -320,13 +320,22 @@ class KnowledgeGapDatabaseMixin:
             # mesma pergunta em duas linhas e quebraria a garantia R1a-4
             # (test_world_and_conversation_never_merge).
             declared_origin = resolved_origin
-            if resolved_origin == AUTHORIZED_AGGREGATE:
+            # P1 (06/11/2026): os leitores aceitam ``instance_global`` E
+            # ``authorized_aggregate`` — TODA declaracao que torna o material
+            # globalmente legivel passa pelo contrato, nao so a que afirma
+            # autorizacao. Declarar ``instance_global`` nao e um atalho.
+            if resolved_origin in {AUTHORIZED_AGGREGATE, INSTANCE_GLOBAL}:
                 decision = assess_global_admission(
                     agent_instance=instance,
                     route=ROUTE_PUBLIC_SOURCE,
                     source_kind=source_kind,
                     source_refs=refs,
-                    private_derived=False,
+                    # P1 (06/11/2026): a evidencia do chamador manda —
+                    # ``private_derived=True`` nunca e substituido por uma
+                    # afirmacao fixa de fonte publica. Chave ausente mantem o
+                    # lado da propria declaracao; tipo ambiguo recusa com
+                    # ``ValueError`` (explicit_flag), nunca vira True.
+                    private_derived=(provenance or {}).get("private_derived", False),
                 )
                 if not decision.admits_global:
                     admission_refused = decision.reason
@@ -478,13 +487,17 @@ class KnowledgeGapDatabaseMixin:
         # Token de dedup: ver comentario em ``add_knowledge_gap`` — a chave
         # fica com a classe DECLARADA, a coluna com a admissao decidida.
         declared_origin = resolved_origin
-        if resolved_origin == AUTHORIZED_AGGREGATE:
+        # P1 (06/11/2026): mesmos dois pontos do add_knowledge_gap — toda
+        # declaracao globalmente legivel passa pelo contrato, e a evidencia
+        # ``private_derived`` do chamador nunca e substituida por afirmacao
+        # fixa de fonte publica.
+        if resolved_origin in {AUTHORIZED_AGGREGATE, INSTANCE_GLOBAL}:
             decision = assess_global_admission(
                 agent_instance=instance,
                 route=ROUTE_PUBLIC_SOURCE,
                 source_kind=declared_kind,
                 source_refs=refs,
-                private_derived=False,
+                private_derived=(provenance or {}).get("private_derived", False),
             )
             if not decision.admits_global:
                 admission_refused = decision.reason

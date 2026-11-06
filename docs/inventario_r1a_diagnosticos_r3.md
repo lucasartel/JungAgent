@@ -449,8 +449,8 @@ na F-5b, mixin agora) — o resto segue pendente e declarado como tal.
 
 | Dimensão | Estado |
 |---|---|
-| **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c `60c8ee9` (reader + gates de revogação) · **admissão global nos produtores** (esta entrega) |
-| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão nos produtores **10 (nenhum `xfail`)** · regressão mock 20/20 · suíte completa **1429 passed** |
+| **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c `60c8ee9` · **admissão global nos produtores + 2 P1 da revisão** (esta entrega) |
+| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão nos produtores **16 (nenhum `xfail`, 2 P1 cobertos)** · regressão mock 20/20 · suíte completa **1435 passed** |
 | **Publicado** | ✅ F-5a/b mergeadas em `main` com deploy Railway `SUCCESS` |
 | **Validado em operação** | ❌ **não verificado** — o deploy confirma *execução*, não aceite operacional; sondas de produção seguem pendentes de `railway login` |
 
@@ -598,6 +598,55 @@ falham**; restaurados, 10/10 verdes. Suíte completa: **1429 passed**.
 
 **Cobertura**: 2 dos 4 caminhos de `knowledge_gaps` gated (tabela acima);
 `dreams`, `scholar_engine` e `world_state` seguem **pendentes**.
+
+##### Revisão do mantenedor (06/11/2026) — 2 P1, ambos corrigidos
+
+Não recomendou merge até corrigir. Ambos afetavam `add_knowledge_gap`
+**e** `upsert_epistemic_knowledge_gap`.
+
+**[P1-1] `instance_global` contornava a admissão.** O contrato só era
+chamado para `authorized_aggregate`, mas **os leitores aceitam as duas
+classes**. Reprodução: `source_kind="conversation"` recusada como
+`authorized_aggregate`, porém **aceita e legível por outro usuário** quando
+declarada `instance_global`.
+
+> **Correção**: a condição passou a ser
+> `resolved_origin in {AUTHORIZED_AGGREGATE, INSTANCE_GLOBAL}` — toda
+> declaração que torna o material globalmente legível passa pelo contrato,
+> não só a que afirma autorização.
+
+**[P1-2] Evidência de origem privada ignorada.** Os dois métodos passavam
+`private_derived=False` **fixo**. Reprodução: `provenance={"private_derived": True}`
+admitida como global e devolvida a outro usuário — o writer substituía
+evidência por afirmação de fonte pública.
+
+> **Correção**: `private_derived=(provenance or {}).get("private_derived", False)`
+> — a **evidência do chamador manda**. Chave ausente mantém o lado da própria
+> declaração; tipo ambíguo (`"false"`) recusa com `ValueError` de
+> `explicit_flag`, **nunca** vira `True`.
+
+**Sentinelas novas (6; total 16 no arquivo)** — todas comprovando o
+**bloqueio na leitura por outro participante**, não só a coluna:
+
+| Teste | Cobre |
+|---|---|
+| `test_instance_global_declaration_is_gated_too` | P1-1: `instance_global` + `conversation` → quarentena, ilegível por carol **e** por dave |
+| `test_instance_global_with_public_source_stays_readable` | **controle**: `instance_global` legítimo segue legível por dave |
+| `test_private_derived_evidence_forces_refusal` | P1-2: evidência `True` → recusa **e** evidência preservada no `provenance_json` |
+| `test_private_derived_evidence_also_gates_instance_global` | P1-2 sobre `instance_global` |
+| `test_absent_or_false_private_derived_keeps_public_source` | **controle**: chave ausente/`False` → fonte pública segue admitida e lida por dave |
+| `test_upsert_honors_both_p1_guards` | paridade do `upsert` nos dois P1 |
+
+**Prova**: com os dois P1 reabertos nos dois produtores, **4 dos 16 testes
+falham**; restaurados, 16/16 verdes. Suíte completa: **1435 passed**.
+
+**Observação verificada (fora do escopo destes P1)**: a classe
+`LEGACY_UNSCOPED` **não é legível por ninguém** — escrita sem declaração
+(`fact_extraction`/`memory_flush` sem `origin_class`, sem Relation) nasce
+`legacy_unscoped` com `origin_quarantined=0` e devolve **0 itens** para
+carol, dave, admin e system (medido, não deduzido). Não é uma brecha de
+leitura; é o efeito opaco do legado, e decidir fechar ou consumi-lo é corte
+próprio.
 
 **Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
 revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
