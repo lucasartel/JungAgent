@@ -438,16 +438,19 @@ writers que podem nascer `authorized_aggregate`:
 |---|---|---|---|
 | `world_consciousness._persist_epistemic_knowledge_gap` | `knowledge_gaps` | **sim** (F-5b) | **Gated** |
 | `core/engine.py:1018` (`rumination_influence`) | contexto de prompt (não grava classe) | não — mas tem **lastro próprio**: só inclui Relations com `scope_json.global_interiority = 1` | Legítimo, **fora** do predicado |
-| mixin `add_knowledge_gap` / `upsert_epistemic_knowledge_gap` (chamadores `fact_extraction`, `memory_flush`, `controlled_action`) | `knowledge_gaps` | **não** — só `resolve_cognitive_origin`, que valida **consistência** e não elegibilidade | **Pendente**: hoje nenhum chamador passa `authorized_aggregate`, mas **nada impede** |
+| mixin `add_knowledge_gap` / `upsert_epistemic_knowledge_gap` (chamadores `fact_extraction`, `memory_flush`, `controlled_action`) | `knowledge_gaps` | **sim** (esta entrega) | **Gated**: a origem declarada passa pelo contrato; recusa → `instance_global` + quarentena, nunca legado |
 | `core/db/dreams`, `scholar_engine` | próprias tabelas | **não** (mesmo resolver) | **Pendente** |
 | `world_state` (`world_consciousness.py:2634`) | cache JSON do mundo | **não** | **Pendente** |
+
+**Estado desta entrega**: 2 de 4 caminhos de `knowledge_gaps` gated (world writer
+na F-5b, mixin agora) — o resto segue pendente e declarado como tal.
 
 ##### Dimensões separadas (mestre §4.1)
 
 | Dimensão | Estado |
 |---|---|
-| **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c (esta entrega): **reader + produtores** (`add_knowledge_gap`, `upsert_epistemic_knowledge_gap`) protegidos pelo gate canônico em `core/db/knowledge_gaps.py` |
-| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c **27 (18 sentinelas + 9 dos produtores, nenhum `xfail`)** · regressão mock 20/20 · suíte completa **1419 passed** |
+| **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c `60c8ee9` · **admissão global nos produtores + 2 P1 da revisão** (esta entrega) |
+| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão nos produtores **16 (nenhum `xfail`, 2 P1 cobertos)** · regressão mock 20/20 · suíte completa **1435 passed** |
 | **Publicado** | ✅ F-5a/b mergeadas em `main` com deploy Railway `SUCCESS` |
 | **Validado em operação** | ❌ **não verificado** — o deploy confirma *execução*, não aceite operacional; sondas de produção seguem pendentes de `railway login` |
 
@@ -544,6 +547,106 @@ temporariamente, **6 dos 9 testes falham**; restaurados, 9/9 verdes.
 exclui. Meu primeiro teste esperava exclusão e falhou; a correção garante o que
 o apagamento assegura de fato: **o material original não sobrevive em nenhuma
 leitura** (`the_gap`, `topic`, `public_question` sem o texto original).
+
+#### Admissão global nos produtores de `knowledge_gaps` (06/11/2026)
+
+**Tarefa do mantenedor**: fechar a admissão global nos dois métodos — já
+respeitavam revogação, mas **não usavam o contrato** que decide se o material
+pode ser global.
+
+**O que mudou** (`core/db/knowledge_gaps.py`): `add_knowledge_gap` e
+`upsert_epistemic_knowledge_gap` chamam `assess_global_admission`
+(`route=public_source`, com o `source_kind` **declarado** e as âncoras) toda
+vez que a escrita nasceria `authorized_aggregate`.
+
+| Declaração | Resultado |
+|---|---|
+| fonte pública comprovada (`world` + âncora) | `authorized_aggregate`, `origin_quarantined=0`, legível |
+| sem origem | recusa → `instance_global` + quarentena (`public_source_kind_missing`) |
+| `conversation` | recusa (`route_mismatch_use_relation_route`) — condição 3 |
+| origem desconhecida (`telegram`) | recusa (`public_source_kind_not_allowed`) |
+| sem âncora | recusa (`public_source_not_identified`) |
+
+Em **toda** recusa: `provenance_json.admission_refused` com o motivo,
+classe `instance_global` (nunca `authorized_aggregate`, **nunca** `legacy_unscoped`),
+`origin_quarantined=1`, e o registro **não** aparece em nenhuma leitura.
+
+**Decisão de design — chave de dedup com a classe DECLARADA** (mesma
+aceitação da F-5b): `gap_identity_key` embute `origin_class` e **nada faz
+parse dela**. Usar a classe **gravada** na chave partiria a mesma pergunta em
+duas linhas quando uma escrita é admitida e outra recusada — **reproduzido
+como falha real** (`assert 2 == 1` em
+`test_quarantined_write_never_pollutes_existing_valid_gap`). A chave fica com
+a classe **declarada** (token); a **coluna** reflete a admissão decidida.
+
+**Dois testes R1a-4 atualizados** — não afrouxados: ambos passavam por
+declarar global **sem** cumprir o contrato, exatamente o buraco que o F-5a
+existia para fechar.
+
+| Teste | Antes | Depois |
+|---|---|---|
+| `test_world_and_conversation_never_merge` | global sem proveniência | ganha `source_kind="world"` + âncora; **intenção (isolamento) preservada** |
+| `test_quarantined_gap_is_not_consumed_even_if_global` | exigia `origin_class='authorized_aggregate'` **na recusa** | classe nova (`instance_global` + motivo na proveniência) **e** linha histórica global em quarentena inserida direto — o invariante *"o flag bloqueia, nunca a classe"* segue coberto |
+
+**Sentinelas — `tests/test_knowledge_gap_global_admission.py`, 10 testes, sem
+`xfail`**: admissão por fonte pública comprovada; recusa nas 4 origens; nunca
+legado; dedup entre admitida→recusada **e** recusada→admitida (quarentena
+sticky); paridade `add`/`upsert`; Relation elegível segue privada.
+
+**Prova**: com os dois blocos de admissão desabilitados, **6 dos 10 testes
+falham**; restaurados, 10/10 verdes. Suíte completa: **1429 passed**.
+
+**Cobertura**: 2 dos 4 caminhos de `knowledge_gaps` gated (tabela acima);
+`dreams`, `scholar_engine` e `world_state` seguem **pendentes**.
+
+##### Revisão do mantenedor (06/11/2026) — 2 P1, ambos corrigidos
+
+Não recomendou merge até corrigir. Ambos afetavam `add_knowledge_gap`
+**e** `upsert_epistemic_knowledge_gap`.
+
+**[P1-1] `instance_global` contornava a admissão.** O contrato só era
+chamado para `authorized_aggregate`, mas **os leitores aceitam as duas
+classes**. Reprodução: `source_kind="conversation"` recusada como
+`authorized_aggregate`, porém **aceita e legível por outro usuário** quando
+declarada `instance_global`.
+
+> **Correção**: a condição passou a ser
+> `resolved_origin in {AUTHORIZED_AGGREGATE, INSTANCE_GLOBAL}` — toda
+> declaração que torna o material globalmente legível passa pelo contrato,
+> não só a que afirma autorização.
+
+**[P1-2] Evidência de origem privada ignorada.** Os dois métodos passavam
+`private_derived=False` **fixo**. Reprodução: `provenance={"private_derived": True}`
+admitida como global e devolvida a outro usuário — o writer substituía
+evidência por afirmação de fonte pública.
+
+> **Correção**: `private_derived=(provenance or {}).get("private_derived", False)`
+> — a **evidência do chamador manda**. Chave ausente mantém o lado da própria
+> declaração; tipo ambíguo (`"false"`) recusa com `ValueError` de
+> `explicit_flag`, **nunca** vira `True`.
+
+**Sentinelas novas (6; total 16 no arquivo)** — todas comprovando o
+**bloqueio na leitura por outro participante**, não só a coluna:
+
+| Teste | Cobre |
+|---|---|
+| `test_instance_global_declaration_is_gated_too` | P1-1: `instance_global` + `conversation` → quarentena, ilegível por carol **e** por dave |
+| `test_instance_global_with_public_source_stays_readable` | **controle**: `instance_global` legítimo segue legível por dave |
+| `test_private_derived_evidence_forces_refusal` | P1-2: evidência `True` → recusa **e** evidência preservada no `provenance_json` |
+| `test_private_derived_evidence_also_gates_instance_global` | P1-2 sobre `instance_global` |
+| `test_absent_or_false_private_derived_keeps_public_source` | **controle**: chave ausente/`False` → fonte pública segue admitida e lida por dave |
+| `test_upsert_honors_both_p1_guards` | paridade do `upsert` nos dois P1 |
+
+**Prova**: com os dois P1 reabertos nos dois produtores, **4 dos 16 testes
+falham**; restaurados, 16/16 verdes. Suíte completa: **1435 passed**.
+
+**Observação verificada (fora do escopo destes P1)**: a classe
+`LEGACY_UNSCOPED` **não é legível por ninguém** — escrita sem declaração
+(`fact_extraction`/`memory_flush` sem `origin_class`, sem Relation) nasce
+`legacy_unscoped` com `origin_quarantined=0` e devolve **0 itens** para
+carol, dave, admin e system (medido, não deduzido). Não é uma brecha de
+leitura; é o efeito opaco do legado, e decidir fechar ou consumi-lo é corte
+próprio.
 
 **Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
 revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
