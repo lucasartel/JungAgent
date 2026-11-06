@@ -1310,6 +1310,303 @@ def query_knowledge_gaps(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Di
     }
 
 
+# ---------------------------------------------------------------------------
+# F-5d — admissao global observavel (metadados, sem conteudo)
+# ---------------------------------------------------------------------------
+# Codigos de recusa do contrato ``assess_global_admission``. Mesma disciplina
+# da PR #67: so sai o que esta nesta lista; qualquer outro valor vira None e
+# ``has_admission_refusal`` continua True para nao esconder a recusa.
+ALLOWED_ADMISSION_REASONS = frozenset(
+    {
+        "relation_instance_unverified",
+        "relation_from_other_instance",
+        "private_derived_without_relation",
+        "relation_route_without_relation",
+        "consent_not_granted",
+        "global_interiority_not_granted",
+        "relation_not_active",
+        "missing_provenance",
+        "public_source_kind_missing",
+        "route_mismatch_use_relation_route",
+        "public_source_kind_not_allowed",
+        "public_source_not_identified",
+    }
+)
+
+
+def _admission_reason_view(raw: Any) -> Tuple[Optional[str], bool]:
+    """Devolve ``(codigo_permitido, ha_recusa)`` de um ``admission_refused``.
+
+    Espelha ``_queue_error_view`` (PR #67): so a lista permitida passa;
+    desconhecido vira ``None`` sem perder o fato de que houve recusa.
+    """
+    if raw in (None, ""):
+        return None, False
+    if str(raw) in ALLOWED_ADMISSION_REASONS:
+        return str(raw), True
+    return None, True
+
+
+def _instance_only_filter(
+    cursor: sqlite3.Cursor, table: str, args: argparse.Namespace
+) -> tuple[str, List[Any]]:
+    """Filtro de tenancy SEM clausula de Relation.
+
+    Contagens e integridade precisam do panorama inteiro — incluir a
+    restricao de Relation esconderia justamente o que esta sonda mede.
+    So instancia; nenhum conteudo sai por aqui (mesmo motivo documentado
+    em ``scope_integrity`` da PR #67).
+    """
+    if "agent_instance" in set(table_columns(cursor, table)):
+        return (
+            " AND agent_instance = ?",
+            [getattr(args, "agent_instance", DEFAULT_AGENT_INSTANCE)],
+        )
+    return "", []
+
+
+def _tables_with_column(cursor: sqlite3.Cursor, column: str) -> List[str]:
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' "
+        "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    )
+    names = [str(row[0]) for row in cursor.fetchall()]
+    return [name for name in names if column in set(table_columns(cursor, name))]
+
+
+def query_global_admission(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
+    """F-5d — o que foi declarado global-authorized, por origem e escopo.
+
+    Responde as tres medicoes de producao pendentes do inventario F-5:
+    contagens de ``ownership_class``/``origin_class`` POR TABELA, o material
+    declarado ``authorized_aggregate`` por ORIGEM (``source_kind``) e ESCOPO
+    (global vs relation), e o numero de Relations com
+    ``global_interiority=true``.
+
+    Somente metadados: contagens, classes, codigos de recusa na lista
+    permitida. Nenhum ``topic``, ``the_gap``, ``closure_*`` ou texto de
+    proveniencia sai desta sonda.
+    """
+    if not table_exists(cursor, "knowledge_gaps"):
+        return {
+            "probe": "global_admission",
+            "available": False,
+            "assessment": "knowledge_gaps table is not available yet",
+            "origin_class_by_table": [],
+            "ownership_class_by_table": [],
+            "knowledge_gaps": {},
+            "relations": {},
+        }
+
+    # (a) Contagens POR TABELA — sem clausula de Relation (ver
+    # _instance_only_filter): e o panorama de tenancy que a medicao pede.
+    origin_class_by_table: List[Dict[str, Any]] = []
+    for table in _tables_with_column(cursor, "origin_class"):
+        where, params = _instance_only_filter(cursor, table, args)
+        # `count_rows`/`grouped_counts` esperam condicao pura; o filtro
+        # devolve " AND ..." para anexar a um WHERE existente.
+        base = f"1=1{where}"
+        origin_class_by_table.append(
+            {
+                "table": table,
+                "rows": count_rows(cursor, table, base, params),
+                "counts": grouped_counts(
+                    cursor, table, "origin_class", where=base, params=params
+                ),
+            }
+        )
+    ownership_class_by_table: List[Dict[str, Any]] = []
+    for table in _tables_with_column(cursor, "ownership_class"):
+        where, params = _instance_only_filter(cursor, table, args)
+        base = f"1=1{where}"
+        ownership_class_by_table.append(
+            {
+                "table": table,
+                "counts": grouped_counts(
+                    cursor, table, "ownership_class", where=base, params=params
+                ),
+            }
+        )
+
+    table = "knowledge_gaps"
+    columns = set(table_columns(cursor, table))
+    scope_where, scope_params = _will_scope_filter(cursor, table, args)
+    inst_where, inst_params = _instance_only_filter(cursor, table, args)
+
+    # (b) Declarado global: total, legivel e bloqueado. O flag de quarentena
+    # e o que decide o consumo — a classe so descreve a declaracao.
+    def _global_counts(params: Sequence[Any]) -> Dict[str, Any]:
+        return {
+            "readable": count_rows(
+                cursor,
+                table,
+                f"origin_class = 'authorized_aggregate' AND origin_quarantined = 0{inst_where}",
+                params,
+            ),
+            "blocked": count_rows(
+                cursor,
+                table,
+                f"origin_class = 'authorized_aggregate' AND origin_quarantined = 1{inst_where}",
+                params,
+            ),
+            "total": count_rows(
+                cursor,
+                table,
+                f"origin_class = 'authorized_aggregate'{inst_where}",
+                params,
+            ),
+        }
+
+    # (c) Por ORIGEM (source_kind) e ESCOPO (global vs relation) — o recorte
+    # que a condicao 2 do F-5 torna observavel.
+    origin_breakdown: List[Dict[str, Any]] = []
+    if "source_kind" in columns and "origin_quarantined" in columns:
+        cursor.execute(
+            f"""
+            SELECT source_kind AS source_kind,
+                   CASE WHEN origin_relation_id IS NULL THEN 'global'
+                        ELSE 'relation' END AS scope,
+                   origin_quarantined AS quarantined,
+                   COUNT(*) AS count
+            FROM {table}
+            WHERE origin_class = 'authorized_aggregate'{inst_where}
+            GROUP BY source_kind, scope, quarantined
+            ORDER BY count DESC
+            """,
+            inst_params,
+        )
+        origin_breakdown = rows_to_dicts(cursor.fetchall())
+
+    # (d) Recusas de admissao: motivos na lista permitida; desconhecidos
+    # viram None e continuam contados (nunca escondidos).
+    admission_refused: List[Dict[str, Any]] = []
+    unknown_reason_count = 0
+    if "provenance_json" in columns:
+        cursor.execute(
+            f"""
+            SELECT json_extract(provenance_json, '$.admission_refused') AS reason,
+                   COUNT(*) AS count
+            FROM {table}
+            WHERE json_extract(provenance_json, '$.admission_refused') IS NOT NULL
+              {'AND agent_instance = ?' if 'agent_instance' in columns else ''}
+            GROUP BY reason
+            ORDER BY count DESC
+            """,
+            inst_params if "agent_instance" in columns else (),
+        )
+        merged: Dict[Optional[str], int] = {}
+        for row in rows_to_dicts(cursor.fetchall()):
+            token, has_refusal = _admission_reason_view(row.get("reason"))
+            if not has_refusal:
+                continue
+            if token is None:
+                unknown_reason_count += int(row.get("count") or 0)
+            merged[token] = merged.get(token, 0) + int(row.get("count") or 0)
+        admission_refused = [
+            {"reason": reason, "count": count}
+            for reason, count in sorted(
+                merged.items(), key=lambda item: (-item[1], str(item[0]))
+            )
+        ]
+
+    # (e) Linhas declaradas globais: somente metadados, sem ``topic`` nem
+    # ``the_gap``. Escopo aplicado aqui (linha a linha e conteudo).
+    recent_rows: List[Dict[str, Any]] = []
+    if "origin_quarantined" in columns:
+        cursor.execute(
+            f"""
+            SELECT id, agent_instance, origin_class, source_kind, status,
+                   origin_quarantined, observation_count,
+                   CASE WHEN origin_relation_id IS NULL THEN 'global'
+                        ELSE 'relation' END AS scope,
+                   created_at, last_observed_at
+            FROM {table}
+            WHERE origin_class = 'authorized_aggregate'{scope_where}
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (*scope_params, int(args.limit)),
+        )
+        recent_rows = rows_to_dicts(cursor.fetchall())
+        for row in recent_rows:
+            row["origin_quarantined"] = bool(row.get("origin_quarantined"))
+            row["readable"] = not row["origin_quarantined"]
+
+    # (f) Relations com opt-in de interioridade — a regra canonica do
+    # contrato (core/rumination_interiority.py): json_extract(...) = 1.
+    relations: Dict[str, Any] = {"available": False}
+    if table_exists(cursor, "agent_relations"):
+        rel_where, rel_params = _instance_only_filter(cursor, "agent_relations", args)
+        # `count_rows`/`grouped_counts` esperam condicao pura: o filtro
+        # devolve " AND ..." para ser anexado a um WHERE existente.
+        rel_base = f"1=1{rel_where}"
+        opt_in = (
+            "json_extract(scope_json, '$.global_interiority') = 1" + rel_where
+        )
+        relations = {
+            "available": True,
+            "total": count_rows(cursor, "agent_relations", rel_base, rel_params),
+            "with_global_interiority": count_rows(
+                cursor, "agent_relations", opt_in, rel_params
+            ),
+            "opt_in_by_status_consent": grouped_counts(
+                cursor,
+                "agent_relations",
+                "status",
+                where=opt_in,
+                params=rel_params,
+            ),
+            "opt_in_by_consent": grouped_counts(
+                cursor,
+                "agent_relations",
+                "consent_status",
+                where=opt_in,
+                params=rel_params,
+            ),
+        }
+
+    global_authorized = _global_counts(inst_params)
+    return {
+        "probe": "global_admission",
+        "available": True,
+        "agent_instance": args.agent_instance,
+        "scope_kind": getattr(args, "scope_kind", "global"),
+        "note": (
+            "somente metadados: contagens, classes e codigos de recusa na "
+            "lista permitida; nenhum conteudo de lacuna ou Relation"
+        ),
+        "origin_class_by_table": origin_class_by_table,
+        "ownership_class_by_table": ownership_class_by_table,
+        "knowledge_gaps": {
+            "rows_total": count_rows(cursor, table, f"1=1{inst_where}", inst_params),
+            "by_origin_class": grouped_counts(
+                cursor, table, "origin_class",
+                where=f"1=1{inst_where}", params=inst_params,
+            ),
+            "by_source_kind": grouped_counts(
+                cursor, table, "source_kind",
+                where=f"1=1{inst_where}", params=inst_params,
+            ),
+            "by_status": grouped_counts(
+                cursor, table, "status",
+                where=f"1=1{inst_where}", params=inst_params,
+            ),
+            "quarantined": count_rows(
+                cursor, table, f"origin_quarantined = 1{inst_where}", inst_params
+            ),
+            "with_relation": count_rows(
+                cursor, table, f"origin_relation_id IS NOT NULL{inst_where}", inst_params
+            ),
+            "global_authorized": global_authorized,
+            "global_authorized_by_origin_and_scope": origin_breakdown,
+            "admission_refused": admission_refused,
+            "admission_refused_unknown_reason_count": unknown_reason_count,
+        },
+        "recent_global_authorized_rows": recent_rows,
+        "relations": relations,
+    }
+
+
 def query_rumination(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
     # T2-28 (corte E): escopo por tabela — user_id + instância + relation
     # quando pedida (mesmo helper fail-closed do resto do probe).
@@ -2444,6 +2741,7 @@ PROBES: Dict[str, Callable[[sqlite3.Cursor, argparse.Namespace], Dict[str, Any]]
     "dreams": query_dreams,
     "expressions": query_expressions,
     "goals": query_goals,
+    "global_admission": query_global_admission,
     "graph": query_graph,
     "identity": query_identity,
     "integration": query_integration,

@@ -322,7 +322,7 @@ registradas antes dele. Script pronto e somente-leitura (só contagens, `mode=ro
 | **F-5a** | **Contrato de elegibilidade.** Predicado no contrato canônico com **duas rotas** (condição 2): **(A)** fonte pública/livro → `authorized_aggregate` por **critérios próprios**, **sem Relation artificial**; **(B)** contribuição derivada de Relation → exige consentimento vigente **e** proveniência. **Recusa** (condição 1): com vínculo válido → mantém `relation_private`; sem vínculo → **quarentena explícita com motivo persistido** — **nunca `legacy_unscoped`**. Define ainda a **regra de leitura** (condição 4) para material sem autorização verificável. Sem escrita de dados. | ✅ recusa · instâncias distintas · consentimento revogado |
 | **F-5b** | **Admissão nos writers.** Passar os caminhos auto-declarados pelo predicado (começando por `world_consciousness`). Quem não passar → `relation_private` ou quarentena com motivo (**condição 1: `legacy_unscoped` proibido como destino de recusa nova**). | ✅ recusa · instâncias distintas · consentimento revogado |
 | **F-5c** | **Verificação integrada.** Duas Relations × duas instâncias; revogação/apagamento retiram a contribuição. | **Entregue: 27 testes sem `xfail` — P1 do reader E do produtor corrigidos com o gate canônico; ambos os casos pegos pelas sentinelas** |
-| **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha a PR #67 (metadados, sem conteúdo). | — |
+| **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha a PR #67 (metadados, sem conteúdo). | **Entregue: probe `global_admission` + 10 testes — responde as 3 medições pendentes** |
 | **F-5e** (requisito de encerramento) | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | recusa de leitura sem autorização verificável |
 
 > **F-5e é requisito de encerramento do F-5** — decisão do mantenedor em
@@ -449,8 +449,8 @@ na F-5b, mixin agora) — o resto segue pendente e declarado como tal.
 
 | Dimensão | Estado |
 |---|---|
-| **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c `60c8ee9` · **admissão global nos produtores + 2 P1 da revisão** (esta entrega) |
-| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão nos produtores **16 (nenhum `xfail`, 2 P1 cobertos)** · regressão mock 20/20 · suíte completa **1435 passed** |
+| **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c `60c8ee9` · admissão nos produtores + 2 P1 · **F-5d sonda `global_admission`** (esta entrega) |
+| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão 16 · **F-5d 10** · regressão mock 20/20 · suíte completa **1445 passed** |
 | **Publicado** | ✅ F-5a/b mergeadas em `main` com deploy Railway `SUCCESS` |
 | **Validado em operação** | ❌ **não verificado** — o deploy confirma *execução*, não aceite operacional; sondas de produção seguem pendentes de `railway login` |
 
@@ -647,6 +647,56 @@ falham**; restaurados, 16/16 verdes. Suíte completa: **1435 passed**.
 carol, dave, admin e system (medido, não deduzido). Não é uma brecha de
 leitura; é o efeito opaco do legado, e decidir fechar ou consumi-lo é corte
 próprio.
+
+#### F-5d — Observabilidade da admissão global (06/11/2026)
+
+**Tarefa**: sonda do que foi declarado global-authorized, por origem e
+escopo, espelhando a disciplina da PR #67 (metadados, sem conteúdo).
+
+**Entrega**: probe `global_admission` em `scripts/remote_db_probe.py`
+(registrado em `PROBES`) + `tests/test_remote_db_probe_global_admission.py`
+— **10 testes, nenhum `xfail`**.
+
+**As três medições de produção pendentes ficam respondíveis com a sonda:**
+
+| Medição pendente | Seção da sonda |
+|---|---|
+| contagens de `ownership_class`/`origin_class` **por tabela** | `origin_class_by_table`, `ownership_class_by_table` — varredura por `sqlite_master` das tabelas que têm a coluna |
+| material declarado global **por origem e escopo** | `knowledge_gaps.global_authorized_by_origin_and_scope` (`source_kind` × global/relation × quarentena) + `global_authorized` legível/bloqueado |
+| nº de Relations com `global_interiority=true` | `relations.with_global_interiority` — regra canônica `json_extract(scope_json,'$.global_interiority') = 1`, a mesma de `core/rumination_interiority.py` |
+
+**Disciplina de privacidade (espelha a PR #67):**
+
+- saem contagens, classes, identificadores de instância/Relation e códigos
+  de recusa de uma **lista explícita** `ALLOWED_ADMISSION_REASONS`;
+- motivo fora da lista → `None`, mas o `count` continua somado e
+  `admission_refused_unknown_reason_count` registra o total — **nunca
+  escondido, nunca texto livre** (reprodução com `"User Maria has depression"`
+  travada por teste, mesmo padrão da #67);
+- nenhum `topic`, `the_gap`, `closure_summary` ou `closure_journal_entry` —
+  o teste `test_probe_payload_contains_no_gap_content` varre o JSON inteiro;
+- contagens usam filtro de **tenancy** (instância) sem cláusula de Relation
+  (mesmo motivo documentado em `scope_integrity` da #67); as linhas
+  individuais aplicam o escopo completo e são fail-closed sem Relation pedida.
+
+**Correção no caminho** (o smoke acusou): `count_rows`/`grouped_counts`
+esperam condição pura, mas os filtros do probe devolvem `" AND ..."` para
+anexar a um `WHERE` — corrigido com prefixo `1=1`, no mesmo padrão do probe
+da #67.
+
+**Observação registrada, sem reparo**: o probe `knowledge_gaps` **já
+existente** devolve `topic`, `the_gap`, `closure_summary` e
+`closure_journal_entry` — conteúdo, não metadados. É pré-existente e distinto
+desta sonda; decisão de alterar é do mantenedor.
+
+**Execução**: `python scripts/remote_db_probe.py global_admission --pretty`
+(somente leitura). **A medição contra produção continua pendente de
+`railway login`** — ação do mantenedor, sem contornar a proteção de
+credenciais. A sonda é a ferramenta; a contagem em produção é o aceite
+operacional.
+
+**F-5e (tratamento das leituras) segue pendente e obrigatório** para o
+encerramento do F-5.
 
 **Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
 revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
