@@ -38,6 +38,22 @@ except ImportError:  # Same direct-file guard as above (F-5c, gate canonico C12g
     _rel_spec.loader.exec_module(_rel_mod)
     require_eligible_relation = _rel_mod.require_eligible_relation
 
+try:
+    from core.db.cognitive_ownership import (  # noqa: F401
+        ROUTE_PUBLIC_SOURCE,
+        assess_global_admission,
+    )
+except ImportError:  # Same direct-file guard (F-5, admissao global).
+    _own_path = Path(__file__).with_name("cognitive_ownership.py")
+    _own_spec = importlib.util.spec_from_file_location(
+        "cognitive_ownership_for_gaps", _own_path
+    )
+    _own_mod = importlib.util.module_from_spec(_own_spec)
+    assert _own_spec.loader is not None
+    _own_spec.loader.exec_module(_own_mod)
+    ROUTE_PUBLIC_SOURCE = _own_mod.ROUTE_PUBLIC_SOURCE
+    assess_global_admission = _own_mod.assess_global_admission
+
 AUTHORIZED_AGGREGATE = _provenance.AUTHORIZED_AGGREGATE
 INSTANCE_GLOBAL = _provenance.INSTANCE_GLOBAL
 cognitive_agent_instance = _provenance.cognitive_agent_instance
@@ -291,17 +307,53 @@ class KnowledgeGapDatabaseMixin:
                     user_id, kind_reason,
                 )
             refs = normalize_source_refs(source_refs)
+            # F-5: FECHAMENTO DA ADMISSAO GLOBAL. Quem declara
+            # ``authorized_aggregate`` passa pelo contrato que decide se o
+            # material pode nascer global — a origem declarada nao e prova.
+            # Sem Relation aqui a rota e a publica: critérios proprios, sem
+            # Relation artificial (condicao 2). Recusa: nunca vira legado
+            # (condicao 1) e, sem vinculo comprovado, cai em quarentena.
+            admission_refused = None
+            # Token de dedup: a chave embute origin_class (ver F-5b) e nada
+            # faz parse dela — ela fica com a classe DECLARADA enquanto a
+            # coluna reflete a admissao. Trocar a chave aqui partiria a
+            # mesma pergunta em duas linhas e quebraria a garantia R1a-4
+            # (test_world_and_conversation_never_merge).
+            declared_origin = resolved_origin
+            if resolved_origin == AUTHORIZED_AGGREGATE:
+                decision = assess_global_admission(
+                    agent_instance=instance,
+                    route=ROUTE_PUBLIC_SOURCE,
+                    source_kind=source_kind,
+                    source_refs=refs,
+                    private_derived=False,
+                )
+                if not decision.admits_global:
+                    admission_refused = decision.reason
+                    resolved_origin = INSTANCE_GLOBAL
+                    logger.warning(
+                        "knowledge_gap admissao global recusada user_id=%s "
+                        "instance=%s motivo=%s",
+                        user_id, instance, decision.reason,
+                    )
+            provenance_extra = dict(provenance or {})
+            if admission_refused:
+                provenance_extra["admission_refused"] = admission_refused
+                provenance_extra["admission_route"] = ROUTE_PUBLIC_SOURCE
             provenance_payload, quarantined = _gap_provenance(
                 cognitive_provenance(
                     origin_class=resolved_origin,
                     relation_id=resolved_relation,
                     participant_user_id=participant,
-                    extra=provenance,
+                    extra=provenance_extra,
                 ),
                 indeterminate_reason=kind_reason,
             )
+            if admission_refused:
+                # Coluna e marcador gravados juntos (ver ``_gap_provenance``).
+                quarantined = 1
             identity_key = gap_identity_key(
-                origin_class=resolved_origin,
+                origin_class=declared_origin,
                 relation_id=resolved_relation,
                 participant=participant,
                 fingerprint=gap_fingerprint(the_gap),
@@ -313,7 +365,7 @@ class KnowledgeGapDatabaseMixin:
                 instance=instance,
                 identity_key=identity_key,
                 incoming_refs=refs,
-                incoming_quarantined=bool(kind_reason),
+                incoming_quarantined=bool(quarantined),
             )
             if observed:
                 self.conn.commit()
@@ -346,7 +398,7 @@ class KnowledgeGapDatabaseMixin:
                     instance=instance,
                     identity_key=identity_key,
                     incoming_refs=refs,
-                    incoming_quarantined=bool(kind_reason),
+                    incoming_quarantined=bool(quarantined),
                 )
                 self.conn.commit()
                 if observed:
@@ -419,17 +471,47 @@ class KnowledgeGapDatabaseMixin:
             public_question = the_gap
         private_trigger = knowledge_gap.get("private_trigger")
         refs = normalize_source_refs(source_refs)
+        # F-5: mesmo fechamento da ADMISSAO GLOBAL do add_knowledge_gap —
+        # antes de qualquer INSERT ou atualizacao por deduplicacao. A origem
+        # declarada nao prova autorizacao; o contrato decide.
+        admission_refused = None
+        # Token de dedup: ver comentario em ``add_knowledge_gap`` — a chave
+        # fica com a classe DECLARADA, a coluna com a admissao decidida.
+        declared_origin = resolved_origin
+        if resolved_origin == AUTHORIZED_AGGREGATE:
+            decision = assess_global_admission(
+                agent_instance=instance,
+                route=ROUTE_PUBLIC_SOURCE,
+                source_kind=declared_kind,
+                source_refs=refs,
+                private_derived=False,
+            )
+            if not decision.admits_global:
+                admission_refused = decision.reason
+                resolved_origin = INSTANCE_GLOBAL
+                logger.warning(
+                    "knowledge_gap admissao global recusada user_id=%s "
+                    "instance=%s motivo=%s",
+                    user_id, instance, decision.reason,
+                )
+        provenance_extra = dict(provenance or {})
+        if admission_refused:
+            provenance_extra["admission_refused"] = admission_refused
+            provenance_extra["admission_route"] = ROUTE_PUBLIC_SOURCE
         provenance_payload, quarantined = _gap_provenance(
             cognitive_provenance(
                 origin_class=resolved_origin,
                 relation_id=resolved_relation,
                 participant_user_id=participant,
-                extra=provenance,
+                extra=provenance_extra,
             ),
             indeterminate_reason=kind_reason,
         )
+        if admission_refused:
+            # Coluna e marcador gravados juntos (ver ``_gap_provenance``).
+            quarantined = 1
         identity_key = gap_identity_key(
-            origin_class=resolved_origin,
+            origin_class=declared_origin,
             relation_id=resolved_relation,
             participant=participant,
             fingerprint=gap_fingerprint(the_gap),
@@ -442,7 +524,7 @@ class KnowledgeGapDatabaseMixin:
                 instance=instance,
                 identity_key=identity_key,
                 incoming_refs=refs,
-                incoming_quarantined=bool(kind_reason),
+                incoming_quarantined=bool(quarantined),
             )
             if observed:
                 self.conn.commit()
@@ -491,7 +573,7 @@ class KnowledgeGapDatabaseMixin:
                     instance=instance,
                     identity_key=identity_key,
                     incoming_refs=refs,
-                    incoming_quarantined=bool(kind_reason),
+                    incoming_quarantined=bool(quarantined),
                 )
                 self.conn.commit()
                 if observed:

@@ -186,6 +186,10 @@ class TestIsolation:
         public = db.add_knowledge_gap(
             "u1", "t", "O que mudou na politica publica?", 0.5,
             origin_class="authorized_aggregate",
+            # F-5: declarar ``authorized_aggregate`` nao basta — a admissao
+            # exige fonte publica comprovada. Sem proveniencia o contrato
+            # recusa e a linha nunca nasce autorizada.
+            source_kind="world", source_refs=["will#30"],
         )
         assert private != public
         assert _row(db, private)["origin_class"] == "relation_private"
@@ -314,13 +318,33 @@ class TestReviewerFindings:
         db = _db(tmp_path)
         gap_id = db.add_knowledge_gap(
             "u1", "t", "Pergunta com origem desconhecida", 0.9,
-            origin_class="authorized_aggregate",  # escrito como global
+            origin_class="authorized_aggregate",  # declarado como global
             source_kind="telegram",               # produtor fora do conjunto
         )
         row = _row(db, gap_id)
-        assert row["origin_class"] == "authorized_aggregate"
+        # F-5: declarar global nao basta. Sem fonte publica comprovada o
+        # contrato recusa, a classe desce para ``instance_global`` (nunca
+        # legado) e o motivo fica na proveniencia.
+        assert row["origin_class"] == "instance_global"
         assert row["origin_quarantined"] == 1
+        assert json.loads(row["provenance_json"])["admission_refused"]
         # ... mas bloqueada para qualquer leitor.
+        assert db.get_active_knowledge_gaps("u1", limit=10) == []
+        assert db.get_active_knowledge_gaps("system", limit=10) == []
+
+        # Linha GLOBAL em quarentena anterior a F-5: o flag continua sendo
+        # o mecanismo de bloqueio, nunca a classe.
+        db.conn.execute(
+            """
+            INSERT INTO knowledge_gaps (
+                user_id, agent_instance, ownership_class, origin_class,
+                topic, the_gap, importance_score, status, origin_quarantined
+            ) VALUES ('u1', 'test_jung', 'authorized_aggregate',
+                      'authorized_aggregate', 'antiga',
+                      'Lacuna global em quarentena', 0.5, 'open', 1)
+            """
+        )
+        db.conn.commit()
         assert db.get_active_knowledge_gaps("u1", limit=10) == []
         assert db.get_active_knowledge_gaps("system", limit=10) == []
 
