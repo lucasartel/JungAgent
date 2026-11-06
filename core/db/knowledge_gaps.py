@@ -28,6 +28,16 @@ except ImportError:  # Same direct-file guard as above.
     _sk_spec.loader.exec_module(_sk_mod)
     validate_gap_source_kind = _sk_mod.validate_gap_source_kind
 
+try:
+    from core.db.relations import require_eligible_relation
+except ImportError:  # Same direct-file guard as above (F-5c, gate canonico C12g).
+    _rel_path = Path(__file__).with_name("relations.py")
+    _rel_spec = importlib.util.spec_from_file_location("relations_for_gaps", _rel_path)
+    _rel_mod = importlib.util.module_from_spec(_rel_spec)
+    assert _rel_spec.loader is not None
+    _rel_spec.loader.exec_module(_rel_mod)
+    require_eligible_relation = _rel_mod.require_eligible_relation
+
 AUTHORIZED_AGGREGATE = _provenance.AUTHORIZED_AGGREGATE
 INSTANCE_GLOBAL = _provenance.INSTANCE_GLOBAL
 cognitive_agent_instance = _provenance.cognitive_agent_instance
@@ -251,6 +261,22 @@ class KnowledgeGapDatabaseMixin:
                 origin_class=origin_class,
                 agent_instance=agent_instance,
             )
+            # F-5c: gate canonico C12g DEPOIS de resolver/validar o vinculo e
+            # ANTES de qualquer INSERT ou atualizacao por deduplicacao — uma
+            # Relation so PRODUZ conteudo quando ativa e com consentimento
+            # concedido. Na recusa: loga motivo+contexto (sem conteudo
+            # pessoal) e devolve None; o contrato e Optional[int] e um ID aqui
+            # seria falso sucesso.
+            if resolved_relation:
+                try:
+                    require_eligible_relation(self, resolved_relation)
+                except ValueError as exc:
+                    logger.warning(
+                        "knowledge_gap escrita recusada user_id=%s instance=%s "
+                        "relation=%s motivo=%s",
+                        user_id, instance, resolved_relation, exc,
+                    )
+                    return None
             if not (the_gap or "").strip():
                 logger.warning("knowledge_gap sem texto user_id=%s — recusado", user_id)
                 return None
@@ -364,6 +390,20 @@ class KnowledgeGapDatabaseMixin:
             origin_class=origin_class or knowledge_gap.get("origin_class"),
             agent_instance=agent_instance,
         )
+        # F-5c: mesmo gate canonico do add_knowledge_gap — DEPOIS de resolver
+        # o vinculo e ANTES de qualquer INSERT ou atualizacao de ancoras,
+        # contadores e timestamps por deduplicacao. Nao ha fallback para o
+        # escopo global nem para o legado: recusa e recusa.
+        if resolved_relation:
+            try:
+                require_eligible_relation(self, resolved_relation)
+            except ValueError as exc:
+                logger.warning(
+                    "knowledge_gap upsert recusado user_id=%s instance=%s "
+                    "relation=%s motivo=%s",
+                    user_id, instance, resolved_relation, exc,
+                )
+                return None
         declared_kind = source_kind or knowledge_gap.get("source_kind")
         # allow_null=False: escrita NOVA sem produtor validado vai para
         # quarentena, distinta do legado historico (que nao passa por aqui).
@@ -508,20 +548,39 @@ class KnowledgeGapDatabaseMixin:
         relation_id: Optional[str] = None,
         agent_instance: Optional[str] = None,
     ) -> List[Dict]:
-        """Busca lacunas globais e, quando explicitado, as da mesma Relation."""
+        """Busca lacunas globais e, quando explicitado, as da mesma Relation.
+
+        F-5c: o escopo de Relation passa pelo **gate canonico C12g**
+        (``require_eligible_relation``). Sem elegibilidade — revogada,
+        pausada, consentimento pendente, vinculo de outra instancia ou leitor
+        indisponivel — a leitura e recusada e devolve ``[]``: **sem fallback
+        para o escopo global** e sem cair no legado. A recusa e registrada
+        com contexto, nunca silenciada (AGENTS.md, regra 5).
+        """
         with self._lock:
             cursor = self.conn.cursor()
             instance = cognitive_agent_instance(self, agent_instance)
             resolved_relation = None
             resolver = getattr(self, "resolve_relation_id", None)
-            if callable(resolver):
-                resolved_relation = resolver(
-                    agent_instance=instance,
-                    participant_user_id=user_id,
-                    relation_id=relation_id,
+            try:
+                if callable(resolver):
+                    resolved_relation = resolver(
+                        agent_instance=instance,
+                        participant_user_id=user_id,
+                        relation_id=relation_id,
+                    )
+                elif relation_id:
+                    resolved_relation = relation_id
+                if resolved_relation:
+                    # Import protegido no topo do modulo (padrao direct-file).
+                    require_eligible_relation(self, resolved_relation)
+            except ValueError as exc:
+                logger.warning(
+                    "get_active_knowledge_gaps: escopo de Relation recusado "
+                    "user_id=%s relation=%s motivo=%s",
+                    user_id, resolved_relation, exc,
                 )
-            elif relation_id:
-                resolved_relation = relation_id
+                return []
             visibility = "origin_class IN (?, ?)"
             params: list[Any] = [instance, INSTANCE_GLOBAL, AUTHORIZED_AGGREGATE]
             if resolved_relation:

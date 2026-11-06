@@ -321,7 +321,7 @@ registradas antes dele. Script pronto e somente-leitura (só contagens, `mode=ro
 |---|---|---|
 | **F-5a** | **Contrato de elegibilidade.** Predicado no contrato canônico com **duas rotas** (condição 2): **(A)** fonte pública/livro → `authorized_aggregate` por **critérios próprios**, **sem Relation artificial**; **(B)** contribuição derivada de Relation → exige consentimento vigente **e** proveniência. **Recusa** (condição 1): com vínculo válido → mantém `relation_private`; sem vínculo → **quarentena explícita com motivo persistido** — **nunca `legacy_unscoped`**. Define ainda a **regra de leitura** (condição 4) para material sem autorização verificável. Sem escrita de dados. | ✅ recusa · instâncias distintas · consentimento revogado |
 | **F-5b** | **Admissão nos writers.** Passar os caminhos auto-declarados pelo predicado (começando por `world_consciousness`). Quem não passar → `relation_private` ou quarentena com motivo (**condição 1: `legacy_unscoped` proibido como destino de recusa nova**). | ✅ recusa · instâncias distintas · consentimento revogado |
-| **F-5c** | **Verificação integrada.** Duas Relations × duas instâncias; revogação/apagamento retiram a contribuição. | — (é a verificação integrada) |
+| **F-5c** | **Verificação integrada.** Duas Relations × duas instâncias; revogação/apagamento retiram a contribuição. | **Entregue: 27 testes sem `xfail` — P1 do reader E do produtor corrigidos com o gate canônico; ambos os casos pegos pelas sentinelas** |
 | **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha a PR #67 (metadados, sem conteúdo). | — |
 | **F-5e** (requisito de encerramento) | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | recusa de leitura sem autorização verificável |
 
@@ -415,6 +415,135 @@ lê `knowledge_gaps` sem filtrar `origin_quarantined` (atrás de
 completa de leitores do F-5e, conforme orientação do mantenedor.
 
 **Fora do escopo**: nenhuma reclassificação ou reprocessamento de histórico; nenhum envio de mensagem; nenhuma alteração de produção. **F-5e continua obrigatório para encerrar F-5**, e este corte **não comprova assimilação nem uso das leituras nas conversas**.
+
+#### F-5c — Verificação integrada (05/11/2026)
+
+**Status (revisão do mantenedor, 05/11/2026)**: **ambas as P1 foram
+corrigidas nesta entrega** com o gate canônico — o **reader** (revogação) e
+os **produtores** (`add_knowledge_gap`, `upsert_epistemic_knowledge_gap`).
+As sentinelas passam **normalmente, sem `xfail`** — condição de aprovação do
+F-5c. A falha do produtor foi **apresentada antes** do reparo e reparada
+**depois da autorização**, no mesmo limite: produtores de `knowledge_gaps`,
+sem reforma geral. F-5d e F-5e continuam **pendentes e obrigatórios** para o
+encerramento do F-5.
+Nenhuma alteração de ambiente de produção nesta entrega: Railway não foi
+tocado; o deploy segue sendo responsabilidade do mantenedor.
+
+##### Cobertura da admissão — quem já usa e quem continua pendente
+
+**Não se declara todos concluídos pela alteração no World.** Inventário dos
+writers que podem nascer `authorized_aggregate`:
+
+| Writer | Alvo | Usa `assess_global_admission`? | Estado |
+|---|---|---|---|
+| `world_consciousness._persist_epistemic_knowledge_gap` | `knowledge_gaps` | **sim** (F-5b) | **Gated** |
+| `core/engine.py:1018` (`rumination_influence`) | contexto de prompt (não grava classe) | não — mas tem **lastro próprio**: só inclui Relations com `scope_json.global_interiority = 1` | Legítimo, **fora** do predicado |
+| mixin `add_knowledge_gap` / `upsert_epistemic_knowledge_gap` (chamadores `fact_extraction`, `memory_flush`, `controlled_action`) | `knowledge_gaps` | **não** — só `resolve_cognitive_origin`, que valida **consistência** e não elegibilidade | **Pendente**: hoje nenhum chamador passa `authorized_aggregate`, mas **nada impede** |
+| `core/db/dreams`, `scholar_engine` | próprias tabelas | **não** (mesmo resolver) | **Pendente** |
+| `world_state` (`world_consciousness.py:2634`) | cache JSON do mundo | **não** | **Pendente** |
+
+##### Dimensões separadas (mestre §4.1)
+
+| Dimensão | Estado |
+|---|---|
+| **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c (esta entrega): **reader + produtores** (`add_knowledge_gap`, `upsert_epistemic_knowledge_gap`) protegidos pelo gate canônico em `core/db/knowledge_gaps.py` |
+| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c **27 (18 sentinelas + 9 dos produtores, nenhum `xfail`)** · regressão mock 20/20 · suíte completa **1419 passed** |
+| **Publicado** | ✅ F-5a/b mergeadas em `main` com deploy Railway `SUCCESS` |
+| **Validado em operação** | ❌ **não verificado** — o deploy confirma *execução*, não aceite operacional; sondas de produção seguem pendentes de `railway login` |
+
+##### [P1] Revogação não bloqueava `get_active_knowledge_gaps` — CORRIGIDO nesta entrega
+
+**Como foi encontrada** (reprodução executada, não deduzida):
+
+```python
+rel = db.register_agent_relation(..., consent_status="granted")
+db.add_knowledge_gap(..., relation_id=rel, origin_class="relation_private", ...)
+db.get_active_knowledge_gaps("alice", relation_id=rel)   # → 1 item
+db.conn.execute("UPDATE agent_relations SET status='revoked',
+                 consent_status='revoked' WHERE relation_id=?", (rel,))
+db.get_active_knowledge_gaps("alice", relation_id=rel)   # → AINDA 1 item ✗
+```
+
+**Causa**: `get_active_knowledge_gaps` resolvia o escopo com `resolve_relation_id`,
+que **não** checa `status`/`consent_status` (valida apenas instância e
+participante), em vez do gate canônico `require_eligible_relation` — plugado
+em **13** pontos e **ausente** em `core/db/knowledge_gaps.py`.
+
+**Reparo (aprovado pelo mantenedor em 05/11/2026)**: o reader agora chama o
+**gate canônico** `require_eligible_relation` depois de resolver o escopo e,
+na recusa (`ValueError`), registra o motivo com contexto e devolve `[]` —
+**sem fallback para o escopo global, sem cair no legado, sem silenciar a
+exceção**. Sem reforma geral: um único ponto de chamada, nenhum contrato de
+chamador alterado.
+
+**Sentinela passando normalmente**: `test_revoked_relation_material_is_not_readable`
+(s/ `xfail`) + pausa, consentimento pendente, resolução automática e vínculo
+de outra instância. **F-5c só é aprovado com essa sentinela verde** — condição
+do mantenedor.
+
+**Preservação verificada**: `test_refused_relation_does_not_fall_back_to_global_scope`
+garante que fonte pública continua legivel para quem nao tem vinculo
+inelegivel, e que a recusa de Relation **nao** cai no escopo global.
+
+**Valor bruto de opt-in**: os testes de opt-in passam o valor direto do
+`scope_json` (**sem `bool()`**) — `bool("false")` seria `True` e abriria
+admissao sem consentimento; `test_raw_scope_value_is_never_coerced_by_truthiness`
+trava isso com `scope={"global_interiority": "false"}` → `ValueError`.
+
+##### [P1] O produtor escrevia após revogação — CORRIGIDO nesta entrega
+
+**Como foi encontrada** (reprodução executada):
+
+```python
+rel = db.register_agent_relation(..., consent_status="granted")
+db.conn.execute("UPDATE agent_relations SET status='revoked',
+                 consent_status='revoked' WHERE relation_id=?", (rel,))
+n0 = COUNT(knowledge_gaps)                                    # → 0
+db.add_knowledge_gap("alice", ..., relation_id=rel,
+                     origin_class="relation_private", ...)    # gravou=True
+n1 = COUNT(knowledge_gaps)                                    # → 1  ✗
+```
+
+**Causa**: `add_knowledge_gap` → `resolve_cognitive_origin` → `resolve_relation_id`,
+que devolve o id **sem checar elegibilidade**. A política C12g diz
+"uma Relation só **lê/produz** conteúdo quando ativa e com consentimento
+concedido" — a leitura já obedecia (reparo acima); a **produção** ainda não.
+
+**Reparo (aprovado pelo mantenedor em 05/11/2026)**: `add_knowledge_gap` e
+`upsert_epistemic_knowledge_gap` agora chamam o **gate canônico**
+`require_eligible_relation` **após** resolver/validar o vínculo e **antes** de
+qualquer `INSERT` ou atualização por deduplicação (`observe_gap_occurrence`).
+O import é o protegido no topo do módulo, seguindo o padrão *direct-file*
+já usado por `cognitive_provenance` e `source_kinds` — sem quebrar os testes
+que carregam `knowledge_gaps.py` isolado.
+
+**Na recusa**: `logger.warning` com usuário, instância, relação e motivo —
+**sem conteúdo pessoal** — e retorno `None` (contrato `Optional[int]`): nunca
+um ID que pareça sucesso. Vínculo de outra instância continua `ValueError`
+(`relation_agent_instance_mismatch`): argumento inválido, não política de
+consentimento.
+
+**Sentinelas — `tests/test_f5c_producer_gate.py`, 9 testes, SEM `xfail`:**
+
+| Cenário | O que prova |
+|---|---|
+| revogação · pausa · consentimento pendente | **nenhuma linha nova** **e** nenhuma mutação de âncoras, contadores e timestamps na linha existente (`observation_count`, `source_refs_json`, `last_observed_at`) |
+| vínculo explícito | gate nos dois produtores |
+| resolução automática (sem `relation_id`) | gate vale igualmente |
+| outra instância | `ValueError`, sem nenhuma linha |
+| sem fallback | a recusa não produz linha em `authorized_aggregate`, `instance_global` **nem** `legacy_unscoped` |
+| **controles** | fonte pública independente e Relation elegível seguem gravando e deduplicando |
+
+**Prova de que as sentinelas pegam o bug**: com os dois gates removidos
+temporariamente, **6 dos 9 testes falham**; restaurados, 9/9 verdes.
+
+##### Correção de expectativa no teste de apagamento
+
+`erase_relation` **redige conteúdo e preserva a linha** como registro auditado
+(docstring: *"Redige o conteudo… Retorna contagem de celulas redigidas"*), não
+exclui. Meu primeiro teste esperava exclusão e falhou; a correção garante o que
+o apagamento assegura de fato: **o material original não sobrevive em nenhuma
+leitura** (`the_gap`, `topic`, `public_question` sem o texto original).
 
 **Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
 revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
