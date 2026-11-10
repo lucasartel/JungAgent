@@ -517,3 +517,120 @@ class TestWorkScheduler:
         db.conn.commit()
         text = scheduler.get_pulse_awareness(cycle_id="c1", pulse_index=1)
         assert "Book W" in text or "paginas" in text
+
+
+# ---------------------------------------------------------------------------
+# F-5/L2 — o agendador nao recria o pedido impossivel
+# ---------------------------------------------------------------------------
+def _make_db_with_attachment(page_count: int, progress: float, target: float):
+    db = _make_db()
+    db.conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS work_project_attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            filename TEXT NOT NULL,
+            stored_path TEXT NOT NULL,
+            size_bytes INTEGER,
+            mime_type TEXT,
+            uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            uploaded_by TEXT DEFAULT 'admin',
+            extracted_text TEXT,
+            extraction_status TEXT DEFAULT 'pending',
+            extracted_at DATETIME,
+            page_count INTEGER,
+            word_count INTEGER,
+            expires_at DATETIME
+        )
+        """
+    )
+    db.conn.execute(
+        "INSERT INTO work_destinations (id, destination_key, provider_key, label, is_active) "
+        "VALUES (1, 'reading', 'reading', 'Reading', 1)"
+    )
+    db.conn.execute(
+        "INSERT INTO work_projects (project_key, name, status, priority, "
+        "default_destination_id, daily_action_limit, deadline_at, effort_target, effort_unit, "
+        "progress_value, created_at, updated_at) "
+        "VALUES ('reading-book', 'Livro', 'active', 90, 1, 1, ?, ?, 'pages', ?, ?, ?)",
+        (
+            (datetime.utcnow() + timedelta(days=10)).strftime("%Y-%m-%d"),
+            target,
+            progress,
+            db._now_iso(),
+            db._now_iso(),
+        ),
+    )
+    db.conn.commit()
+    project_id = db.conn.execute("SELECT id FROM work_projects").fetchone()[0]
+    db.conn.execute(
+        "INSERT INTO work_project_attachments "
+        "(project_id, filename, stored_path, mime_type, extraction_status, page_count) "
+        "VALUES (?, 'book.pdf', '/nonexistent/book.pdf', 'application/pdf', 'extracted', ?)",
+        (project_id, page_count),
+    )
+    db.conn.commit()
+    return db, project_id
+
+
+def test_plan_skips_range_beyond_physical_pages():
+    """Caso real do projeto 11: alvo 179, progresso 170, PDF de 170.
+
+    Sem o guarda, todo ciclo recriaria o pedido impossivel 171-179.
+    Nao avanca progresso e nao conclui o livro automaticamente.
+    """
+    db, project_id = _make_db_with_attachment(
+        page_count=170, progress=170.0, target=179.0
+    )
+    scheduler = WorkScheduler(db)
+
+    plan = scheduler.plan_for_phase(cycle_id="c1", pulse_count=2)
+
+    assert plan["briefs_created"] == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM work_briefs").fetchone()[0] == 0
+
+    row = db.conn.execute(
+        "SELECT progress_value, status FROM work_projects WHERE id = ?",
+        (project_id,),
+    ).fetchone()
+    assert float(row["progress_value"]) == 170.0   # marcador intacto
+    assert row["status"] == "active"               # livro NAO concluido
+
+
+def test_plan_creates_brief_when_range_is_within_physical_pages():
+    """Controle: faixa valida continua gerando brief (o guarda nao bloqueia)."""
+    db, project_id = _make_db_with_attachment(
+        page_count=300, progress=0.0, target=300.0
+    )
+    scheduler = WorkScheduler(db)
+
+    plan = scheduler.plan_for_phase(cycle_id="c1", pulse_count=2)
+
+    assert plan["briefs_created"] == 1
+    row = db.conn.execute(
+        "SELECT progress_value FROM work_projects WHERE id = ?", (project_id,)
+    ).fetchone()
+    assert float(row["progress_value"]) == 0.0   # sem avanco automatico
+
+
+def test_plan_without_attachment_keeps_working():
+    """Controle: sem anexo nao ha o que validar — o plano segue normal
+    (o leitor continua sendo a autoridade nesse caso)."""
+    db = _make_db()
+    db.conn.execute(
+        "INSERT INTO work_destinations (id, destination_key, provider_key, label, is_active) "
+        "VALUES (1, 'reading', 'reading', 'Reading', 1)"
+    )
+    db.conn.execute(
+        "INSERT INTO work_projects (project_key, name, status, priority, "
+        "default_destination_id, daily_action_limit, deadline_at, effort_target, effort_unit, "
+        "progress_value, created_at, updated_at) "
+        "VALUES ('reading-x', 'Livro X', 'active', 90, 1, 1, ?, 300, 'pages', 0, ?, ?)",
+        ((datetime.utcnow() + timedelta(days=10)).strftime("%Y-%m-%d"),
+         db._now_iso(), db._now_iso()),
+    )
+    db.conn.commit()
+
+    plan = WorkScheduler(db).plan_for_phase(cycle_id="c1", pulse_count=2)
+
+    assert plan["briefs_created"] == 1

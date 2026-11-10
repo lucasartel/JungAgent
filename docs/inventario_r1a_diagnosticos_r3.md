@@ -480,6 +480,20 @@ caminho de fallback (sem `\f`) → `reading_exact_pages_unavailable`. É
 >
 > **Nenhum marcador foi avançado**; nenhum dado alterado.
 
+**Implementado em 10/11/2026 (corte L2)** — leitor e agendador, sem tocar
+`progress_value` nem concluir livro:
+
+| Peça | Mudança |
+|---|---|
+| **Leitor** `work/attachments.py` | testa o **início** contra a paginação física **antes** de fatiar (`requested_start > total_pages` → `reading_range_beyond_pagination`, com `total_pages`); sem fallback, distingue **acesso** (`reading_pdf_unavailable` + `error_type`) de faixa impossível — `reading_exact_pages_unavailable` fica só para "PDF abriu e não devolveu página" |
+| **Agendador** `engines/work_scheduler.py` | `_physical_page_count` (mesma fonte do leitor: anexo PDF extraído, `candidates[0]`); se `start_page > paginas físicas` → **não cria o brief** (log), sem avançar progresso e sem concluir o livro |
+
+**Testes** (6 novos; 3 falham com as correções revertidas, 28/28 verdes
+com elas): faixa impossível · faixa parcial (2..9 em PDF de 3 → serve 2..3)
+· arquivo indisponível · plano com faixa impossível (projeto 11: alvo 179,
+progresso 170, PDF 170 → 0 briefs, progresso **íntegro**, livro `active`) ·
+controle de faixa válida · controle sem anexo (o leitor segue autoridade).
+
 > **Estoque não medido**: o bloqueio de páginas **não explica, por si só**,
 > o que aconteceu com os **fragmentos de leituras anteriores**. Esse estoque
 > precisa ser medido **separadamente** — ainda pendente.

@@ -67,6 +67,33 @@ def _effort_cap_for_unit(unit: Optional[str]) -> float:
     return 50.0
 
 
+def _physical_page_count(engine: Any, project_id: int) -> Optional[int]:
+    """Paginacao FISICA do PDF do projeto — mesma fonte do leitor.
+
+    Devolve ``None`` quando nao ha anexo extraido (nao ha o que validar) ou
+    quando os anexos nao podem ser lidos: nesses casos o agendador nao decide
+    nada e o leitor continua sendo a autoridade.
+    """
+    try:
+        candidates = [
+            item
+            for item in engine.list_project_attachments(int(project_id))
+            if item.get("mime_type") == "application/pdf"
+            and item.get("extraction_status") == "extracted"
+        ]
+    except Exception as exc:
+        logger.warning(
+            "scheduler: attachments unreadable for project %s (%s)",
+            project_id,
+            type(exc).__name__,
+        )
+        return None
+    if not candidates:
+        return None
+    page_count = candidates[0].get("page_count")
+    return int(page_count) if page_count else None
+
+
 def _project_sort_key(project: Dict[str, Any]) -> tuple:
     days = _days_until(project.get("deadline_at"))
     priority = -(int(project.get("priority") or 50))
@@ -150,6 +177,19 @@ class WorkScheduler:
             if unit == "pages" and target > 0:
                 start_page = int(progress) + 1
                 end_page = min(int(target), max(start_page, int(progress + per_pulse)))
+                # F-5/L2: valida contra a paginacao FISICA. O leitor
+                # normaliza o fim para >= inicio, entao limitar so o fim nao
+                # evita `start > total` (171 > 170) — e o ciclo seguinte
+                # recriaria o MESMO pedido impossivel. Sem avancar
+                # progresso e sem concluir o livro: apenas nao criar o brief.
+                physical_pages = _physical_page_count(engine, int(project.get("id") or 0))
+                if physical_pages is not None and start_page > physical_pages:
+                    logger.warning(
+                        "scheduler: project %s range %s-%s beyond physical pages "
+                        "(%s); brief not created",
+                        project.get("id"), start_page, end_page, physical_pages,
+                    )
+                    continue
                 planned_effort = end_page - start_page + 1
                 objective = (
                     f"Ler paginas {start_page} a {end_page} de '{project['name']}'"
