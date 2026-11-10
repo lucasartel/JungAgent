@@ -298,22 +298,214 @@ caminho cuja declaração tem lastro.
 - O `NULL` que importa é o histórico (`dedup_key`, `source_kind`) da R1a-4:
   sem backfill, **por desenho** — e por isso nunca é alcançado pelo dedup.
 
-#### ⚠️ Medições de produção pendentes
+#### Medições de produção — executadas em 10/11/2026 (somente leitura)
 
-Contagens reais de `ownership_class`/`origin_class` por tabela e o nº de
-Relations com `global_interiority=true` **não foram coletadas**.
+Acesso restaurado: `railway whoami` voltou a funcionar após o `railway login`
+do mantenedor (o EPERM anterior era de refresh, não de token expirado). As
+sondas rodaram **dentro do container** via `railway ssh` — o `railway run`
+não alcança o volume — com o banco aberto em `mode=ro`. **Nenhum texto
+privado** saiu: só contagens, classes, códigos de recusa e idades.
+Artefatos em `output/probes/`.
 
-**Diagnóstico de acesso (corrigido em 04/11/2026 — a leitura anterior estava
-forte demais).** `railway status` funciona (config cacheado), mas `whoami` e
-`ssh` falham com `failed to refresh OAuth token: Operation not permitted
-(os error 1)`; `~/.railway/config.json` existe e é legível. **EPERM no refresh
-não comprova token expirado** — indica que a CLI não conseguiu renovar
-(permissão/keychain do SO). A verificação de acesso é ação do mantenedor
-(`railway login`), **sem contornar a proteção de credenciais**.
+##### Contagens — `knowledge_gaps`, instância `jung_v1`, escopo global
 
-**Não bloqueia o desenvolvimento**: F-5a–F-5b se desenvolvem e testam offline.
-As contagens são **necessárias para o aceite operacional** e devem ser
-registradas antes dele. Script pronto e somente-leitura (só contagens, `mode=ro`).
+| Métrica | Valor |
+|---|---|
+| linhas totais | 60 |
+| `authorized_aggregate` | 39 (todas `resolved`) |
+| `relation_private` | 17 |
+| `legacy_unscoped` | 4 |
+| **em quarentena** | **0** |
+| recusas de admissão registradas (`admission_refused`) | **0** |
+| Relations | 1 total · **0 com `global_interiority=true`** |
+| por `source_kind` | `NULL` = 58 · `conversation` = 2 · desconhecidos = 0 |
+| por `status` | `resolved` = 39 · `open` = 21 |
+
+Filtro de tenancy: `agent_instance = jung_v1` (instância configurada nesta
+execução); nenhuma outra instância foi nomeada.
+
+##### Idade da fila — `processing_queue`
+
+| Métrica | Valor |
+|---|---|
+| `rows_total` | **0** |
+| pendentes / >24h / >7d | 0 / 0 / 0 |
+| retry: abertos / vencidos / perto do limite | 0 / 0 / 0 |
+| colunas obrigatórias ausentes | nenhuma |
+| tenancy (sem filtro de Relation) | 0 linhas · 0 sem instância · 0 sem origem |
+
+##### "Nenhum caso observado" ≠ "comportamento validado"
+
+| Afirmação | Estado correto |
+|---|---|
+| Fila vazia | **Nenhum caso observado** — não valida retry, backoff nem vencimento |
+| 0 quarentenas em produção | **Nenhuma recusa registrada no recorte observado** — **não** prova que os gates nunca recusaram material |
+| 0 recusas de admissão | **Nenhum caso observado** — não comprova a recusa em produção (coberta offline por testes) |
+| 39 `authorized_aggregate` "legíveis"? | **NÃO** — ver distinção abaixo |
+
+##### Distinção essencial: `not_quarantined` ≠ legível
+
+A sonda reporta `global_authorized.not_quarantined = 39` — métrica de
+**flag** (renomeada na revisão justamente para não prometer legibilidade).
+Pela **regra efetiva de leitura** (F-5e), uma linha `authorized_aggregate`
+só é servida com âncora válida; **as 39 têm `source_kind = NULL`** e as
+âncoras não são expostas por esta sonda. Consequência: **nenhuma passaria
+pelo predicado de leitura** — são material histórico anterior aos gates.
+
+**Reparo aqui exige tocar histórico** (reclassificar/reprocessar está
+proibido) → **nenhum reparo proposto**; registrado como consequência
+conhecida do F-5e. Observabilidade possível sem tocar dado: a sonda passar
+a reportar `authorized_aggregate_sem_ancora` (contagem só em SQL) para a
+distância `not_quarantined → legível` ficar visível ao operador.
+
+##### Cruze com os caminhos pendentes do inventário
+
+| Caminho pendente | Observação em produção | Veredito |
+|---|---|---|
+| **Produtores de sonhos** (`core/db/dreams`) | `agent_dreams` = 34 linhas: 33 `relation_private` + 1 `legacy_unscoped` → **0 declarações globais** | **Nenhum caso observado** — caminho segue ungated (pendente) |
+| **Scholar** (`scholar_runs`, `external_research`) | `scholar_runs` = 0 · `external_research` = 0 | **Nenhum caso observado** — sem material algum |
+| **Cache do World** (`world_consciousness.py:2634`) | `origin_class: authorized_aggregate` gravado **hardcoded** no JSON do cache; **nenhum leitor** desse campo encontrado | **Nenhum caso observado** (metadado inerte) — mas a afirmação segue sem contrato |
+| **Leitura administrativa** (`admin_web/routes/research_lab_memory.py:177-183`) | query **sem** `origin_quarantined = 0`; produção tem 0 em quarentena | **Nenhum caso observado** — lacuna real de código, 0 linhas afetadas hoje |
+
+##### Lacunas reais: reprodução e menor reparo proposto
+
+**L1 — Leitura administrativa não filtra quarentena.**
+
+```sql
+-- admin_web/routes/research_lab_memory.py:177
+SELECT topic, the_gap, importance_score, status, created_at
+FROM knowledge_gaps
+WHERE user_id = ? AND status = 'open'{gap_sql}   -- sem origin_quarantined = 0
+```
+Com uma linha `origin_quarantined=1` e `status='open'`, ela seria servida
+na rota admin.
+
+> **Menor reparo**: acrescentar `AND origin_quarantined = 0` quando a coluna
+> existir — exatamente o padrão já aplicado em `engines/integrative_self.py`
+> (F-5b). Uma linha de SQL, sem schema e sem histórico.
+
+**L2 — Material do Work parado entre leitura e elaboração (CONFIRMADO).**
+
+Reprodução (sonda `work`, metadados):
+
+| Sinal | Valor |
+|---|---|
+| `assessment.summary` | `work autonomy is currently blocked by persisted state` |
+| `blockers` | `['active_projects_missing_destination']` |
+| briefs `blocked` (`scheduled_reading`) | 42 — novos **por dia** (ids 279-282, 06→09/11) |
+| artefatos | `generation_mode: reading_blocked`, `editorial_note: reading_exact_pages_unavailable` |
+| `readings_assimilated` / `reading_pages_assimilated` | **0 / 0** |
+| progresso do projeto 11 | páginas **170/179 desde 06/11** (travado) |
+| `latest_work_phase.status` | `partial_success` — "Work bloqueou a leitura porque nao conseguiu verificar e assimilar a fonte" |
+
+> **Correção do mantenedor (10/11/2026) — dar destino NÃO é o reparo.**
+> A autonomia editorial **exclui projetos de leitura agendada antes de checar
+> destino**, então `active_projects_missing_destination` não explica o bloqueio
+> da leitura; e `reading_exact_pages_unavailable` ocorre na **verificação das
+> páginas, antes da elaboração**.
+>
+> **Ordem de investigação (sem avançar o marcador sem evidência)**:
+> 1. o PDF está **acessível**?
+> 2. o intervalo solicitado (171–179 de 179) **bate com a paginação física**?
+> 3. a **extração preserva os delimitadores de página**?
+>
+> Referências: `work/autonomy.py:381` (autonomia), `work/attachments.py:300`
+> (extração). **Não avançar o marcador de progresso sem evidência.**
+
+**Investigação executada em 10/11/2026 (somente leitura, metadados)** — as três
+perguntas do mantenedor, respondidas com dados:
+
+| Pergunta | Evidência | Resposta |
+|---|---|---|
+| O PDF está acessível? | 4/4 anexos: `file_exists = true`, `path_kind = volume` | **SIM** |
+| O intervalo bate com a paginação física? | anexo do projeto 11: `page_count = **170**`; brief pede **171–179**; `work_projects.effort_target = 179`, `progress_value = 170` | **NÃO** — 9 páginas além do físico |
+| A extração preserva os delimitadores? | 4/4 anexos: `has_formfeed = false` e `text_len = 200018` (truncamento de 200K + sufixo) | **NÃO** — texto legado concatenado, truncado |
+
+**Cadeia causal**: `engines/work_scheduler.py:151-152` monta
+`start = progress+1 = 171`, `end = min(effort_target=179, …) = 179` a partir
+dos **metadados do projeto**, não do PDF. Em `work/attachments.py:308-310`,
+`upper = min(179, 170) = 170` → `range(171, 171)` **vazio** → `pages = []` →
+fallback exige `\f` (linha 317) → texto legado **sem** `\f` →
+`reading_exact_pages_unavailable`. O `effort_target = 179` não corresponde
+ao PDF enviado (170 páginas) — e `progress_value = 170` já cobre **todas as
+páginas físicas**.
+
+**Checagem da paginação real — EXECUTADA em 10/11/2026** (`scripts/diagnostics/check_pdf_pagination.py`,
+somente leitura; somente contagem ou erro, sem conteúdo): todos os 5 PDFs
+**abrem** (`openable: true`) e `pdf_page_count == db_page_count` em todos.
+
+| anexo | projeto | `db_page_count` | `pdf_page_count` (aberto) | abrível |
+|---|---|---|---|---|
+| 1 | 7 | 115 | **115** | sim |
+| 2 | 8 | 162 | **162** | sim |
+| 3 | 9 | 120 | **120** | sim |
+| 4 | 10 | 374 | **374** | sim |
+| **5** | **11** | **170** | **170** | **sim** |
+
+**Consequência**: a hipótese "PDF ilegível" **está descartada** — o arquivo
+do projeto 11 abre e tem **170 páginas de verdade**. O falha é
+**exclusivamente** `start (171) > total (170)` → `range(171,171)` vazio →
+caminho de fallback (sem `\f`) → `reading_exact_pages_unavailable`. É
+**exatamente** o caso *"início além da última página"* do plano abaixo.
+
+> **Plano revisado (revisão do mantenedor, 10/11/2026)** — limitar só o
+> fim **não resolve**: o leitor normaliza `requested_end =
+> max(requested_start, end)` (`work/attachments.py:278`), então com
+> `start=171, total=170` até `end` limitado a 170 vira `171` →
+> `upper = min(171, 170) = 170` → `range(171, 171)` **vazio** de novo, e o
+> agendador pode re pedir o mesmo intervalo indefinidamente.
+>
+> **O plano distingue TRÊS casos**, sem avançar progresso e sem marcar o
+> livro como concluído automaticamente:
+>
+> | Caso | Condição | Tratamento |
+> |---|---|---|
+> | **Intervalo parcialmente válido** | `start ≤ total < end` | servir `start..total`, registrar quantas páginas **realmente** servidas; progresso só com evidência da leitura |
+> | **Início além da última página** | `start > total` | motivo **distinto** `reading_range_beyond_pagination`; **não** recriar o mesmo brief impossível; **não** avançar `progress_value`; **não** concluir o livro |
+> | **Arquivo indisponível** | anexo ausente, não extraído ou PDF não abrível | motivo distinto `reading_pdf_unavailable` (ou `reading_pdf_not_extracted` já existente) |
+>
+> **Peças do reparo** (nenhuma toca `progress_value`):
+> 1. **Checagem da paginação real** — `scripts/diagnostics/check_pdf_pagination.py`
+>    (somente leitura; em falha devolve **código estável + tipo da exceção**,
+>    nunca mensagem bruta que possa conter caminho). **EXECUTADA em
+>    10/11/2026 — resultado na tabela acima**;
+> 2. **Fonte única da paginação**: validar o intervalo contra o
+>    `page_count` **do anexo aberto**, não contra `effort_target` do projeto
+>    (reconciliar `effort_target` é **mudança de dado — sua decisão**);
+> 3. **Motivos distintos no leitor** para os três casos acima (hoje tudo
+>    vira `reading_exact_pages_unavailable`);
+> 4. **Delimitadores**: o texto legado sem `\f` não serve de fallback —
+>    re-extrair com o código atual (que une com `\f`) é operação de
+>    produção (**não executada aqui**).
+>
+> **Nenhum marcador foi avançado**; nenhum dado alterado.
+
+> **Estoque não medido**: o bloqueio de páginas **não explica, por si só**,
+> o que aconteceu com os **fragmentos de leituras anteriores**. Esse estoque
+> precisa ser medido **separadamente** — ainda pendente.
+
+**L3 — Afirmiação global hardcoded no cache do World.**
+
+`world_consciousness.py:2634` grava `"origin_class": "authorized_aggregate"`
+sem passar por `assess_global_admission`. Nenhum leitor desse campo foi
+encontrado (não decide nada hoje).
+
+> **Decisão do mantenedor (10/11/2026)**: **preferir OMITIR o rótulo**,
+> após checar a **compatibilidade dos leitores**, mantendo instância e
+> referências. **Trocar o rótulo não comprova autorização.** Ajuste de
+> contrato independente — separado de L1/L2.
+
+##### Revalidação do Work entre leitura e elaboração
+
+**Sim, continua parado** — evidência acima (L2). A fila de processamento
+está vazia (nenhum caso observado), mas a tubulação de Work acumula 42
+briefs bloqueados e não avança página nenhuma desde 06/11.
+
+##### Limites respeitados
+
+Nenhuma linha reclassificada · nenhum registro reprocessado · nenhuma
+quarentena liberada · nenhuma alteração de produção · Railway usado apenas
+com sondas `mode=ro`.
 
 #### Decomposição revisada (aprovada em 04/11/2026 com as 5 condições)
 
@@ -452,7 +644,7 @@ na F-5b, mixin agora) — o resto segue pendente e declarado como tal.
 | **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c `60c8ee9` · admissão nos produtores + 2 P1 · **F-5d sonda `global_admission` + F-5e tratamento das leituras** |
 | **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão 16 · **F-5d 13 + F-5e 13** · regressão mock 20/20 · suíte combinada **1461 passed** |
 | **Publicado** | ✅ F-5a/b mergeadas em `main` com deploy Railway `SUCCESS` |
-| **Validado em operação** | ❌ **não verificado** — o deploy confirma *execução*, não aceite operacional; sondas de produção seguem pendentes de `railway login` |
+| **Validado em operação** | ⚠️ **parcial** — sondas `global_admission` + `processing_queue` (+ `work`, `world`) executadas em produção em 10/11/2026, somente leitura, sem texto privado; **aceite completo não**: L1 (leitura admin), L2 (Work travado) e L3 (afirmação hardcoded) seguem em aberto |
 
 ##### [P1] Revogação não bloqueava `get_active_knowledge_gaps` — CORRIGIDO nesta entrega
 
@@ -690,10 +882,10 @@ existente** devolve `topic`, `the_gap`, `closure_summary` e
 desta sonda; decisão de alterar é do mantenedor.
 
 **Execução**: `python scripts/remote_db_probe.py global_admission --pretty`
-(somente leitura). **A medição contra produção continua pendente de
-`railway login`** — ação do mantenedor, sem contornar a proteção de
-credenciais. A sonda é a ferramenta; a contagem em produção é o aceite
-operacional.
+(somente leitura) — **EXECUTADA em 10/11/2026**; contagens em *Medições de
+produção* acima. **Diagnóstico executado; reparo pendente** (L1 · L2 · L3).
+
+> **Estado geral**: **diagnóstico executado; reparo pendente** — L1 em PR própria, L2 em corte próprio (leitor/agendador), L3 em ajuste de contrato.
 
 **F-5e (tratamento das leituras) segue pendente e obrigatório** para o
 encerramento do F-5.
