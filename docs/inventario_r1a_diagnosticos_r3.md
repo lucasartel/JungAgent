@@ -339,7 +339,7 @@ execução); nenhuma outra instância foi nomeada.
 | Afirmação | Estado correto |
 |---|---|
 | Fila vazia | **Nenhum caso observado** — não valida retry, backoff nem vencimento |
-| 0 quarentenas em produção | **Nenhum caso observado** — os gates de escrita (F-5b/F-5c) **nunca recusaram** nada até aqui |
+| 0 quarentenas em produção | **Nenhuma recusa registrada no recorte observado** — **não** prova que os gates nunca recusaram material |
 | 0 recusas de admissão | **Nenhum caso observado** — não comprova a recusa em produção (coberta offline por testes) |
 | 39 `authorized_aggregate` "legíveis"? | **NÃO** — ver distinção abaixo |
 
@@ -398,11 +398,23 @@ Reprodução (sonda `work`, metadados):
 | progresso do projeto 11 | páginas **170/179 desde 06/11** (travado) |
 | `latest_work_phase.status` | `partial_success` — "Work bloqueou a leitura porque nao conseguiu verificar e assimilar a fonte" |
 
-> **Menor reparo (proposto, não executado)**: (a) dar destino ao projeto
-> ativo (`default_destination_id = NULL`) para destravar a autonomia; e
-> (b) investigar `reading_exact_pages_unavailable` — a fonte não é
-> verificável/assimilável, então a leitura avança **zero páginas** e os
-> briefs se acumulam em `blocked`. São dois bloqueadores distintos.
+> **Correção do mantenedor (10/11/2026) — dar destino NÃO é o reparo.**
+> A autonomia editorial **exclui projetos de leitura agendada antes de checar
+> destino**, então `active_projects_missing_destination` não explica o bloqueio
+> da leitura; e `reading_exact_pages_unavailable` ocorre na **verificação das
+> páginas, antes da elaboração**.
+>
+> **Ordem de investigação (sem avançar o marcador sem evidência)**:
+> 1. o PDF está **acessível**?
+> 2. o intervalo solicitado (171–179 de 179) **bate com a paginação física**?
+> 3. a **extração preserva os delimitadores de página**?
+>
+> Referências: `work/autonomy.py:381` (autonomia), `work/attachments.py:300`
+> (extração). **Não avançar o marcador de progresso sem evidência.**
+
+> **Estoque não medido**: o bloqueio de páginas **não explica, por si só**,
+> o que aconteceu com os **fragmentos de leituras anteriores**. Esse estoque
+> precisa ser medido **separadamente** — ainda pendente.
 
 **L3 — Afirmiação global hardcoded no cache do World.**
 
@@ -410,8 +422,10 @@ Reprodução (sonda `work`, metadados):
 sem passar por `assess_global_admission`. Nenhum leitor desse campo foi
 encontrado (não decide nada hoje).
 
-> **Menor reparo**: parar de afirmar — gravar `instance_global` (ou omitir o
-> campo), já que nada o consome. Uma linha, sem histórico.
+> **Decisão do mantenedor (10/11/2026)**: **preferir OMITIR o rótulo**,
+> após checar a **compatibilidade dos leitores**, mantendo instância e
+> referências. **Trocar o rótulo não comprova autorização.** Ajuste de
+> contrato independente — separado de L1/L2.
 
 ##### Revalidação do Work entre leitura e elaboração
 
