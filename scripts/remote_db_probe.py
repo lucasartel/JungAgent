@@ -1335,7 +1335,12 @@ ALLOWED_ADMISSION_REASONS = frozenset(
 
 
 ALLOWED_SOURCE_KINDS = frozenset({"conversation", "world", "goal_manager"})
-ALLOWED_GAP_STATUSES = frozenset({"open", "resolved"})
+# `investigating` e `rejected` sao estados gravados pelo proprio agente
+# (`jung_proactive_advanced.py`, `knowledge_gaps.close_*`) — estavam
+# faltando e perdiam agrupamento em `null` (P2 da revisao).
+ALLOWED_GAP_STATUSES = frozenset(
+    {"open", "resolved", "investigating", "rejected"}
+)
 ALLOWED_ORIGIN_CLASSES = frozenset(
     {"relation_private", "instance_global", "authorized_aggregate", "legacy_unscoped"}
 )

@@ -347,3 +347,36 @@ def test_categorical_fields_never_emit_arbitrary_text():
         row["status"] for row in payload["recent_global_authorized_rows"]
     }
     assert None in row_level
+
+
+def test_valid_gap_states_appear_separately():
+    """P2 (rodada 4): `investigating` e `rejected` sao estados gravados pelo
+    proprio agente — precisam aparecer SEPARADOS, nao virar `null`."""
+    db = _db()
+    _seed(db)
+    db.conn.execute(
+        "UPDATE knowledge_gaps SET status = 'investigating' WHERE source_kind = 'world'"
+    )
+    db.conn.execute(
+        "UPDATE knowledge_gaps SET status = 'rejected' "
+        "WHERE source_kind = 'conversation'"
+    )
+    db.conn.execute(
+        "UPDATE knowledge_gaps SET status = 'synthetic-status-value' "
+        "WHERE origin_class = 'relation_private'"
+    )
+    db.conn.commit()
+    payload = _payload(db)
+
+    statuses = {
+        row["key"]: row["count"] for row in payload["knowledge_gaps"]["by_status"]
+    }
+    # Os estados legitimos aparecem DISTINCTOS...
+    assert statuses.get("investigating") == 1
+    assert statuses.get("rejected") == 1
+    # ...o arbitrario continua bloqueado (agrupado em None, sem texto)...
+    assert None in statuses
+    assert statuses.get("synthetic-status-value") is None
+    # ...e o mesmo vale no nivel de linha.
+    blob = json.dumps(payload, ensure_ascii=False)
+    assert "synthetic-status-value" not in blob
