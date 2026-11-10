@@ -412,6 +412,38 @@ Reprodução (sonda `work`, metadados):
 > Referências: `work/autonomy.py:381` (autonomia), `work/attachments.py:300`
 > (extração). **Não avançar o marcador de progresso sem evidência.**
 
+**Investigação executada em 10/11/2026 (somente leitura, metadados)** — as três
+perguntas do mantenedor, respondidas com dados:
+
+| Pergunta | Evidência | Resposta |
+|---|---|---|
+| O PDF está acessível? | 4/4 anexos: `file_exists = true`, `path_kind = volume` | **SIM** |
+| O intervalo bate com a paginação física? | anexo do projeto 11: `page_count = **170**`; brief pede **171–179**; `work_projects.effort_target = 179`, `progress_value = 170` | **NÃO** — 9 páginas além do físico |
+| A extração preserva os delimitadores? | 4/4 anexos: `has_formfeed = false` e `text_len = 200018` (truncamento de 200K + sufixo) | **NÃO** — texto legado concatenado, truncado |
+
+**Cadeia causal**: `engines/work_scheduler.py:151-152` monta
+`start = progress+1 = 171`, `end = min(effort_target=179, …) = 179` a partir
+dos **metadados do projeto**, não do PDF. Em `work/attachments.py:308-310`,
+`upper = min(179, 170) = 170` → `range(171, 171)` **vazio** → `pages = []` →
+fallback exige `\f` (linha 317) → texto legado **sem** `\f` →
+`reading_exact_pages_unavailable`. O `effort_target = 179` não corresponde
+ao PDF enviado (170 páginas) — e `progress_value = 170` já cobre **todas as
+páginas físicas**.
+
+> **Menor reparo proposto (sem avançar o marcador)** — três peças, nenhuma
+> toca `progress_value`:
+> 1. **Diagnóstico correto**: quando `requested_start > total_pages`,
+>    devolver motivo **distinto** (`reading_range_beyond_pagination`) em vez
+>    de `reading_exact_pages_unavailable` — hoje o erro real fica mascarado;
+> 2. **Fonte única da paginação**: o scheduler/reitor de briefs deve limitar
+>    `end_page` ao `page_count` do anexo (ou reconciliar `effort_target` —
+>    **mudança de dado, exige decisão do mantenedor**);
+> 3. **Delimitadores**: o texto legado sem `\f` não serve de fallback —
+>    re-extrair com o código atual (que une com `\f`) é operação de produção
+>    (**não executada aqui**).
+>
+> **Nenhum marcador foi avançado**; nenhum dado alterado.
+
 > **Estoque não medido**: o bloqueio de páginas **não explica, por si só**,
 > o que aconteceu com os **fragmentos de leituras anteriores**. Esse estoque
 > precisa ser medido **separadamente** — ainda pendente.
