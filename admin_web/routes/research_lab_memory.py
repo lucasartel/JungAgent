@@ -174,10 +174,20 @@ def _fetch_user_memory_detail(db, user_id: str) -> Dict[str, object]:
             relation_column="origin_relation_id",
             relation_id=gap_scope.relation_id,
         )
+        # F-5/L1: o marcador de quarentena vale para TODOS os leitores,
+        # inclusive a rota administrativa — a recusa de admissao (F-5a..c)
+        # so protege se a leitura obedece. Coluna ausente em schema antigo:
+        # nao se filtra o que nao existe.
+        gap_columns = {
+            row[1] for row in cursor.execute("PRAGMA table_info(knowledge_gaps)")
+        }
+        quarantine_sql = (
+            " AND origin_quarantined = 0" if "origin_quarantined" in gap_columns else ""
+        )
         cursor.execute(f"""
             SELECT topic, the_gap, importance_score, status, created_at
             FROM knowledge_gaps
-            WHERE user_id = ? AND status = 'open'{gap_sql}
+            WHERE user_id = ? AND status = 'open'{gap_sql}{quarantine_sql}
             ORDER BY importance_score DESC, created_at DESC
             LIMIT 20
         """, (user_id, *gap_params))
