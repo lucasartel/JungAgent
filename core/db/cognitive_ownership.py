@@ -526,6 +526,29 @@ def assess_global_admission(
 # Nada aqui reclassifica historico: e a decisao de servir ou recusar, nunca
 # de reescrever a linha.
 # ---------------------------------------------------------------------------
+# Prefixes canonicos de ancora — espelho EXATO da alternancia de
+# ``SOURCE_REF_RE`` (``core/db/cognitive_provenance.py``), mantidos aqui sem
+# import para o modulo continuar neutro em tempo de execucao.
+# ``tests/test_f5e_reader_authorization.py::test_sql_anchor_rule_matches_canonical_regex``
+# trava a equivalencia entre os dois.
+ANCHOR_PREFIXES = (
+    "loop",
+    "conversation",
+    "dream",
+    "will",
+    "meta",
+    "rumination_insight",
+    "rumination_fragment",
+    "work_run",
+    "work_ticket",
+    "work_delivery",
+    "hobby_artifact",
+    "agent_development",
+    "knowledge_gap",
+    "research",
+)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -567,23 +590,59 @@ def globally_readable_sql(
     )
     if anchors:
         anchor_col = f"{prefix}{anchors}"
-        # P1 (09/11/2026): campo preenchido NAO e prova de autorizacao.
-        # Exige JSON array com ao menos UMA referencia no formato canonico
-        # ``tipo#id`` (SOURCE_REF_RE): `not json`, objeto, escalar, `[]`,
-        # `[ ]` e `[null]` passam a ser recusados.
+        # P1 (rodada 3, 10/11/2026): o SQL precisa aceitar EXATAMENTE o
+        # formato da regra canonica ``SOURCE_REF_RE`` = ``prefixo#digitos``.
+        # O GLOB simples aceitava ``#1`` (sem prefixo) e
+        # ``invalid#1suffix`` (sufixo apos os digitos). Tres condicoes:
+        # prefixo da lista + ao menos um digito + NADA apos os digitos.
+        value = "anchor_ref.value"
+        prefix_ok = " OR ".join(
+            f"{value} GLOB '{name}#*'" for name in ANCHOR_PREFIXES
+        )
+        # ATENCAO: GLOB do SQLite nega com ``[^...]`` (estilo fnmatch) —
+        # ``[!...]`` seria lido como conjunto literal '!' + '0'-'9' e
+        # casaria digitos, derrubando a regra canonica.
+        only_digits = (
+            f"{value} GLOB '*#[0-9]*' AND NOT {value} GLOB '*#*[^0-9]*'"
+        )
         conditions.append(
             f"({origin} <> 'authorized_aggregate' OR ("
             f"CASE WHEN json_valid({anchor_col}) "
             f"AND json_type({anchor_col}) = 'array' "
             f"THEN EXISTS (SELECT 1 FROM json_each({anchor_col}) AS anchor_ref "
-            f"WHERE typeof(anchor_ref.value) = 'text' "
-            f"AND TRIM(anchor_ref.value) <> '' "
-            f"AND anchor_ref.value GLOB '*#[0-9]*') "
+            f"WHERE typeof({value}) = 'text' "
+            f"AND TRIM({value}) <> '' "
+            f"AND ({prefix_ok}) "
+            f"AND ({only_digits})) "
             f"ELSE 0 END))"
         )
     else:
         conditions.append(f"{origin} <> 'authorized_aggregate'")
     return "(" + " AND ".join(conditions) + ")"
+
+
+def _load_json_field(row: Any, column: str, expected: type) -> Any:
+    """Carrega um campo JSON da linha; devolve ``None`` quando a linha deve
+    ser RECUSADA (metadado malformado) e o valor padrao quando ausente."""
+    raw = row.get(column)
+    if raw in (None, ""):
+        return [] if expected is list else {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        logger.warning(
+            "leitura global recusada: %s nao-JSON gap_id=%s", column, row.get("id")
+        )
+        return None
+    if not isinstance(parsed, expected):
+        logger.warning(
+            "leitura global recusada: %s com tipo %s gap_id=%s",
+            column,
+            type(parsed).__name__,
+            row.get("id"),
+        )
+        return None
+    return parsed
 
 
 def is_globally_readable(row: Any, *, agent_instance: str) -> bool:
@@ -595,32 +654,22 @@ def is_globally_readable(row: Any, *, agent_instance: str) -> bool:
     """
     if int(row.get("origin_quarantined") or 0):
         return False
+
+    # P2 (rodada 3, 10/11/2026): metadado MALFORMADO recusa a linha ANTES
+    # de qualquer servico — o leitor faria ``json.loads`` no valor original
+    # e lancaria ``JSONDecodeError``, derrubando a leitura das demais.
+    source_refs = _load_json_field(row, "source_refs_json", list)
+    if source_refs is None:
+        return False
+    provenance = _load_json_field(row, "provenance_json", dict)
+    if provenance is None:
+        return False
+
     if str(row.get("origin_class") or "") != AUTHORIZED_AGGREGATE:
         return True
     if str(row.get("origin_relation_id") or "").strip():
         # Material de Relation e servido pelo ramo de Relation (gate de
         # elegibilidade), nunca por uma afirmacao de escopo global.
-        return False
-    try:
-        source_refs = json.loads(row.get("source_refs_json") or "[]")
-    except ValueError:
-        source_refs = []
-    # P2 (09/11/2026): metadata historico inesperado nao pode derrubar a
-    # leitura — `[]`/`null` viram dict vazio; tipo errado vira recusa.
-    if not isinstance(source_refs, list):
-        source_refs = []
-    try:
-        provenance = json.loads(row.get("provenance_json") or "{}")
-    except ValueError:
-        provenance = {}
-    if not isinstance(provenance, dict):
-        # P2 (09/11/2026): `provenance_json` com `[]`/`null` e metadado
-        # historico invalido — RECUSA a linha e continua a leitura.
-        logger.warning(
-            "leitura global recusada por provenance invalido gap_id=%s tipo=%s",
-            row.get("id"),
-            type(provenance).__name__,
-        )
         return False
     try:
         decision = assess_global_admission(

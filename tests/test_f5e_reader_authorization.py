@@ -331,3 +331,136 @@ def test_invalid_historical_metadata_refuses_row_and_continues():
     assert "flag-ambigua" not in served
     # "continua": a valida apos as invalidas chega.
     assert served == {"valida-ultima"}
+
+
+# ---------------------------------------------------------------------------
+# P1 (rodada 3): a regra SQL precisa aceitar EXATAMENTE a regra canonica
+# ---------------------------------------------------------------------------
+def test_sql_anchor_rule_matches_canonical_regex():
+    """``ANCHOR_PREFIXES`` e a condicao GLOB tem de casar ``SOURCE_REF_RE``.
+
+    Trava a divergencia entre as duas implementacoes (SQL nao pode ser mais
+    fraco nem mais forte que o validador canonico).
+    """
+    from core.db.cognitive_ownership import ANCHOR_PREFIXES
+    from core.db.cognitive_provenance import SOURCE_REF_RE
+
+    # Os prefixos espelham EXATAMENTE a alternancia do regex:
+    # ^(?:loop|conversation|...|research)#\d+$
+    body = SOURCE_REF_RE.pattern
+    assert body.startswith("^(?:") and body.endswith(")#\\d+$"), body
+    alternates = set(body[len("^(?:"): -len(")#\\d+$")].split("|"))
+    assert set(ANCHOR_PREFIXES) == alternates, (set(ANCHOR_PREFIXES), alternates)
+
+    # Aceitacao identica: array com a ancora.
+    import json as _json
+    import sqlite3 as _sqlite3
+
+    from core.db.cognitive_ownership import globally_readable_sql
+
+    cond = globally_readable_sql({"origin_class", "source_refs_json"})
+    conn = _sqlite3.connect(":memory:")
+
+    def sql_accepts(anchor):
+        query = (
+            f"SELECT CASE WHEN {cond} THEN 1 ELSE 0 END "
+            "FROM (SELECT 'authorized_aggregate' AS origin_class, ? AS source_refs_json)"
+        )
+        return bool(conn.execute(query, (_json.dumps([anchor]),)).fetchone()[0])
+
+    anchors = [
+        "#1", "invalid#1suffix", "will#30", "will#1suffix", "conversation#12",
+        "will#", "will#0", "loop#7", "rumination_insight#4", "work_ticket#9",
+        "hobby_artifact#2", "agent_development#5", "knowledge_gap#3", "research#8",
+        "dream#1", "rumination_fragment#6", "work_run#1", "work_delivery#1",
+        "xwill#1", "will#1#2", "will#abc", "WILL#1", "will #1", "  will#1",
+        "will#1 ", "will#-1", "will#1.5", "meta#123",
+    ]
+    divergences = [
+        anchor
+        for anchor in anchors
+        if bool(SOURCE_REF_RE.fullmatch(anchor)) != sql_accepts(anchor)
+    ]
+    assert divergences == [], divergences
+
+
+# ---------------------------------------------------------------------------
+# P2 (rodada 3): metadado malformado recusa a linha sem derrubar as demais
+# ---------------------------------------------------------------------------
+def test_malformed_json_refuses_row_without_breaking_the_rest():
+    db = _db()
+    # provenance nao-JSON numa linha autorizada...
+    _insert_global(db, "prov-nao-json", '["will#30"]', provenance="not json")
+    # ...e source_refs nao-JSON numa linha instance_global (o leitor faria
+    # json.loads no valor original e lancaria JSONDecodeError).
+    db.conn.execute(
+        """
+        INSERT INTO knowledge_gaps (
+            user_id, agent_instance, ownership_class, origin_class,
+            source_refs_json, provenance_json, topic, the_gap,
+            importance_score, status, source_kind, dedup_key,
+            observation_count, last_observed_at, origin_quarantined
+        ) VALUES ('u1', ?, 'instance_global', 'instance_global',
+                  'not json', '{}', 'topico', 'refs-invalidos', 0.9, 'open',
+                  'goal_manager', 'refs-invalidos', 1, '2026-11-01T00:00:00', 0)
+        """,
+        (_INSTANCE,),
+    )
+    # ...e uma valida depois delas.
+    _insert_global(db, "valida-depois", '["will#31"]', provenance="{}")
+    db.conn.commit()
+
+    served = {g["the_gap"] for g in db.get_active_knowledge_gaps("u1", limit=50)}
+    assert "prov-nao-json" not in served
+    assert "refs-invalidos" not in served
+    assert served == {"valida-depois"}  # continua sem interromper
+
+
+# ---------------------------------------------------------------------------
+# P2 (rodada 3): ISM — 20 recusados a frente nao podem esconder o valido
+# ---------------------------------------------------------------------------
+def test_ism_skips_unlimited_refused_rows_to_find_the_authorized_one():
+    from engines.integrative_self import IntegrativeSelfModel
+
+    class _Conn:
+        def __init__(self, conn):
+            self.conn = conn
+            self.agent_instance = _INSTANCE
+
+    db = _db()
+    insert = """
+        INSERT INTO knowledge_gaps (
+            user_id, agent_instance, ownership_class, origin_class,
+            source_refs_json, provenance_json, topic, the_gap,
+            importance_score, status, source_kind, dedup_key,
+            observation_count, last_observed_at, origin_quarantined,
+            resolved_at, closure_summary
+        ) VALUES ('u1', ?, 'instance_global', ?, ?, '{}', 'topico', ?, 0.5,
+                  'resolved', 'world', ?, 1, '2026-11-01T00:00:00', 0,
+                  ?, 'fechado')
+    """
+    # 25 recusadas (sem ancora) e MAIS RECENTES...
+    for i in range(25):
+        db.conn.execute(
+            insert,
+            (_INSTANCE, "authorized_aggregate", "[]", f"recusada-{i}",
+             f"rec-{i}", f"2026-11-05T10:{i:02d}:00"),
+        )
+    # ...e uma autorizada mais antiga (aparece por ultimo no ORDER BY).
+    cursor = db.conn.execute(
+        insert,
+        (_INSTANCE, "authorized_aggregate", '["will#30"]', "autorizada",
+         "auth", "2026-11-01T00:00:00"),
+    )
+    authorized_id = cursor.lastrowid
+    db.conn.commit()
+
+    model = IntegrativeSelfModel(_Conn(db.conn), agent_instance=_INSTANCE)
+    gaps = [
+        c for c in model._latest_components(user_id="u1", relation_id=None)
+        if c and c.get("key") == "knowledge_gap"
+    ]
+    # LIMIT+ filtro atras devolveria vazio; o lote encontra a autorizada.
+    assert len(gaps) == 1
+    assert gaps[0]["source_ref"] == f"knowledge_gap#{authorized_id}"
+    assert gaps[0]["title"] == "topico"

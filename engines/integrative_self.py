@@ -388,31 +388,41 @@ class IntegrativeSelfModel:
                 # P2 (09/11/2026): LIMIT 1 ANTES da verificacao escondia um
                 # registro valido atras de um recusado. Varre o lote e pega
                 # o primeiro AUTORIZADO — recusa nao toca a linha.
-                rows = cursor.execute(
-                    f"""
-                    SELECT id, topic, the_gap, status, closure_summary,
-                           closure_source_type, resolved_at{extra_cols}
-                    FROM knowledge_gaps
-                    WHERE agent_instance = ? AND user_id = ? AND status = 'resolved'
-                      AND (
-                        origin_relation_id = ?
-                        OR (origin_relation_id IS NULL AND origin_class IN ('instance_global', 'authorized_aggregate'))
-                        OR (? IS NULL AND origin_relation_id IS NULL AND origin_class = 'legacy_unscoped')
-                      ){quarantine_sql}
-                    ORDER BY resolved_at DESC, id DESC
-                    LIMIT ?
-                    """,
-                    (self.agent_instance, user_id, relation_id, relation_id, 20),
-                ).fetchall()
+                # P2 (rodada 3): filtrar DEPOIS do limite continuava
+                # escondendo o valido — 20 recusados a frente devolviam
+                # vazio. Busca em LOTES ate achar o primeiro autorizado.
                 from core.db.cognitive_ownership import is_globally_readable
 
+                base_params = (self.agent_instance, user_id, relation_id, relation_id)
                 row = None
-                for candidate in rows:
-                    if is_globally_readable(
-                        dict(candidate), agent_instance=self.agent_instance
-                    ):
-                        row = candidate
+                offset = 0
+                batch = 20
+                while row is None:
+                    candidates = cursor.execute(
+                        f"""
+                        SELECT id, topic, the_gap, status, closure_summary,
+                               closure_source_type, resolved_at{extra_cols}
+                        FROM knowledge_gaps
+                        WHERE agent_instance = ? AND user_id = ? AND status = 'resolved'
+                          AND (
+                            origin_relation_id = ?
+                            OR (origin_relation_id IS NULL AND origin_class IN ('instance_global', 'authorized_aggregate'))
+                            OR (? IS NULL AND origin_relation_id IS NULL AND origin_class = 'legacy_unscoped')
+                          ){quarantine_sql}
+                        ORDER BY resolved_at DESC, id DESC
+                        LIMIT ? OFFSET ?
+                        """,
+                        (*base_params, batch, offset),
+                    ).fetchall()
+                    for candidate in candidates:
+                        if is_globally_readable(
+                            dict(candidate), agent_instance=self.agent_instance
+                        ):
+                            row = candidate
+                            break
+                    if row is not None or len(candidates) < batch:
                         break
+                    offset += batch
             else:
                 row = cursor.execute(
                     f"""SELECT id, topic, the_gap, status, closure_summary,
