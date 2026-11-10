@@ -648,6 +648,96 @@ carol, dave, admin e system (medido, não deduzido). Não é uma brecha de
 leitura; é o efeito opaco do legado, e decidir fechar ou consumi-lo é corte
 próprio.
 
+#### F-5d — Observabilidade da admissão global (06/11/2026)
+
+**Tarefa**: sonda do que foi declarado global-authorized, por origem e
+escopo, espelhando a disciplina da PR #67 (metadados, sem conteúdo).
+
+**Entrega**: probe `global_admission` em `scripts/remote_db_probe.py`
+(registrado em `PROBES`) + `tests/test_remote_db_probe_global_admission.py`
+— **13 testes, nenhum `xfail`**.
+
+**As três medições de produção pendentes ficam respondíveis com a sonda:**
+
+| Medição pendente | Seção da sonda |
+|---|---|
+| contagens de `ownership_class`/`origin_class` **por tabela** | `origin_class_by_table`, `ownership_class_by_table` — varredura por `sqlite_master` das tabelas que têm a coluna |
+| material declarado global **por origem e escopo** | `knowledge_gaps.global_authorized_by_origin_and_scope` (`source_kind` × global/relation × quarentena) + `global_authorized` legível/bloqueado |
+| nº de Relations com `global_interiority=true` | `relations.with_global_interiority` — regra canônica `json_extract(scope_json,'$.global_interiority') = 1`, a mesma de `core/rumination_interiority.py` |
+
+**Disciplina de privacidade (espelha a PR #67):**
+
+- saem contagens, classes, identificadores de instância/Relation e códigos
+  de recusa de uma **lista explícita** `ALLOWED_ADMISSION_REASONS`;
+- motivo fora da lista → `None`, mas o `count` continua somado e
+  `admission_refused_unknown_reason_count` registra o total — **nunca
+  escondido, nunca texto livre** (reprodução com `"User Maria has depression"`
+  travada por teste, mesmo padrão da #67);
+- nenhum `topic`, `the_gap`, `closure_summary` ou `closure_journal_entry` —
+  o teste `test_probe_payload_contains_no_gap_content` varre o JSON inteiro;
+- contagens usam filtro de **tenancy** (instância) sem cláusula de Relation
+  (mesmo motivo documentado em `scope_integrity` da #67); as linhas
+  individuais aplicam o escopo completo e são fail-closed sem Relation pedida.
+
+**Correção no caminho** (o smoke acusou): `count_rows`/`grouped_counts`
+esperam condição pura, mas os filtros do probe devolvem `" AND ..."` para
+anexar a um `WHERE` — corrigido com prefixo `1=1`, no mesmo padrão do probe
+da #67.
+
+**Observação registrada, sem reparo**: o probe `knowledge_gaps` **já
+existente** devolve `topic`, `the_gap`, `closure_summary` e
+`closure_journal_entry` — conteúdo, não metadados. É pré-existente e distinto
+desta sonda; decisão de alterar é do mantenedor.
+
+**Execução**: `python scripts/remote_db_probe.py global_admission --pretty`
+(somente leitura). **A medição contra produção continua pendente de
+`railway login`** — ação do mantenedor, sem contornar a proteção de
+credenciais. A sonda é a ferramenta; a contagem em produção é o aceite
+operacional.
+
+**F-5e (tratamento das leituras) segue pendente e obrigatório** para o
+encerramento do F-5.
+
+##### Revisão do mantenedor (09/11/2026) — 2 P2, corrigidos
+
+| Sev. | Achado | Correção |
+|---|---|---|
+| **P2** | A sonda emitia **texto livre em `source_kind`** — valor legado sintético saía integral no JSON; a lista de motivos permitidos não protegia este campo | `ALLOWED_SOURCE_KINDS` + `_source_kind_view`: só sai `{conversation, world, goal_manager}`; desconhecidos viram `None` **agrupados** com `unknown_source_kind_count`, sem emitir o texto. Aplicado nos **três** pontos: agregado, breakdown e nível de linha |
+| **P2** | `readable` não media legibilidade — só ausência de quarentena (sonda contou **2** legíveis, o leitor aceitou **1**) | Renomeado para **`not_quarantined`** (agregado e linha): a métrica passa a dizer o que mede |
+
+**Prova**: com a sonda revertida ao estado anterior, **4 testes falham**
+(incluindo `source_kind_unknown_value_is_never_emitted_verbatim` — o teste
+pegou um **terceiro ponto** que a primeira correção tinha deixado de fora);
+restaurada, 11/11 verdes.
+
+**Merge combinado com a #74**: testado em branch temporário; o conflito do
+inventario foi **resolvido combinando os dois lados** e a suíte combinada
+passou com **1456 passed**.
+
+##### Revisão — rodada 3 (10/11/2026) — P2 de `status`, corrigido
+
+| Sev. | Achado | Correção |
+|---|---|---|
+| **P2** | A sonda ainda emitia **texto livre em `status`** — `source_kind` e `not_quarantined` já funcionavam, mas valor arbitrário em `status` saía no JSON | A regra de valores permitidos passa a cobrir **todos** os campos categóricos emitidos pelo probe: `status` (`open`/`resolved`), `origin_class` e `ownership_class` (4 classes), `consent_status` (`pending`/`granted`/`revoked`), `status` de Relation (`active`/`paused`/`revoked`/`archived`) — nos **agregados e no nível de linha** |
+
+Desconhecidos são **agrupados em `None`** (contagem visível, texto nunca
+emitido), com o mesmo mecanismo de `source_kind`.
+
+**Prova**: com a sonda revertida, `test_categorical_fields_never_emit_arbitrary_text`
+**falha**; restaurada, 12/12 verdes. Suíte completa: **1447 passed**.
+
+**Escopo**: aplicado ao probe `global_admission` (o revisado). Os demais
+probes da sonda têm domínios categóricos próprios e não foram alterados.
+
+##### Revisão — rodada 4 (10/11/2026) — estados válidos perdidos, corrigido
+
+| Sev. | Achado | Correção |
+|---|---|---|
+| **P2** | `ALLOWED_GAP_STATUSES` só tinha `open` e `resolved` — **`investigating` e `rejected`**, estados gravados pelo próprio agente (`jung_proactive_advanced.py:1404`, `knowledge_gaps.py:750`), eram agrupados como `null` | Os dois entram na lista; teste prova que aparecem **distintos** e que o texto arbitrário **continua bloqueado** |
+
+**Prova**: `test_valid_gap_states_appear_separately` falha sem o ajuste;
+13/13 verdes com ele. Suíte completa: **1448 passed**.
+
 **Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
 revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
 
