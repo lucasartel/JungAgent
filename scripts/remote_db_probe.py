@@ -3,7 +3,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 DEFAULT_ADMIN_USER_ID = "367f9e509e396d51"
@@ -1335,6 +1335,13 @@ ALLOWED_ADMISSION_REASONS = frozenset(
 
 
 ALLOWED_SOURCE_KINDS = frozenset({"conversation", "world", "goal_manager"})
+ALLOWED_GAP_STATUSES = frozenset({"open", "resolved"})
+ALLOWED_ORIGIN_CLASSES = frozenset(
+    {"relation_private", "instance_global", "authorized_aggregate", "legacy_unscoped"}
+)
+ALLOWED_OWNERSHIP_CLASSES = ALLOWED_ORIGIN_CLASSES
+ALLOWED_RELATION_STATUSES = frozenset({"active", "paused", "revoked", "archived"})
+ALLOWED_CONSENT_STATUSES = frozenset({"pending", "granted", "revoked"})
 
 
 def _source_kind_view(raw: Any) -> Optional[str]:
@@ -1351,10 +1358,15 @@ def _source_kind_view(raw: Any) -> Optional[str]:
     return None
 
 
-def _sanitize_source_kind_counts(
+def _sanitize_categorical_counts(
     rows: List[Dict[str, Any]],
+    allowed: Iterable[str],
+    *,
+    out_field: str = "key",
 ) -> Tuple[List[Dict[str, Any]], int]:
-    """Agrupa por valor conhecido; desconhecidos viram contagem SEM texto."""
+    """Agrupa por valor PERMITIDO; desconhecido vira ``None`` — o texto
+    original nunca sai. Devolve ``(contagens, total_desconhecido)``."""
+    allowed_set = set(allowed)
     merged: Dict[Optional[str], int] = {}
     unknown = 0
     for row in rows:
@@ -1363,20 +1375,27 @@ def _sanitize_source_kind_counts(
         if raw in (None, ""):
             merged[None] = merged.get(None, 0) + count
             continue
-        token = _source_kind_view(raw)
-        if token is None:
-            # Agrupa SEM emitir o texto original (P2 do revisor).
+        if str(raw) in allowed_set:
+            merged[str(raw)] = merged.get(str(raw), 0) + count
+        else:
             unknown += count
             merged[None] = merged.get(None, 0) + count
-            continue
-        merged[token] = merged.get(token, 0) + count
     out = [
-        {"source_kind": key, "count": count}
+        {out_field: key, "count": count}
         for key, count in sorted(
             merged.items(), key=lambda item: (-item[1], str(item[0]))
         )
     ]
     return out, unknown
+
+
+def _sanitize_source_kind_counts(
+    rows: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Agrupa por ``source_kind`` conhecido; desconhecidos sem texto."""
+    return _sanitize_categorical_counts(
+        rows, ALLOWED_SOURCE_KINDS, out_field="source_kind"
+    )
 
 
 def _admission_reason_view(raw: Any) -> Tuple[Optional[str], bool]:
@@ -1455,9 +1474,12 @@ def query_global_admission(cursor: sqlite3.Cursor, args: argparse.Namespace) -> 
             {
                 "table": table,
                 "rows": count_rows(cursor, table, base, params),
-                "counts": grouped_counts(
-                    cursor, table, "origin_class", where=base, params=params
-                ),
+                "counts": _sanitize_categorical_counts(
+                    grouped_counts(
+                        cursor, table, "origin_class", where=base, params=params
+                    ),
+                    ALLOWED_ORIGIN_CLASSES,
+                )[0],
             }
         )
     ownership_class_by_table: List[Dict[str, Any]] = []
@@ -1467,9 +1489,12 @@ def query_global_admission(cursor: sqlite3.Cursor, args: argparse.Namespace) -> 
         ownership_class_by_table.append(
             {
                 "table": table,
-                "counts": grouped_counts(
-                    cursor, table, "ownership_class", where=base, params=params
-                ),
+                "counts": _sanitize_categorical_counts(
+                    grouped_counts(
+                        cursor, table, "ownership_class", where=base, params=params
+                    ),
+                    ALLOWED_OWNERSHIP_CLASSES,
+                )[0],
             }
         )
 
@@ -1579,10 +1604,15 @@ def query_global_admission(cursor: sqlite3.Cursor, args: argparse.Namespace) -> 
         )
         recent_rows = rows_to_dicts(cursor.fetchall())
         for row in recent_rows:
-            # P2: tambem no nivel de LINHA — valor arbitrario nunca sai.
+            # P2: tambem no nivel de LINHA — valor arbitrario nunca sai em
+            # nenhum campo categorico emitido.
             raw_kind = row.get("source_kind")
             if raw_kind not in (None, "") and _source_kind_view(raw_kind) is None:
                 row["source_kind"] = None
+            if str(row.get("status") or "") not in ALLOWED_GAP_STATUSES:
+                row["status"] = None
+            if str(row.get("origin_class") or "") not in ALLOWED_ORIGIN_CLASSES:
+                row["origin_class"] = None
             row["origin_quarantined"] = bool(row.get("origin_quarantined"))
             row["not_quarantined"] = not row["origin_quarantined"]
 
@@ -1603,20 +1633,20 @@ def query_global_admission(cursor: sqlite3.Cursor, args: argparse.Namespace) -> 
             "with_global_interiority": count_rows(
                 cursor, "agent_relations", opt_in, rel_params
             ),
-            "opt_in_by_status_consent": grouped_counts(
-                cursor,
-                "agent_relations",
-                "status",
-                where=opt_in,
-                params=rel_params,
-            ),
-            "opt_in_by_consent": grouped_counts(
-                cursor,
-                "agent_relations",
-                "consent_status",
-                where=opt_in,
-                params=rel_params,
-            ),
+            "opt_in_by_status_consent": _sanitize_categorical_counts(
+                grouped_counts(
+                    cursor, "agent_relations", "status",
+                    where=opt_in, params=rel_params,
+                ),
+                ALLOWED_RELATION_STATUSES,
+            )[0],
+            "opt_in_by_consent": _sanitize_categorical_counts(
+                grouped_counts(
+                    cursor, "agent_relations", "consent_status",
+                    where=opt_in, params=rel_params,
+                ),
+                ALLOWED_CONSENT_STATUSES,
+            )[0],
         }
 
     sanitized_by_kind, unknown_source_kinds = _sanitize_source_kind_counts(
@@ -1639,16 +1669,22 @@ def query_global_admission(cursor: sqlite3.Cursor, args: argparse.Namespace) -> 
         "ownership_class_by_table": ownership_class_by_table,
         "knowledge_gaps": {
             "rows_total": count_rows(cursor, table, f"1=1{inst_where}", inst_params),
-            "by_origin_class": grouped_counts(
-                cursor, table, "origin_class",
-                where=f"1=1{inst_where}", params=inst_params,
-            ),
+            "by_origin_class": _sanitize_categorical_counts(
+                grouped_counts(
+                    cursor, table, "origin_class",
+                    where=f"1=1{inst_where}", params=inst_params,
+                ),
+                ALLOWED_ORIGIN_CLASSES,
+            )[0],
             "by_source_kind": sanitized_by_kind,
             "unknown_source_kind_count": unknown_source_kinds,
-            "by_status": grouped_counts(
-                cursor, table, "status",
-                where=f"1=1{inst_where}", params=inst_params,
-            ),
+            "by_status": _sanitize_categorical_counts(
+                grouped_counts(
+                    cursor, table, "status",
+                    where=f"1=1{inst_where}", params=inst_params,
+                ),
+                ALLOWED_GAP_STATUSES,
+            )[0],
             "quarantined": count_rows(
                 cursor, table, f"origin_quarantined = 1{inst_where}", inst_params
             ),

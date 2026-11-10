@@ -307,3 +307,43 @@ def test_source_kind_unknown_value_is_never_emitted_verbatim():
     assert gaps["unknown_source_kind_count"] >= 2
     for row in gaps["global_authorized_by_origin_and_scope"]:
         assert row["source_kind"] in (None, "world", "conversation", "goal_manager")
+
+
+def test_categorical_fields_never_emit_arbitrary_text():
+    """P2 (rodada 3): a lista de valores permitidos cobre TODOS os campos
+    categoricos emitidos — `status`, `origin_class`, `ownership_class`,
+    `consent_status` — nao so `source_kind`."""
+    db = _db()
+    _seed(db)
+    # Dado sintetico/historico em campos categoricos.
+    db.conn.execute(
+        "UPDATE knowledge_gaps SET status = ? WHERE source_kind = 'world'",
+        ("synthetic-status-value",),
+    )
+    db.conn.execute(
+        "UPDATE knowledge_gaps SET origin_class = ? WHERE source_kind = 'conversation'",
+        ("synthetic-origin-value",),
+    )
+    db.conn.commit()
+    payload = _payload(db)
+
+    blob = json.dumps(payload, ensure_ascii=False)
+    assert "synthetic-status-value" not in blob
+    assert "synthetic-origin-value" not in blob
+
+    # ...mas as contagens continuam visiveis, agrupadas em None.
+    statuses = {
+        row["key"]: row["count"] for row in payload["knowledge_gaps"]["by_status"]
+    }
+    assert None in statuses
+    origins = {
+        row["key"]: row["count"]
+        for row in payload["knowledge_gaps"]["by_origin_class"]
+    }
+    assert None in origins
+
+    # Nivel de linha: status sintetico tambem nao sai.
+    row_level = {
+        row["status"] for row in payload["recent_global_authorized_rows"]
+    }
+    assert None in row_level
