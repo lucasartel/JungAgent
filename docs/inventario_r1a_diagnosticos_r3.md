@@ -648,23 +648,6 @@ carol, dave, admin e system (medido, não deduzido). Não é uma brecha de
 leitura; é o efeito opaco do legado, e decidir fechar ou consumi-lo é corte
 próprio.
 
-##### Revisão do mantenedor (09/11/2026) — 1 P1 + 2 P2, todos corrigidos
-
-| Sev. | Achado | Correção |
-|---|---|---|
-| **P1** | O filtro SQL aceitava `not json`, `[ ]` e `[null]` como prova — **campo preenchido não é referência** | `globally_readable_sql` exige `json_valid` + `json_type = 'array'` + **ao menos uma âncora `tipo#id`** (`json_each` + `GLOB '*#[0-9]*'`). 14/14 casos verificados, incluindo objeto, escalar e `["garbage"]` |
-| **P2** | `LIMIT` antes da verificação escondia um registro autorizado atrás de um recusado (`limit=1` devolvia vazio) | `get_active_knowledge_gaps` busca em **lotes** até completar o limite; o ISM varre o lote e pega o primeiro **autorizado** |
-| **P2** | `provenance_json` com `[]`/`null` lançava `AttributeError`; `private_derived="false"` lançava `ValueError` | `is_globally_readable` valida tipos e, na recusa, **loga com contexto e continua** — metadado inválido não derruba a leitura |
-
-**Prova**: com as três correções revertidas ao estado anterior, **3 testes
-falham** (`anchor_must_be_a_valid_reference`, `limit_does_not_hide_an_authorized_row`,
-`invalid_historical_metadata`); restauradas, 10/10 verdes.
-
-**Merge combinado com a #73**: testado em branch temporário — as duas edits
-linhas adjacentes do quadro de decomposição e das dimensões; resolução
-combinando os dois lados foi executada e a suíte combinada passou com
-**1456 passed**.
-
 **Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
 revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
 
@@ -764,6 +747,23 @@ restauradas, 13/13 verdes.
 **Observação de método**: minha primeira verificação de equivalência comparou
 âncora crua com o SQL (que espera array JSON) e acusou divergência falsa — a
 metodologia estava errada, não a regra; corrigida e reexecutada.
+
+##### Revisão do mantenedor (09/11/2026) — 1 P1 + 2 P2, todos corrigidos
+
+| Sev. | Achado | Correção |
+|---|---|---|
+| **P1** | O filtro SQL aceitava `not json`, `[ ]` e `[null]` como prova — **campo preenchido não é referência** | `globally_readable_sql` exige `json_valid` + `json_type = 'array'` + **ao menos uma âncora `tipo#id`** (`json_each` + `GLOB '*#[0-9]*'`). 14/14 casos verificados, incluindo objeto, escalar e `["garbage"]` |
+| **P2** | `LIMIT` antes da verificação escondia um registro autorizado atrás de um recusado (`limit=1` devolvia vazio) | `get_active_knowledge_gaps` busca em **lotes** até completar o limite; o ISM varre o lote e pega o primeiro **autorizado** |
+| **P2** | `provenance_json` com `[]`/`null` lançava `AttributeError`; `private_derived="false"` lançava `ValueError` | `is_globally_readable` valida tipos e, na recusa, **loga com contexto e continua** — metadado inválido não derruba a leitura |
+
+**Prova**: com as três correções revertidas ao estado anterior, **3 testes
+falham** (`anchor_must_be_a_valid_reference`, `limit_does_not_hide_an_authorized_row`,
+`invalid_historical_metadata`); restauradas, 10/10 verdes.
+
+**Merge combinado com a #73**: testado em branch temporário — as duas edits
+linhas adjacentes do quadro de decomposição e das dimensões; resolução
+combinando os dois lados foi executada e a suíte combinada passou com
+**1456 passed**.
 
 ### R3 — Corretivos (3 subcortes)
 
