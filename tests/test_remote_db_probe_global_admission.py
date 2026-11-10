@@ -117,7 +117,7 @@ def test_probe_reports_empty_schema():
     assert payload["available"] is True
     assert payload["knowledge_gaps"]["rows_total"] == 0
     assert payload["knowledge_gaps"]["global_authorized"] == {
-        "readable": 0, "blocked": 0, "total": 0,
+        "not_quarantined": 0, "blocked": 0, "total": 0,
     }
     assert payload["relations"] == {"available": True, "total": 0,
                                     "with_global_interiority": 0,
@@ -153,7 +153,7 @@ def test_probe_reports_global_authorized_by_origin_and_scope():
     payload = _payload(db)
 
     gaps = payload["knowledge_gaps"]
-    assert gaps["global_authorized"] == {"readable": 1, "blocked": 0, "total": 1}
+    assert gaps["global_authorized"] == {"not_quarantined": 1, "blocked": 0, "total": 1}
 
     breakdown = gaps["global_authorized_by_origin_and_scope"]
     assert breakdown == [
@@ -183,7 +183,7 @@ def test_probe_separates_readable_from_blocked():
 
     for row in payload["recent_global_authorized_rows"]:
         assert row["origin_class"] == "authorized_aggregate"
-        assert row["readable"] is True
+        assert row["not_quarantined"] is True
         # Somente metadados: nenhum texto de lacuna.
         assert "topic" not in row and "the_gap" not in row
 
@@ -275,3 +275,35 @@ def test_probe_scope_kind_relation_fails_closed_without_relation_id():
     assert payload["scope_kind"] == "relation"
     # Nenhuma linha declarada global visivel sem Relation pedida.
     assert payload["recent_global_authorized_rows"] == []
+
+
+def test_source_kind_unknown_value_is_never_emitted_verbatim():
+    """P2: valor legado arbitrario em ``source_kind`` nunca sai integral —
+    e a contagem continua visivel (agrupada, sem o texto)."""
+    db = _db()
+    _seed(db)
+    # Simula dado historico: um produtor desconhecido em registro normal e
+    # um valor sintetico na classe autorizada (caminho do breakdown).
+    db.conn.execute(
+        "UPDATE knowledge_gaps SET source_kind = ? WHERE source_kind = 'conversation'",
+        ("User Maria has depression",),
+    )
+    db.conn.execute(
+        "UPDATE knowledge_gaps SET source_kind = ? "
+        "WHERE origin_class = 'authorized_aggregate'",
+        ("legacy-synthetic-value",),
+    )
+    db.conn.commit()
+    payload = _payload(db)
+
+    blob = json.dumps(payload, ensure_ascii=False)
+    assert "User Maria has depression" not in blob
+    assert "legacy-synthetic-value" not in blob
+
+    # ...mas a contagem continua visivel e agrupada.
+    gaps = payload["knowledge_gaps"]
+    kinds = {row["source_kind"]: row["count"] for row in gaps["by_source_kind"]}
+    assert None in kinds
+    assert gaps["unknown_source_kind_count"] >= 2
+    for row in gaps["global_authorized_by_origin_and_scope"]:
+        assert row["source_kind"] in (None, "world", "conversation", "goal_manager")

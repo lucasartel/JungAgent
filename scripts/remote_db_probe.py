@@ -1334,6 +1334,51 @@ ALLOWED_ADMISSION_REASONS = frozenset(
 )
 
 
+ALLOWED_SOURCE_KINDS = frozenset({"conversation", "world", "goal_manager"})
+
+
+def _source_kind_view(raw: Any) -> Optional[str]:
+    """Devolve o ``source_kind`` do sistema ou ``None``.
+
+    P2 (09/11/2026): valor legado arbitrario NUNCA sai integral — a lista
+    de motivos permitidos nao protegia este campo. Mesma disciplina da
+    PR #67: so sai o que esta na lista explicita.
+    """
+    if raw in (None, ""):
+        return None
+    if str(raw) in ALLOWED_SOURCE_KINDS:
+        return str(raw)
+    return None
+
+
+def _sanitize_source_kind_counts(
+    rows: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Agrupa por valor conhecido; desconhecidos viram contagem SEM texto."""
+    merged: Dict[Optional[str], int] = {}
+    unknown = 0
+    for row in rows:
+        raw = row.get("key")
+        count = int(row.get("count") or 0)
+        if raw in (None, ""):
+            merged[None] = merged.get(None, 0) + count
+            continue
+        token = _source_kind_view(raw)
+        if token is None:
+            # Agrupa SEM emitir o texto original (P2 do revisor).
+            unknown += count
+            merged[None] = merged.get(None, 0) + count
+            continue
+        merged[token] = merged.get(token, 0) + count
+    out = [
+        {"source_kind": key, "count": count}
+        for key, count in sorted(
+            merged.items(), key=lambda item: (-item[1], str(item[0]))
+        )
+    ]
+    return out, unknown
+
+
 def _admission_reason_view(raw: Any) -> Tuple[Optional[str], bool]:
     """Devolve ``(codigo_permitido, ha_recusa)`` de um ``admission_refused``.
 
@@ -1437,7 +1482,7 @@ def query_global_admission(cursor: sqlite3.Cursor, args: argparse.Namespace) -> 
     # e o que decide o consumo — a classe so descreve a declaracao.
     def _global_counts(params: Sequence[Any]) -> Dict[str, Any]:
         return {
-            "readable": count_rows(
+            "not_quarantined": count_rows(
                 cursor,
                 table,
                 f"origin_class = 'authorized_aggregate' AND origin_quarantined = 0{inst_where}",
@@ -1475,7 +1520,12 @@ def query_global_admission(cursor: sqlite3.Cursor, args: argparse.Namespace) -> 
             """,
             inst_params,
         )
-        origin_breakdown = rows_to_dicts(cursor.fetchall())
+        origin_breakdown = []
+        for row in rows_to_dicts(cursor.fetchall()):
+            raw_kind = row.get("source_kind")
+            if raw_kind not in (None, "") and _source_kind_view(raw_kind) is None:
+                row["source_kind"] = None  # agrupa sem emitir o texto
+            origin_breakdown.append(row)
 
     # (d) Recusas de admissao: motivos na lista permitida; desconhecidos
     # viram None e continuam contados (nunca escondidos).
@@ -1529,8 +1579,12 @@ def query_global_admission(cursor: sqlite3.Cursor, args: argparse.Namespace) -> 
         )
         recent_rows = rows_to_dicts(cursor.fetchall())
         for row in recent_rows:
+            # P2: tambem no nivel de LINHA — valor arbitrario nunca sai.
+            raw_kind = row.get("source_kind")
+            if raw_kind not in (None, "") and _source_kind_view(raw_kind) is None:
+                row["source_kind"] = None
             row["origin_quarantined"] = bool(row.get("origin_quarantined"))
-            row["readable"] = not row["origin_quarantined"]
+            row["not_quarantined"] = not row["origin_quarantined"]
 
     # (f) Relations com opt-in de interioridade — a regra canonica do
     # contrato (core/rumination_interiority.py): json_extract(...) = 1.
@@ -1565,6 +1619,12 @@ def query_global_admission(cursor: sqlite3.Cursor, args: argparse.Namespace) -> 
             ),
         }
 
+    sanitized_by_kind, unknown_source_kinds = _sanitize_source_kind_counts(
+        grouped_counts(
+            cursor, table, "source_kind",
+            where=f"1=1{inst_where}", params=inst_params,
+        )
+    )
     global_authorized = _global_counts(inst_params)
     return {
         "probe": "global_admission",
@@ -1583,10 +1643,8 @@ def query_global_admission(cursor: sqlite3.Cursor, args: argparse.Namespace) -> 
                 cursor, table, "origin_class",
                 where=f"1=1{inst_where}", params=inst_params,
             ),
-            "by_source_kind": grouped_counts(
-                cursor, table, "source_kind",
-                where=f"1=1{inst_where}", params=inst_params,
-            ),
+            "by_source_kind": sanitized_by_kind,
+            "unknown_source_kind_count": unknown_source_kinds,
             "by_status": grouped_counts(
                 cursor, table, "status",
                 where=f"1=1{inst_where}", params=inst_params,
