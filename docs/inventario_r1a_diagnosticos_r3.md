@@ -655,7 +655,7 @@ escopo, espelhando a disciplina da PR #67 (metadados, sem conteúdo).
 
 **Entrega**: probe `global_admission` em `scripts/remote_db_probe.py`
 (registrado em `PROBES`) + `tests/test_remote_db_probe_global_admission.py`
-— **10 testes, nenhum `xfail`**.
+— **13 testes, nenhum `xfail`**.
 
 **As três medições de produção pendentes ficam respondíveis com a sonda:**
 
@@ -728,6 +728,15 @@ emitido), com o mesmo mecanismo de `source_kind`.
 
 **Escopo**: aplicado ao probe `global_admission` (o revisado). Os demais
 probes da sonda têm domínios categóricos próprios e não foram alterados.
+
+##### Revisão — rodada 4 (10/11/2026) — estados válidos perdidos, corrigido
+
+| Sev. | Achado | Correção |
+|---|---|---|
+| **P2** | `ALLOWED_GAP_STATUSES` só tinha `open` e `resolved` — **`investigating` e `rejected`**, estados gravados pelo próprio agente (`jung_proactive_advanced.py:1404`, `knowledge_gaps.py:750`), eram agrupados como `null` | Os dois entram na lista; teste prova que aparecem **distintos** e que o texto arbitrário **continua bloqueado** |
+
+**Prova**: `test_valid_gap_states_appear_separately` falha sem o ajuste;
+13/13 verdes com ele. Suíte completa: **1448 passed**.
 
 **Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
 revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
