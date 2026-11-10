@@ -430,17 +430,35 @@ fallback exige `\f` (linha 317) → texto legado **sem** `\f` →
 ao PDF enviado (170 páginas) — e `progress_value = 170` já cobre **todas as
 páginas físicas**.
 
-> **Menor reparo proposto (sem avançar o marcador)** — três peças, nenhuma
-> toca `progress_value`:
-> 1. **Diagnóstico correto**: quando `requested_start > total_pages`,
->    devolver motivo **distinto** (`reading_range_beyond_pagination`) em vez
->    de `reading_exact_pages_unavailable` — hoje o erro real fica mascarado;
-> 2. **Fonte única da paginação**: o scheduler/reitor de briefs deve limitar
->    `end_page` ao `page_count` do anexo (ou reconciliar `effort_target` —
->    **mudança de dado, exige decisão do mantenedor**);
-> 3. **Delimitadores**: o texto legado sem `\f` não serve de fallback —
->    re-extrair com o código atual (que une com `\f`) é operação de produção
->    (**não executada aqui**).
+> **Plano revisado (revisão do mantenedor, 10/11/2026)** — limitar só o
+> fim **não resolve**: o leitor normaliza `requested_end =
+> max(requested_start, end)` (`work/attachments.py:278`), então com
+> `start=171, total=170` até `end` limitado a 170 vira `171` →
+> `upper = min(171, 170) = 170` → `range(171, 171)` **vazio** de novo, e o
+> agendador pode re pedir o mesmo intervalo indefinidamente.
+>
+> **O plano distingue TRÊS casos**, sem avançar progresso e sem marcar o
+> livro como concluído automaticamente:
+>
+> | Caso | Condição | Tratamento |
+> |---|---|---|
+> | **Intervalo parcialmente válido** | `start ≤ total < end` | servir `start..total`, registrar quantas páginas **realmente** servidas; progresso só com evidência da leitura |
+> | **Início além da última página** | `start > total` | motivo **distinto** `reading_range_beyond_pagination`; **não** recriar o mesmo brief impossível; **não** avançar `progress_value`; **não** concluir o livro |
+> | **Arquivo indisponível** | anexo ausente, não extraído ou PDF não abrível | motivo distinto `reading_pdf_unavailable` (ou `reading_pdf_not_extracted` já existente) |
+>
+> **Peças do reparo** (nenhuma toca `progress_value`):
+> 1. **Checagem da paginação real** — `scripts/diagnostics/check_pdf_pagination.py`
+>    (somente leitura: contagem ou erro, sem conteúdo). **Preparado; execução
+>    pendente de `railway login`** (token expirou: `EPERM` no refresh — ação
+>    do mantenedor, sem contornar a proteção de credenciais);
+> 2. **Fonte única da paginação**: validar o intervalo contra o
+>    `page_count` **do anexo aberto**, não contra `effort_target` do projeto
+>    (reconciliar `effort_target` é **mudança de dado — sua decisão**);
+> 3. **Motivos distintos no leitor** para os três casos acima (hoje tudo
+>    vira `reading_exact_pages_unavailable`);
+> 4. **Delimitadores**: o texto legado sem `\f` não serve de fallback —
+>    re-extrair com o código atual (que une com `\f`) é operação de
+>    produção (**não executada aqui**).
 >
 > **Nenhum marcador foi avançado**; nenhum dado alterado.
 
