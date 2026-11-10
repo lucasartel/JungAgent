@@ -323,7 +323,7 @@ registradas antes dele. Script pronto e somente-leitura (só contagens, `mode=ro
 | **F-5b** | **Admissão nos writers.** Passar os caminhos auto-declarados pelo predicado (começando por `world_consciousness`). Quem não passar → `relation_private` ou quarentena com motivo (**condição 1: `legacy_unscoped` proibido como destino de recusa nova**). | ✅ recusa · instâncias distintas · consentimento revogado |
 | **F-5c** | **Verificação integrada.** Duas Relations × duas instâncias; revogação/apagamento retiram a contribuição. | **Entregue: 27 testes sem `xfail` — P1 do reader E do produtor corrigidos com o gate canônico; ambos os casos pegos pelas sentinelas** |
 | **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha a PR #67 (metadados, sem conteúdo). | — |
-| **F-5e** (requisito de encerramento) | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | **Entregue: 7 testes — 14 pontos protegidos (13 + leitor principal), nenhum `xfail`** |
+| **F-5e** (requisito de encerramento) | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | **Entregue: 10 testes — 14 pontos protegidos (13 + leitor principal), nenhum `xfail`** |
 
 > **F-5e é requisito de encerramento do F-5** — decisão do mantenedor em
 > 05/11/2026, que aceitou o rótulo e rejeitou o enquadramento anterior como
@@ -450,7 +450,7 @@ na F-5b, mixin agora) — o resto segue pendente e declarado como tal.
 | Dimensão | Estado |
 |---|---|
 | **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c `60c8ee9` · admissão nos produtores + 2 P1 · **F-5e tratamento das leituras** (esta entrega) |
-| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão 16 · **F-5e 7** · regressão mock 20/20 · suíte completa **1442 passed** |
+| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão 16 · **F-5e 10** · regressão mock 20/20 · suíte completa **1445 passed** |
 | **Publicado** | ✅ F-5a/b mergeadas em `main` com deploy Railway `SUCCESS` |
 | **Validado em operação** | ❌ **não verificado** — o deploy confirma *execução*, não aceite operacional; sondas de produção seguem pendentes de `railway login` |
 
@@ -648,6 +648,23 @@ carol, dave, admin e system (medido, não deduzido). Não é uma brecha de
 leitura; é o efeito opaco do legado, e decidir fechar ou consumi-lo é corte
 próprio.
 
+##### Revisão do mantenedor (09/11/2026) — 1 P1 + 2 P2, todos corrigidos
+
+| Sev. | Achado | Correção |
+|---|---|---|
+| **P1** | O filtro SQL aceitava `not json`, `[ ]` e `[null]` como prova — **campo preenchido não é referência** | `globally_readable_sql` exige `json_valid` + `json_type = 'array'` + **ao menos uma âncora `tipo#id`** (`json_each` + `GLOB '*#[0-9]*'`). 14/14 casos verificados, incluindo objeto, escalar e `["garbage"]` |
+| **P2** | `LIMIT` antes da verificação escondia um registro autorizado atrás de um recusado (`limit=1` devolvia vazio) | `get_active_knowledge_gaps` busca em **lotes** até completar o limite; o ISM varre o lote e pega o primeiro **autorizado** |
+| **P2** | `provenance_json` com `[]`/`null` lançava `AttributeError`; `private_derived="false"` lançava `ValueError` | `is_globally_readable` valida tipos e, na recusa, **loga com contexto e continua** — metadado inválido não derruba a leitura |
+
+**Prova**: com as três correções revertidas ao estado anterior, **3 testes
+falham** (`anchor_must_be_a_valid_reference`, `limit_does_not_hide_an_authorized_row`,
+`invalid_historical_metadata`); restauradas, 10/10 verdes.
+
+**Merge combinado com a #73**: testado em branch temporário — as duas edits
+linhas adjacentes do quadro de decomposição e das dimensões; resolução
+combinando os dois lados foi executada e a suíte combinada passou com
+**1456 passed**.
+
 **Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
 revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
 
@@ -689,7 +706,7 @@ lacunas) · `engines/symbolic_graph.extract_from_identity_contradictions` ·
 **`knowledge_gaps.get_active_knowledge_gaps`** (leitor principal — incluído
 pelo mandato "predicado real onde existe `source_kind`").
 
-##### Testes — `tests/test_f5e_reader_authorization.py`, 7 testes
+##### Testes — `tests/test_f5e_reader_authorization.py`, 10 testes
 
 Condição SQL (variantes, alias `t.`, `ownership_class`, quarentena) ·
 predicado real (admitida/recusada/quarentena/Relation/`instance_global`) ·
@@ -703,9 +720,9 @@ sonho do ISM sem âncora bloqueado e com âncora servido.
 |---|---|
 | `globally_readable_sql` → `1 = 1` + predicado desligado | **3 testes falham** |
 | chamada do filtro removida de `get_active_knowledge_gaps` | `test_unverifiable_global_is_not_served_and_row_is_untouched` **falha** |
-| restaurado | 7/7 verdes |
+| restaurado | 10/10 verdes |
 
-**Suíte completa: 1442 passed** (1435 + 7) · mock 20/20 · `diff --check` limpo.
+**Suíte completa: 1445 passed** (1435 + 10) · mock 20/20 · `diff --check` limpo.
 
 ##### Correção de ambiente de teste (registrada)
 
