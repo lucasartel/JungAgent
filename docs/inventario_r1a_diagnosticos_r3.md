@@ -322,7 +322,7 @@ registradas antes dele. Script pronto e somente-leitura (só contagens, `mode=ro
 | **F-5a** | **Contrato de elegibilidade.** Predicado no contrato canônico com **duas rotas** (condição 2): **(A)** fonte pública/livro → `authorized_aggregate` por **critérios próprios**, **sem Relation artificial**; **(B)** contribuição derivada de Relation → exige consentimento vigente **e** proveniência. **Recusa** (condição 1): com vínculo válido → mantém `relation_private`; sem vínculo → **quarentena explícita com motivo persistido** — **nunca `legacy_unscoped`**. Define ainda a **regra de leitura** (condição 4) para material sem autorização verificável. Sem escrita de dados. | ✅ recusa · instâncias distintas · consentimento revogado |
 | **F-5b** | **Admissão nos writers.** Passar os caminhos auto-declarados pelo predicado (começando por `world_consciousness`). Quem não passar → `relation_private` ou quarentena com motivo (**condição 1: `legacy_unscoped` proibido como destino de recusa nova**). | ✅ recusa · instâncias distintas · consentimento revogado |
 | **F-5c** | **Verificação integrada.** Duas Relations × duas instâncias; revogação/apagamento retiram a contribuição. | **Entregue: 27 testes sem `xfail` — P1 do reader E do produtor corrigidos com o gate canônico; ambos os casos pegos pelas sentinelas** |
-| **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha a PR #67 (metadados, sem conteúdo). | **Entregue: probe `global_admission` + 10 testes — responde as 3 medições pendentes** |
+| **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha a PR #67 (metadados, sem conteúdo). | **Entregue: probe `global_admission` + 11 testes — responde as 3 medições pendentes** |
 | **F-5e** (requisito de encerramento) | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | recusa de leitura sem autorização verificável |
 
 > **F-5e é requisito de encerramento do F-5** — decisão do mantenedor em
@@ -450,7 +450,7 @@ na F-5b, mixin agora) — o resto segue pendente e declarado como tal.
 | Dimensão | Estado |
 |---|---|
 | **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c `60c8ee9` · admissão nos produtores + 2 P1 · **F-5d sonda `global_admission`** (esta entrega) |
-| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão 16 · **F-5d 10** · regressão mock 20/20 · suíte completa **1445 passed** |
+| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão 16 · **F-5d 11** · regressão mock 20/20 · suíte completa **1446 passed** |
 | **Publicado** | ✅ F-5a/b mergeadas em `main` com deploy Railway `SUCCESS` |
 | **Validado em operação** | ❌ **não verificado** — o deploy confirma *execução*, não aceite operacional; sondas de produção seguem pendentes de `railway login` |
 
