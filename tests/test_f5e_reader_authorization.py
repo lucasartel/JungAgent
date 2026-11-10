@@ -243,3 +243,91 @@ def test_ism_dream_without_anchors_is_not_served():
     # Só o com prova de proveniencia passa.
     assert len(dreams) == 1
     assert "tema com ancora" in dreams[0]["title"]
+
+
+# ---------------------------------------------------------------------------
+# P1 (09/11/2026): campo preenchido nao e prova — a ancora precisa ser VALIDA
+# ---------------------------------------------------------------------------
+def _insert_global(db, the_gap, source_refs, *, importance=0.5, provenance="{}"):
+    db.conn.execute(
+        """
+        INSERT INTO knowledge_gaps (
+            user_id, agent_instance, ownership_class, origin_class,
+            source_refs_json, provenance_json, topic, the_gap,
+            importance_score, status, source_kind, dedup_key,
+            observation_count, last_observed_at, origin_quarantined
+        ) VALUES ('u1', ?, 'instance_global', 'authorized_aggregate',
+                  ?, ?, 'topico', ?, ?, 'open', 'world', ?,
+                  1, '2026-11-01T00:00:00', 0)
+        """,
+        (_INSTANCE, source_refs, provenance, the_gap, importance, the_gap),
+    )
+    db.conn.commit()
+
+
+def test_anchor_must_be_a_valid_reference_not_just_a_filled_field():
+    """`not json`, `[ ]`, `[null]`, objeto, escalar e `["garbage"]` nao
+    servem de prova de autorizacao; so uma referencia `tipo#id` serve."""
+    db = _db()
+    aceitas = ['["will#30"]', '["conversation#1", "dream#9"]']
+    recusadas = [
+        "not json",      # P1 citado
+        "[ ]",           # P1 citado
+        "[]",
+        "[null]",        # P1 citado
+        "[0]",
+        "{}",
+        '"will#30"',     # escalar string
+        "5",             # escalar numero
+        "null",
+        "",
+        "['garbage']",   # sem formato tipo#id
+    ]
+    for i, refs in enumerate(recusadas):
+        _insert_global(db, f"invalida-{i}", refs, importance=1.0 - i * 0.01)
+    for i, refs in enumerate(aceitas):
+        _insert_global(db, f"valida-{i}", refs, importance=0.1 - i * 0.01)
+
+    served = {g["the_gap"] for g in db.get_active_knowledge_gaps("u1", limit=50)}
+    assert served == {"valida-0", "valida-1"}, served
+
+
+# ---------------------------------------------------------------------------
+# P2 (09/11/2026): LIMIT antes da verificacao escondia o registro valido
+# ---------------------------------------------------------------------------
+def test_limit_does_not_hide_an_authorized_row_behind_a_refused_one():
+    db = _db()
+    # Recusada com MAIOR importancia (aparece primeiro no ORDER BY)...
+    _insert_global(db, "recusada-primeiro", "not json", importance=9.0)
+    # ...e a valida com menor importancia.
+    _insert_global(db, "valida-depois", '["will#30"]', importance=1.0)
+
+    # limit=1 devolvia vazio; agora devolve a valida.
+    served = db.get_active_knowledge_gaps("u1", limit=1)
+    assert [g["the_gap"] for g in served] == ["valida-depois"]
+    # E o limite continua sendo respeitado.
+    assert len(db.get_active_knowledge_gaps("u1", limit=2)) == 1
+
+
+# ---------------------------------------------------------------------------
+# P2 (09/11/2026): metadado historico invalido recusa a linha e CONTINUA
+# ---------------------------------------------------------------------------
+def test_invalid_historical_metadata_refuses_row_and_continues():
+    db = _db()
+    # Metadados invalidos: nao podem derrubar a leitura.
+    _insert_global(db, "provenance-array", '["will#30"]', provenance="[]")
+    _insert_global(db, "provenance-null", '["will#30"]', provenance="null")
+    _insert_global(
+        db, "flag-ambigua", '["will#30"]',
+        provenance='{"private_derived": "false"}',
+    )
+    # ...e uma valida depois delas continua sendo servida.
+    _insert_global(db, "valida-ultima", '["will#31"]', provenance="{}")
+
+    served = {g["the_gap"] for g in db.get_active_knowledge_gaps("u1", limit=50)}
+    # Nao lanca AttributeError/ValueError; recusa as invalidas.
+    assert "provenance-array" not in served
+    assert "provenance-null" not in served
+    assert "flag-ambigua" not in served
+    # "continua": a valida apos as invalidas chega.
+    assert served == {"valida-ultima"}

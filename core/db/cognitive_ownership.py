@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable, Optional, Tuple
 
@@ -525,6 +526,9 @@ def assess_global_admission(
 # Nada aqui reclassifica historico: e a decisao de servir ou recusar, nunca
 # de reescrever a linha.
 # ---------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
+
+
 def globally_readable_sql(
     columns: Iterable[str],
     *,
@@ -563,10 +567,19 @@ def globally_readable_sql(
     )
     if anchors:
         anchor_col = f"{prefix}{anchors}"
+        # P1 (09/11/2026): campo preenchido NAO e prova de autorizacao.
+        # Exige JSON array com ao menos UMA referencia no formato canonico
+        # ``tipo#id`` (SOURCE_REF_RE): `not json`, objeto, escalar, `[]`,
+        # `[ ]` e `[null]` passam a ser recusados.
         conditions.append(
-            f"({origin} <> 'authorized_aggregate' OR "
-            f"({anchor_col} IS NOT NULL AND TRIM({anchor_col}) NOT IN "
-            f"('', '[]', '{{}}', 'null')))"
+            f"({origin} <> 'authorized_aggregate' OR ("
+            f"CASE WHEN json_valid({anchor_col}) "
+            f"AND json_type({anchor_col}) = 'array' "
+            f"THEN EXISTS (SELECT 1 FROM json_each({anchor_col}) AS anchor_ref "
+            f"WHERE typeof(anchor_ref.value) = 'text' "
+            f"AND TRIM(anchor_ref.value) <> '' "
+            f"AND anchor_ref.value GLOB '*#[0-9]*') "
+            f"ELSE 0 END))"
         )
     else:
         conditions.append(f"{origin} <> 'authorized_aggregate'")
@@ -592,18 +605,41 @@ def is_globally_readable(row: Any, *, agent_instance: str) -> bool:
         source_refs = json.loads(row.get("source_refs_json") or "[]")
     except ValueError:
         source_refs = []
+    # P2 (09/11/2026): metadata historico inesperado nao pode derrubar a
+    # leitura — `[]`/`null` viram dict vazio; tipo errado vira recusa.
+    if not isinstance(source_refs, list):
+        source_refs = []
     try:
         provenance = json.loads(row.get("provenance_json") or "{}")
     except ValueError:
         provenance = {}
-    decision = assess_global_admission(
-        agent_instance=agent_instance,
-        route=ROUTE_PUBLIC_SOURCE,
-        source_kind=row.get("source_kind"),
-        source_refs=source_refs,
-        # Evidencia do registro manda (mesma regra do P1-2 nos writers).
-        private_derived=provenance.get("private_derived", False),
-    )
+    if not isinstance(provenance, dict):
+        # P2 (09/11/2026): `provenance_json` com `[]`/`null` e metadado
+        # historico invalido — RECUSA a linha e continua a leitura.
+        logger.warning(
+            "leitura global recusada por provenance invalido gap_id=%s tipo=%s",
+            row.get("id"),
+            type(provenance).__name__,
+        )
+        return False
+    try:
+        decision = assess_global_admission(
+            agent_instance=agent_instance,
+            route=ROUTE_PUBLIC_SOURCE,
+            source_kind=row.get("source_kind"),
+            source_refs=source_refs,
+            # Evidencia do registro manda (mesma regra do P1-2 nos writers).
+            private_derived=provenance.get("private_derived", False),
+        )
+    except ValueError as exc:
+        # Recusa a LINHA invalida e continua: nunca derruba a leitura nem
+        # interpreta ambiguo como consentimento (regra 5 do AGENTS.md).
+        logger.warning(
+            "leitura global recusada por metadado invalido gap_id=%s motivo=%s",
+            row.get("id"),
+            exc,
+        )
+        return False
     return decision.admits_global
 
 

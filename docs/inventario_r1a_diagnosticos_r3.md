@@ -648,6 +648,15 @@ carol, dave, admin e system (medido, não deduzido). Não é uma brecha de
 leitura; é o efeito opaco do legado, e decidir fechar ou consumi-lo é corte
 próprio.
 
+**Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
+revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
+
+**Fora do escopo de F-5**: projeção de conteúdo privado → global com revisão e
+política de retratação. Isso é o R1 completo (R1b/R1c) e exige decisão própria;
+F-5 só fecha *quem pode declarar* global, não converte privado em global.
+Além disso — e por decisão do mantenedor — F-5 **não** comprova assimilação nem
+uso das leituras nas conversas (ver *Limite de escopo* acima).
+
 #### F-5e — Tratamento das leituras (09/11/2026)
 
 **Tarefa**: aplicar a regra do F-5a aos 13 sítios de leitura — material sem
@@ -720,15 +729,6 @@ Falhas pré-existentes em `test_working_memory`, `test_loop_failure_policy`,
 Nenhuma linha reclassificada (testado: a recusa é exclusão na leitura e a
 `origin_class` permanece intacta) · nenhum histórico reprocessado · nenhuma
 quarentena liberada · nenhuma alteração de produção · Railway intocado.
-
-**Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
-revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
-
-**Fora do escopo de F-5**: projeção de conteúdo privado → global com revisão e
-política de retratação. Isso é o R1 completo (R1b/R1c) e exige decisão própria;
-F-5 só fecha *quem pode declarar* global, não converte privado em global.
-Além disso — e por decisão do mantenedor — F-5 **não** comprova assimilação nem
-uso das leituras nas conversas (ver *Limite de escopo* acima).
 
 ### R3 — Corretivos (3 subcortes)
 

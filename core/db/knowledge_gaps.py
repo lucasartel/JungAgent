@@ -689,28 +689,39 @@ class KnowledgeGapDatabaseMixin:
                 if str(user_id) == str(ADMIN_USER_ID):
                     visibility = f"({visibility} OR (origin_relation_id IS NULL AND user_id = ?))"
                     params.append(user_id)
-            params.append(limit)
-            cursor.execute(f"""
-                SELECT * FROM knowledge_gaps
-                WHERE agent_instance = ? AND status = 'open' AND {visibility}
-                  AND origin_quarantined = 0
-                ORDER BY importance_score DESC, created_at DESC
-                LIMIT ?
-            """, params)
-            
-            gaps = []
-            for row in cursor.fetchall():
-                item = dict(row)
-                # F-5e: a afirmacao `authorized_aggregate` passa pelo
-                # contrato REAL antes de virar insumo de prompt/vontade/
-                # proatividade. Recusa e exclusao na LEITURA — a linha nao
-                # e tocada (condicao 4: nada de reclassificar historico).
-                if not is_globally_readable(item, agent_instance=instance):
-                    continue
-                item["source_refs"] = json.loads(item.pop("source_refs_json") or "[]")
-                item["provenance"] = json.loads(item.pop("provenance_json") or "{}")
-                item["private_trigger"] = json.loads(item.pop("private_trigger_json") or "{}")
-                gaps.append(item)
+            # P2 (09/11/2026): LIMIT aplicado ANTES da verificacao escondia
+            # um registro autorizado atras de um recusado — `limit=1`
+            # devolvia vazio com o segundo registro valido. Busca em LOTES
+            # ate completar o limite pedido ou esgotar as candidatas.
+            gaps: List[Dict[str, Any]] = []
+            offset = 0
+            batch = max(int(limit) * 10, 50)
+            while len(gaps) < int(limit):
+                cursor.execute(f"""
+                    SELECT * FROM knowledge_gaps
+                    WHERE agent_instance = ? AND status = 'open' AND {visibility}
+                      AND origin_quarantined = 0
+                    ORDER BY importance_score DESC, created_at DESC
+                    LIMIT ? OFFSET ?
+                """, (*params, batch, offset))
+                rows = cursor.fetchall()
+                for row in rows:
+                    item = dict(row)
+                    # F-5e: a afirmacao `authorized_aggregate` passa pelo
+                    # contrato REAL antes de virar insumo de prompt/vontade/
+                    # proatividade. Recusa e exclusao na LEITURA — a linha
+                    # nao e tocada (condicao 4: nada de reclassificar).
+                    if not is_globally_readable(item, agent_instance=instance):
+                        continue
+                    item["source_refs"] = json.loads(item.pop("source_refs_json") or "[]")
+                    item["provenance"] = json.loads(item.pop("provenance_json") or "{}")
+                    item["private_trigger"] = json.loads(item.pop("private_trigger_json") or "{}")
+                    gaps.append(item)
+                    if len(gaps) >= int(limit):
+                        break
+                if len(rows) < batch:
+                    break
+                offset += batch
             return gaps
 
     def resolve_knowledge_gap(self, gap_id: int) -> bool:

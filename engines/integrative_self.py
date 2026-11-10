@@ -385,7 +385,10 @@ class IntegrativeSelfModel:
                     )
                     if column in gap_columns
                 )
-                row = cursor.execute(
+                # P2 (09/11/2026): LIMIT 1 ANTES da verificacao escondia um
+                # registro valido atras de um recusado. Varre o lote e pega
+                # o primeiro AUTORIZADO — recusa nao toca a linha.
+                rows = cursor.execute(
                     f"""
                     SELECT id, topic, the_gap, status, closure_summary,
                            closure_source_type, resolved_at{extra_cols}
@@ -397,18 +400,19 @@ class IntegrativeSelfModel:
                         OR (? IS NULL AND origin_relation_id IS NULL AND origin_class = 'legacy_unscoped')
                       ){quarantine_sql}
                     ORDER BY resolved_at DESC, id DESC
-                    LIMIT 1
+                    LIMIT ?
                     """,
-                    (self.agent_instance, user_id, relation_id, relation_id),
-                ).fetchone()
-                # F-5e: a afirmacao global passa pelo contrato REAL antes de
-                # virar componente de prompt. Recusa nao toca a linha.
+                    (self.agent_instance, user_id, relation_id, relation_id, 20),
+                ).fetchall()
                 from core.db.cognitive_ownership import is_globally_readable
 
-                if row and not is_globally_readable(
-                    dict(row), agent_instance=self.agent_instance
-                ):
-                    row = None
+                row = None
+                for candidate in rows:
+                    if is_globally_readable(
+                        dict(candidate), agent_instance=self.agent_instance
+                    ):
+                        row = candidate
+                        break
             else:
                 row = cursor.execute(
                     f"""SELECT id, topic, the_gap, status, closure_summary,
