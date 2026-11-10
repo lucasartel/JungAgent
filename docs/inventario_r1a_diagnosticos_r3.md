@@ -298,22 +298,132 @@ caminho cuja declaração tem lastro.
 - O `NULL` que importa é o histórico (`dedup_key`, `source_kind`) da R1a-4:
   sem backfill, **por desenho** — e por isso nunca é alcançado pelo dedup.
 
-#### ⚠️ Medições de produção pendentes
+#### Medições de produção — executadas em 10/11/2026 (somente leitura)
 
-Contagens reais de `ownership_class`/`origin_class` por tabela e o nº de
-Relations com `global_interiority=true` **não foram coletadas**.
+Acesso restaurado: `railway whoami` voltou a funcionar após o `railway login`
+do mantenedor (o EPERM anterior era de refresh, não de token expirado). As
+sondas rodaram **dentro do container** via `railway ssh` — o `railway run`
+não alcança o volume — com o banco aberto em `mode=ro`. **Nenhum texto
+privado** saiu: só contagens, classes, códigos de recusa e idades.
+Artefatos em `output/probes/`.
 
-**Diagnóstico de acesso (corrigido em 04/11/2026 — a leitura anterior estava
-forte demais).** `railway status` funciona (config cacheado), mas `whoami` e
-`ssh` falham com `failed to refresh OAuth token: Operation not permitted
-(os error 1)`; `~/.railway/config.json` existe e é legível. **EPERM no refresh
-não comprova token expirado** — indica que a CLI não conseguiu renovar
-(permissão/keychain do SO). A verificação de acesso é ação do mantenedor
-(`railway login`), **sem contornar a proteção de credenciais**.
+##### Contagens — `knowledge_gaps`, instância `jung_v1`, escopo global
 
-**Não bloqueia o desenvolvimento**: F-5a–F-5b se desenvolvem e testam offline.
-As contagens são **necessárias para o aceite operacional** e devem ser
-registradas antes dele. Script pronto e somente-leitura (só contagens, `mode=ro`).
+| Métrica | Valor |
+|---|---|
+| linhas totais | 60 |
+| `authorized_aggregate` | 39 (todas `resolved`) |
+| `relation_private` | 17 |
+| `legacy_unscoped` | 4 |
+| **em quarentena** | **0** |
+| recusas de admissão registradas (`admission_refused`) | **0** |
+| Relations | 1 total · **0 com `global_interiority=true`** |
+| por `source_kind` | `NULL` = 58 · `conversation` = 2 · desconhecidos = 0 |
+| por `status` | `resolved` = 39 · `open` = 21 |
+
+Filtro de tenancy: `agent_instance = jung_v1` (instância configurada nesta
+execução); nenhuma outra instância foi nomeada.
+
+##### Idade da fila — `processing_queue`
+
+| Métrica | Valor |
+|---|---|
+| `rows_total` | **0** |
+| pendentes / >24h / >7d | 0 / 0 / 0 |
+| retry: abertos / vencidos / perto do limite | 0 / 0 / 0 |
+| colunas obrigatórias ausentes | nenhuma |
+| tenancy (sem filtro de Relation) | 0 linhas · 0 sem instância · 0 sem origem |
+
+##### "Nenhum caso observado" ≠ "comportamento validado"
+
+| Afirmação | Estado correto |
+|---|---|
+| Fila vazia | **Nenhum caso observado** — não valida retry, backoff nem vencimento |
+| 0 quarentenas em produção | **Nenhum caso observado** — os gates de escrita (F-5b/F-5c) **nunca recusaram** nada até aqui |
+| 0 recusas de admissão | **Nenhum caso observado** — não comprova a recusa em produção (coberta offline por testes) |
+| 39 `authorized_aggregate` "legíveis"? | **NÃO** — ver distinção abaixo |
+
+##### Distinção essencial: `not_quarantined` ≠ legível
+
+A sonda reporta `global_authorized.not_quarantined = 39` — métrica de
+**flag** (renomeada na revisão justamente para não prometer legibilidade).
+Pela **regra efetiva de leitura** (F-5e), uma linha `authorized_aggregate`
+só é servida com âncora válida; **as 39 têm `source_kind = NULL`** e as
+âncoras não são expostas por esta sonda. Consequência: **nenhuma passaria
+pelo predicado de leitura** — são material histórico anterior aos gates.
+
+**Reparo aqui exige tocar histórico** (reclassificar/reprocessar está
+proibido) → **nenhum reparo proposto**; registrado como consequência
+conhecida do F-5e. Observabilidade possível sem tocar dado: a sonda passar
+a reportar `authorized_aggregate_sem_ancora` (contagem só em SQL) para a
+distância `not_quarantined → legível` ficar visível ao operador.
+
+##### Cruze com os caminhos pendentes do inventário
+
+| Caminho pendente | Observação em produção | Veredito |
+|---|---|---|
+| **Produtores de sonhos** (`core/db/dreams`) | `agent_dreams` = 34 linhas: 33 `relation_private` + 1 `legacy_unscoped` → **0 declarações globais** | **Nenhum caso observado** — caminho segue ungated (pendente) |
+| **Scholar** (`scholar_runs`, `external_research`) | `scholar_runs` = 0 · `external_research` = 0 | **Nenhum caso observado** — sem material algum |
+| **Cache do World** (`world_consciousness.py:2634`) | `origin_class: authorized_aggregate` gravado **hardcoded** no JSON do cache; **nenhum leitor** desse campo encontrado | **Nenhum caso observado** (metadado inerte) — mas a afirmação segue sem contrato |
+| **Leitura administrativa** (`admin_web/routes/research_lab_memory.py:177-183`) | query **sem** `origin_quarantined = 0`; produção tem 0 em quarentena | **Nenhum caso observado** — lacuna real de código, 0 linhas afetadas hoje |
+
+##### Lacunas reais: reprodução e menor reparo proposto
+
+**L1 — Leitura administrativa não filtra quarentena.**
+
+```sql
+-- admin_web/routes/research_lab_memory.py:177
+SELECT topic, the_gap, importance_score, status, created_at
+FROM knowledge_gaps
+WHERE user_id = ? AND status = 'open'{gap_sql}   -- sem origin_quarantined = 0
+```
+Com uma linha `origin_quarantined=1` e `status='open'`, ela seria servida
+na rota admin.
+
+> **Menor reparo**: acrescentar `AND origin_quarantined = 0` quando a coluna
+> existir — exatamente o padrão já aplicado em `engines/integrative_self.py`
+> (F-5b). Uma linha de SQL, sem schema e sem histórico.
+
+**L2 — Material do Work parado entre leitura e elaboração (CONFIRMADO).**
+
+Reprodução (sonda `work`, metadados):
+
+| Sinal | Valor |
+|---|---|
+| `assessment.summary` | `work autonomy is currently blocked by persisted state` |
+| `blockers` | `['active_projects_missing_destination']` |
+| briefs `blocked` (`scheduled_reading`) | 42 — novos **por dia** (ids 279-282, 06→09/11) |
+| artefatos | `generation_mode: reading_blocked`, `editorial_note: reading_exact_pages_unavailable` |
+| `readings_assimilated` / `reading_pages_assimilated` | **0 / 0** |
+| progresso do projeto 11 | páginas **170/179 desde 06/11** (travado) |
+| `latest_work_phase.status` | `partial_success` — "Work bloqueou a leitura porque nao conseguiu verificar e assimilar a fonte" |
+
+> **Menor reparo (proposto, não executado)**: (a) dar destino ao projeto
+> ativo (`default_destination_id = NULL`) para destravar a autonomia; e
+> (b) investigar `reading_exact_pages_unavailable` — a fonte não é
+> verificável/assimilável, então a leitura avança **zero páginas** e os
+> briefs se acumulam em `blocked`. São dois bloqueadores distintos.
+
+**L3 — Afirmiação global hardcoded no cache do World.**
+
+`world_consciousness.py:2634` grava `"origin_class": "authorized_aggregate"`
+sem passar por `assess_global_admission`. Nenhum leitor desse campo foi
+encontrado (não decide nada hoje).
+
+> **Menor reparo**: parar de afirmar — gravar `instance_global` (ou omitir o
+> campo), já que nada o consome. Uma linha, sem histórico.
+
+##### Revalidação do Work entre leitura e elaboração
+
+**Sim, continua parado** — evidência acima (L2). A fila de processamento
+está vazia (nenhum caso observado), mas a tubulação de Work acumula 42
+briefs bloqueados e não avança página nenhuma desde 06/11.
+
+##### Limites respeitados
+
+Nenhuma linha reclassificada · nenhum registro reprocessado · nenhuma
+quarentena liberada · nenhuma alteração de produção · Railway usado apenas
+com sondas `mode=ro`.
 
 #### Decomposição revisada (aprovada em 04/11/2026 com as 5 condições)
 
@@ -452,7 +562,7 @@ na F-5b, mixin agora) — o resto segue pendente e declarado como tal.
 | **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c `60c8ee9` · admissão nos produtores + 2 P1 · **F-5d sonda `global_admission` + F-5e tratamento das leituras** |
 | **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão 16 · **F-5d 13 + F-5e 13** · regressão mock 20/20 · suíte combinada **1461 passed** |
 | **Publicado** | ✅ F-5a/b mergeadas em `main` com deploy Railway `SUCCESS` |
-| **Validado em operação** | ❌ **não verificado** — o deploy confirma *execução*, não aceite operacional; sondas de produção seguem pendentes de `railway login` |
+| **Validado em operação** | ⚠️ **parcial** — sondas `global_admission` + `processing_queue` (+ `work`, `world`) executadas em produção em 10/11/2026, somente leitura, sem texto privado; **aceite completo não**: L1 (leitura admin), L2 (Work travado) e L3 (afirmação hardcoded) seguem em aberto |
 
 ##### [P1] Revogação não bloqueava `get_active_knowledge_gaps` — CORRIGIDO nesta entrega
 
