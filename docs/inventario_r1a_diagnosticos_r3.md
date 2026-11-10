@@ -450,7 +450,7 @@ na F-5b, mixin agora) — o resto segue pendente e declarado como tal.
 | Dimensão | Estado |
 |---|---|
 | **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c `60c8ee9` · admissão nos produtores + 2 P1 · **F-5d sonda `global_admission` + F-5e tratamento das leituras** |
-| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão 16 · **F-5d 12 + F-5e 13** · regressão mock 20/20 · suíte combinada **1460 passed** |
+| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão 16 · **F-5d 13 + F-5e 13** · regressão mock 20/20 · suíte combinada **1461 passed** |
 | **Publicado** | ✅ F-5a/b mergeadas em `main` com deploy Railway `SUCCESS` |
 | **Validado em operação** | ❌ **não verificado** — o deploy confirma *execução*, não aceite operacional; sondas de produção seguem pendentes de `railway login` |
 
