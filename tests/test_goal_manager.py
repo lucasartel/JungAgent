@@ -1,5 +1,19 @@
 from __future__ import annotations
 
+# `core/__init__` importa `core.embeddings` (`from openai import OpenAI`); o
+# stub do conftest nao traz o atributo. Estes testes exercitam caminhos que
+# chamam `core` em tempo de execucao (leitores F-5e), entao o atributo precisa
+# existir antes — mesmo padrao dos demais arquivos de teste.
+import sys as _sys
+
+if "openai" in _sys.modules:
+    if not hasattr(_sys.modules["openai"], "OpenAI"):
+        _sys.modules["openai"].OpenAI = object
+else:
+    _f5e_openai = type(_sys)("openai")
+    _f5e_openai.OpenAI = object
+    _sys.modules["openai"] = _f5e_openai
+
 import importlib.util
 import sqlite3
 import threading

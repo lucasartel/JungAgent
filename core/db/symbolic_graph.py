@@ -267,7 +267,18 @@ class SymbolicGraphDatabaseMixin:
                 WHERE t.agent_instance = ?
             """
             params: List[Any] = [agent_instance]
-            visibility = ["t.origin_class IN ('instance_global', 'authorized_aggregate')"]
+            # F-5e: afirmacao global sem prova de proveniencia nao e servida.
+            triple_columns = {
+                row[1]
+                for row in cursor.execute("PRAGMA table_info(symbolic_triples)")
+            }
+            from core.db.cognitive_ownership import globally_readable_sql
+
+            readable = globally_readable_sql(triple_columns, prefix="t.")
+            visibility = [
+                "t.origin_class IN ('instance_global', 'authorized_aggregate') "
+                "AND " + readable
+            ]
             if relation_id:
                 visibility.append("t.origin_relation_id = ?")
                 params.append(relation_id)
@@ -315,7 +326,18 @@ class SymbolicGraphDatabaseMixin:
         self._init_symbolic_graph_schema()
         with self._lock:
             cursor = self.conn.cursor()
-            visibility_parts = ["t.origin_class IN ('instance_global', 'authorized_aggregate')"]
+            # F-5e: mesma regra do list_symbolic_triples.
+            triple_columns = {
+                row[1]
+                for row in cursor.execute("PRAGMA table_info(symbolic_triples)")
+            }
+            from core.db.cognitive_ownership import globally_readable_sql
+
+            readable = globally_readable_sql(triple_columns, prefix="t.")
+            visibility_parts = [
+                "t.origin_class IN ('instance_global', 'authorized_aggregate') "
+                "AND " + readable
+            ]
             visibility_params: List[Any] = []
             if relation_id:
                 visibility_parts.append("t.origin_relation_id = ?")

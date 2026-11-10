@@ -561,13 +561,24 @@ class WorkingMemoryDatabaseMixin:
     ) -> Optional[Dict[str, Any]]:
         ref = self._normalize_source_refs([source_ref])[0]
         cursor = self.conn.cursor()
+        # F-5e: afirmacao global sem prova de proveniencia nao e servida.
+        # Import lazy: este modulo e carregado isolado por varios testes.
+        from core.db.cognitive_ownership import globally_readable_sql
+
+        thread_columns = {
+            row[1] for row in cursor.execute("PRAGMA table_info(goal_threads)")
+        }
+        readable = globally_readable_sql(
+            thread_columns, origin_column="ownership_class"
+        )
         cursor.execute(
-            """
+            f"""
             SELECT *
             FROM goal_threads
             WHERE agent_instance = ? AND source_refs_json LIKE ?
               AND ownership_class IN ('instance_global', 'authorized_aggregate')
               AND relation_id IS NULL
+              AND {readable}
             ORDER BY id DESC
             LIMIT 1
             """,

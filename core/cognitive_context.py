@@ -14,6 +14,7 @@ from core.db.cognitive_ownership import (
     OWNERSHIP_CONTRACTS,
     RELATION_PRIVATE,
     SAME_RELATION,
+    globally_readable_sql,
 )
 
 
@@ -86,10 +87,16 @@ class CognitiveContextScope:
 
         if origin_relation_column in available and origin_class_column in available:
             if self.relation_id:
+                # F-5e: o ramo GLOBAL exige prova de proveniencia; o ramo de
+                # Relation continua governado pelo gate de elegibilidade.
+                readable = globally_readable_sql(
+                    available, origin_column=origin_class_column
+                )
                 clauses.append(
                     f"({origin_relation_column} = ? OR "
                     f"({origin_relation_column} IS NULL AND "
-                    f"{origin_class_column} IN ('instance_global', 'authorized_aggregate')))"
+                    f"{origin_class_column} IN ('instance_global', 'authorized_aggregate') "
+                    f"AND {readable}))"
                 )
                 params.append(self.relation_id)
             elif self.legacy_admin:

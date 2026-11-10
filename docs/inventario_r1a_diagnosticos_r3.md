@@ -322,8 +322,8 @@ registradas antes dele. Script pronto e somente-leitura (só contagens, `mode=ro
 | **F-5a** | **Contrato de elegibilidade.** Predicado no contrato canônico com **duas rotas** (condição 2): **(A)** fonte pública/livro → `authorized_aggregate` por **critérios próprios**, **sem Relation artificial**; **(B)** contribuição derivada de Relation → exige consentimento vigente **e** proveniência. **Recusa** (condição 1): com vínculo válido → mantém `relation_private`; sem vínculo → **quarentena explícita com motivo persistido** — **nunca `legacy_unscoped`**. Define ainda a **regra de leitura** (condição 4) para material sem autorização verificável. Sem escrita de dados. | ✅ recusa · instâncias distintas · consentimento revogado |
 | **F-5b** | **Admissão nos writers.** Passar os caminhos auto-declarados pelo predicado (começando por `world_consciousness`). Quem não passar → `relation_private` ou quarentena com motivo (**condição 1: `legacy_unscoped` proibido como destino de recusa nova**). | ✅ recusa · instâncias distintas · consentimento revogado |
 | **F-5c** | **Verificação integrada.** Duas Relations × duas instâncias; revogação/apagamento retiram a contribuição. | **Entregue: 27 testes sem `xfail` — P1 do reader E do produtor corrigidos com o gate canônico; ambos os casos pegos pelas sentinelas** |
-| **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha a PR #67 (metadados, sem conteúdo). | — |
-| **F-5e** (requisito de encerramento) | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | recusa de leitura sem autorização verificável |
+| **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha a PR #67 (metadados, sem conteúdo). | **Entregue: probe `global_admission` + 12 testes — responde as 3 medições pendentes** |
+| **F-5e** (requisito de encerramento) | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | **Entregue: 13 testes — 14 pontos protegidos (13 + leitor principal), nenhum `xfail`** |
 
 > **F-5e é requisito de encerramento do F-5** — decisão do mantenedor em
 > 05/11/2026, que aceitou o rótulo e rejeitou o enquadramento anterior como
@@ -449,8 +449,8 @@ na F-5b, mixin agora) — o resto segue pendente e declarado como tal.
 
 | Dimensão | Estado |
 |---|---|
-| **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c `60c8ee9` · **admissão global nos produtores + 2 P1 da revisão** (esta entrega) |
-| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão nos produtores **16 (nenhum `xfail`, 2 P1 cobertos)** · regressão mock 20/20 · suíte completa **1435 passed** |
+| **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c `60c8ee9` · admissão nos produtores + 2 P1 · **F-5d sonda `global_admission` + F-5e tratamento das leituras** |
+| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão 16 · **F-5d 13 + F-5e 13** · regressão mock 20/20 · suíte combinada **1461 passed** |
 | **Publicado** | ✅ F-5a/b mergeadas em `main` com deploy Railway `SUCCESS` |
 | **Validado em operação** | ❌ **não verificado** — o deploy confirma *execução*, não aceite operacional; sondas de produção seguem pendentes de `railway login` |
 
@@ -746,6 +746,114 @@ política de retratação. Isso é o R1 completo (R1b/R1c) e exige decisão pró
 F-5 só fecha *quem pode declarar* global, não converte privado em global.
 Além disso — e por decisão do mantenedor — F-5 **não** comprova assimilação nem
 uso das leituras nas conversas (ver *Limite de escopo* acima).
+
+#### F-5e — Tratamento das leituras (09/11/2026)
+
+**Tarefa**: aplicar a regra do F-5a aos 13 sítios de leitura — material sem
+autorização verificável tem tratamento explícito, **sem reclassificar o
+histórico**. É o requisito de encerramento do F-5.
+
+**Regra escolhida pelo mantenedor** (pergunta registrada antes de codar):
+**evidência por tabela** — rejeitadas as alternativas "predicado completo em
+tudo" (recusaria quase tudo nas tabelas sem `source_kind` → regressão em
+essays/working_memory/symbolic_graph) e "marcar sem bloquear" (o material
+continuaria chegando ao prompt).
+
+##### Os dois helpers (`core/db/cognitive_ownership.py`)
+
+| Helper | Onde vale | Regra |
+|---|---|---|
+| `globally_readable_sql(columns, *, origin_column, prefix)` | 11 sítios SQL | `authorized_aggregate` só com âncora (`source_refs_json`; `sources_cited_json` em essays); **sem coluna de âncoras → não serve**; `origin_quarantined = 0` quando existir; `instance_global` segue servindo (escopo da instância, não afirmação de autorização) |
+| `is_globally_readable(row, *, agent_instance)` | `knowledge_gaps` (única tabela com `source_kind`) | rota pública do **próprio** `assess_global_admission` — sem duplicar regra; usa `provenance_json.private_derived` (mesma regra do P1-2) |
+
+**14 pontos de aplicação** (os 13 do inventário + o leitor principal):
+
+`core/cognitive_context.sql_visibility` · `agent_identity_context_builder._identity_visibility`
+· `_dream_visibility_scope` · `core/db/essays.list_philosophical_essays` ·
+`core/db/meta_cognition.get_latest_meta_cognition_evaluation` ·
+`core/db/symbolic_graph.list_symbolic_triples` · `query_causal_neighborhood` ·
+`core/db/working_memory.find_goal_thread_by_source_ref` ·
+`engines/integrative_self._latest_components` (sonhos, working memory e
+lacunas) · `engines/symbolic_graph.extract_from_identity_contradictions` ·
+`scholar_engine.get_recent_loop_inspirations` (ramo com e sem Relation) ·
+**`knowledge_gaps.get_active_knowledge_gaps`** (leitor principal — incluído
+pelo mandato "predicado real onde existe `source_kind`").
+
+##### Testes — `tests/test_f5e_reader_authorization.py`, 13 testes
+
+Condição SQL (variantes, alias `t.`, `ownership_class`, quarentena) ·
+predicado real (admitida/recusada/quarentena/Relation/`instance_global`) ·
+**exclusão na leitura sem tocar a linha** · fonte legítima servida ·
+`instance_global` segue servindo · ramo de Relation intacto ·
+sonho do ISM sem âncora bloqueado e com âncora servido.
+
+**Prova de que pegam a ausência do tratamento**:
+
+| Neutralização | Resultado |
+|---|---|
+| `globally_readable_sql` → `1 = 1` + predicado desligado | **3 testes falham** |
+| chamada do filtro removida de `get_active_knowledge_gaps` | `test_unverifiable_global_is_not_served_and_row_is_untouched` **falha** |
+| restaurado | 10/10 verdes |
+
+**Suíte completa: 1448 passed** (1435 + 13) · mock 20/20 · `diff --check` limpo.
+
+##### Correção de ambiente de teste (registrada)
+
+Os módulos `working_memory` e `integrative_self` são carregados **isolados**
+por 3 arquivos de teste; meus imports `core` em tempo de execução passaram a
+exigir `OpenAI` no stub. Comparação com baseline isolada:
+
+| Arquivo (isolado) | Baseline | Antes da correção |
+|---|---|---|
+| `test_goal_manager` | 3 passed | 3 failed |
+| `test_integrative_self` | 7 passed | 2 failed |
+| `test_c12e_scope_fallbacks` | 12 passed | 3 failed |
+
+Corrigido com o **padrão já existente em ~10 arquivos de teste** (bloco do
+stub `OpenAI` no topo) — os três voltaram ao baseline exato (3/7/12 passed).
+Falhas pré-existentes em `test_working_memory`, `test_loop_failure_policy`,
+`test_action_catalog` e `test_loop_action_proposal` **não foram tocadas**.
+
+##### Fora do escopo (confirmado)
+
+Nenhuma linha reclassificada (testado: a recusa é exclusão na leitura e a
+`origin_class` permanece intacta) · nenhum histórico reprocessado · nenhuma
+quarentena liberada · nenhuma alteração de produção · Railway intocado.
+
+##### Revisão — rodada 3 (10/11/2026) — 1 P1 + 2 P2, todos corrigidos
+
+| Sev. | Achado | Correção |
+|---|---|---|
+| **P1** | O SQL aceitava `#1` (sem prefixo) e `invalid#1suffix` — o `GLOB` era mais fraco que o validador canônico | A regra passa a casar **exatamente** `SOURCE_REF_RE`: prefixo da lista (`ANCHOR_PREFIXES`) + `*#[0-9]*` + `NOT *#*[^0-9]*`. **Bug sutil**: GLOB do SQLite nega com `[^...]`; `[!...]` é lido como conjunto literal e casaria dígitos. **28 âncoras verificadas contra o regex: 0 divergências** + drift-guard de teste |
+| **P2** | `provenance_json="not json"` virava `{}` no predicado (linha podia ser aceita) e o leitor re-interpretava o original → `JSONDecodeError` | `_load_json_field` valida `source_refs_json` **e** `provenance_json`: malformado → **recusa a linha e continua** (log com `gap_id`, sem conteúdo) |
+| **P2** | ISM: limite 1→20 mas filtro ainda depois — 20 recusados à frente devolviam vazio | ISM passa a buscar em **lotes** (com `OFFSET`) até achar o primeiro autorizado |
+
+**Prova**: com as três correções revertidas, **3 testes falham**
+(`test_sql_anchor_rule_matches_canonical_regex`,
+`test_malformed_json_refuses_row_without_breaking_the_rest`,
+`test_ism_skips_unlimited_refused_rows_to_find_the_authorized_one`);
+restauradas, 13/13 verdes.
+
+**Observação de método**: minha primeira verificação de equivalência comparou
+âncora crua com o SQL (que espera array JSON) e acusou divergência falsa — a
+metodologia estava errada, não a regra; corrigida e reexecutada.
+
+##### Revisão do mantenedor (09/11/2026) — 1 P1 + 2 P2, todos corrigidos
+
+| Sev. | Achado | Correção |
+|---|---|---|
+| **P1** | O filtro SQL aceitava `not json`, `[ ]` e `[null]` como prova — **campo preenchido não é referência** | `globally_readable_sql` exige `json_valid` + `json_type = 'array'` + **ao menos uma âncora `tipo#id`** (`json_each` + `GLOB '*#[0-9]*'`). 14/14 casos verificados, incluindo objeto, escalar e `["garbage"]` |
+| **P2** | `LIMIT` antes da verificação escondia um registro autorizado atrás de um recusado (`limit=1` devolvia vazio) | `get_active_knowledge_gaps` busca em **lotes** até completar o limite; o ISM varre o lote e pega o primeiro **autorizado** |
+| **P2** | `provenance_json` com `[]`/`null` lançava `AttributeError`; `private_derived="false"` lançava `ValueError` | `is_globally_readable` valida tipos e, na recusa, **loga com contexto e continua** — metadado inválido não derruba a leitura |
+
+**Prova**: com as três correções revertidas ao estado anterior, **3 testes
+falham** (`anchor_must_be_a_valid_reference`, `limit_does_not_hide_an_authorized_row`,
+`invalid_historical_metadata`); restauradas, 10/10 verdes.
+
+**Merge combinado com a #73**: testado em branch temporário — as duas edits
+linhas adjacentes do quadro de decomposição e das dimensões; resolução
+combinando os dois lados foi executada e a suíte combinada passou com
+**1456 passed**.
 
 ### R3 — Corretivos (3 subcortes)
 

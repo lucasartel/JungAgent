@@ -160,15 +160,21 @@ class SymbolicGraphExtractor:
                 for row in cursor.execute("PRAGMA table_info(agent_identity_contradictions)")
             }
             if "origin_relation_id" in columns and "origin_class" in columns:
+                # F-5e: so o ramo GLOBAL exige prova de proveniencia.
+                from core.db.cognitive_ownership import globally_readable_sql
+
+                readable = globally_readable_sql(columns)
                 cursor.execute(
-                    """
+                    f"""
                     SELECT id, pole_a, pole_b, contradiction_type, created_at,
                            origin_relation_id, origin_participant_user_id, origin_class
                     FROM agent_identity_contradictions
                     WHERE agent_instance = ?
                       AND (
                         origin_relation_id = ?
-                        OR (origin_relation_id IS NULL AND origin_class IN ('instance_global', 'authorized_aggregate'))
+                        OR (origin_relation_id IS NULL AND origin_class IN
+                            ('instance_global', 'authorized_aggregate')
+                            AND {readable})
                       )
                     ORDER BY id DESC LIMIT ?
                     """,

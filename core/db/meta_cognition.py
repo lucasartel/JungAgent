@@ -160,8 +160,21 @@ class MetaCognitionDatabaseMixin:
             cursor = self.conn.cursor()
             clauses = ["agent_instance = ?"]
             params: List[Any] = [agent_instance]
+            # F-5e: afirmacao global sem prova de proveniencia nao e servida.
+            columns = {
+                row[1]
+                for row in cursor.execute(
+                    "PRAGMA table_info(agent_meta_cognition_evaluations)"
+                )
+            }
+            from core.db.cognitive_ownership import globally_readable_sql
+
+            readable = globally_readable_sql(columns)
             visibility = [
-                "(origin_relation_id IS NULL AND origin_class IN ('instance_global', 'authorized_aggregate'))"
+                "(origin_relation_id IS NULL AND origin_class IN "
+                "('instance_global', 'authorized_aggregate') AND "
+                + readable
+                + ")"
             ]
             if relation_id:
                 visibility.append("origin_relation_id = ?")
