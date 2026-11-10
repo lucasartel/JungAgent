@@ -323,7 +323,7 @@ registradas antes dele. Script pronto e somente-leitura (só contagens, `mode=ro
 | **F-5b** | **Admissão nos writers.** Passar os caminhos auto-declarados pelo predicado (começando por `world_consciousness`). Quem não passar → `relation_private` ou quarentena com motivo (**condição 1: `legacy_unscoped` proibido como destino de recusa nova**). | ✅ recusa · instâncias distintas · consentimento revogado |
 | **F-5c** | **Verificação integrada.** Duas Relations × duas instâncias; revogação/apagamento retiram a contribuição. | **Entregue: 27 testes sem `xfail` — P1 do reader E do produtor corrigidos com o gate canônico; ambos os casos pegos pelas sentinelas** |
 | **F-5d** | **Observabilidade.** Sonda do que foi declarado global-authorized, por origem e escopo — espelha a PR #67 (metadados, sem conteúdo). | — |
-| **F-5e** (requisito de encerramento) | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | recusa de leitura sem autorização verificável |
+| **F-5e** (requisito de encerramento) | **Tratamento das leituras** (condição 4). Aplicar a regra definida em F-5a aos **13 sítios de leitura**: material sem autorização verificável tem tratamento explícito, **sem reclassificar o histórico automaticamente**. | **Entregue: 7 testes — 14 pontos protegidos (13 + leitor principal), nenhum `xfail`** |
 
 > **F-5e é requisito de encerramento do F-5** — decisão do mantenedor em
 > 05/11/2026, que aceitou o rótulo e rejeitou o enquadramento anterior como
@@ -449,8 +449,8 @@ na F-5b, mixin agora) — o resto segue pendente e declarado como tal.
 
 | Dimensão | Estado |
 |---|---|
-| **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c `60c8ee9` · **admissão global nos produtores + 2 P1 da revisão** (esta entrega) |
-| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão nos produtores **16 (nenhum `xfail`, 2 P1 cobertos)** · regressão mock 20/20 · suíte completa **1435 passed** |
+| **Implementado** | ✅ F-5a `92b8f7a` · F-5b `8573418` · F-5c `60c8ee9` · admissão nos produtores + 2 P1 · **F-5e tratamento das leituras** (esta entrega) |
+| **Testado** | ✅ F-5a 41 · F-5b 17 · F-5c 27 · admissão 16 · **F-5e 7** · regressão mock 20/20 · suíte completa **1442 passed** |
 | **Publicado** | ✅ F-5a/b mergeadas em `main` com deploy Railway `SUCCESS` |
 | **Validado em operação** | ❌ **não verificado** — o deploy confirma *execução*, não aceite operacional; sondas de produção seguem pendentes de `railway login` |
 
@@ -647,6 +647,79 @@ falham**; restaurados, 16/16 verdes. Suíte completa: **1435 passed**.
 carol, dave, admin e system (medido, não deduzido). Não é uma brecha de
 leitura; é o efeito opaco do legado, e decidir fechar ou consumi-lo é corte
 próprio.
+
+#### F-5e — Tratamento das leituras (09/11/2026)
+
+**Tarefa**: aplicar a regra do F-5a aos 13 sítios de leitura — material sem
+autorização verificável tem tratamento explícito, **sem reclassificar o
+histórico**. É o requisito de encerramento do F-5.
+
+**Regra escolhida pelo mantenedor** (pergunta registrada antes de codar):
+**evidência por tabela** — rejeitadas as alternativas "predicado completo em
+tudo" (recusaria quase tudo nas tabelas sem `source_kind` → regressão em
+essays/working_memory/symbolic_graph) e "marcar sem bloquear" (o material
+continuaria chegando ao prompt).
+
+##### Os dois helpers (`core/db/cognitive_ownership.py`)
+
+| Helper | Onde vale | Regra |
+|---|---|---|
+| `globally_readable_sql(columns, *, origin_column, prefix)` | 11 sítios SQL | `authorized_aggregate` só com âncora (`source_refs_json`; `sources_cited_json` em essays); **sem coluna de âncoras → não serve**; `origin_quarantined = 0` quando existir; `instance_global` segue servindo (escopo da instância, não afirmação de autorização) |
+| `is_globally_readable(row, *, agent_instance)` | `knowledge_gaps` (única tabela com `source_kind`) | rota pública do **próprio** `assess_global_admission` — sem duplicar regra; usa `provenance_json.private_derived` (mesma regra do P1-2) |
+
+**14 pontos de aplicação** (os 13 do inventário + o leitor principal):
+
+`core/cognitive_context.sql_visibility` · `agent_identity_context_builder._identity_visibility`
+· `_dream_visibility_scope` · `core/db/essays.list_philosophical_essays` ·
+`core/db/meta_cognition.get_latest_meta_cognition_evaluation` ·
+`core/db/symbolic_graph.list_symbolic_triples` · `query_causal_neighborhood` ·
+`core/db/working_memory.find_goal_thread_by_source_ref` ·
+`engines/integrative_self._latest_components` (sonhos, working memory e
+lacunas) · `engines/symbolic_graph.extract_from_identity_contradictions` ·
+`scholar_engine.get_recent_loop_inspirations` (ramo com e sem Relation) ·
+**`knowledge_gaps.get_active_knowledge_gaps`** (leitor principal — incluído
+pelo mandato "predicado real onde existe `source_kind`").
+
+##### Testes — `tests/test_f5e_reader_authorization.py`, 7 testes
+
+Condição SQL (variantes, alias `t.`, `ownership_class`, quarentena) ·
+predicado real (admitida/recusada/quarentena/Relation/`instance_global`) ·
+**exclusão na leitura sem tocar a linha** · fonte legítima servida ·
+`instance_global` segue servindo · ramo de Relation intacto ·
+sonho do ISM sem âncora bloqueado e com âncora servido.
+
+**Prova de que pegam a ausência do tratamento**:
+
+| Neutralização | Resultado |
+|---|---|
+| `globally_readable_sql` → `1 = 1` + predicado desligado | **3 testes falham** |
+| chamada do filtro removida de `get_active_knowledge_gaps` | `test_unverifiable_global_is_not_served_and_row_is_untouched` **falha** |
+| restaurado | 7/7 verdes |
+
+**Suíte completa: 1442 passed** (1435 + 7) · mock 20/20 · `diff --check` limpo.
+
+##### Correção de ambiente de teste (registrada)
+
+Os módulos `working_memory` e `integrative_self` são carregados **isolados**
+por 3 arquivos de teste; meus imports `core` em tempo de execução passaram a
+exigir `OpenAI` no stub. Comparação com baseline isolada:
+
+| Arquivo (isolado) | Baseline | Antes da correção |
+|---|---|---|
+| `test_goal_manager` | 3 passed | 3 failed |
+| `test_integrative_self` | 7 passed | 2 failed |
+| `test_c12e_scope_fallbacks` | 12 passed | 3 failed |
+
+Corrigido com o **padrão já existente em ~10 arquivos de teste** (bloco do
+stub `OpenAI` no topo) — os três voltaram ao baseline exato (3/7/12 passed).
+Falhas pré-existentes em `test_working_memory`, `test_loop_failure_policy`,
+`test_action_catalog` e `test_loop_action_proposal` **não foram tocadas**.
+
+##### Fora do escopo (confirmado)
+
+Nenhuma linha reclassificada (testado: a recusa é exclusão na leitura e a
+`origin_class` permanece intacta) · nenhum histórico reprocessado · nenhuma
+quarentena liberada · nenhuma alteração de produção · Railway intocado.
 
 **Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
 revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.

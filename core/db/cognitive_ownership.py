@@ -518,6 +518,95 @@ def assess_global_admission(
     )
 
 
+# ---------------------------------------------------------------------------
+# F-5e — tratamento das LEITURAS (condicao 4 da aprovacao do F-5a)
+#
+# Material sem autorizacao verificavel tem tratamento EXPLICITO na leitura.
+# Nada aqui reclassifica historico: e a decisao de servir ou recusar, nunca
+# de reescrever a linha.
+# ---------------------------------------------------------------------------
+def globally_readable_sql(
+    columns: Iterable[str],
+    *,
+    origin_column: str = "origin_class",
+    prefix: str = "",
+) -> str:
+    """Condicao SQL que recusa afirmacao global sem prova de proveniencia.
+
+    Regra escolhida pelo mantenedor (09/11/2026) — *evidencia por tabela*:
+
+    * ``authorized_aggregate`` so e servido com ancora de proveniencia
+      (``source_refs_json``; ``sources_cited_json`` quando for o nome da
+      coluna da tabela). Sem coluna de ancoras a afirmacao nao e
+      verificavel e o material **nao sai**;
+    * ``instance_global`` segue servindo: e escopo da instancia, nao uma
+      afirmacao de autorizacao;
+    * ``origin_quarantined`` (quando existir) bloqueia qualquer classe —
+      o flag e a autoridade, a classe so descreve.
+
+    Devolve sempre uma condicao pronta para ser ANDada. Tabela sem a coluna
+    de origem recebe ``1 = 1``: nao ha ali o que verificar.
+    """
+    available = set(columns)
+    if origin_column not in available:
+        return "1 = 1"
+    origin = f"{prefix}{origin_column}"
+    conditions = []
+    if "origin_quarantined" in available:
+        conditions.append(f"{prefix}origin_quarantined = 0")
+    anchors = (
+        "source_refs_json"
+        if "source_refs_json" in available
+        else "sources_cited_json"
+        if "sources_cited_json" in available
+        else None
+    )
+    if anchors:
+        anchor_col = f"{prefix}{anchors}"
+        conditions.append(
+            f"({origin} <> 'authorized_aggregate' OR "
+            f"({anchor_col} IS NOT NULL AND TRIM({anchor_col}) NOT IN "
+            f"('', '[]', '{{}}', 'null')))"
+        )
+    else:
+        conditions.append(f"{origin} <> 'authorized_aggregate'")
+    return "(" + " AND ".join(conditions) + ")"
+
+
+def is_globally_readable(row: Any, *, agent_instance: str) -> bool:
+    """Predicado REAL para linhas de ``knowledge_gaps`` — a unica tabela com
+    ``source_kind``, entao a rota publica do proprio contrato se aplica.
+
+    Nao duplica regra: quem decide e ``assess_global_admission``. Recusas da
+    leitura nao tocam a linha (condicao 4: nada de reclassificar historico).
+    """
+    if int(row.get("origin_quarantined") or 0):
+        return False
+    if str(row.get("origin_class") or "") != AUTHORIZED_AGGREGATE:
+        return True
+    if str(row.get("origin_relation_id") or "").strip():
+        # Material de Relation e servido pelo ramo de Relation (gate de
+        # elegibilidade), nunca por uma afirmacao de escopo global.
+        return False
+    try:
+        source_refs = json.loads(row.get("source_refs_json") or "[]")
+    except ValueError:
+        source_refs = []
+    try:
+        provenance = json.loads(row.get("provenance_json") or "{}")
+    except ValueError:
+        provenance = {}
+    decision = assess_global_admission(
+        agent_instance=agent_instance,
+        route=ROUTE_PUBLIC_SOURCE,
+        source_kind=row.get("source_kind"),
+        source_refs=source_refs,
+        # Evidencia do registro manda (mesma regra do P1-2 nos writers).
+        private_derived=provenance.get("private_derived", False),
+    )
+    return decision.admits_global
+
+
 def validate_ownership_contracts(
     contracts: Iterable[CognitiveOwnershipContract] = OWNERSHIP_CONTRACTS,
 ) -> Tuple[str, ...]:

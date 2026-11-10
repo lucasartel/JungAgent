@@ -42,6 +42,7 @@ try:
     from core.db.cognitive_ownership import (  # noqa: F401
         ROUTE_PUBLIC_SOURCE,
         assess_global_admission,
+        is_globally_readable,
     )
 except ImportError:  # Same direct-file guard (F-5, admissao global).
     _own_path = Path(__file__).with_name("cognitive_ownership.py")
@@ -53,6 +54,7 @@ except ImportError:  # Same direct-file guard (F-5, admissao global).
     _own_spec.loader.exec_module(_own_mod)
     ROUTE_PUBLIC_SOURCE = _own_mod.ROUTE_PUBLIC_SOURCE
     assess_global_admission = _own_mod.assess_global_admission
+    is_globally_readable = _own_mod.is_globally_readable
 
 AUTHORIZED_AGGREGATE = _provenance.AUTHORIZED_AGGREGATE
 INSTANCE_GLOBAL = _provenance.INSTANCE_GLOBAL
@@ -699,6 +701,12 @@ class KnowledgeGapDatabaseMixin:
             gaps = []
             for row in cursor.fetchall():
                 item = dict(row)
+                # F-5e: a afirmacao `authorized_aggregate` passa pelo
+                # contrato REAL antes de virar insumo de prompt/vontade/
+                # proatividade. Recusa e exclusao na LEITURA — a linha nao
+                # e tocada (condicao 4: nada de reclassificar historico).
+                if not is_globally_readable(item, agent_instance=instance):
+                    continue
                 item["source_refs"] = json.loads(item.pop("source_refs_json") or "[]")
                 item["provenance"] = json.loads(item.pop("provenance_json") or "{}")
                 item["private_trigger"] = json.loads(item.pop("private_trigger_json") or "{}")

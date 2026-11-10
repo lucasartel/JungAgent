@@ -174,6 +174,8 @@ class IntegrativeSelfModel:
     ) -> List[Dict[str, Any]]:
         components: List[Dict[str, Any]] = []
         cursor = self.db.conn.cursor()
+        # F-5e: afirmacao global sem prova de proveniencia nao e servida.
+        from core.db.cognitive_ownership import globally_readable_sql
 
         if self._table_exists("consciousness_loop_phase_results"):
             row = cursor.execute(
@@ -204,14 +206,17 @@ class IntegrativeSelfModel:
         if self._table_exists("agent_dreams"):
             dream_columns = self._table_columns("agent_dreams")
             if {"agent_instance", "origin_relation_id", "origin_class"}.issubset(dream_columns):
+                dream_readable = globally_readable_sql(dream_columns)
                 row = cursor.execute(
-                """
+                f"""
                 SELECT id, symbolic_theme, extracted_insight, dream_mood, created_at
                 FROM agent_dreams
                 WHERE agent_instance = ? AND user_id = ?
                   AND (
                     origin_relation_id = ?
-                    OR (origin_relation_id IS NULL AND origin_class IN ('instance_global', 'authorized_aggregate'))
+                    OR (origin_relation_id IS NULL AND origin_class IN
+                        ('instance_global', 'authorized_aggregate')
+                        AND {dream_readable})
                     OR (? IS NULL AND origin_relation_id IS NULL AND origin_class = 'legacy_unscoped')
                   )
                 ORDER BY created_at DESC, id DESC
@@ -312,13 +317,17 @@ class IntegrativeSelfModel:
         if self._table_exists("working_memory_items"):
             memory_columns = self._table_columns("working_memory_items")
             if {"ownership_class", "relation_id"}.issubset(memory_columns):
+                memory_readable = globally_readable_sql(
+                    memory_columns, origin_column="ownership_class"
+                )
                 row = cursor.execute(
-                """
+                f"""
                 SELECT id, title, summary, source_refs_json, priority, created_at
                 FROM working_memory_items
                 WHERE agent_instance = ? AND status = 'active'
                   AND (
-                    (ownership_class IN ('instance_global', 'authorized_aggregate') AND relation_id IS NULL)
+                    (ownership_class IN ('instance_global', 'authorized_aggregate')
+                     AND relation_id IS NULL AND {memory_readable})
                     OR (ownership_class = 'relation_private' AND relation_id = ?)
                   )
                 ORDER BY item_type = 'focus' DESC, priority DESC, updated_at DESC, id DESC
@@ -362,10 +371,24 @@ class IntegrativeSelfModel:
                 " AND origin_quarantined = 0" if "origin_quarantined" in gap_columns else ""
             )
             if {"agent_instance", "origin_relation_id", "origin_class"}.issubset(gap_columns):
+                # Colunas de proveniencia exigidas pelo predicado REAL —
+                # knowledge_gaps e a unica tabela com `source_kind`.
+                extra_cols = "".join(
+                    f", {column}"
+                    for column in (
+                        "origin_class",
+                        "origin_relation_id",
+                        "source_kind",
+                        "source_refs_json",
+                        "provenance_json",
+                        "origin_quarantined",
+                    )
+                    if column in gap_columns
+                )
                 row = cursor.execute(
                     f"""
                     SELECT id, topic, the_gap, status, closure_summary,
-                           closure_source_type, resolved_at
+                           closure_source_type, resolved_at{extra_cols}
                     FROM knowledge_gaps
                     WHERE agent_instance = ? AND user_id = ? AND status = 'resolved'
                       AND (
@@ -378,6 +401,14 @@ class IntegrativeSelfModel:
                     """,
                     (self.agent_instance, user_id, relation_id, relation_id),
                 ).fetchone()
+                # F-5e: a afirmacao global passa pelo contrato REAL antes de
+                # virar componente de prompt. Recusa nao toca a linha.
+                from core.db.cognitive_ownership import is_globally_readable
+
+                if row and not is_globally_readable(
+                    dict(row), agent_instance=self.agent_instance
+                ):
+                    row = None
             else:
                 row = cursor.execute(
                     f"""SELECT id, topic, the_gap, status, closure_summary,

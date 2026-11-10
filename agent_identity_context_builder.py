@@ -86,8 +86,15 @@ class AgentIdentityContextBuilder:
         columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
         if "origin_relation_id" not in columns or "origin_class" not in columns:
             return "1 = 1", []
+        # F-5e: afirmacao global sem prova de proveniencia nao e servida.
+        from core.db.cognitive_ownership import globally_readable_sql
+
+        readable = globally_readable_sql(columns)
         clauses = [
-            "(origin_relation_id IS NULL AND origin_class IN ('instance_global', 'authorized_aggregate'))"
+            "(origin_relation_id IS NULL AND origin_class IN "
+            "('instance_global', 'authorized_aggregate') AND "
+            + readable
+            + ")"
         ]
         params = []
         if relation_id:
@@ -1283,8 +1290,15 @@ class AgentIdentityContextBuilder:
                 participant_user_id=user_id,
             )
         if resolved_relation:
+            # F-5e: so o ramo GLOBAL exige prova; o ramo de Relation segue
+            # governado pelo gate de elegibilidade (C12g).
+            from core.db.cognitive_ownership import globally_readable_sql
+
+            readable = globally_readable_sql(columns)
             return (
-                "agent_instance = ? AND (origin_relation_id = ? OR origin_class IN ('instance_global', 'authorized_aggregate'))",
+                "agent_instance = ? AND (origin_relation_id = ? OR "
+                "(origin_class IN ('instance_global', 'authorized_aggregate') "
+                "AND " + readable + "))",
                 [self.agent_instance, resolved_relation],
             )
         if callable(resolver) and str(user_id) != str(ADMIN_USER_ID):

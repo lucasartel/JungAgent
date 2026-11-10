@@ -6,7 +6,11 @@ import unicodedata
 from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional
 
-from core.db.cognitive_ownership import INSTANCE_GLOBAL, RELATION_PRIVATE
+from core.db.cognitive_ownership import (
+    INSTANCE_GLOBAL,
+    RELATION_PRIVATE,
+    globally_readable_sql,
+)
 from core.db.cognitive_provenance import (
     cognitive_agent_instance,
     cognitive_provenance,
@@ -219,12 +223,20 @@ class ScholarEngine:
         self, user_id: str, relation_id: Optional[str] = None
     ) -> str:
         cursor = self.db.conn.cursor()
+        # F-5e: afirmacao global sem prova de proveniencia nao e servida
+        # (tabela agent_dreams: ancora em source_refs_json).
+        dream_columns = {row[1] for row in cursor.execute("PRAGMA table_info(agent_dreams)")}
+        dream_readable = globally_readable_sql(dream_columns)
         sections: List[str] = []
         resolved_relation = self._resolve_relation(user_id, relation_id)
         if resolved_relation:
             private_scope = "agent_instance = ? AND relation_id = ?"
             private_params: List[Any] = [self.agent_instance, resolved_relation]
-            dream_scope = "agent_instance = ? AND (origin_relation_id = ? OR origin_class IN ('instance_global', 'authorized_aggregate'))"
+            dream_scope = (
+                "agent_instance = ? AND (origin_relation_id = ? OR "
+                "(origin_class IN ('instance_global', 'authorized_aggregate') "
+                "AND " + dream_readable + "))"
+            )
             dream_params: List[Any] = [self.agent_instance, resolved_relation]
             research_scope = "agent_instance = ? AND origin_relation_id = ?"
             research_params: List[Any] = [self.agent_instance, resolved_relation]
@@ -236,7 +248,10 @@ class ScholarEngine:
                     return ""
             private_scope = "(agent_instance = ? OR agent_instance IS NULL) AND relation_id IS NULL"
             private_params = [self.agent_instance]
-            dream_scope = "(agent_instance = ? OR agent_instance IS NULL) AND origin_relation_id IS NULL"
+            dream_scope = (
+                "(agent_instance = ? OR agent_instance IS NULL) "
+                "AND origin_relation_id IS NULL AND " + dream_readable
+            )
             dream_params = [self.agent_instance]
             research_scope = "(agent_instance = ? OR agent_instance IS NULL) AND origin_relation_id IS NULL"
             research_params = [self.agent_instance]
