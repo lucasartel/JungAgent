@@ -698,6 +698,22 @@ operacional.
 **F-5e (tratamento das leituras) segue pendente e obrigatório** para o
 encerramento do F-5.
 
+##### Revisão do mantenedor (09/11/2026) — 2 P2, corrigidos
+
+| Sev. | Achado | Correção |
+|---|---|---|
+| **P2** | A sonda emitia **texto livre em `source_kind`** — valor legado sintético saía integral no JSON; a lista de motivos permitidos não protegia este campo | `ALLOWED_SOURCE_KINDS` + `_source_kind_view`: só sai `{conversation, world, goal_manager}`; desconhecidos viram `None` **agrupados** com `unknown_source_kind_count`, sem emitir o texto. Aplicado nos **três** pontos: agregado, breakdown e nível de linha |
+| **P2** | `readable` não media legibilidade — só ausência de quarentena (sonda contou **2** legíveis, o leitor aceitou **1**) | Renomeado para **`not_quarantined`** (agregado e linha): a métrica passa a dizer o que mede |
+
+**Prova**: com a sonda revertida ao estado anterior, **4 testes falham**
+(incluindo `source_kind_unknown_value_is_never_emitted_verbatim` — o teste
+pegou um **terceiro ponto** que a primeira correção tinha deixado de fora);
+restaurada, 11/11 verdes.
+
+**Merge combinado com a #74**: testado em branch temporário; o conflito do
+inventario foi **resolvido combinando os dois lados** e a suíte combinada
+passou com **1456 passed**.
+
 **Condição 5 em vigor desde F-5a**: recusa, instâncias distintas e consentimento
 revogado não esperam F-5c — entram nas entregas de F-5a e F-5b.
 
