@@ -466,9 +466,9 @@ caminho de fallback (sem `\f`) → `reading_exact_pages_unavailable`. É
 >
 > **Peças do reparo** (nenhuma toca `progress_value`):
 > 1. **Checagem da paginação real** — `scripts/diagnostics/check_pdf_pagination.py`
->    (somente leitura: contagem ou erro, sem conteúdo). **Preparado; execução
->    pendente de `railway login`** (token expirou: `EPERM` no refresh — ação
->    do mantenedor, sem contornar a proteção de credenciais);
+>    (somente leitura; em falha devolve **código estável + tipo da exceção**,
+>    nunca mensagem bruta que possa conter caminho). **EXECUTADA em
+>    10/11/2026 — resultado na tabela acima**;
 > 2. **Fonte única da paginação**: validar o intervalo contra o
 >    `page_count` **do anexo aberto**, não contra `effort_target` do projeto
 >    (reconciliar `effort_target` é **mudança de dado — sua decisão**);
@@ -882,10 +882,10 @@ existente** devolve `topic`, `the_gap`, `closure_summary` e
 desta sonda; decisão de alterar é do mantenedor.
 
 **Execução**: `python scripts/remote_db_probe.py global_admission --pretty`
-(somente leitura). **A medição contra produção continua pendente de
-`railway login`** — ação do mantenedor, sem contornar a proteção de
-credenciais. A sonda é a ferramenta; a contagem em produção é o aceite
-operacional.
+(somente leitura) — **EXECUTADA em 10/11/2026**; contagens em *Medições de
+produção* acima. **Diagnóstico executado; reparo pendente** (L1 · L2 · L3).
+
+> **Estado geral**: **diagnóstico executado; reparo pendente** — L1 em PR própria, L2 em corte próprio (leitor/agendador), L3 em ajuste de contrato.
 
 **F-5e (tratamento das leituras) segue pendente e obrigatório** para o
 encerramento do F-5.

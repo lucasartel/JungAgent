@@ -4,8 +4,10 @@ Responde a checagem pedida na revisao da PR #75: o banco registra
 ``page_count`` e o arquivo existe, mas isso **nao** comprova que o leitor
 consegue ABRIR o PDF selecionado e contar as paginas.
 
-Saida: apenas a contagem por anexo (ou o erro de abertura, truncado) —
-**nenhum conteudo do documento** e nenhum caminho exposto.
+Saida: apenas a contagem por anexo; em falha, **apenas um codigo estavel
+(`file_not_found` / `pdf_open_failed`) e o tipo da excecao** — nunca a
+mensagem bruta (que pode conter o caminho) e **nenhum conteudo do
+documento**.
 
 Uso (dentro do container, banco em mode=ro):
     railway ssh python scripts/diagnostics/check_pdf_pagination.py
@@ -50,7 +52,7 @@ def main() -> int:
         }
         if not os.path.isfile(stored):
             entry["openable"] = False
-            entry["error"] = "file_not_found"
+            entry["error_code"] = "file_not_found"
         else:
             try:
                 from PyPDF2 import PdfReader
@@ -58,9 +60,12 @@ def main() -> int:
                 reader = PdfReader(stored)
                 entry["openable"] = True
                 entry["pdf_page_count"] = len(reader.pages)
-            except Exception as exc:  # somente contagem/erro sai daqui
+            except Exception as exc:  # somente codigo estavel + tipo saem daqui
+                # A mensagem bruta de PyPDF2 pode conter o CAMINHO do arquivo;
+                # truncar nao garante ocultar. So o tipo (estavel, sem dado).
                 entry["openable"] = False
-                entry["error"] = f"{type(exc).__name__}: {str(exc)[:120]}"
+                entry["error_code"] = "pdf_open_failed"
+                entry["error_type"] = type(exc).__name__
         report.append(entry)
 
     print(json.dumps(report, indent=2, ensure_ascii=False))
