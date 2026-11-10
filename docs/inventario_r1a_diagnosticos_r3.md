@@ -430,6 +430,24 @@ fallback exige `\f` (linha 317) → texto legado **sem** `\f` →
 ao PDF enviado (170 páginas) — e `progress_value = 170` já cobre **todas as
 páginas físicas**.
 
+**Checagem da paginação real — EXECUTADA em 10/11/2026** (`scripts/diagnostics/check_pdf_pagination.py`,
+somente leitura; somente contagem ou erro, sem conteúdo): todos os 5 PDFs
+**abrem** (`openable: true`) e `pdf_page_count == db_page_count` em todos.
+
+| anexo | projeto | `db_page_count` | `pdf_page_count` (aberto) | abrível |
+|---|---|---|---|---|
+| 1 | 7 | 115 | **115** | sim |
+| 2 | 8 | 162 | **162** | sim |
+| 3 | 9 | 120 | **120** | sim |
+| 4 | 10 | 374 | **374** | sim |
+| **5** | **11** | **170** | **170** | **sim** |
+
+**Consequência**: a hipótese "PDF ilegível" **está descartada** — o arquivo
+do projeto 11 abre e tem **170 páginas de verdade**. O falha é
+**exclusivamente** `start (171) > total (170)` → `range(171,171)` vazio →
+caminho de fallback (sem `\f`) → `reading_exact_pages_unavailable`. É
+**exatamente** o caso *"início além da última página"* do plano abaixo.
+
 > **Plano revisado (revisão do mantenedor, 10/11/2026)** — limitar só o
 > fim **não resolve**: o leitor normaliza `requested_end =
 > max(requested_start, end)` (`work/attachments.py:278`), então com
