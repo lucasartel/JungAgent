@@ -13,6 +13,7 @@ Heuristics (deterministic, no LLM):
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -68,11 +69,19 @@ def _effort_cap_for_unit(unit: Optional[str]) -> float:
 
 
 def _physical_page_count(engine: Any, project_id: int) -> Optional[int]:
-    """Paginacao FISICA do PDF do projeto — mesma fonte do leitor.
+    """Paginacao FISICA verificada — abre o anexo, como o leitor faz.
 
-    Devolve ``None`` quando nao ha anexo extraido (nao ha o que validar) ou
-    quando os anexos nao podem ser lidos: nesses casos o agendador nao decide
-    nada e o leitor continua sendo a autoridade.
+    P1 (revisao da PR #77): o ``page_count`` gravado no banco e so um
+    REGISTRO e pode divergir do arquivo (anexo substituido, extracao
+    antiga). Trata-lo como prova de que a faixa e impossivel bloquearia
+    leitura valida (170 no banco, 179 no PDF) ou deixaria passar pedido
+    impossivel (179 no banco, 170 no PDF).
+
+    Devolve ``None`` quando NAO ha como verificar (sem anexo extraido, sem
+    arquivo em disco, PDF ilegivel): nesse caso nao ha prova de impossibilidade
+    e o agendador nao bloqueia — o leitor continua sendo a autoridade. Como o
+    arquivo e aberto a cada ciclo, trocar o PDF nunca mantem um bloqueio
+    antigo.
     """
     try:
         candidates = [
@@ -81,17 +90,21 @@ def _physical_page_count(engine: Any, project_id: int) -> Optional[int]:
             if item.get("mime_type") == "application/pdf"
             and item.get("extraction_status") == "extracted"
         ]
+        if not candidates:
+            return None
+        stored = Path(str(candidates[0].get("stored_path") or ""))
+        if not stored.is_file():
+            return None
+        from PyPDF2 import PdfReader
+
+        return len(PdfReader(str(stored)).pages)
     except Exception as exc:
         logger.warning(
-            "scheduler: attachments unreadable for project %s (%s)",
+            "scheduler: physical pagination unreadable for project %s (%s)",
             project_id,
             type(exc).__name__,
         )
         return None
-    if not candidates:
-        return None
-    page_count = candidates[0].get("page_count")
-    return int(page_count) if page_count else None
 
 
 def _project_sort_key(project: Dict[str, Any]) -> tuple:

@@ -486,7 +486,23 @@ caminho de fallback (sem `\f`) → `reading_exact_pages_unavailable`. É
 | Peça | Mudança |
 |---|---|
 | **Leitor** `work/attachments.py` | testa o **início** contra a paginação física **antes** de fatiar (`requested_start > total_pages` → `reading_range_beyond_pagination`, com `total_pages`); sem fallback, distingue **acesso** (`reading_pdf_unavailable` + `error_type`) de faixa impossível — `reading_exact_pages_unavailable` fica só para "PDF abriu e não devolveu página" |
-| **Agendador** `engines/work_scheduler.py` | `_physical_page_count` (mesma fonte do leitor: anexo PDF extraído, `candidates[0]`); se `start_page > paginas físicas` → **não cria o brief** (log), sem avançar progresso e sem concluir o livro |
+| **Agendador** `engines/work_scheduler.py` | `_physical_page_count` **abre o anexo e conta `len(reader.pages)`** — a mesma paginação do leitor, não o `page_count` do banco; sem como verificar → `None` (sem prova, **sem bloqueio**); se `start_page > paginas físicas` → **não cria o brief** (log), sem avançar progresso e sem concluir o livro |
+
+**Revisão do mantenedor (10/11/2026) — P1 corrigido**: o helper lia o
+`page_count` **gravado no banco**, mas o leitor conta `len(reader.pages)` —
+fontes que podem divergir (anexo substituído, extração antiga):
+
+| Divergência | Com o registro do banco | Com a paginação verificada |
+|---|---|---|
+| banco 170, PDF real 179 | **bloqueava** a página 171 sem deixar o leitor verificar | não bloqueia (brief criado) |
+| banco 179, PDF real 170 | **continuava** recriando o pedido impossível | bloqueia |
+| troca do PDF (170 → 179) | bloqueio antigo **persistia** | liberado no ciclo seguinte |
+
+Sem arquivo abrível, sem anexo extraído ou PDF ilegível → `None`: **não há
+prova de impossibilidade, logo não há bloqueio** (o leitor é a autoridade).
+**Testado com arquivo real em disco + PyPDF2 aberto** — o teste anterior usava
+caminho inexistente e comprovava a decisão pelos metadados, não pela
+paginação física (crítica do mantenedor).
 
 **Testes** (6 novos; 3 falham com as correções revertidas, 28/28 verdes
 com elas): faixa impossível · faixa parcial (2..9 em PDF de 3 → serve 2..3)
