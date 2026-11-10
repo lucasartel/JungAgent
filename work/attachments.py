@@ -298,6 +298,23 @@ class WorkAttachmentMixin:
         source_mode = "stored_pdf"
         total_pages = int(raw.get("page_count") or 0)
         stored_path = Path(str(raw.get("stored_path") or ""))
+        # F-5/L2: motivo de falha de ACESSO, distinto de faixa impossivel.
+        pdf_open_error: Optional[str] = None
+
+        def _range_beyond(total: int) -> Dict[str, Any]:
+            """Inicio alem da ultima pagina do PDF.
+
+            Motivo proprio, para o agendador nao recriar o mesmo pedido
+            impossivel. Nao avanca progresso nem conclui o livro.
+            """
+            return {
+                "verified": False,
+                "reason": "reading_range_beyond_pagination",
+                "attachment_id": attachment.get("id"),
+                "requested_start_page": requested_start,
+                "requested_end_page": requested_end,
+                "total_pages": total,
+            }
 
         if stored_path.is_file():
             try:
@@ -305,27 +322,45 @@ class WorkAttachmentMixin:
 
                 reader = PdfReader(str(stored_path))
                 total_pages = len(reader.pages)
+                # O fim e normalizado para >= inicio, entao limitar so o
+                # fim nao resolve: 171 > 170 continuaria vazio. O inicio
+                # precisa ser testado contra a paginacao FISICA.
+                if requested_start > total_pages:
+                    return _range_beyond(total_pages)
                 upper = min(requested_end, total_pages)
                 for page_number in range(requested_start, upper + 1):
                     pages.append(reader.pages[page_number - 1].extract_text() or "")
             except Exception as exc:
+                pdf_open_error = type(exc).__name__
                 logger.warning("reading_pages: stored PDF could not be read: %s", exc)
                 pages = []
+        else:
+            pdf_open_error = "file_not_found"
 
         if not pages:
             extracted_text = str(raw.get("extracted_text") or "")
             delimited_pages = extracted_text.split("\f") if "\f" in extracted_text else []
             if not delimited_pages:
+                # Sem fallback: distingue ACESSO ao arquivo (falha de
+                # leitura) de faixa impossivel (tratada acima).
                 return {
                     "verified": False,
-                    "reason": "reading_exact_pages_unavailable",
+                    "reason": (
+                        "reading_pdf_unavailable"
+                        if pdf_open_error
+                        else "reading_exact_pages_unavailable"
+                    ),
                     "attachment_id": attachment.get("id"),
                     "filename": attachment.get("filename"),
                     "requested_start_page": requested_start,
                     "requested_end_page": requested_end,
+                    "total_pages": total_pages,
+                    "error_type": pdf_open_error,
                 }
             source_mode = "page_delimited_extraction"
             total_pages = len(delimited_pages)
+            if requested_start > total_pages:
+                return _range_beyond(total_pages)
             pages = delimited_pages[requested_start - 1:min(requested_end, total_pages)]
 
         accepted: List[Dict[str, Any]] = []

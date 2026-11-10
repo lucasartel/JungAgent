@@ -517,3 +517,213 @@ class TestWorkScheduler:
         db.conn.commit()
         text = scheduler.get_pulse_awareness(cycle_id="c1", pulse_index=1)
         assert "Book W" in text or "paginas" in text
+
+
+# ---------------------------------------------------------------------------
+# F-5/L2 — o agendador nao recria o pedido impossivel
+# (paginacao FISICA verificada, nao o page_count do banco)
+# ---------------------------------------------------------------------------
+def _fake_pdf(monkeypatch, pages: int) -> None:
+    """PyPDF2 falso: o helper ABRE o arquivo e conta `len(reader.pages)`."""
+    import types as _types
+
+    module = _types.ModuleType("PyPDF2")
+    module.PdfReader = lambda _path: _types.SimpleNamespace(
+        pages=[
+            _types.SimpleNamespace(extract_text=lambda: "x" * 140)
+            for _ in range(pages)
+        ]
+    )
+    monkeypatch.setitem(sys.modules, "PyPDF2", module)
+
+
+def _make_db_with_pdf(
+    tmp_path,
+    monkeypatch,
+    *,
+    db_page_count: int,
+    pdf_pages: int,
+    progress: float,
+    target: float,
+    filename: str = "book.pdf",
+):
+    """Projeto + anexo com arquivo REAL em disco e paginacao verificada.
+
+    `db_page_count` e o registro gravado; `pdf_pages` e o que o arquivo
+    realmente tem — as divergencias entre os dois sao exatamente o que se
+    quer testar.
+    """
+    _fake_pdf(monkeypatch, pdf_pages)
+    pdf = tmp_path / filename
+    pdf.write_bytes(b"%PDF-fake")
+
+    db = _make_db()
+    # Fora do schema minimo deste arquivo: necessaria para a fonte do leitor.
+    db.conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS work_project_attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            filename TEXT NOT NULL,
+            stored_path TEXT NOT NULL,
+            size_bytes INTEGER,
+            mime_type TEXT,
+            uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            uploaded_by TEXT DEFAULT 'admin',
+            extracted_text TEXT,
+            extraction_status TEXT DEFAULT 'pending',
+            extracted_at DATETIME,
+            page_count INTEGER,
+            word_count INTEGER,
+            expires_at DATETIME
+        )
+        """
+    )
+    db.conn.execute(
+        "INSERT INTO work_destinations (id, destination_key, provider_key, label, is_active) "
+        "VALUES (1, 'reading', 'reading', 'Reading', 1)"
+    )
+    db.conn.execute(
+        "INSERT INTO work_projects (project_key, name, status, priority, "
+        "default_destination_id, daily_action_limit, deadline_at, effort_target, effort_unit, "
+        "progress_value, created_at, updated_at) "
+        "VALUES ('reading-book', 'Livro', 'active', 90, 1, 1, ?, ?, 'pages', ?, ?, ?)",
+        (
+            (datetime.utcnow() + timedelta(days=10)).strftime("%Y-%m-%d"),
+            target,
+            progress,
+            db._now_iso(),
+            db._now_iso(),
+        ),
+    )
+    db.conn.commit()
+    project_id = db.conn.execute("SELECT id FROM work_projects").fetchone()[0]
+    db.conn.execute(
+        "INSERT INTO work_project_attachments "
+        "(project_id, filename, stored_path, mime_type, extraction_status, page_count) "
+        "VALUES (?, ?, ?, 'application/pdf', 'extracted', ?)",
+        (project_id, filename, str(pdf), db_page_count),
+    )
+    db.conn.commit()
+    return db, project_id
+
+
+def _plan_and_project_state(db, project_id, cycle_id="c1"):
+    plan = WorkScheduler(db).plan_for_phase(cycle_id=cycle_id, pulse_count=2)
+    row = db.conn.execute(
+        "SELECT progress_value, status FROM work_projects WHERE id = ?",
+        (project_id,),
+    ).fetchone()
+    return plan, row
+
+
+def test_plan_skips_range_beyond_physical_pages(tmp_path, monkeypatch):
+    """Caso real do projeto 11: alvo 179, progresso 170, PDF de 170.
+
+    A paginacao vem do ARQUIVO ABERTO (nao do banco). Sem o guarda, todo
+    ciclo recriaria o pedido impossivel 171-179.
+    """
+    db, project_id = _make_db_with_pdf(
+        tmp_path, monkeypatch,
+        db_page_count=170, pdf_pages=170, progress=170.0, target=179.0,
+    )
+
+    plan, row = _plan_and_project_state(db, project_id)
+
+    assert plan["briefs_created"] == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM work_briefs").fetchone()[0] == 0
+    assert float(row["progress_value"]) == 170.0   # marcador intacto
+    assert row["status"] == "active"               # livro NAO concluido
+
+
+def test_plan_does_not_block_when_db_understates_pdf(tmp_path, monkeypatch):
+    """Divergencia A: banco diz 170, o PDF ATUAL tem 179.
+
+    Confiar no banco bloquearia a pagina 171 sem deixar o leitor verificar
+    — uma leitura valida perdida.
+    """
+    db, project_id = _make_db_with_pdf(
+        tmp_path, monkeypatch,
+        db_page_count=170, pdf_pages=179, progress=170.0, target=179.0,
+    )
+
+    plan, row = _plan_and_project_state(db, project_id)
+
+    assert plan["briefs_created"] == 1   # nao bloqueado pelo registro velho
+    assert float(row["progress_value"]) == 170.0
+    assert row["status"] == "active"
+
+
+def test_plan_blocks_when_db_overstates_pdf(tmp_path, monkeypatch):
+    """Divergencia B: banco diz 179, o PDF ATUAL tem 170.
+
+    Confiar no banco deixaria o agendador recriar o pedido impossivel.
+    """
+    db, project_id = _make_db_with_pdf(
+        tmp_path, monkeypatch,
+        db_page_count=179, pdf_pages=170, progress=170.0, target=179.0,
+    )
+
+    plan, row = _plan_and_project_state(db, project_id)
+
+    assert plan["briefs_created"] == 0
+    assert float(row["progress_value"]) == 170.0
+    assert row["status"] == "active"
+
+
+def test_swapping_pdf_releases_old_block(tmp_path, monkeypatch):
+    """Trocar o arquivo NAO mantem um bloqueio antigo: o helper abre o
+    arquivo a cada ciclo, entao o novo PDF (179) reabre a faixa 171."""
+    db, project_id = _make_db_with_pdf(
+        tmp_path, monkeypatch,
+        db_page_count=170, pdf_pages=170, progress=170.0, target=179.0,
+    )
+    first, _ = _plan_and_project_state(db, project_id, cycle_id="c1")
+    assert first["briefs_created"] == 0   # bloqueado com o PDF de 170
+
+    # Mesmo registro no banco (170), arquivo novo com 179 paginas.
+    _fake_pdf(monkeypatch, 179)
+    (tmp_path / "book.pdf").write_bytes(b"%PDF-fake-v2")
+
+    second, row = _plan_and_project_state(db, project_id, cycle_id="c2")
+    assert second["briefs_created"] == 1   # bloqueio antigo liberado
+    assert float(row["progress_value"]) == 170.0
+    assert row["status"] == "active"
+
+
+def test_plan_creates_brief_when_range_is_within_physical_pages(
+    tmp_path, monkeypatch
+):
+    """Controle: faixa dentro da paginacao fisica continua gerando brief."""
+    db, project_id = _make_db_with_pdf(
+        tmp_path, monkeypatch,
+        db_page_count=300, pdf_pages=300, progress=0.0, target=300.0,
+    )
+
+    plan, row = _plan_and_project_state(db, project_id)
+
+    assert plan["briefs_created"] == 1
+    assert float(row["progress_value"]) == 0.0   # sem avanco automatico
+
+
+def test_plan_without_attachment_keeps_working():
+    """Controle: sem anexo nao ha o que verificar — o plano segue normal
+    (sem prova de impossibilidade nao ha bloqueio; o leitor e a autoridade)."""
+    db = _make_db()
+    db.conn.execute(
+        "INSERT INTO work_destinations (id, destination_key, provider_key, label, is_active) "
+        "VALUES (1, 'reading', 'reading', 'Reading', 1)"
+    )
+    db.conn.execute(
+        "INSERT INTO work_projects (project_key, name, status, priority, "
+        "default_destination_id, daily_action_limit, deadline_at, effort_target, effort_unit, "
+        "progress_value, created_at, updated_at) "
+        "VALUES ('reading-x', 'Livro X', 'active', 90, 1, 1, ?, 300, 'pages', 0, ?, ?)",
+        ((datetime.utcnow() + timedelta(days=10)).strftime("%Y-%m-%d"),
+         db._now_iso(), db._now_iso()),
+    )
+    db.conn.commit()
+
+    plan = WorkScheduler(db).plan_for_phase(cycle_id="c1", pulse_count=2)
+
+    assert plan["briefs_created"] == 1

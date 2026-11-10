@@ -13,6 +13,7 @@ Heuristics (deterministic, no LLM):
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -65,6 +66,45 @@ def _effort_cap_for_unit(unit: Optional[str]) -> float:
     if u == "sections":
         return MAX_PULSE_EFFORT_SECTIONS
     return 50.0
+
+
+def _physical_page_count(engine: Any, project_id: int) -> Optional[int]:
+    """Paginacao FISICA verificada — abre o anexo, como o leitor faz.
+
+    P1 (revisao da PR #77): o ``page_count`` gravado no banco e so um
+    REGISTRO e pode divergir do arquivo (anexo substituido, extracao
+    antiga). Trata-lo como prova de que a faixa e impossivel bloquearia
+    leitura valida (170 no banco, 179 no PDF) ou deixaria passar pedido
+    impossivel (179 no banco, 170 no PDF).
+
+    Devolve ``None`` quando NAO ha como verificar (sem anexo extraido, sem
+    arquivo em disco, PDF ilegivel): nesse caso nao ha prova de impossibilidade
+    e o agendador nao bloqueia — o leitor continua sendo a autoridade. Como o
+    arquivo e aberto a cada ciclo, trocar o PDF nunca mantem um bloqueio
+    antigo.
+    """
+    try:
+        candidates = [
+            item
+            for item in engine.list_project_attachments(int(project_id))
+            if item.get("mime_type") == "application/pdf"
+            and item.get("extraction_status") == "extracted"
+        ]
+        if not candidates:
+            return None
+        stored = Path(str(candidates[0].get("stored_path") or ""))
+        if not stored.is_file():
+            return None
+        from PyPDF2 import PdfReader
+
+        return len(PdfReader(str(stored)).pages)
+    except Exception as exc:
+        logger.warning(
+            "scheduler: physical pagination unreadable for project %s (%s)",
+            project_id,
+            type(exc).__name__,
+        )
+        return None
 
 
 def _project_sort_key(project: Dict[str, Any]) -> tuple:
@@ -150,6 +190,19 @@ class WorkScheduler:
             if unit == "pages" and target > 0:
                 start_page = int(progress) + 1
                 end_page = min(int(target), max(start_page, int(progress + per_pulse)))
+                # F-5/L2: valida contra a paginacao FISICA. O leitor
+                # normaliza o fim para >= inicio, entao limitar so o fim nao
+                # evita `start > total` (171 > 170) — e o ciclo seguinte
+                # recriaria o MESMO pedido impossivel. Sem avancar
+                # progresso e sem concluir o livro: apenas nao criar o brief.
+                physical_pages = _physical_page_count(engine, int(project.get("id") or 0))
+                if physical_pages is not None and start_page > physical_pages:
+                    logger.warning(
+                        "scheduler: project %s range %s-%s beyond physical pages "
+                        "(%s); brief not created",
+                        project.get("id"), start_page, end_page, physical_pages,
+                    )
+                    continue
                 planned_effort = end_page - start_page + 1
                 objective = (
                     f"Ler paginas {start_page} a {end_page} de '{project['name']}'"

@@ -291,3 +291,73 @@ def test_structured_output_echoing_pdf_overlay_falls_back_to_clean_source(monkey
     assert len(calls) == 2
     assert package["reading_assimilation"]["assimilation_mode"] == "extractive_fallback"
     assert "BERGSONERGSON" not in package["reading_assimilation"]["summary"]
+
+
+# ---------------------------------------------------------------------------
+# F-5/L2 — o leitor distingue faixa impossivel de falha de acesso
+# ---------------------------------------------------------------------------
+def _three_page_reader(monkeypatch):
+    module = types.ModuleType("PyPDF2")
+    module.PdfReader = lambda _path: types.SimpleNamespace(
+        pages=[_Page("A" * 140), _Page("B" * 140), _Page("C" * 140)]
+    )
+    monkeypatch.setitem(sys.modules, "PyPDF2", module)
+
+
+def test_read_project_pages_reports_range_beyond_pagination(tmp_path, monkeypatch):
+    """Inicio alem da ultima pagina: motivo proprio, com a paginacao real.
+
+    E o caso do projeto 11 (alvo 179, PDF com 170): sem este motivo o
+    erro vira `reading_exact_pages_unavailable` e mascara a causa.
+    """
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(b"%PDF-test")
+    _three_page_reader(monkeypatch)
+
+    result = _AttachmentEngine(pdf).read_project_pages(
+        10, start_page=4, end_page=9, max_chars=4000
+    )
+
+    assert result["verified"] is False
+    assert result["reason"] == "reading_range_beyond_pagination"
+    assert result["total_pages"] == 3
+    assert result["requested_start_page"] == 4
+    assert result["requested_end_page"] == 9
+
+
+def test_read_project_pages_partial_range_serves_available_pages(tmp_path, monkeypatch):
+    """Intervalo parcialmente valido (2..9 em PDF de 3): serve 2..3.
+
+    Limitar so o fim nao resolve o caso 171-179 — mas um inicio valido com
+    fim alem do fim do PDF funciona e precisa continuar funcionando.
+    """
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(b"%PDF-test")
+    _three_page_reader(monkeypatch)
+
+    result = _AttachmentEngine(pdf).read_project_pages(
+        10, start_page=2, end_page=9, max_chars=4000
+    )
+
+    assert result["verified"] is True
+    assert result["start_page"] == 2
+    assert result["end_page"] == 3
+    assert result["pages_read"] == 2
+    assert result["total_pages"] == 3
+
+
+def test_read_project_pages_reports_unavailable_pdf(tmp_path):
+    """Falha de ACESSO ao arquivo: motivo proprio, distinto da faixa.
+
+    Sem arquivo e sem texto delimitado — nao ha como servir nem contar.
+    """
+    missing = tmp_path / "never-written.pdf"  # nao existe em disco
+
+    result = _AttachmentEngine(missing).read_project_pages(
+        10, start_page=1, end_page=3, max_chars=4000
+    )
+
+    assert result["verified"] is False
+    assert result["reason"] == "reading_pdf_unavailable"
+    assert result["error_type"] == "file_not_found"
+    assert result["requested_start_page"] == 1
