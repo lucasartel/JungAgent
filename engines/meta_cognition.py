@@ -67,16 +67,35 @@ class DoubleLoopMetaCognitionEngine:
         biases = self._detect_biases(loop_stats, rumination_stats, will_stats)
 
         # 4. Generate bounded heuristic adjustments (max delta <= 5%)
-        adjustments = self._generate_heuristic_adjustments(biases, resonance_score, coherence_score)
+        # R3b: Falha/contingencia upstream NAO dispara ajuste autonomo, e uma
+        # leitura heuristica de coerencia/ressonancia nunca valida a si mesma.
+        upstream_contingency = bool(will_stats.get("is_contingency"))
+        adjustments_suppressed_reason: Optional[str] = None
+        if upstream_contingency:
+            adjustments: List[Dict[str, Any]] = []
+            adjustments_suppressed_reason = "upstream_will_in_contingency"
+        else:
+            adjustments = self._generate_heuristic_adjustments(
+                biases, resonance_score, coherence_score
+            )
 
         # 5. Formulate recommendations
         recommendations = self._formulate_recommendations(biases, resonance_score, coherence_score)
 
         summary = (
-            f"Double-loop evaluation for {cycle_id}: resonance={resonance_score:.2f}, "
+            f"Double-loop evaluation for {cycle_id} [heuristic_reading]: resonance={resonance_score:.2f}, "
             f"coherence={coherence_score:.2f}. Identified {len(biases)} bias signals and "
             f"{len(adjustments)} bounded strategy adjustments."
         )
+
+        provenance_meta = {
+            "epistemic_status": "heuristic_reading",
+            "self_validated": False,
+            "upstream_will_status": will_stats.get("status"),
+            "upstream_will_epistemic_status": will_stats.get("epistemic_status"),
+            "upstream_contingency": upstream_contingency,
+            "adjustments_suppressed_reason": adjustments_suppressed_reason,
+        }
 
         # 6. Persist evaluation to SQLite
         eval_id = 0
@@ -91,6 +110,7 @@ class DoubleLoopMetaCognitionEngine:
                 heuristic_adjustments=adjustments,
                 recommendations=recommendations,
                 summary=summary,
+                provenance=provenance_meta,
             )
 
         logger.info(
@@ -104,6 +124,10 @@ class DoubleLoopMetaCognitionEngine:
             "status": "success",
             "eval_id": eval_id,
             "cycle_id": cycle_id,
+            "epistemic_status": "heuristic_reading",
+            "self_validated": False,
+            "upstream_contingency": upstream_contingency,
+            "adjustments_suppressed_reason": adjustments_suppressed_reason,
             "resonance_score": resonance_score,
             "coherence_score": coherence_score,
             "biases_detected": biases,
@@ -173,17 +197,52 @@ class DoubleLoopMetaCognitionEngine:
 
     def _collect_will_stats(self, user_id: str) -> Dict[str, Any]:
         try:
+            from engines.will_scope import scope_context
             from will_engine import load_latest_will_state
 
-            state = load_latest_will_state(self.db, user_id=user_id) or {}
+            scope = scope_context(
+                self.db,
+                agent_instance=self.agent_instance,
+                resolve_participant_user_id=user_id,
+            )
+            state = (
+                load_latest_will_state(
+                    self.db,
+                    user_id=user_id,
+                    relation_id=scope.get("relation_id"),
+                    agent_instance=self.agent_instance,
+                    scope_kind=scope.get("scope_kind"),
+                )
+                or load_latest_will_state(
+                    self.db,
+                    user_id=user_id,
+                    agent_instance=self.agent_instance,
+                )
+                or {}
+            )
+            status = str(state.get("status") or "")
+            epistemic = str(state.get("epistemic_status") or "")
+            is_contingency = status in {"fallback", "preliminary_fallback"} or (
+                epistemic == "heuristic_contingency"
+            )
             return {
                 "dominant": state.get("dominant_will"),
                 "constrained": state.get("constrained_will"),
-                "has_conflict": bool(state.get("will_conflict")),
+                "has_conflict": bool(state.get("will_conflict")) and not is_contingency,
+                "status": status or None,
+                "epistemic_status": epistemic or None,
+                "is_contingency": is_contingency,
             }
         except Exception as exc:
             logger.debug("meta_cognition: error collecting will stats: %s", exc)
-            return {"dominant": None, "constrained": None, "has_conflict": False}
+            return {
+                "dominant": None,
+                "constrained": None,
+                "has_conflict": False,
+                "status": None,
+                "epistemic_status": None,
+                "is_contingency": False,
+            }
 
     def _collect_working_memory_stats(self, user_id: str) -> Dict[str, Any]:
         try:

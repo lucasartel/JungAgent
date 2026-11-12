@@ -333,7 +333,24 @@ class AgentMetaConsciousnessEngine:
             return None
         data = dict(row)
         data["internal_questions"] = json.loads(data.get("internal_questions_json") or "[]")
-        data["source_summary"] = json.loads(data.get("source_summary_json") or "{}")
+        source_summary = json.loads(data.get("source_summary_json") or "{}")
+        data["source_summary"] = source_summary
+        diag = (
+            source_summary.get("r3b_diagnostics")
+            if isinstance(source_summary, dict)
+            else None
+        ) or {}
+        status = str(data.get("status") or "")
+        default_epistemic = (
+            "heuristic_contingency" if status == "fallback" else "validated_deliberation"
+        )
+        default_origin = (
+            "heuristic_contingency" if status == "fallback" else "llm_deliberation"
+        )
+        data["fallback_reason"] = diag.get("fallback_reason")
+        data["epistemic_status"] = diag.get("epistemic_status") or default_epistemic
+        data["state_origin"] = diag.get("state_origin") or default_origin
+        data["r3b_diagnostics"] = diag
         return data
 
     def generate_cycle_reading(
@@ -343,8 +360,17 @@ class AgentMetaConsciousnessEngine:
         current_state: Dict[str, Any],
         trigger_source: str = "identity_phase",
     ) -> Dict[str, Any]:
+        from engines.fallback_diagnostics import (
+            StructuredLLMValidationError,
+            classify_exception_reason,
+            compute_table_fallback_telemetry,
+            execute_with_bounded_retry,
+            parse_and_classify_json_response,
+            resolve_active_provider_metadata,
+        )
+
         payload = self._build_source_payload(user_id, cycle_id, current_state)
-        source_summary = payload.get("source_summary") or {}
+        source_summary = dict(payload.get("source_summary") or {})
 
         prompt = f"""
 Voce esta produzindo uma leitura metaconsciente do JungAgent.
@@ -373,10 +399,31 @@ Responda APENAS com JSON valido:
 }}
 """
 
+        input_sufficient = not bool((current_state or {}).get("force_insufficient_input"))
+
+        def _validate_meta_json(raw_text: str) -> Dict[str, Any]:
+            return parse_and_classify_json_response(
+                raw_text,
+                required_non_empty_keys=("dominant_form", "integration_note"),
+            )
+
         status = "generated"
+        diag: Optional[Dict[str, Any]] = None
         try:
-            raw = get_llm_response(prompt, temperature=0.35, max_tokens=550)
-            data = self._extract_json(raw)
+            data, diag = execute_with_bounded_retry(
+                component="meta_consciousness:identity",
+                base_prompt=prompt,
+                temperature=0.35,
+                max_tokens=550,
+                llm_Point=get_llm_response,
+                validator=_validate_meta_json,
+                input_sufficient=input_sufficient,
+            )
+            if not data:
+                raise StructuredLLMValidationError(
+                    diag.get("fallback_reason") or "invalid_structure",
+                    diag.get("validation_detail") or "metaconsciencia_sem_payload_util",
+                )
             questions = data.get("internal_questions")
             if not isinstance(questions, list):
                 questions = []
@@ -395,11 +442,45 @@ Responda APENAS com JSON valido:
             }
 
             if not normalized["dominant_form"] or not normalized["integration_note"]:
-                raise ValueError("metaconsciencia_sem_payload_util")
+                raise StructuredLLMValidationError(
+                    "invalid_structure", "metaconsciencia_sem_payload_util"
+                )
         except Exception as exc:
-            logger.warning("Metaconsciencia caiu em fallback heuristico: %s", exc)
+            if not diag:
+                reason, detail = classify_exception_reason(exc)
+                diag = {
+                    "component": "meta_consciousness:identity",
+                    **resolve_active_provider_metadata(),
+                    "attempt_count": 1,
+                    "fallback_reason": reason,
+                    "validation_detail": detail,
+                    "recovered_on_retry": False,
+                }
+            logger.warning(
+                "Metaconsciencia caiu em fallback heuristico (reason=%s attempts=%s): %s",
+                diag.get("fallback_reason"),
+                diag.get("attempt_count"),
+                exc,
+            )
             normalized = self._fallback_reading(payload)
             status = "fallback"
+
+        scope = self._query_scope(user_id)
+        clause, clause_params = scope.sql(("id", "user_id", "agent_instance"))
+        cursor = self.db.conn.cursor()
+        telemetry = compute_table_fallback_telemetry(
+            cursor,
+            table="agent_meta_consciousness",
+            user_id=user_id,
+            where_clause=f" AND agent_instance = ?{clause}",
+            where_params=(self.agent_instance, *clause_params),
+            current_status=status,
+            current_reason=(diag or {}).get("fallback_reason"),
+            recovered_on_retry=bool((diag or {}).get("recovered_on_retry")),
+            retry_trigger_reason=(diag or {}).get("retry_trigger_reason"),
+        )
+        r3b_diagnostics = {**(diag or {}), **telemetry}
+        source_summary["r3b_diagnostics"] = r3b_diagnostics
 
         reading_id = self._save_reading(
             user_id=user_id,
@@ -415,6 +496,10 @@ Responda APENAS com JSON valido:
                 "status": status,
                 "cycle_id": cycle_id,
                 "source_summary": source_summary,
+                "fallback_reason": r3b_diagnostics.get("fallback_reason"),
+                "epistemic_status": r3b_diagnostics.get("epistemic_status"),
+                "state_origin": r3b_diagnostics.get("state_origin"),
+                "r3b_diagnostics": r3b_diagnostics,
                 "created_at": datetime.now().isoformat(),
             }
         )

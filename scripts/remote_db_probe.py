@@ -659,12 +659,38 @@ def query_will(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
             row["source_summary"] = json.loads(raw) if raw else {}
         except Exception:
             row["source_summary"] = {}
+        diag = (
+            row["source_summary"].get("r3b_diagnostics")
+            if isinstance(row["source_summary"], dict)
+            else None
+        ) or {}
+        status = str(row.get("status") or "")
+        if status in {"fallback", "preliminary_fallback"}:
+            default_epistemic = "heuristic_contingency"
+        elif status == "preliminary_generated":
+            default_epistemic = "preliminary_deliberation"
+        else:
+            default_epistemic = "validated_deliberation"
+        row["epistemic_status"] = diag.get("epistemic_status") or default_epistemic
+        row["fallback_reason"] = diag.get("fallback_reason")
+        row["r3b_diagnostics"] = diag
+
+    from engines.fallback_diagnostics import compute_table_fallback_telemetry
+
+    telemetry = compute_table_fallback_telemetry(
+        cursor,
+        table="agent_will_states",
+        user_id=args.user_id,
+        where_clause=scope_where,
+        where_params=scope_params,
+    )
     return {
         "probe": "will",
         "user_id": args.user_id,
         "agent_instance": getattr(args, "agent_instance", DEFAULT_AGENT_INSTANCE),
         "relation_id": getattr(args, "relation_id", None),
         "scope_kind": getattr(args, "scope_kind", "global"),
+        "fallback_telemetry": telemetry,
         "rows": rows,
     }
 
@@ -1146,7 +1172,15 @@ def fetch_latest_saber_event(cursor: sqlite3.Cursor, args: argparse.Namespace) -
 
 def query_meta(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, Any]:
     rows = []
+    scope_where = ""
+    scope_params: Tuple[Any, ...] = ()
     if table_exists(cursor, "agent_meta_consciousness"):
+        columns = table_columns(cursor, "agent_meta_consciousness")
+        summary_select = (
+            "source_summary_json,"
+            if "source_summary_json" in columns
+            else "NULL AS source_summary_json,"
+        )
         scope_where, scope_params = _will_scope_filter(cursor, "agent_meta_consciousness", args)
         cursor.execute(
             f"""
@@ -1161,6 +1195,7 @@ def query_meta(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
                 blind_spot,
                 integration_note,
                 internal_questions_json,
+                {summary_select}
                 trigger_source,
                 created_at
             FROM agent_meta_consciousness
@@ -1178,13 +1213,50 @@ def query_meta(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
                 row["internal_questions"] = json.loads(raw) if raw else []
             except Exception:
                 row["internal_questions"] = []
+            raw_summary = row.get("source_summary_json")
+            try:
+                row["source_summary"] = json.loads(raw_summary) if raw_summary else {}
+            except Exception:
+                row["source_summary"] = {}
+            diag = (
+                row["source_summary"].get("r3b_diagnostics")
+                if isinstance(row["source_summary"], dict)
+                else None
+            ) or {}
+            status = str(row.get("status") or "")
+            default_epistemic = (
+                "heuristic_contingency" if status == "fallback" else "validated_deliberation"
+            )
+            row["epistemic_status"] = diag.get("epistemic_status") or default_epistemic
+            row["fallback_reason"] = diag.get("fallback_reason")
+            row["r3b_diagnostics"] = diag
+
+    from engines.fallback_diagnostics import compute_table_fallback_telemetry
+
+    telemetry = (
+        compute_table_fallback_telemetry(
+            cursor,
+            table="agent_meta_consciousness",
+            user_id=args.user_id,
+            where_clause=scope_where,
+            where_params=scope_params,
+        )
+        if table_exists(cursor, "agent_meta_consciousness")
+        else {}
+    )
     double_loop_rows = []
     if table_exists(cursor, "agent_meta_cognition_evaluations"):
+        eval_cols = table_columns(cursor, "agent_meta_cognition_evaluations")
+        prov_select = (
+            "provenance_json,"
+            if "provenance_json" in eval_cols
+            else "NULL AS provenance_json,"
+        )
         cursor.execute(
-            """
+            f"""
             SELECT id, agent_instance, cycle_id, evaluation_type, resonance_score,
                    coherence_score, biases_detected_json, heuristic_adjustments_json,
-                   recommendations_json, summary, created_at
+                   recommendations_json, {prov_select} summary, created_at
             FROM agent_meta_cognition_evaluations
             WHERE agent_instance = ?
             ORDER BY id DESC LIMIT ?
@@ -1200,10 +1272,19 @@ def query_meta(cursor: sqlite3.Cursor, args: argparse.Namespace) -> Dict[str, An
                     r[target] = json.loads(raw) if raw else []
                 except Exception:
                     r[target] = []
+            raw_prov = r.get("provenance_json")
+            try:
+                prov = json.loads(raw_prov) if raw_prov else {}
+            except Exception:
+                prov = {}
+            r["provenance"] = prov if isinstance(prov, dict) else {}
+            r["epistemic_status"] = r["provenance"].get("epistemic_status", "heuristic_reading")
+            r["self_validated"] = bool(r["provenance"].get("self_validated", False))
 
     return {
         "probe": "meta",
         "user_id": args.user_id,
+        "fallback_telemetry": telemetry,
         "rows": rows,
         "double_loop_evaluations": double_loop_rows,
     }

@@ -212,7 +212,7 @@
     "path": "/nuclear",
     "full_path": "/admin/agent-identity/nuclear",
     "endpoint": "get_nuclear_beliefs",
-    "line": 283,
+    "line": 308,
     "migration_bucket": "agent_identity_routes"
   },
   {
@@ -221,7 +221,7 @@
     "path": "/contradictions",
     "full_path": "/admin/agent-identity/contradictions",
     "endpoint": "get_active_contradictions",
-    "line": 350,
+    "line": 375,
     "migration_bucket": "agent_identity_routes"
   },
   {
@@ -230,7 +230,7 @@
     "path": "/narrative",
     "full_path": "/admin/agent-identity/narrative",
     "endpoint": "get_narrative_chapters",
-    "line": 417,
+    "line": 442,
     "migration_bucket": "agent_identity_routes"
   },
   {
@@ -239,7 +239,7 @@
     "path": "/relational",
     "full_path": "/admin/agent-identity/relational",
     "endpoint": "get_relational_identities",
-    "line": 486,
+    "line": 511,
     "migration_bucket": "agent_identity_routes"
   },
   {
@@ -248,7 +248,7 @@
     "path": "/consolidate",
     "full_path": "/admin/agent-identity/consolidate",
     "endpoint": "run_manual_consolidation",
-    "line": 547,
+    "line": 572,
     "migration_bucket": "agent_identity_routes"
   },
   {
@@ -257,7 +257,7 @@
     "path": "/export/download",
     "full_path": "/admin/agent-identity/export/download",
     "endpoint": "download_endojung_snapshot",
-    "line": 692,
+    "line": 717,
     "migration_bucket": "agent_identity_routes"
   },
   {
@@ -266,7 +266,7 @@
     "path": "/dashboard",
     "full_path": "/admin/agent-identity/dashboard",
     "endpoint": "agent_identity_dashboard",
-    "line": 723,
+    "line": 748,
     "migration_bucket": "agent_identity_routes"
   },
   {
