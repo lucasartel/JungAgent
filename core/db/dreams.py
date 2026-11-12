@@ -17,6 +17,34 @@ except ImportError:  # Direct-file tests deliberately avoid importing core.__ini
     assert _spec.loader is not None
     _spec.loader.exec_module(_provenance)
 
+try:
+    from core.db.relations import require_eligible_relation
+except ImportError:  # Direct-file guard (F-5c, gate canonico C12g).
+    _rel_path = Path(__file__).with_name("relations.py")
+    _rel_spec = importlib.util.spec_from_file_location("relations_for_dreams", _rel_path)
+    _rel_mod = importlib.util.module_from_spec(_rel_spec)
+    assert _rel_spec.loader is not None
+    _rel_spec.loader.exec_module(_rel_mod)
+    require_eligible_relation = _rel_mod.require_eligible_relation
+
+try:
+    from core.db.cognitive_ownership import (
+        ROUTE_PUBLIC_SOURCE,
+        assess_global_admission,
+        globally_readable_sql,
+    )
+except ImportError:  # Direct-file guard (F-5, admissao e leitura global).
+    _own_path = Path(__file__).with_name("cognitive_ownership.py")
+    _own_spec = importlib.util.spec_from_file_location(
+        "cognitive_ownership_for_dreams", _own_path
+    )
+    _own_mod = importlib.util.module_from_spec(_own_spec)
+    assert _own_spec.loader is not None
+    _own_spec.loader.exec_module(_own_mod)
+    ROUTE_PUBLIC_SOURCE = _own_mod.ROUTE_PUBLIC_SOURCE
+    assess_global_admission = _own_mod.assess_global_admission
+    globally_readable_sql = _own_mod.globally_readable_sql
+
 AUTHORIZED_AGGREGATE = _provenance.AUTHORIZED_AGGREGATE
 INSTANCE_GLOBAL = _provenance.INSTANCE_GLOBAL
 cognitive_agent_instance = _provenance.cognitive_agent_instance
@@ -47,14 +75,50 @@ class DreamDatabaseMixin:
     ) -> Optional[int]:
         """Salva um sonho global preservando a origem privada ou agregada."""
         with self._lock:
+            instance, resolved_origin, resolved_relation, participant = resolve_cognitive_origin(
+                self,
+                participant_user_id=user_id,
+                relation_id=relation_id,
+                origin_class=origin_class,
+                agent_instance=agent_instance,
+            )
+            if resolved_relation and callable(getattr(self, "get_agent_relation", None)):
+                try:
+                    require_eligible_relation(self, resolved_relation)
+                except ValueError as exc:
+                    logger.warning(
+                        "save_dream escrita recusada user_id=%s instance=%s "
+                        "relation=%s motivo=%s",
+                        user_id, instance, resolved_relation, exc,
+                    )
+                    return None
+
+            refs = normalize_source_refs(source_refs)
+            if resolved_origin in {AUTHORIZED_AGGREGATE, INSTANCE_GLOBAL}:
+                try:
+                    decision = assess_global_admission(
+                        agent_instance=instance,
+                        route=ROUTE_PUBLIC_SOURCE,
+                        source_kind=(provenance or {}).get("source_kind"),
+                        source_refs=refs,
+                        private_derived=(provenance or {}).get("private_derived", False),
+                    )
+                except ValueError as exc:
+                    logger.warning(
+                        "save_dream admissao global recusada por entrada invalida "
+                        "user_id=%s instance=%s motivo=%s",
+                        user_id, instance, exc,
+                    )
+                    return None
+                if not decision.admits_global:
+                    logger.warning(
+                        "save_dream admissao global recusada user_id=%s "
+                        "instance=%s motivo=%s",
+                        user_id, instance, decision.reason,
+                    )
+                    return None
+
             try:
-                instance, resolved_origin, resolved_relation, participant = resolve_cognitive_origin(
-                    self,
-                    participant_user_id=user_id,
-                    relation_id=relation_id,
-                    origin_class=origin_class,
-                    agent_instance=agent_instance,
-                )
                 provenance_payload = cognitive_provenance(
                     origin_class=resolved_origin,
                     relation_id=resolved_relation,
@@ -87,7 +151,7 @@ class DreamDatabaseMixin:
                     resolved_origin,
                     resolved_relation,
                     participant,
-                    json_payload(normalize_source_refs(source_refs), []),
+                    json_payload(refs, []),
                     json_payload(provenance_payload, {}),
                     dream_content,
                     symbolic_theme,
@@ -98,7 +162,7 @@ class DreamDatabaseMixin:
                 self.conn.commit()
                 return cursor.lastrowid
             except Exception as e:
-                logger.error(f"âŒ Erro ao salvar sonho: {e}")
+                logger.error(f"â Œ Erro ao salvar sonho: {e}")
                 return None
 
     def update_dream_with_insight(self, dream_id: int, extracted_insight: str) -> bool:
@@ -200,11 +264,15 @@ class DreamDatabaseMixin:
         if resolved_relation:
             # Revogacao C12g: residuos de sonho nao vazam de Relations
             # sem consentimento concedido.
-            from core.db.relations import require_eligible_relation
-
             require_eligible_relation(self, resolved_relation)
+            columns = {
+                row[1]
+                for row in self.conn.execute("PRAGMA table_info(agent_dreams)")
+            }
+            readable = globally_readable_sql(columns)
             return (
-                "agent_instance = ? AND (origin_relation_id = ? OR origin_class IN (?, ?))",
+                "agent_instance = ? AND (origin_relation_id = ? OR "
+                f"(origin_class IN (?, ?) AND {readable}))",
                 [instance, resolved_relation, INSTANCE_GLOBAL, AUTHORIZED_AGGREGATE],
             )
         if callable(resolver):
