@@ -7,8 +7,11 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional
 
 from core.db.cognitive_ownership import (
+    AUTHORIZED_AGGREGATE,
     INSTANCE_GLOBAL,
     RELATION_PRIVATE,
+    ROUTE_PUBLIC_SOURCE,
+    assess_global_admission,
     globally_readable_sql,
 )
 from core.db.cognitive_provenance import (
@@ -18,6 +21,7 @@ from core.db.cognitive_provenance import (
     normalize_source_refs,
     resolve_cognitive_origin,
 )
+from core.db.relations import require_eligible_relation
 from jung_core import Config, HybridDatabaseManager
 
 logger = logging.getLogger(__name__)
@@ -151,6 +155,16 @@ class ScholarEngine:
             if str(user_id) != str(ADMIN_USER_ID):
                 return ""
         if resolved_relation:
+            if callable(getattr(self.db, "get_agent_relation", None)):
+                try:
+                    require_eligible_relation(self.db, resolved_relation)
+                except ValueError as exc:
+                    logger.warning(
+                        "Scholar get_recent_admin_interactions recusado user_id=%s "
+                        "instance=%s relation=%s motivo=%s",
+                        user_id, self.agent_instance, resolved_relation, exc,
+                    )
+                    return ""
             scope_sql = "agent_instance = ? AND relation_id = ?"
             scope_params: List[Any] = [self.agent_instance, resolved_relation]
         else:
@@ -224,12 +238,24 @@ class ScholarEngine:
     ) -> str:
         cursor = self.db.conn.cursor()
         # F-5e: afirmacao global sem prova de proveniencia nao e servida
-        # (tabela agent_dreams: ancora em source_refs_json).
+        # (tabelas agent_dreams e external_research: ancora em source_refs_json).
         dream_columns = {row[1] for row in cursor.execute("PRAGMA table_info(agent_dreams)")}
         dream_readable = globally_readable_sql(dream_columns)
+        research_columns = {row[1] for row in cursor.execute("PRAGMA table_info(external_research)")}
+        research_readable = globally_readable_sql(research_columns)
         sections: List[str] = []
         resolved_relation = self._resolve_relation(user_id, relation_id)
         if resolved_relation:
+            if callable(getattr(self.db, "get_agent_relation", None)):
+                try:
+                    require_eligible_relation(self.db, resolved_relation)
+                except ValueError as exc:
+                    logger.warning(
+                        "Scholar get_recent_loop_inspirations recusado user_id=%s "
+                        "instance=%s relation=%s motivo=%s",
+                        user_id, self.agent_instance, resolved_relation, exc,
+                    )
+                    return ""
             private_scope = "agent_instance = ? AND relation_id = ?"
             private_params: List[Any] = [self.agent_instance, resolved_relation]
             dream_scope = (
@@ -238,7 +264,11 @@ class ScholarEngine:
                 "AND " + dream_readable + "))"
             )
             dream_params: List[Any] = [self.agent_instance, resolved_relation]
-            research_scope = "agent_instance = ? AND origin_relation_id = ?"
+            research_scope = (
+                "agent_instance = ? AND (origin_relation_id = ? OR "
+                "(origin_class IN ('instance_global', 'authorized_aggregate') "
+                "AND " + research_readable + "))"
+            )
             research_params: List[Any] = [self.agent_instance, resolved_relation]
         else:
             if hasattr(self.db, "resolve_relation_id"):
@@ -253,7 +283,10 @@ class ScholarEngine:
                 "AND origin_relation_id IS NULL AND " + dream_readable
             )
             dream_params = [self.agent_instance]
-            research_scope = "(agent_instance = ? OR agent_instance IS NULL) AND origin_relation_id IS NULL"
+            research_scope = (
+                "(agent_instance = ? OR agent_instance IS NULL) "
+                "AND origin_relation_id IS NULL AND " + research_readable
+            )
             research_params = [self.agent_instance]
 
         cursor.execute(
@@ -1138,6 +1171,72 @@ Responda APENAS com JSON valido:
 
         return "\n\n".join(part for part in article_parts if part)
 
+    def _resolve_and_gate_write_origin(
+        self,
+        *,
+        user_id: str,
+        relation_id: Optional[str] = None,
+        origin_class: Optional[str] = None,
+        source_refs: Optional[Iterable[str]] = None,
+        provenance: Optional[Dict[str, Any]] = None,
+        caller: str,
+    ) -> Optional[tuple]:
+        instance, resolved_origin, resolved_relation, participant = resolve_cognitive_origin(
+            self.db,
+            participant_user_id=user_id,
+            relation_id=relation_id,
+            origin_class=origin_class,
+            agent_instance=self.agent_instance,
+        )
+        if resolved_relation and callable(getattr(self.db, "get_agent_relation", None)):
+            try:
+                require_eligible_relation(self.db, resolved_relation)
+            except ValueError as exc:
+                logger.warning(
+                    "Scholar %s recusado user_id=%s instance=%s relation=%s motivo=%s",
+                    caller, user_id, instance, resolved_relation, exc,
+                )
+                return None
+
+        refs = normalize_source_refs(source_refs)
+        prov_extra: Dict[str, Any] = {"producer": "scholar_engine", **(provenance or {})}
+        if resolved_origin in {AUTHORIZED_AGGREGATE, INSTANCE_GLOBAL}:
+            try:
+                decision = assess_global_admission(
+                    agent_instance=instance,
+                    route=ROUTE_PUBLIC_SOURCE,
+                    source_kind=(provenance or {}).get("source_kind"),
+                    source_refs=refs,
+                    private_derived=(provenance or {}).get("private_derived", False),
+                )
+            except ValueError as exc:
+                logger.warning(
+                    "Scholar %s global recusado user_id=%s instance=%s origin=%s motivo=%s",
+                    caller, user_id, instance, resolved_origin, exc,
+                )
+                return None
+            if not decision.admits_global:
+                logger.warning(
+                    "Scholar %s global recusado user_id=%s instance=%s origin=%s motivo=%s",
+                    caller, user_id, instance, resolved_origin, decision.reason,
+                )
+                return None
+            resolved_origin = decision.origin_class
+            prov_extra.update(
+                {
+                    "admission_route": decision.route,
+                    "admission_reason": decision.reason,
+                }
+            )
+
+        prov_payload = cognitive_provenance(
+            origin_class=resolved_origin,
+            relation_id=resolved_relation,
+            participant_user_id=participant,
+            extra=prov_extra,
+        )
+        return instance, resolved_origin, resolved_relation, participant, refs, prov_payload
+
     def _start_run(
         self,
         user_id: str,
@@ -1145,20 +1244,21 @@ Responda APENAS com JSON valido:
         history_excerpt: str,
         *,
         relation_id: Optional[str] = None,
+        origin_class: Optional[str] = None,
         source_refs: Optional[Iterable[str]] = None,
-    ) -> int:
-        instance, origin_class, resolved_relation, participant = resolve_cognitive_origin(
-            self.db,
-            participant_user_id=user_id,
+        provenance: Optional[Dict[str, Any]] = None,
+    ) -> Optional[int]:
+        gated = self._resolve_and_gate_write_origin(
+            user_id=user_id,
             relation_id=relation_id,
-            agent_instance=self.agent_instance,
-        )
-        provenance = cognitive_provenance(
             origin_class=origin_class,
-            relation_id=resolved_relation,
-            participant_user_id=participant,
-            extra={"producer": "scholar_engine"},
+            source_refs=source_refs,
+            provenance=provenance,
+            caller="_start_run",
         )
+        if gated is None:
+            return None
+        instance, resolved_origin, resolved_relation, participant, refs, prov_payload = gated
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
@@ -1170,10 +1270,10 @@ Responda APENAS com JSON valido:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, CURRENT_TIMESTAMP)
             """,
             (
-                user_id, instance, origin_class, origin_class,
+                user_id, instance, resolved_origin, resolved_origin,
                 resolved_relation, participant,
-                json_payload(normalize_source_refs(source_refs), []),
-                json_payload(provenance, {}), trigger_source,
+                json_payload(refs, []),
+                json_payload(prov_payload, {}), trigger_source,
                 history_excerpt[:4000] if history_excerpt else None,
             ),
         )
@@ -1182,7 +1282,7 @@ Responda APENAS com JSON valido:
 
     def _finish_run(
         self,
-        run_id: int,
+        run_id: Optional[int],
         status: str,
         result_summary: str,
         topic: Optional[str] = None,
@@ -1190,6 +1290,8 @@ Responda APENAS com JSON valido:
         article_chars: int = 0,
         research_id: Optional[int] = None,
     ) -> None:
+        if run_id is None:
+            return
         cursor = self.db.conn.cursor()
         cursor.execute(
             """
@@ -1380,7 +1482,9 @@ Responda APENAS com um objeto JSON valido:
         selection_mode: Optional[str] = None,
         will_conflict: Optional[Dict] = None,
         relation_id: Optional[str] = None,
+        origin_class: Optional[str] = None,
         source_refs: Optional[Iterable[str]] = None,
+        provenance: Optional[Dict[str, Any]] = None,
     ) -> Dict:
         if not self.llm:
             return {
@@ -1395,18 +1499,27 @@ Responda APENAS com um objeto JSON valido:
             }
 
         logger.info("Iniciando pesquisa autonoma sobre: %s", topic)
-        instance, origin_class, resolved_relation, participant = resolve_cognitive_origin(
-            self.db,
-            participant_user_id=user_id,
+        gated = self._resolve_and_gate_write_origin(
+            user_id=user_id,
             relation_id=relation_id,
-            agent_instance=self.agent_instance,
-        )
-        provenance = cognitive_provenance(
             origin_class=origin_class,
-            relation_id=resolved_relation,
-            participant_user_id=participant,
-            extra={"producer": "scholar_engine"},
+            source_refs=source_refs,
+            provenance=provenance,
+            caller="conduct_research",
         )
+        if gated is None:
+            return {
+                "success": False,
+                "status": "admission_refused",
+                "topic": topic,
+                "research_id": None,
+                "article_chars": 0,
+                "reason": "Escrita do Scholar recusada por politica de admissao ou elegibilidade de relacao.",
+                "research_lens": None,
+                "lineage": lineage,
+                "selection_mode": selection_mode,
+            }
+        instance, resolved_origin, resolved_relation, participant, refs, prov_payload = gated
 
         existing_match = self._find_recent_topic_match(user_id, topic)
         if existing_match:
@@ -1507,6 +1620,13 @@ Responda SOMENTE com o corpo do artigo, sem involucros de chat.
                     "selection_mode": selection_mode,
                 }
 
+            finding_scope = (
+                AUTHORIZED_AGGREGATE
+                if resolved_origin == AUTHORIZED_AGGREGATE
+                else (RELATION_PRIVATE if resolved_relation else "quarantined")
+            )
+            public_finding = article if resolved_origin == AUTHORIZED_AGGREGATE else None
+
             cursor = self.db.conn.cursor()
             cursor.execute(
                 """
@@ -1524,11 +1644,11 @@ Responda SOMENTE com o corpo do artigo, sem involucros de chat.
                     user_id,
                     instance,
                     INSTANCE_GLOBAL,
-                    origin_class,
+                    resolved_origin,
                     resolved_relation,
                     participant,
-                    json_payload(normalize_source_refs(source_refs), []),
-                    json_payload(provenance, {}),
+                    json_payload(refs, []),
+                    json_payload(prov_payload, {}),
                     topic,
                     "LLM Knowledge Base",
                     history_excerpt[:4000] if history_excerpt else "Sem transcricao preservada.",
@@ -1540,8 +1660,8 @@ Responda SOMENTE com o corpo do artigo, sem involucros de chat.
                         },
                         {},
                     ),
-                    None,
-                    RELATION_PRIVATE if resolved_relation else "quarantined",
+                    public_finding,
+                    finding_scope,
                     enriched_trigger_reason,
                     chosen_lens,
                 ),
