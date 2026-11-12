@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable, Optional, Tuple
 
@@ -690,6 +691,271 @@ def is_globally_readable(row: Any, *, agent_instance: str) -> bool:
         )
         return False
     return decision.admits_global
+
+
+# ---------------------------------------------------------------------------
+# R3a — Politica declarativa e revisavel de promocao ruminal para identidade
+# ---------------------------------------------------------------------------
+EPISTEMIC_EPISODIC_SYMBOL = "episodic_symbol"
+EPISTEMIC_DOMAIN_CONCEPT = "domain_concept"
+EPISTEMIC_SUSTAINED_IDENTITY = "sustained_identity_claim"
+EPISTEMIC_HEURISTIC_PROMOTED = "sustained_identity_heuristic"
+EPISTEMIC_INCOMPLETE = "incomplete_content"
+
+_DANGLING_CONNECTORS = frozenset(
+    {
+        "de", "do", "da", "dos", "das",
+        "em", "no", "na", "nos", "nas",
+        "por", "para", "com", "sem", "sob", "sobre", "entre", "contra", "perante",
+        "que", "porque", "pois", "como", "quando", "enquanto", "se",
+        "mas", "porem", "porém", "contudo", "todavia",
+        "ou", "e", "nem",
+        "o", "a", "os", "as", "um", "uma", "uns", "umas", "ao", "aos",
+    }
+)
+
+_FIRST_PERSON_IDENTITY_RE = re.compile(
+    r"\b("
+    r"eu|sou|nao sou|não sou|minha|meu|meus|minhas|mim|comigo|"
+    r"reconheco|reconheço|percebo|valorizo|priorizo|evito|sustento|"
+    r"escolho|prefiro|aprendi|assumo|recuso|busco|mantenho|"
+    r"permaneco|permaneço|continuo|descubro|compreendo|tendo a|"
+    r"como agente|minha postura|meu papel|minha escuta|minha identidade"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_DOMAIN_CONCEPT_RE = re.compile(
+    r"\b("
+    r"segundo\s+\w+|conforme\s+\w+|para\s+[a-záéíóúâêôãõç]{3,}|"
+    r"o conceito de|a teoria de|a nocao de|a noção de|"
+    r"define-se como|trata-se de|na filosofia|na psicanalise|na psicanálise|"
+    r"na fenomenologia|ontologia|epistemologia"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class IdentityPromotionPolicy:
+    """Politica declarativa R3a para promocao de insights de ruminacao ao nucleo identitario."""
+
+    policy_version: str = "r3a_declarative_v1"
+    min_depth_score: float = 0.65
+    min_novelty_score: float = 0.60
+    min_evidence_count: int = 2
+    min_content_chars: int = 24
+    base_certainty: float = 0.62
+    max_certainty: float = 0.88
+
+    def compute_certainty(
+        self,
+        *,
+        depth_score: float,
+        novelty_score: float,
+        evidence_count: int,
+        maturation_days: int = 0,
+    ) -> float:
+        depth_span = max(0.01, 1.0 - self.min_depth_score)
+        novelty_span = max(0.01, 1.0 - self.min_novelty_score)
+        depth_term = min(1.0, max(0.0, (depth_score - self.min_depth_score) / depth_span))
+        novelty_term = min(1.0, max(0.0, (novelty_score - self.min_novelty_score) / novelty_span))
+        evidence_term = min(1.0, max(0.0, (evidence_count - self.min_evidence_count) / 4.0))
+        maturation_term = min(1.0, max(0.0, float(maturation_days or 0) / 7.0))
+        raw = (
+            self.base_certainty
+            + 0.11 * depth_term
+            + 0.06 * novelty_term
+            + 0.05 * evidence_term
+            + 0.04 * maturation_term
+        )
+        return round(min(self.max_certainty, max(self.base_certainty, raw)), 2)
+
+
+IDENTITY_PROMOTION_POLICY = IdentityPromotionPolicy()
+
+
+@dataclass(frozen=True)
+class IdentityPromotionDecision:
+    """Resultado puro da avaliacao R3a de um insight candidato ao nucleo identitario."""
+
+    promotes: bool
+    epistemic_status: str
+    reason: str
+    certainty: Optional[float]
+    nuclear_content: Optional[str]
+    policy_version: str = IDENTITY_PROMOTION_POLICY.policy_version
+
+
+def is_insight_text_complete(
+    text: Optional[str],
+    *,
+    min_chars: int = IDENTITY_PROMOTION_POLICY.min_content_chars,
+) -> Tuple[bool, str]:
+    """Verifica completude e legibilidade estrutural sem punir reticencias poeticas."""
+    if not isinstance(text, str) or not text.strip():
+        return False, "empty_content"
+    stripped = text.strip()
+    if len(stripped) < min_chars:
+        return False, "content_too_short"
+    if stripped.count('"') % 2 != 0 or stripped.count("(") != stripped.count(")"):
+        return False, "unbalanced_delimiters"
+    if stripped[-1] in ",;:-—/":
+        return False, "dangling_punctuation"
+    if stripped[-1] not in '.!?"\')]…':
+        return False, "missing_terminal_punctuation"
+
+    body = stripped.rstrip('.!?"\')]… ').strip()
+    if not body:
+        return False, "empty_content"
+    if body[-1] in ",;:-—/":
+        return False, "dangling_punctuation"
+    words = re.findall(r"[A-Za-zÀ-ÿ0-9_]+", body)
+    if len(words) < 4:
+        return False, "content_too_short"
+    last_word = words[-1].lower()
+    if last_word in _DANGLING_CONNECTORS:
+        return False, "dangling_clause_connector"
+    return True, "complete"
+
+
+def classify_insight_epistemic_status(
+    content: Optional[str],
+    symbolic: Optional[str] = None,
+    insight_type: Optional[str] = None,
+) -> str:
+    """Distingue simbolo episodico, conceito de dominio e afirmacao identitaria sustentada."""
+    declared_type = str(insight_type or "").strip().lower()
+    if declared_type in {"episodic_symbol", "imagem_episodica", "metafora", "metáfora"}:
+        return EPISTEMIC_EPISODIC_SYMBOL
+    if declared_type in {"domain_concept", "conceito", "conhecimento_dominio"}:
+        return EPISTEMIC_DOMAIN_CONCEPT
+
+    content_clean = str(content or "").strip()
+    symbolic_clean = str(symbolic or "").strip()
+    if not content_clean:
+        return EPISTEMIC_EPISODIC_SYMBOL
+    if symbolic_clean and content_clean.lower() == symbolic_clean.lower():
+        return EPISTEMIC_EPISODIC_SYMBOL
+
+    lowered = content_clean.lower()
+    if lowered.startswith(("imagem:", "metafora:", "metáfora:", "simbolo:", "símbolo:", "imagem de ", "metafora de ", "metáfora de ")):
+        return EPISTEMIC_EPISODIC_SYMBOL
+
+    has_first_person = bool(_FIRST_PERSON_IDENTITY_RE.search(content_clean))
+    has_domain_marker = bool(_DOMAIN_CONCEPT_RE.search(content_clean))
+
+    if not has_first_person:
+        if has_domain_marker:
+            return EPISTEMIC_DOMAIN_CONCEPT
+        return EPISTEMIC_EPISODIC_SYMBOL
+
+    return EPISTEMIC_SUSTAINED_IDENTITY
+
+
+def assess_identity_promotion(
+    *,
+    content: Optional[str],
+    symbolic: Optional[str] = None,
+    insight_type: Optional[str] = None,
+    depth_score: Optional[float] = None,
+    novelty_score: Optional[float] = None,
+    evidence_count: Optional[int] = None,
+    maturation_days: int = 0,
+    novelty_validated: bool = True,
+    provider_truncated: bool = False,
+    policy: IdentityPromotionPolicy = IDENTITY_PROMOTION_POLICY,
+) -> IdentityPromotionDecision:
+    """Avalia se um insight ruminal pode ser promovido a atributo nuclear de identidade."""
+    if provider_truncated:
+        return IdentityPromotionDecision(
+            promotes=False,
+            epistemic_status=EPISTEMIC_INCOMPLETE,
+            reason="provider_truncated_response",
+            certainty=None,
+            nuclear_content=None,
+            policy_version=policy.policy_version,
+        )
+
+    complete, completeness_reason = is_insight_text_complete(
+        content, min_chars=policy.min_content_chars
+    )
+    if not complete:
+        return IdentityPromotionDecision(
+            promotes=False,
+            epistemic_status=EPISTEMIC_INCOMPLETE,
+            reason=f"incomplete_content:{completeness_reason}",
+            certainty=None,
+            nuclear_content=None,
+            policy_version=policy.policy_version,
+        )
+
+    epistemic = classify_insight_epistemic_status(content, symbolic, insight_type)
+    if epistemic == EPISTEMIC_EPISODIC_SYMBOL:
+        return IdentityPromotionDecision(
+            promotes=False,
+            epistemic_status=EPISTEMIC_EPISODIC_SYMBOL,
+            reason="episodic_symbol_not_identity_claim",
+            certainty=None,
+            nuclear_content=None,
+            policy_version=policy.policy_version,
+        )
+    if epistemic == EPISTEMIC_DOMAIN_CONCEPT:
+        return IdentityPromotionDecision(
+            promotes=False,
+            epistemic_status=EPISTEMIC_DOMAIN_CONCEPT,
+            reason="domain_concept_not_identity_claim",
+            certainty=None,
+            nuclear_content=None,
+            policy_version=policy.policy_version,
+        )
+
+    resolved_depth = float(depth_score if depth_score is not None else 0.0)
+    resolved_novelty = float(novelty_score if novelty_score is not None else 0.0)
+    resolved_evidence = int(evidence_count if evidence_count is not None else 0)
+
+    if resolved_depth < policy.min_depth_score:
+        return IdentityPromotionDecision(
+            promotes=False,
+            epistemic_status=EPISTEMIC_SUSTAINED_IDENTITY,
+            reason="insufficient_depth_score",
+            certainty=None,
+            nuclear_content=None,
+            policy_version=policy.policy_version,
+        )
+    if not novelty_validated or resolved_novelty < policy.min_novelty_score:
+        return IdentityPromotionDecision(
+            promotes=False,
+            epistemic_status=EPISTEMIC_SUSTAINED_IDENTITY,
+            reason="insufficient_novelty_score",
+            certainty=None,
+            nuclear_content=None,
+            policy_version=policy.policy_version,
+        )
+    if resolved_evidence < policy.min_evidence_count:
+        return IdentityPromotionDecision(
+            promotes=False,
+            epistemic_status=EPISTEMIC_SUSTAINED_IDENTITY,
+            reason="insufficient_supporting_evidence",
+            certainty=None,
+            nuclear_content=None,
+            policy_version=policy.policy_version,
+        )
+
+    certainty = policy.compute_certainty(
+        depth_score=resolved_depth,
+        novelty_score=resolved_novelty,
+        evidence_count=resolved_evidence,
+        maturation_days=maturation_days,
+    )
+    return IdentityPromotionDecision(
+        promotes=True,
+        epistemic_status=EPISTEMIC_HEURISTIC_PROMOTED,
+        reason="sustained_identity_claim_verified",
+        certainty=certainty,
+        nuclear_content=str(content).strip(),
+        policy_version=policy.policy_version,
+    )
 
 
 def validate_ownership_contracts(

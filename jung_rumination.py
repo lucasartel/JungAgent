@@ -1834,7 +1834,7 @@ class RuminationEngine:
         cursor = self.db.conn.cursor()
         cursor.execute(f"""
             SELECT delivered_at FROM rumination_insights
-            WHERE user_id = ?{relation_clause} AND status = 'delivered'
+            WHERE user_id = ?{relation_clause} AND status = 'delivered' AND delivered_at IS NOT NULL
             ORDER BY delivered_at DESC
             LIMIT 1
         """, (user_id, *relation_params))

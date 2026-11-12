@@ -238,7 +238,9 @@ def test_c12e_rumination_bridge_preserves_admin_relation_origin(tmp_path):
     admin_relation = db.register_agent_relation(
         agent_instance="instance_a",
         participant_user_id=str(ADMIN_USER_ID),
+        consent_status="granted",
     )
+    claim_text = "Eu valorizo sustentar uma escuta rigorosa e honesta nas interacoes."
     db.conn.execute(
         """CREATE TABLE rumination_insights (
                id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -248,6 +250,9 @@ def test_c12e_rumination_bridge_preserves_admin_relation_origin(tmp_path):
                full_message TEXT NOT NULL,
                symbol_content TEXT,
                source_tension_id INTEGER,
+               depth_score REAL,
+               novelty_score REAL,
+               evidence_count INTEGER,
                status TEXT,
                crystallized_at TEXT
            )"""
@@ -255,13 +260,14 @@ def test_c12e_rumination_bridge_preserves_admin_relation_origin(tmp_path):
     db.conn.execute(
         """INSERT INTO rumination_insights (
                user_id, agent_instance, relation_id, full_message,
-               symbol_content, status, crystallized_at
-           ) VALUES (?, ?, ?, ?, ?, 'ready', CURRENT_TIMESTAMP)""",
+               symbol_content, depth_score, novelty_score, evidence_count,
+               status, crystallized_at
+           ) VALUES (?, ?, ?, ?, ?, 0.80, 0.75, 3, 'ready', CURRENT_TIMESTAMP)""",
         (
             str(ADMIN_USER_ID),
             "instance_a",
             admin_relation,
-            "bridge-private-message",
+            claim_text,
             "bridge-private-symbol",
         ),
     )
@@ -271,6 +277,6 @@ def test_c12e_rumination_bridge_preserves_admin_relation_origin(tmp_path):
     row = db.conn.execute(
         """SELECT ownership_class, origin_class, origin_relation_id
            FROM agent_identity_core WHERE content = ?""",
-        ("bridge-private-symbol",),
+        (claim_text,),
     ).fetchone()
     assert tuple(row) == ("instance_global", "relation_private", admin_relation)
