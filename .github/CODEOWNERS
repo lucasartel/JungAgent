@@ -1,0 +1,30 @@
+# CODEOWNERS — Governanca de Merge e Producao do JungAgent
+#
+# Regra operacional (AGENTS.md + Documento Mestre Secao 3):
+# O desenvolvimento de cortes (Mimo / DeepSeek Harness) e a revisao/correcao
+# tecnica (Gemini Argon via Antigravity Remote Agents) ocorrem em branches de PR.
+# A aprovacao final de merge na `main` e o deploy em producao pertencem
+# exclusivamente ao mantenedor (@lucasartel).
+
+* @lucasartel
+
+# Documentos canonicos de arquitetura e governanca
+/AGENTS.md @lucasartel
+/docs/DOCUMENTO_MESTRE_EMULACAO_COGNITIVA_V2.md @lucasartel
+
+# Infraestrutura de CI, seguranca e skills de coordenacao
+/.github/ @lucasartel
+/.agents/ @lucasartel
+
+# Nucleo cognitivo, loop, vontade e persistencia
+/core/ @lucasartel
+/engines/ @lucasartel
+/work/ @lucasartel
+/admin_web/ @lucasartel
+/consciousness_loop.py @lucasartel
+/will_engine.py @lucasartel
+/will_pressure.py @lucasartel
+/jung_rumination.py @lucasartel
+/dream_engine.py @lucasartel
+/telegram_bot.py @lucasartel
+/main.py @lucasartel
