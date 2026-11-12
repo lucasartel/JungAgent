@@ -4,7 +4,9 @@ import json
 import importlib.util
 import sqlite3
 import threading
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -189,6 +191,33 @@ def test_only_configured_instance_can_import_legacy_world_cache(tmp_path):
     refresh_seed = configured._cache_refresh_seed(imported)
     assert refresh_seed == {"raw_area_digest": {"ciencia": []}}
     assert foreign._load_cache() == {}
+
+
+def test_world_refresh_preserves_source_refs_without_claiming_authorization(tmp_path, monkeypatch):
+    world = WorldConsciousnessFetcher(str(tmp_path), agent_instance="agent-a")
+    monkeypatch.setattr(world, "_setting_value", lambda key, default: default)
+    monkeypatch.setattr(world, "_fetch_area_news", lambda **kwargs: {})
+    monkeypatch.setattr(world, "_fetch_weather", lambda locale: "")
+    monkeypatch.setattr(world, "_llm_enrich_lucidity", lambda state: {})
+    monkeypatch.setattr(
+        "firecrawl_client.get_firecrawl_client",
+        lambda overrides: SimpleNamespace(enabled=False, is_available=lambda: False),
+    )
+    world._save_cache({
+        "cache_timestamp": datetime.now().isoformat(),
+        "origin_class": "authorized_aggregate",
+        "knowledge_source_decision": "latent_sufficient",
+        "knowledge_findings": "A recent finding",
+        "knowledge_gap": {"knowledge_gap_id": 42},
+    })
+
+    world.get_world_state(force_refresh=True, will_state={"id": 7})
+
+    cached = world._load_cache()
+    assert "origin_class" not in cached
+    assert cached["agent_instance"] == "agent-a"
+    assert cached["ownership_class"] == "instance_global"
+    assert cached["source_refs"] == ["will#7", "knowledge_gap#42"]
 
 
 def test_world_gap_is_persisted_as_text_free_authorized_aggregate(tmp_path):

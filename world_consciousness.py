@@ -2631,7 +2631,6 @@ Estado estruturado:
             "state_version": WORLD_STATE_VERSION,
             "agent_instance": self.agent_instance,
             "ownership_class": "instance_global",
-            "origin_class": "authorized_aggregate",
             "source_refs": source_refs,
             "provenance": {
                 "producer": "world_consciousness",
