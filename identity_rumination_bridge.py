@@ -13,10 +13,16 @@ Ambos os sistemas operam apenas com o usuário master admin.
 import logging
 import json
 import asyncio
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
+from core.db.cognitive_ownership import (
+    IDENTITY_PROMOTION_POLICY,
+    assess_identity_promotion,
+)
+from core.db.relations import require_eligible_relation
 from instance_config import AGENT_INSTANCE, ADMIN_USER_ID
 from identity_config import MIN_CERTAINTY_FOR_NUCLEAR
 from rumination_config import (
@@ -61,18 +67,28 @@ class IdentityRuminationBridge:
         """
         self.db = db_connection
 
-    def _scope(self) -> tuple[str, Optional[str]]:
+    def _scope(
+        self,
+        user_id: Optional[str] = None,
+        relation_id: Optional[str] = None,
+    ) -> tuple[str, Optional[str]]:
+        participant = str(user_id or ADMIN_USER_ID)
         instance = (getattr(self.db, "agent_instance", None) or AGENT_INSTANCE).strip()
         resolver = getattr(self.db, "resolve_relation_id", None)
-        relation_id = None
+        resolved_relation = relation_id
         if callable(resolver):
-            relation_id = resolver(
+            resolved_relation = resolver(
                 agent_instance=instance,
-                participant_user_id=str(ADMIN_USER_ID),
+                participant_user_id=participant,
+                relation_id=relation_id,
             )
-            if not relation_id:
-                raise ValueError("admin_relation_required_for_identity_rumination_bridge")
-        return instance, relation_id
+            if not resolved_relation:
+                if participant == str(ADMIN_USER_ID):
+                    raise ValueError("admin_relation_required_for_identity_rumination_bridge")
+                raise ValueError("relation_required_for_identity_rumination_bridge")
+        if resolved_relation and callable(getattr(self.db, "get_agent_relation", None)):
+            require_eligible_relation(self.db, resolved_relation)
+        return instance, resolved_relation
 
     def _ensure_identity_provenance(self, cursor) -> None:
         for table in (
@@ -95,6 +111,26 @@ class IdentityRuminationBridge:
             ):
                 if column not in columns:
                     cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            if table == "agent_identity_core":
+                for col, defn in (
+                    ("contradiction_count", "INTEGER DEFAULT 0"),
+                    ("affirmation_count", "INTEGER DEFAULT 1"),
+                ):
+                    if col not in columns:
+                        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {defn}")
+
+    def _ensure_insight_sync_columns(self, cursor) -> set[str]:
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(rumination_insights)")}
+        for column, definition in (
+            ("identity_sync_status", "TEXT"),
+            ("identity_sync_reason", "TEXT"),
+            ("identity_synced_at", "TEXT"),
+            ("epistemic_status", "TEXT"),
+        ):
+            if column not in columns:
+                cursor.execute(f"ALTER TABLE rumination_insights ADD COLUMN {column} {definition}")
+                columns.add(column)
+        return columns
 
     def _stamp_identity_origin(
         self,
@@ -104,15 +140,20 @@ class IdentityRuminationBridge:
         row_id: int,
         relation_id: Optional[str],
         source_ref: str,
+        participant_user_id: Optional[str] = None,
+        extra_provenance: Optional[Dict[str, Any]] = None,
     ) -> None:
+        participant = str(participant_user_id or ADMIN_USER_ID)
         origin_class = "relation_private" if relation_id else "legacy_unscoped"
-        provenance = {
+        provenance: Dict[str, Any] = {
             "private_derived": True,
             "origin_class": origin_class,
             "origin_relation_id": relation_id,
-            "origin_participant_user_id": str(ADMIN_USER_ID),
+            "origin_participant_user_id": participant,
             "source_refs": [source_ref],
         }
+        if extra_provenance:
+            provenance.update(extra_provenance)
         cursor.execute(
             f"""UPDATE {table}
                 SET ownership_class = 'instance_global', origin_class = ?,
@@ -122,7 +163,7 @@ class IdentityRuminationBridge:
             (
                 origin_class,
                 relation_id,
-                str(ADMIN_USER_ID),
+                participant,
                 json.dumps([source_ref]),
                 json.dumps(provenance, ensure_ascii=False, sort_keys=True),
                 row_id,
@@ -222,22 +263,128 @@ class IdentityRuminationBridge:
             logger.error(f"   ❌ Erro ao sincronizar tensões: {e}")
             return 0
 
-    def sync_mature_insights_to_core(self) -> int:
+    def _resolve_insight_evidence_count(
+        self,
+        cursor,
+        *,
+        instance: str,
+        relation_id: Optional[str],
+        source_tension_id: Optional[int],
+        insight_columns: set[str],
+        row_dict: Dict[str, Any],
+    ) -> int:
+        if "evidence_count" in insight_columns and row_dict.get("evidence_count") is not None:
+            return int(row_dict["evidence_count"])
+        if not source_tension_id:
+            return 0
+        has_tensions = cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rumination_tensions'"
+        ).fetchone()
+        if not has_tensions:
+            return 0
+        tension_cols = {row[1] for row in cursor.execute("PRAGMA table_info(rumination_tensions)")}
+        if "evidence_count" not in tension_cols:
+            return 0
+        t_row = cursor.execute(
+            """
+            SELECT evidence_count
+            FROM rumination_tensions
+            WHERE id = ?
+              AND (agent_instance = ? OR agent_instance IS NULL)
+              AND COALESCE(relation_id, '') = COALESCE(?, '')
+            """,
+            (source_tension_id, instance, relation_id),
+        ).fetchone()
+        return int(t_row[0] or 0) if t_row else 0
+
+    @staticmethod
+    def _negation_signature(text: str) -> tuple[bool, str]:
+        cleaned = re.sub(r"[^\w\sÀ-ÿ]", " ", (text or "").lower())
+        tokens = [tok for tok in cleaned.split() if tok]
+        has_neg = any(tok in {"nao", "não", "nunca", "jamais", "evito", "recuso"} for tok in tokens)
+        subject_tokens = [
+            tok for tok in tokens
+            if tok not in {
+                "eu", "sou", "nao", "não", "nunca", "jamais", "sempre",
+                "valorizo", "priorizo", "evito", "recuso", "sustento", "busco",
+                "prefiro", "escolho", "reconheco", "reconheço", "percebo",
+                "de", "do", "da", "em", "no", "na", "para", "com", "por", "que",
+                "o", "a", "os", "as", "um", "uma",
+            }
+        ]
+        return has_neg, " ".join(subject_tokens[:6])
+
+    def _record_contradiction_if_present(
+        self,
+        cursor,
+        *,
+        instance: str,
+        relation_id: Optional[str],
+        attribute_type: str,
+        nuclear_content: str,
+        source_ref: str,
+    ) -> None:
+        new_neg, new_sig = self._negation_signature(nuclear_content)
+        if not new_sig:
+            return
+        cursor.execute(
+            """
+            SELECT id, content, provenance_json, contradiction_count
+            FROM agent_identity_core
+            WHERE agent_instance = ?
+              AND attribute_type = ?
+              AND is_current = 1
+              AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
+            """,
+            (instance, attribute_type, relation_id),
+        )
+        for existing_row in cursor.fetchall():
+            ex_id, ex_content, ex_prov_raw, ex_contra = existing_row
+            if ex_content == nuclear_content:
+                continue
+            ex_neg, ex_sig = self._negation_signature(ex_content or "")
+            if ex_sig and ex_sig == new_sig and ex_neg != new_neg:
+                try:
+                    ex_prov = json.loads(ex_prov_raw or "{}")
+                except ValueError:
+                    ex_prov = {}
+                contra_refs = list(ex_prov.get("contradicting_source_refs") or [])
+                if source_ref not in contra_refs:
+                    contra_refs.append(source_ref)
+                    ex_prov["contradicting_source_refs"] = contra_refs
+                    cursor.execute(
+                        """
+                        UPDATE agent_identity_core
+                        SET contradiction_count = COALESCE(contradiction_count, 0) + 1,
+                            provenance_json = ?
+                        WHERE id = ?
+                        """,
+                        (json.dumps(ex_prov, ensure_ascii=False, sort_keys=True), ex_id),
+                    )
+
+    def sync_mature_insights_to_core(
+        self,
+        user_id: Optional[str] = None,
+        relation_id: Optional[str] = None,
+    ) -> int:
         """
-        Ruminação → Identidade: Insights maduros viram crenças nucleares
+        Ruminação → Identidade: Insights maduros viram crenças nucleares sob gate R3a.
 
-        Busca insights com synthesis_level = 'symbolic' e ainda não exportados,
-        cria atributos nucleares correspondentes.
-
-        Returns:
-            int: Número de insights sincronizados
+        Regras R3a:
+        - Confere completude/legibilidade (sem punir reticências poéticas em cláusula completa).
+        - Distingue símbolo episódico, conceito de domínio e afirmação identitária sustentada.
+        - Nunca copia `symbol_content` como `trait` ou `role`.
+        - Exige `depth_score >= 0.65`, `novelty_score >= 0.60` e `evidence_count >= 2`.
+        - Calcula `certainty` pela política declarativa (nunca `0.75` fixo).
+        - Registra incorporação em `identity_sync_status`/`identity_sync_reason` sem sobrescrever
+          `status = 'delivered'` (que pertence exclusivamente à entrega externa no Telegram).
         """
         cursor = self.db.conn.cursor()
+        participant = str(user_id or ADMIN_USER_ID)
 
         try:
-            instance, relation_id = self._scope()
+            instance, resolved_relation = self._scope(user_id=participant, relation_id=relation_id)
             self._ensure_identity_provenance(cursor)
-            # Verificar se tabela existe
             cursor.execute("""
                 SELECT name FROM sqlite_master
                 WHERE type='table' AND name='rumination_insights'
@@ -246,77 +393,232 @@ class IdentityRuminationBridge:
                 logger.warning("⚠️ Tabela rumination_insights não existe - pulando sync")
                 return 0
 
-            # Buscar insights prontos (schema real: full_message, symbol_content)
-            cursor.execute("""
-                SELECT id, full_message, symbol_content,
-                       crystallized_at, source_tension_id
+            insight_columns = self._ensure_insight_sync_columns(cursor)
+            select_cols = [
+                "id",
+                "full_message",
+                "symbol_content",
+                "crystallized_at",
+                "source_tension_id",
+            ]
+            for optional_col in (
+                "depth_score",
+                "novelty_score",
+                "maturation_days",
+                "insight_type",
+                "evidence_count",
+                "identity_sync_status",
+            ):
+                if optional_col in insight_columns:
+                    select_cols.append(optional_col)
+
+            cursor.execute(
+                f"""
+                SELECT {', '.join(select_cols)}
                 FROM rumination_insights
                 WHERE user_id = ?
                   AND agent_instance = ?
                   AND COALESCE(relation_id, '') = COALESCE(?, '')
-                  AND status = 'ready'
-            """, (str(ADMIN_USER_ID), instance, relation_id))
+                  AND status IN ('ready', 'delivered')
+                  AND COALESCE(identity_sync_status, '') != 'synced'
+                """,
+                (participant, instance, resolved_relation),
+            )
 
             insights = cursor.fetchall()
-
             if not insights:
                 return 0
 
-            logger.info(f"   🔄 Sincronizando {len(insights)} insights → nuclear")
+            logger.info(f"   🔄 Avaliando {len(insights)} insights sob gate R3a → nuclear")
 
             synced_count = 0
             for row in insights:
-                insight_id, content, symbolic, crystallized, conv_id = row
+                row_dict = dict(zip(select_cols, row))
+                insight_id = int(row_dict["id"])
+                content = row_dict.get("full_message")
+                symbolic = row_dict.get("symbol_content")
+                crystallized = row_dict.get("crystallized_at")
+                source_tension_id = row_dict.get("source_tension_id")
+                depth_score = row_dict.get("depth_score")
+                novelty_score = row_dict.get("novelty_score")
+                maturation_days = int(row_dict.get("maturation_days") or 0)
+                insight_type = row_dict.get("insight_type")
 
-                # Classificar tipo de atributo baseado no conteúdo
-                # (simplificado - pode usar LLM para classificação mais precisa)
-                attribute_type = self._classify_insight_type(content, symbolic)
+                evidence_count = self._resolve_insight_evidence_count(
+                    cursor,
+                    instance=instance,
+                    relation_id=resolved_relation,
+                    source_tension_id=source_tension_id,
+                    insight_columns=insight_columns,
+                    row_dict=row_dict,
+                )
 
-                # Usar interpretação simbólica como conteúdo
-                nuclear_content = symbolic if symbolic else content
+                decision = assess_identity_promotion(
+                    content=content,
+                    symbolic=symbolic,
+                    insight_type=insight_type,
+                    depth_score=depth_score,
+                    novelty_score=novelty_score,
+                    evidence_count=evidence_count,
+                    maturation_days=maturation_days,
+                    policy=IDENTITY_PROMOTION_POLICY,
+                )
 
-                # Verificar se já existe atributo similar
-                cursor.execute("""
-                    SELECT id FROM agent_identity_core
+                if not decision.promotes:
+                    cursor.execute(
+                        """
+                        UPDATE rumination_insights
+                        SET identity_sync_status = 'deferred',
+                            identity_sync_reason = ?,
+                            epistemic_status = ?
+                        WHERE id = ?
+                        """,
+                        (decision.reason, decision.epistemic_status, insight_id),
+                    )
+                    continue
+
+                nuclear_content = decision.nuclear_content
+                attribute_type = self._classify_insight_type(nuclear_content, None)
+                source_ref = f"rumination_insight#{insight_id}"
+
+                # Verificar se já existe atributo ativo idêntico no mesmo escopo
+                cursor.execute(
+                    """
+                    SELECT id, certainty, source_refs_json, provenance_json
+                    FROM agent_identity_core
                     WHERE agent_instance = ?
                       AND content = ?
                       AND is_current = 1
                       AND COALESCE(origin_relation_id, '') = COALESCE(?, '')
-                """, (instance, nuclear_content, relation_id))
+                    """,
+                    (instance, nuclear_content, resolved_relation),
+                )
+                existing = cursor.fetchone()
+                if existing:
+                    existing_id, existing_certainty, existing_refs_raw, existing_prov_raw = existing
+                    try:
+                        existing_refs = json.loads(existing_refs_raw or "[]")
+                    except ValueError:
+                        existing_refs = []
+                    try:
+                        existing_prov = json.loads(existing_prov_raw or "{}")
+                    except ValueError:
+                        existing_prov = {}
 
-                if cursor.fetchone():
-                    continue  # Já existe, pular
+                    if source_ref in existing_refs:
+                        cursor.execute(
+                            """
+                            UPDATE rumination_insights
+                            SET identity_sync_status = 'synced',
+                                identity_sync_reason = 'replay_already_synced',
+                                epistemic_status = ?,
+                                identity_synced_at = COALESCE(identity_synced_at, CURRENT_TIMESTAMP)
+                            WHERE id = ?
+                            """,
+                            (decision.epistemic_status, insight_id),
+                        )
+                        continue
 
-                # Criar novo atributo nuclear
-                cursor.execute("""
+                    existing_refs.append(source_ref)
+                    revised_certainty = round(
+                        min(
+                            IDENTITY_PROMOTION_POLICY.max_certainty,
+                            max(float(existing_certainty or 0.0), float(decision.certainty or 0.0)) + 0.02,
+                        ),
+                        2,
+                    )
+                    existing_prov["source_refs"] = existing_refs
+                    existing_prov["last_revised_by"] = source_ref
+                    existing_prov["epistemic_status"] = decision.epistemic_status
+                    existing_prov["confidence_policy"] = decision.policy_version
+                    cursor.execute(
+                        """
+                        UPDATE agent_identity_core
+                        SET certainty = ?,
+                            affirmation_count = COALESCE(affirmation_count, 1) + 1,
+                            last_reaffirmed_at = CURRENT_TIMESTAMP,
+                            source_refs_json = ?,
+                            provenance_json = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            revised_certainty,
+                            json.dumps(existing_refs),
+                            json.dumps(existing_prov, ensure_ascii=False, sort_keys=True),
+                            existing_id,
+                        ),
+                    )
+                    cursor.execute(
+                        """
+                        UPDATE rumination_insights
+                        SET identity_sync_status = 'synced',
+                            identity_sync_reason = 'reaffirmed_existing_attribute',
+                            epistemic_status = ?,
+                            identity_synced_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (decision.epistemic_status, insight_id),
+                    )
+                    synced_count += 1
+                    continue
+
+                self._record_contradiction_if_present(
+                    cursor,
+                    instance=instance,
+                    relation_id=resolved_relation,
+                    attribute_type=attribute_type,
+                    nuclear_content=nuclear_content,
+                    source_ref=source_ref,
+                )
+
+                cursor.execute(
+                    """
                     INSERT INTO agent_identity_core (
                         agent_instance, attribute_type, content, certainty,
                         first_crystallized_at, last_reaffirmed_at,
                         supporting_conversation_ids, emerged_in_relation_to
                     ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
-                """, (
-                    instance,
-                    attribute_type,
-                    nuclear_content,
-                    0.75,  # Certainty moderado para insights de ruminação
-                    crystallized if crystallized else datetime.now().isoformat(),
-                    json.dumps([conv_id] if conv_id else []),
-                    'ruminação sobre interações'
-                ))
+                    """,
+                    (
+                        instance,
+                        attribute_type,
+                        nuclear_content,
+                        decision.certainty,
+                        crystallized if crystallized else datetime.now().isoformat(),
+                        json.dumps([source_tension_id] if source_tension_id else []),
+                        'ruminação sobre interações',
+                    ),
+                )
                 self._stamp_identity_origin(
                     cursor,
                     table="agent_identity_core",
                     row_id=int(cursor.lastrowid),
-                    relation_id=relation_id,
-                    source_ref=f"rumination_insight#{insight_id}",
+                    relation_id=resolved_relation,
+                    source_ref=source_ref,
+                    participant_user_id=participant,
+                    extra_provenance={
+                        "epistemic_status": decision.epistemic_status,
+                        "confidence_policy": decision.policy_version,
+                        "promotion_reason": decision.reason,
+                        "depth_score": depth_score,
+                        "novelty_score": novelty_score,
+                        "evidence_count": evidence_count,
+                        "maturation_days": maturation_days,
+                        "symbolic_image": symbolic or None,
+                    },
                 )
 
-                # Marcar insight como entregue
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE rumination_insights
-                    SET status = 'delivered'
+                    SET identity_sync_status = 'synced',
+                        identity_sync_reason = ?,
+                        epistemic_status = ?,
+                        identity_synced_at = CURRENT_TIMESTAMP
                     WHERE id = ?
-                """, (insight_id,))
+                    """,
+                    (decision.reason, decision.epistemic_status, insight_id),
+                )
 
                 synced_count += 1
 
