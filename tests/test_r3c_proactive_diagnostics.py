@@ -59,24 +59,24 @@ def make_relational_release(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "case,response,summary,calls",
+    "case,response,summary,code,calls",
     [
         ("revoked", None, "A proatividade relacional foi recusada pelo escopo da relacao.",
-         ["scope"]),
+         "proactive_scope_denied", ["scope"]),
         ("cooldown", None, "A proatividade relacional esta no intervalo minimo entre contatos.",
-         ["scope", "cooldown"]),
+         "proactive_cooldown", ["scope", "cooldown"]),
         ("empty", '{"text": "  "}', "A geracao proativa relacional nao retornou texto.",
-         ["scope", "cooldown", "generate"]),
+         "proactive_empty_message", ["scope", "cooldown", "generate"]),
         ("blank", "  ", "A geracao proativa relacional nao retornou texto.",
-         ["scope", "cooldown", "generate"]),
+         "proactive_empty_message", ["scope", "cooldown", "generate"]),
         ("invalid", "not JSON", "A geracao proativa relacional falhou.",
-         ["scope", "cooldown", "generate"]),
+         "proactive_generation_error", ["scope", "cooldown", "generate"]),
         ("exception", RuntimeError("private details"), "A geracao proativa relacional falhou.",
-         ["scope", "cooldown", "generate"]),
+         "proactive_generation_error", ["scope", "cooldown", "generate"]),
     ],
 )
 def test_relational_no_message_records_reason_without_delivery(
-    make_relational_release, case, response, summary, calls,
+    make_relational_release, case, response, summary, code, calls,
 ):
     system, engine, actual_calls = make_relational_release(case, response)
     expressions = WillExpressionEngine(engine.db)
@@ -95,12 +95,39 @@ def test_relational_no_message_records_reason_without_delivery(
     assert "pending_delivery" not in result
     assert result["action_summary"] == summary
     assert result["expression"]["reason"] == summary
-    receipts = engine.db.conn.execute("SELECT status FROM will_expression_receipts").fetchall()
-    assert [row["status"] for row in receipts] == ["failed"]
     replay = prepare()
     assert replay["reused"] is True
     assert replay["action_summary"] == summary
+    receipts = engine.db.conn.execute(
+        "SELECT status, result_code FROM will_expression_receipts WHERE expression_id = ?",
+        (result["expression"]["id"],),
+    ).fetchall()
+    assert [tuple(row) for row in receipts] == [("failed", code)]
     assert actual_calls == calls
+
+
+@pytest.mark.parametrize("will,reason", [
+    ("relacionar", None),
+    ("relacionar", "unknown_reason"),
+    ("relacionar", {"unexpected": "value"}),
+    ("saber", "generation_error"),
+])
+def test_unrecognized_preparation_reason_keeps_generic_receipt(make_relational_release, will, reason):
+    system, engine, _ = make_relational_release("empty", "")
+    result = WillExpressionEngine(engine.db).prepare(
+        user_id="u",
+        cycle_id="cycle",
+        will_name=will,
+        proactive_system=system,
+        prepare_capability=lambda _: {"success": False, "preparation_reason": reason},
+    )
+    assert result["status"] == "failed"
+    assert "pending_delivery" not in result
+    receipt = engine.db.conn.execute(
+        "SELECT result_code FROM will_expression_receipts WHERE expression_id = ?",
+        (result["expression"]["id"],),
+    ).fetchone()
+    assert receipt["result_code"] == "delivery_not_prepared"
 
 
 def test_relational_valid_text_preserves_delivery_payload(make_relational_release):

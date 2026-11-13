@@ -1032,6 +1032,7 @@ ESTADO QUALITATIVO:
         if not payload:
             return {
                 "success": False,
+                "preparation_reason": reason,
                 "action_summary": RELATIONAL_NO_MESSAGE_SUMMARIES.get(
                     reason, "A proatividade relacional nao encontrou mensagem valida para enviar.",
                 ),
