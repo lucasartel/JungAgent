@@ -14,6 +14,7 @@ for name, client in (("openai", "OpenAI"), ("anthropic", "Anthropic")):
 
 import jung_proactive_advanced as proactive
 from engines.will_expression import WillExpressionEngine
+from test_will_relation_scope import ScopedWillDB
 from will_pressure import WillPressureEngine
 
 
@@ -121,3 +122,79 @@ def test_relational_valid_text_preserves_delivery_payload(make_relational_releas
         },
     }
     assert calls == ["scope", "cooldown", "generate"]
+
+
+@pytest.fixture
+def scoped_db():
+    db = ScopedWillDB()
+    try:
+        yield db
+    finally:
+        db.conn.close()
+
+
+@pytest.mark.parametrize(
+    "will,consent,availability,status,reason",
+    [
+        ("relacionar", "granted", "available", "triggered", None),
+        ("relacionar", "revoked", "available", "blocked", "relation_consent_required"),
+        ("relacionar", "granted", "paused", "blocked", "availability_paused"),
+        ("expressar", "granted", "available", "blocked", "paid_capability_not_enabled"),
+    ],
+)
+def test_will_pulse_with_paid_images_off(
+    monkeypatch, scoped_db, will, consent, availability, status, reason,
+):
+    db = scoped_db
+    monkeypatch.setenv("WILL_PAID_CAPABILITIES_ENABLED", "false")
+    monkeypatch.setattr("instance_config.IMAGE_GENERATION_ENABLED", False)
+    monkeypatch.setattr("will_engine.load_latest_will_state", lambda *args, **kwargs: {})
+    user = "r3c-participant"
+    relation = db.register_agent_relation(
+        agent_instance=db.agent_instance, participant_user_id=user, consent_status=consent,
+    )
+    scope = {"scope_kind": "relation", "relation_id": relation, "agent_instance": db.agent_instance}
+    db.configure_availability(scope, status=availability)
+    db.get_user = lambda _: {"platform_id": "synthetic"}
+    engine = WillPressureEngine(db, threshold=51)
+    state = engine._get_or_create_state(user, "cycle", **scope)
+    state[f"{will}_pressure"] = 60.0
+    monkeypatch.setattr(engine, "recalculate_pressure", lambda **kwargs: state)
+    monkeypatch.setattr(engine, "_execute_expressar_release", lambda *args: pytest.fail("visual executor ran"))
+
+    system = object.__new__(proactive.ProactiveAdvancedSystem)
+    system.db = db
+    system.cooldown_hours = 6
+    system._refresh_runtime_settings = lambda: None
+    system._is_in_relational_cooldown = lambda *args, **kwargs: False
+    system._get_rich_conversation_context = lambda *args, **kwargs: "synthetic context"
+    system._get_previous_proactive_messages = lambda *args, **kwargs: ""
+    generated = []
+
+    def generate(**kwargs):
+        generated.append(True)
+        return '{"text": "Contato de teste."}'
+
+    monkeypatch.setattr(proactive, "send_to_xai", generate)
+
+    result = engine.run_pulse(user, proactive_system=system, **scope)
+
+    assert result["status"] == status
+    assert result["winner"] == will
+    assert result["pressure_state"][f"{will}_pressure"] == 60.0
+    expression = result["expression"]
+    assert expression["relation_id"] == relation
+    assert expression["agent_instance"] == db.agent_instance
+    assert expression["capability_key"] == (
+        "relacionar_proactive_message" if will == "relacionar" else "expressar_visual_artifact"
+    )
+    if reason is None:
+        assert generated == [True]
+        assert result["pending_delivery"]["text"] == "Contato de teste."
+    else:
+        assert not generated
+        assert not result.get("pending_delivery")
+        assert result["action_summary"] == reason
+    codes = db.conn.execute("SELECT result_code FROM will_expression_receipts ORDER BY id")
+    expected_codes = ["delivery_prepared", "delivery_claimed"] if reason is None else [reason]
+    assert [row[0] for row in codes] == expected_codes
