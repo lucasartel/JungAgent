@@ -29,7 +29,7 @@ import os
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Literal, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from instance_settings import get_setting_value
@@ -57,6 +57,8 @@ except ImportError:
 # LOGGER
 # ============================================================
 logger = logging.getLogger(__name__)
+
+PressureMessageReason = Literal["scope_denied", "cooldown", "empty_message", "generation_error"]
 
 # ============================================================
 # CONFIGURAÇÕES DE TEMPO (Editáveis Manualmente)
@@ -890,7 +892,19 @@ Mensagem enviada: "{message}..."
         user_name: str,
         pressure_context: Dict,
     ) -> Optional[Dict]:
-        """Gera uma mensagem relacional guiada pela pressão do Will, sem enviar nem persistir."""
+        """Gera o payload legado, ou None quando nao houver mensagem."""
+        payload, _ = self.generate_pressure_based_message_with_diagnostics(
+            user_id, user_name, pressure_context,
+        )
+        return payload
+
+    def generate_pressure_based_message_with_diagnostics(
+        self,
+        user_id: str,
+        user_name: str,
+        pressure_context: Dict,
+    ) -> Tuple[Optional[Dict], Optional[PressureMessageReason]]:
+        """Gera uma mensagem relacional ou o motivo da ausencia, sem enviar nem persistir."""
         from core.db.relation_scope import resolve_relation_query_scope
 
         try:
@@ -901,11 +915,11 @@ Mensagem enviada: "{message}..."
                 "⏸️ [PROATIVO] Pulso relacional recusado pelo escopo de Relation: %s",
                 scope_err,
             )
-            return None
+            return None, "scope_denied"
         self._refresh_runtime_settings()
         if self._is_in_relational_cooldown(user_id, minimum_hours=max(6.0, self.cooldown_hours / 2)):
             logger.info("⏸️ [PROATIVO] Pulso relacional bloqueado por cooldown secundário.")
-            return None
+            return None, "cooldown"
 
         rich_context = self._get_rich_conversation_context(user_id, limit=5)
         previous_proactives = self._get_previous_proactive_messages(user_id, limit=3)
@@ -955,19 +969,22 @@ Responda APENAS com JSON válido:
                 cleaned = cleaned[3:]
             if cleaned.endswith("```"):
                 cleaned = cleaned[:-3]
-            data = json.loads(cleaned.strip())
+            cleaned = cleaned.strip()
+            if not cleaned:
+                return None, "empty_message"
+            data = json.loads(cleaned)
             text = self._clean_llm_text(data.get("text") or "")
             if not text:
-                return None
+                return None, "empty_message"
             return {
                 "text": text.replace("**", "*"),
                 "topic": data.get("topic") or "aprofundamento relacional",
                 "message_type": data.get("message_type") or "pressure_relational",
                 "pressure_summary": current_conflict,
-            }
+            }, None
         except Exception as e:
             logger.info(f"❌ Erro ao gerar mensagem relacional guiada por pressão: {e}")
-            return None
+            return None, "generation_error"
 
     def record_pressure_based_message(
         self,
