@@ -347,7 +347,12 @@ class WillExpressionEngine:
         delivery = prepared.get("pending_delivery")
         if not prepared.get("success") or not delivery:
             reason = prepared.get("action_summary") or "capability_did_not_prepare_delivery"
-            expression = self._finish_preparation(expression["id"], "failed", reason, "delivery_not_prepared")
+            result_code = "delivery_not_prepared"
+            if expression.get("capability_key") == "relacionar_proactive_message":
+                preparation_reason = prepared.get("preparation_reason")
+                if preparation_reason in ("scope_denied", "cooldown", "empty_message", "generation_error"):
+                    result_code = "proactive_" + preparation_reason
+            expression = self._finish_preparation(expression["id"], "failed", reason, result_code)
             if expression["status"] != "failed":
                 return self._reuse(expression)
             return {"status": "failed", "expression": expression, "action_summary": reason, "payload": prepared.get("payload")}
