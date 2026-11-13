@@ -11,12 +11,57 @@ from types import SimpleNamespace
 import pytest
 
 from engines.will_phase_arbitration import WillPhaseArbitration
-from engines.will_recovery import utc_time
+from engines.will_recovery import classify_proactive_cooldown, utc_time
 from scripts.remote_db_probe import query_expressions
 from test_will_delivery_receipt import CYCLE, EVIDENCE, USER, delivery, finish, state
 from test_will_expression import _engine
 from test_will_phase_arbitration import USER as WORLD_USER, completed, context
 from will_pressure import WillPressureEngine
+
+
+@pytest.mark.parametrize(
+    "code,failed_at,deadline,now,expected",
+    [
+        ("proactive_cooldown", "12:00", "13:00", "12:59", "waiting"),
+        ("proactive_cooldown", "12:00", "13:00", "13:00", "cooldown_elapsed"),
+        ("proactive_cooldown", "12:00", "13:00", "13:01", "cooldown_elapsed"),
+        ("proactive_cooldown", "12:00", "12:00", "13:00", "no_transition"),
+        ("proactive_cooldown", "12:00", "11:00", "13:00", "no_transition"),
+        ("proactive_cooldown", "12:00", "13:00", "11:59", "no_transition"),
+        ("proactive_cooldown", "12:00", None, "13:00", "no_transition"),
+        ("proactive_cooldown", None, "13:00", "13:00", "no_transition"),
+        ("proactive_cooldown", "12:00", "13:00", None, "no_transition"),
+        ("proactive_generation_error", "12:00", "13:00", "13:01", "no_transition"),
+    ],
+)
+def test_classify_proactive_cooldown(code, failed_at, deadline, now, expected):
+    def timestamp(clock):
+        return f"2026-11-13T{clock}:00Z" if clock else None
+
+    assert classify_proactive_cooldown(
+        code,
+        failed_at=timestamp(failed_at),
+        cooldown_until=timestamp(deadline),
+        now=timestamp(now),
+    ) == expected
+
+
+def test_classify_proactive_cooldown_normalizes_offsets():
+    assert classify_proactive_cooldown(
+        "proactive_cooldown",
+        failed_at="2026-11-13T08:00:00-03:00",
+        cooldown_until="2026-11-13T09:00:00-03:00",
+        now="2026-11-13T12:00:00Z",
+    ) == "cooldown_elapsed"
+
+
+def test_classify_proactive_cooldown_rejects_unrepresentable_utc():
+    assert classify_proactive_cooldown(
+        "proactive_cooldown",
+        failed_at="0001-01-01T00:00:00+01:00",
+        cooldown_until="2026-11-13T13:00:00Z",
+        now="2026-11-13T13:00:00Z",
+    ) == "no_transition"
 
 
 def fail_pressure(context, success=True):
