@@ -524,16 +524,35 @@ def test_binding_is_idempotent_but_not_replaceable(delivery):
     assert state(delivery)["relacionar_pressure"] == 70
 
 
-def test_reused_completed_pulse_does_not_record_frustration(delivery, monkeypatch):
+@pytest.mark.parametrize(
+    "prior_status,prior_summary,expected_summary",
+    [
+        ("completed", "Entrega confirmada.", "Entrega confirmada."),
+        ("failed", "Sem texto.", "Tentativa anterior reutilizada; sem nova geracao. Sem texto."),
+        ("failed", "", "Tentativa anterior reutilizada; sem nova geracao."),
+    ],
+)
+def test_reused_pulse_does_not_record_frustration(
+    delivery, monkeypatch, prior_status, prior_summary, expected_summary,
+):
     import will_engine
     monkeypatch.setattr(will_engine, "load_latest_will_state", lambda *args, **kwargs: {})
     monkeypatch.setattr(delivery.pressure, "recalculate_pressure",
                         lambda user_id: {**state(delivery), "relacionar_pressure": 70})
-    monkeypatch.setattr(delivery.pressure, "_prepare_expression_release",
-                        lambda **kwargs: {"status": "completed", "reused": True,
-                                          "expression": {"id": delivery.expression_id}})
+    previous = {"status": prior_status, "reused": True, "action_summary": prior_summary,
+                "expression": {"id": delivery.expression_id}}
+    monkeypatch.setattr(delivery.pressure, "_prepare_expression_release", lambda **kwargs: previous)
     result = delivery.pressure.run_pulse(USER)
+
     assert result["status"] == "expression_reused"
+    assert result["action_summary"] == expected_summary
+    assert result["pressure_state"]["relacionar_pressure"] == 70
+    assert "pending_delivery" not in result
+    assert previous["action_summary"] == prior_summary
+    event = delivery.db.conn.execute(
+        "SELECT status, action_summary FROM agent_will_pulse_events WHERE id = ?", (result["event_id"],),
+    ).fetchone()
+    assert tuple(event) == ("expression_reused", expected_summary)
     assert delivery.db.conn.execute("SELECT COUNT(*) FROM rumination_log").fetchone()[0] == 0
 
 
