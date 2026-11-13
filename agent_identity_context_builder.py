@@ -576,7 +576,8 @@ class AgentIdentityContextBuilder:
                 internal_questions_json,
                 cycle_id,
                 status,
-                created_at
+                created_at,
+                source_summary_json
             FROM agent_meta_consciousness
             WHERE agent_instance = ? AND user_id = ?
             ORDER BY created_at DESC, id DESC
@@ -589,6 +590,16 @@ class AgentIdentityContextBuilder:
         if not row:
             return None
 
+        status = row[7]
+        source_summary = json.loads(row[9]) if len(row) > 9 and row[9] else {}
+        diag = (
+            source_summary.get("r3b_diagnostics")
+            if isinstance(source_summary, dict)
+            else None
+        ) or {}
+        epistemic_status = diag.get("epistemic_status") or (
+            "heuristic_contingency" if status == "fallback" else "validated_deliberation"
+        )
         return {
             "dominant_form": row[0],
             "emergent_shift": row[1],
@@ -597,8 +608,12 @@ class AgentIdentityContextBuilder:
             "integration_note": row[4],
             "internal_questions": json.loads(row[5]) if row[5] else [],
             "cycle_id": row[6],
-            "status": row[7],
+            "status": status,
             "created_at": row[8],
+            "source_summary": source_summary,
+            "epistemic_status": epistemic_status,
+            "fallback_reason": diag.get("fallback_reason"),
+            "r3b_diagnostics": diag,
         }
 
     def _get_possible_selves(self, cursor, limit: int, relation_id: Optional[str] = None) -> List[Dict]:
@@ -1790,23 +1805,40 @@ class AgentIdentityContextBuilder:
         if not row:
             base_state = None
         else:
+            source_summary = json.loads(row[13]) if row[13] else {}
+            diag = (
+                source_summary.get("r3b_diagnostics")
+                if isinstance(source_summary, dict)
+                else None
+            ) or {}
+            status_val = str(row[3] or "")
+            if status_val in {"fallback", "preliminary_fallback"}:
+                default_epistemic = "heuristic_contingency"
+            elif status_val == "preliminary_generated":
+                default_epistemic = "preliminary_deliberation"
+            else:
+                default_epistemic = "validated_deliberation"
             base_state = {
-            "id": row[0],
-            "cycle_id": row[1],
-            "phase": row[2],
-            "status": row[3],
-            "saber_score": row[4],
-            "relacionar_score": row[5],
-            "expressar_score": row[6],
-            "dominant_will": row[7],
-            "secondary_will": row[8],
-            "constrained_will": row[9],
-            "will_conflict": row[10],
-            "attention_bias_note": row[11],
-            "daily_text": row[12],
-            "source_summary": json.loads(row[13]) if row[13] else {},
-            "created_at": row[14],
-        }
+                "id": row[0],
+                "cycle_id": row[1],
+                "phase": row[2],
+                "status": row[3],
+                "saber_score": row[4],
+                "relacionar_score": row[5],
+                "expressar_score": row[6],
+                "dominant_will": row[7],
+                "secondary_will": row[8],
+                "constrained_will": row[9],
+                "will_conflict": row[10],
+                "attention_bias_note": row[11],
+                "daily_text": row[12],
+                "source_summary": source_summary,
+                "created_at": row[14],
+                "epistemic_status": diag.get("epistemic_status") or default_epistemic,
+                "fallback_reason": diag.get("fallback_reason"),
+                "state_origin": diag.get("state_origin") or status_val,
+                "r3b_diagnostics": diag,
+            }
         message_summary = _aggregate_message_signals(
             cursor,
             user_id=user_id,
@@ -2130,12 +2162,18 @@ class AgentIdentityContextBuilder:
             "meta_consciousness_questions": (meta_consciousness or {}).get("internal_questions") or [],
             "meta_consciousness_gravity": (meta_consciousness or {}).get("dominant_gravity"),
             "meta_consciousness_shift": (meta_consciousness or {}).get("emergent_shift"),
+            "meta_consciousness_status": (meta_consciousness or {}).get("status"),
+            "meta_consciousness_epistemic_status": (meta_consciousness or {}).get("epistemic_status"),
+            "meta_consciousness_fallback_reason": (meta_consciousness or {}).get("fallback_reason"),
             "dream_residue": dream_signal,
             "world_knowledge_signal": world_knowledge_signal,
             "work_autobiography": work_autobiography,
             "recent_hobby_art": recent_hobby_art,
             "architectural_self_awareness": architectural_self_awareness,
             "will_signal": will_signal,
+            "will_status": will_signal.get("status") if will_signal else None,
+            "will_epistemic_status": will_signal.get("epistemic_status") if will_signal else None,
+            "will_fallback_reason": will_signal.get("fallback_reason") if will_signal else None,
             "will_state": (
                 {
                     "saber": will_signal.get("saber_score"),
@@ -2449,8 +2487,14 @@ class AgentIdentityContextBuilder:
         meta_consciousness_note = current_state.get("meta_consciousness_note")
         meta_consciousness_gravity = current_state.get("meta_consciousness_gravity")
         meta_consciousness_questions = current_state.get("meta_consciousness_questions") or []
+        meta_status = current_state.get("meta_consciousness_status")
+        meta_epistemic = current_state.get("meta_consciousness_epistemic_status")
         if meta_consciousness_note or meta_consciousness_gravity or meta_consciousness_questions:
             lines.append("### Metaconsciousness")
+            if meta_status == "fallback" or meta_epistemic == "heuristic_contingency":
+                lines.append(
+                    "- Estatuto da leitura metaconsciente: contingencia heuristica (nao validada como deliberacao LLM)."
+                )
             if meta_consciousness_note:
                 lines.append(f"- No seu proprio devir agora, voce percebe: {meta_consciousness_note}")
             if meta_consciousness_gravity:
@@ -2461,7 +2505,17 @@ class AgentIdentityContextBuilder:
 
         if current_state.get("will_signal"):
             will_signal = current_state["will_signal"]
+            will_status = current_state.get("will_status") or will_signal.get("status")
+            will_epistemic = current_state.get("will_epistemic_status") or will_signal.get("epistemic_status")
             lines.append("### Will State")
+            if will_status in {"fallback", "preliminary_fallback"} or will_epistemic == "heuristic_contingency":
+                lines.append(
+                    "- Estatuto do estado de vontade: contingencia heuristica (nao tratar como nova deliberacao validada)."
+                )
+            elif will_status == "preliminary_generated" or will_epistemic == "preliminary_deliberation":
+                lines.append(
+                    "- Estatuto do estado de vontade: deliberacao preliminar da fase de identidade."
+                )
             lines.append(
                 f"- A direcao dominante hoje passa pela vontade de {will_signal.get('dominant_will') or 'equilibrio'}, "
                 f"com a vontade de {will_signal.get('secondary_will') or 'equilibrio'} como apoio."

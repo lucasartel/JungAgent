@@ -338,7 +338,20 @@ def _row_to_will_state(row: Any) -> Dict[str, Any]:
     if not row:
         return {}
     data = dict(row)
-    data["source_summary"] = _parse_json_field(data.get("source_summary_json"), {})
+    summary = _parse_json_field(data.get("source_summary_json"), {})
+    data["source_summary"] = summary
+    diag = (summary.get("r3b_diagnostics") if isinstance(summary, dict) else None) or {}
+    status = str(data.get("status") or "")
+    if status in {"fallback", "preliminary_fallback"}:
+        default_epistemic = "heuristic_contingency"
+    elif status == "preliminary_generated":
+        default_epistemic = "preliminary_deliberation"
+    else:
+        default_epistemic = "validated_deliberation"
+    data["r3b_diagnostics"] = diag
+    data["fallback_reason"] = diag.get("fallback_reason")
+    data["epistemic_status"] = diag.get("epistemic_status") or default_epistemic
+    data["state_origin"] = diag.get("state_origin") or status
     return data
 
 
@@ -426,6 +439,15 @@ def load_latest_will_state_from_sqlite(
                 agent_instance=scope.get("agent_instance"),
                 scope_kind=scope.get("scope_kind"),
             )
+            if pressure_state is None and cycle_id is not None:
+                pressure_state = load_latest_pressure_state_from_sqlite(
+                    user_id=user_id,
+                    cycle_id=None,
+                    db_path=path,
+                    relation_id=scope.get("relation_id"),
+                    agent_instance=scope.get("agent_instance"),
+                    scope_kind=scope.get("scope_kind"),
+                )
         except Exception:
             pressure_state = None
         return _merge_pressure_state(blended, pressure_state)
@@ -486,6 +508,15 @@ def load_latest_will_state(
             agent_instance=scope.get("agent_instance"),
             scope_kind=scope.get("scope_kind"),
         )
+        if pressure_state is None and cycle_id is not None:
+            pressure_state = load_latest_pressure_state(
+                db_manager,
+                user_id=user_id,
+                cycle_id=None,
+                relation_id=scope.get("relation_id"),
+                agent_instance=scope.get("agent_instance"),
+                scope_kind=scope.get("scope_kind"),
+            )
     except Exception:
         pressure_state = None
     return _merge_pressure_state(blended, pressure_state)
@@ -1181,10 +1212,42 @@ Fase de origem: {source_phase}
 Material do ciclo:
 {json.dumps(payload, ensure_ascii=False)}
 """
-        raw = get_llm_response(prompt, temperature=0.45, max_tokens=700)
-        data = self._extract_json(raw)
+        from engines.fallback_diagnostics import (
+            StructuredLLMValidationError,
+             execute_with_bounded_retry,
+            parse_and_classify_json_response,
+        )
+
+        input_sufficient = not bool(payload.get("force_insufficient_input"))
+
+        def _validate_will_json(raw_text: str) -> Dict[str, Any]:
+            return parse_and_classify_json_response(
+                raw_text,
+                any_of_keys=(
+                    "saber_score",
+                    "relacionar_score",
+                    "expressar_score",
+                    "dominant_will",
+                    "will_conflict",
+                    "daily_text",
+                ),
+            )
+
+        data, diag = execute_with_bounded_retry(
+            component=f"will_engine:{source_phase}",
+            base_prompt=prompt,
+            temperature=0.45,
+            max_tokens=700,
+            llm_Point=get_llm_response,
+            validator=_validate_will_json,
+            input_sufficient=input_sufficient,
+        )
+        self._last_llm_diagnostics = diag
         if not data:
-            raise ValueError("WillEngine nao recebeu JSON utilizavel do modelo")
+            raise StructuredLLMValidationError(
+                diag.get("fallback_reason") or "invalid_json",
+                diag.get("validation_detail") or "WillEngine nao recebeu JSON utilizavel do modelo",
+            )
 
         fallback = self._fallback_state(payload, source_phase)
         scores = {
@@ -1287,6 +1350,12 @@ Material do ciclo:
         agent_instance: Optional[str] = None,
         scope_kind: Optional[str] = None,
     ) -> Dict[str, Any]:
+        from engines.fallback_diagnostics import (
+            classify_exception_reason,
+            compute_table_fallback_telemetry,
+            resolve_active_provider_metadata,
+        )
+
         if not cycle_id:
             cycle_id = datetime.utcnow().strftime("%Y-%m-%d")
         scope = scope_context(
@@ -1309,11 +1378,36 @@ Material do ciclo:
             scope_kind=scope.get("scope_kind"),
         )
 
+        self._last_llm_diagnostics = None
         status = "generated"
         try:
             state = self._generate_with_llm(payload, source_phase)
+            diag = getattr(self, "_last_llm_diagnostics", None) or {
+                "component": f"will_engine:{source_phase}",
+                **resolve_active_provider_metadata(),
+                "attempt_count": 1,
+                "fallback_reason": None,
+                "validation_detail": "ok",
+                "recovered_on_retry": False,
+            }
         except Exception as exc:
-            logger.warning("WillEngine caiu em fallback heuristico: %s", exc)
+            diag = getattr(self, "_last_llm_diagnostics", None)
+            if not diag:
+                reason, detail = classify_exception_reason(exc)
+                diag = {
+                    "component": f"will_engine:{source_phase}",
+                    **resolve_active_provider_metadata(),
+                    "attempt_count": 1,
+                    "fallback_reason": reason,
+                    "validation_detail": detail,
+                    "recovered_on_retry": False,
+                }
+            logger.warning(
+                "WillEngine caiu em fallback heuristico (reason=%s attempts=%s): %s",
+                diag.get("fallback_reason"),
+                diag.get("attempt_count"),
+                exc,
+            )
             state = self._fallback_state(payload, source_phase)
             status = "fallback"
 
@@ -1329,6 +1423,23 @@ Material do ciclo:
         if source_phase == "identity":
             status = f"preliminary_{status}"
 
+        cursor = self.db.conn.cursor()
+        scope_sql, scope_params = scope_where_clause(cursor, "agent_will_states", scope)
+        telemetry = compute_table_fallback_telemetry(
+            cursor,
+            table="agent_will_states",
+            user_id=user_id,
+            where_clause=scope_sql,
+            where_params=scope_params,
+            current_status=status,
+            current_reason=diag.get("fallback_reason"),
+            recovered_on_retry=bool(diag.get("recovered_on_retry")),
+            retry_trigger_reason=diag.get("retry_trigger_reason"),
+        )
+        r3b_diagnostics = {**diag, **telemetry}
+        source_summary = dict(payload.get("source_summary") or {})
+        source_summary["r3b_diagnostics"] = r3b_diagnostics
+
         state_id = self._save_state(
             user_id=user_id,
             cycle_id=cycle_id,
@@ -1336,7 +1447,7 @@ Material do ciclo:
             trigger_source=trigger_source,
             status=status,
             state=state,
-            source_summary=payload.get("source_summary") or {},
+            source_summary=source_summary,
             scope=scope,
         )
         saved = load_latest_will_state(
@@ -1349,7 +1460,11 @@ Material do ciclo:
         ) or {}
         saved.update(state)
         saved["id"] = saved.get("id") or state_id
-        saved["source_summary"] = payload.get("source_summary") or {}
+        saved["source_summary"] = source_summary
+        saved["fallback_reason"] = r3b_diagnostics.get("fallback_reason")
+        saved["epistemic_status"] = r3b_diagnostics.get("epistemic_status")
+        saved["state_origin"] = r3b_diagnostics.get("state_origin")
+        saved["r3b_diagnostics"] = r3b_diagnostics
         saved["will_scope"] = scope
         return saved
 

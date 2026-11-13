@@ -234,6 +234,16 @@ async def get_meta_consciousness_status(
         )
         total_readings = int(cursor.fetchone()[0])
 
+        from engines.fallback_diagnostics import compute_table_fallback_telemetry
+
+        telemetry = compute_table_fallback_telemetry(
+            cursor,
+            table="agent_meta_consciousness",
+            user_id=ADMIN_USER_ID,
+            where_clause=" AND agent_instance = ?",
+            where_params=(AGENT_INSTANCE,),
+        )
+
         if not row:
             return {
                 "success": True,
@@ -241,21 +251,35 @@ async def get_meta_consciousness_status(
                 "stats": {
                     "total_readings": total_readings,
                     "is_active": False,
+                    "fallback_telemetry": telemetry,
                 },
             }
 
+        source_summary = json.loads(row[10]) if row[10] else {}
+        diag = (
+            source_summary.get("r3b_diagnostics")
+            if isinstance(source_summary, dict)
+            else None
+        ) or {}
+        status = row[3]
+        epistemic_status = diag.get("epistemic_status") or (
+            "heuristic_contingency" if status == "fallback" else "validated_deliberation"
+        )
         meta = {
             "id": row[0],
             "cycle_id": row[1],
             "phase": row[2],
-            "status": row[3],
+            "status": status,
+            "epistemic_status": epistemic_status,
+            "fallback_reason": diag.get("fallback_reason"),
+            "r3b_diagnostics": diag,
             "dominant_form": row[4],
             "emergent_shift": row[5],
             "dominant_gravity": row[6],
             "blind_spot": row[7],
             "integration_note": row[8],
             "internal_questions": json.loads(row[9]) if row[9] else [],
-            "source_summary": json.loads(row[10]) if row[10] else {},
+            "source_summary": source_summary,
             "trigger_source": row[11],
             "created_at": row[12],
         }
@@ -268,6 +292,7 @@ async def get_meta_consciousness_status(
             "stats": {
                 "total_readings": total_readings,
                 "is_active": True,
+                "fallback_telemetry": telemetry,
             },
         }
 
