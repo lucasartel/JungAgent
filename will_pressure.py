@@ -32,6 +32,12 @@ PRESSURE_THRESHOLD = 51.0
 PULSE_INTERVAL_HOURS = 3
 REFRACTORY_HOURS = 6
 PRESSURE_ORDER = ("saber", "relacionar", "expressar")
+RELATIONAL_NO_MESSAGE_SUMMARIES = {
+    "scope_denied": "A proatividade relacional foi recusada pelo escopo da relacao.",
+    "cooldown": "A proatividade relacional esta no intervalo minimo entre contatos.",
+    "empty_message": "A geracao proativa relacional nao retornou texto.",
+    "generation_error": "A geracao proativa relacional falhou.",
+}
 
 
 def _resolve_sqlite_path() -> str:
@@ -1018,7 +1024,7 @@ ESTADO QUALITATIVO:
         user = self.db.get_user(user_id) or {}
         user_name = user.get("user_name") or "Usuario"
         platform_id = user.get("platform_id")
-        payload = proactive_system.generate_pressure_based_message(
+        payload, reason = proactive_system.generate_pressure_based_message_with_diagnostics(
             user_id=user_id,
             user_name=user_name,
             pressure_context=pressure_state,
@@ -1026,7 +1032,9 @@ ESTADO QUALITATIVO:
         if not payload:
             return {
                 "success": False,
-                "action_summary": "A proatividade relacional nao encontrou mensagem valida para enviar.",
+                "action_summary": RELATIONAL_NO_MESSAGE_SUMMARIES.get(
+                    reason, "A proatividade relacional nao encontrou mensagem valida para enviar.",
+                ),
             }
         payload["platform_id"] = platform_id
         payload["cycle_id"] = cycle_id
