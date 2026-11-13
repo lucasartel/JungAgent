@@ -22,6 +22,25 @@ def utc_time(value):
         return None
 
 
+def classify_proactive_cooldown(result_code, *, failed_at, cooldown_until, now):
+    """Classify a cooldown transition without authorizing a retry."""
+    if result_code != "proactive_cooldown":
+        return "no_transition"
+    try:
+        failed = utc_time(failed_at)
+        deadline = utc_time(cooldown_until)
+        current = utc_time(now)
+    except OverflowError:
+        return "no_transition"
+    if failed is None or deadline is None or current is None:
+        return "no_transition"
+    if deadline <= failed or current < failed:
+        return "no_transition"
+    if current < deadline:
+        return "waiting"
+    return "cooldown_elapsed"
+
+
 def expire_expression(conn, expression, now):
     """Fence an old preparer, or quarantine transport whose outcome is unknown."""
     status = expression["status"]
