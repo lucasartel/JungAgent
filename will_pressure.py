@@ -1261,6 +1261,13 @@ ESTADO QUALITATIVO:
             event_status = "expression_reused"
         else:
             event_status = "failed"
+        if winner == "relacionar" and event_status == "expression_reused" and expression_status == "failed":
+            expression = expression.copy()
+            prior_summary = expression.get("action_summary")
+            expression["action_summary"] = (
+                "Tentativa anterior reutilizada; sem nova geracao."
+                + (f" {prior_summary}" if prior_summary else "")
+            )
         event_id = self._register_event(
             user_id=user_id,
             cycle_id=cycle_id,
