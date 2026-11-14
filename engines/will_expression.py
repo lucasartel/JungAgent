@@ -146,8 +146,8 @@ class WillExpressionEngine:
         with delivery_connection(self.db) as conn:
             return _row(conn.execute("SELECT * FROM will_expressions WHERE idempotency_key = ?", (key,)).fetchone())
 
-    def _finish_preparation(self, expression_id, status, reason, code, payload=None, proof=None):
-        from engines.will_recovery import expire_expression, utc_time
+    def _finish_preparation(self, expression_id, status, reason, code, payload=None, proof=None, *, failed_evidence=None):
+        from engines.will_recovery import classify_proactive_cooldown, expire_expression, utc_time
 
         with delivery_connection(self.db) as conn, atomic(conn):
             stored = dict(conn.execute("SELECT * FROM will_expressions WHERE id = ?", (expression_id,)).fetchone())
@@ -163,9 +163,22 @@ class WillExpressionEngine:
                     (expression_id, status, result_code, summary, evidence_json)
                     VALUES (?, 'capability_completed', 'phase_evidence_v1', ?, ?)""",
                     (expression_id, "Resultado cognitivo persistido; ainda nao confirma entrega.", _dump(proof)))
+            evidence = {"capability_key": current["capability_key"]}
+            if status == "failed" and code == "proactive_cooldown" and isinstance(failed_evidence, dict):
+                failed_at = failed_evidence.get("failed_at")
+                cooldown_until = failed_evidence.get("cooldown_until")
+                if (
+                    isinstance(failed_at, str)
+                    and isinstance(cooldown_until, str)
+                    and classify_proactive_cooldown(
+                        code, failed_at=failed_at, cooldown_until=cooldown_until, now=failed_at
+                    ) == "waiting"
+                ):
+                    evidence["failed_at"] = failed_at
+                    evidence["cooldown_until"] = cooldown_until
             conn.execute(
                 "INSERT INTO will_expression_receipts (expression_id, status, result_code, summary, evidence_json) VALUES (?, ?, ?, ?, ?)",
-                (expression_id, status, code, str(reason or "")[:500], _dump({"capability_key": current["capability_key"]})),
+                (expression_id, status, code, str(reason or "")[:500], _dump(evidence)),
             )
             return _row(conn.execute("SELECT * FROM will_expressions WHERE id = ?", (expression_id,)).fetchone())
 
@@ -272,9 +285,31 @@ class WillExpressionEngine:
         status = {"delivering": "delivery_in_progress", "preparing": "preparation_in_progress"}.get(
             expression.get("status"), expression.get("status") or "blocked",
         )
-        return {"status": status, "success": False, "expression": expression,
-                "action_summary": expression.get("reason") or "Expressao ja registrada; nenhuma nova tentativa foi iniciada.",
-                "reused": True}
+        result = {"status": status, "success": False, "expression": expression,
+                 "action_summary": expression.get("reason") or "Expressao ja registrada; nenhuma nova tentativa foi iniciada.",
+                 "reused": True}
+        if (status == "failed"
+                and expression.get("capability_key") == "relacionar_proactive_message"
+                and expression.get("delivery_event_id") is None):
+            with delivery_connection(self.db) as conn:
+                row = conn.execute(
+                    "SELECT result_code,evidence_json FROM will_expression_receipts "
+                    "WHERE expression_id=? AND status='failed' ORDER BY id DESC LIMIT 1",
+                    (expression.get("id"),),
+                ).fetchone()
+            if row is not None:
+                evidence = _load(row["evidence_json"], {})
+                if isinstance(evidence, dict):
+                    from engines.will_recovery import classify_proactive_cooldown
+                    cooldown = classify_proactive_cooldown(
+                        row["result_code"],
+                        failed_at=evidence.get("failed_at"),
+                        cooldown_until=evidence.get("cooldown_until"),
+                        now=self._now(),
+                    )
+                    if cooldown in ("waiting", "cooldown_elapsed"):
+                        result["cooldown_transition"] = cooldown
+        return result
 
     def _blocked_result(self, expression: Dict[str, Any], *, reused: bool = False) -> Dict[str, Any]:
         from engines.will_decision import decision_envelope
@@ -352,7 +387,13 @@ class WillExpressionEngine:
                 preparation_reason = prepared.get("preparation_reason")
                 if preparation_reason in ("scope_denied", "cooldown", "empty_message", "generation_error"):
                     result_code = "proactive_" + preparation_reason
-            expression = self._finish_preparation(expression["id"], "failed", reason, result_code)
+            expression = self._finish_preparation(
+                expression["id"],
+                "failed",
+                reason,
+                result_code,
+                failed_evidence=prepared.get("preparation_evidence"),
+            )
             if expression["status"] != "failed":
                 return self._reuse(expression)
             return {"status": "failed", "expression": expression, "action_summary": reason, "payload": prepared.get("payload")}
