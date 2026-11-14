@@ -2,6 +2,7 @@
 
 import sqlite3
 import sys
+from datetime import datetime
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -16,6 +17,39 @@ import jung_proactive_advanced as proactive
 from engines.will_expression import WillExpressionEngine
 from test_will_relation_scope import ScopedWillDB
 from will_pressure import WillPressureEngine
+
+
+@pytest.mark.parametrize(
+    "timestamp,expected_until,active",
+    [
+        ("2026-11-14 10:00:01", datetime(2026, 11, 14, 16, 0, 1), True),
+        ("2026-11-14 10:00:00", datetime(2026, 11, 14, 16), False),
+        ("2026-11-14 09:59:59", datetime(2026, 11, 14, 15, 59, 59), False),
+        ("2026-11-14T10:00:01+00:00", None, False),
+        ("invalid", None, False),
+        (None, None, False),
+    ],
+)
+def test_existing_cooldown_exposes_deadline_without_changing_gate(monkeypatch, timestamp, expected_until, active):
+    class FixedDatetime(datetime):
+        @classmethod
+        def utcnow(cls):
+            return cls(2026, 11, 14, 16)
+
+    monkeypatch.setattr(proactive, "datetime", FixedDatetime)
+    system = object.__new__(proactive.ProactiveAdvancedSystem)
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE proactive_approaches (user_id TEXT, timestamp TEXT)")
+        conn.execute("INSERT INTO proactive_approaches VALUES ('other', '2026-11-14 15:00:00')")
+        if timestamp is not None:
+            conn.execute("INSERT INTO proactive_approaches VALUES ('subject', ?)", (timestamp,))
+        system.db = SimpleNamespace(conn=conn)
+        assert system._relational_cooldown_until("subject") == expected_until
+        assert system._is_in_relational_cooldown("subject") is active
+    finally:
+        conn.close()
 
 
 @pytest.fixture
