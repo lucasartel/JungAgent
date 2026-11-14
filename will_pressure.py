@@ -1013,6 +1013,8 @@ ESTADO QUALITATIVO:
         cycle_id: str,
         proactive_system,
         pressure_state: Dict[str, Any],
+        *,
+        scope: Optional[Dict[str, Optional[str]]] = None,
     ) -> Dict[str, Any]:
         if proactive_system is None:
             return {
@@ -1024,15 +1026,19 @@ ESTADO QUALITATIVO:
         user = self.db.get_user(user_id) or {}
         user_name = user.get("user_name") or "Usuario"
         platform_id = user.get("platform_id")
+        evidence: Dict[str, Any] = {}
+        generator_kwargs = {"scope": scope, "diagnostics": evidence} if scope is not None else {}
         payload, reason = proactive_system.generate_pressure_based_message_with_diagnostics(
             user_id=user_id,
             user_name=user_name,
             pressure_context=pressure_state,
+            **generator_kwargs,
         )
         if not payload:
             return {
                 "success": False,
                 "preparation_reason": reason,
+                "preparation_evidence": evidence,
                 "action_summary": RELATIONAL_NO_MESSAGE_SUMMARIES.get(
                     reason, "A proatividade relacional nao encontrou mensagem valida para enviar.",
                 ),
@@ -1066,6 +1072,7 @@ ESTADO QUALITATIVO:
                 cycle_id=cycle_id,
                 proactive_system=proactive_system,
                 pressure_state=pressure_state,
+                scope=scope,
             ),
         }
         intent = {
@@ -1269,6 +1276,18 @@ ESTADO QUALITATIVO:
                 "Tentativa anterior reutilizada; sem nova geracao."
                 + (f" {prior_summary}" if prior_summary else "")
             )
+        cooldown_transition = expression.get("cooldown_transition")
+        if event_status == "expression_reused" and cooldown_transition in ("waiting", "cooldown_elapsed"):
+            expression = expression.copy()
+            cooldown_summary = expression.get("action_summary")
+            label = (
+                "Cooldown ainda ativo." if cooldown_transition == "waiting"
+                else "Prazo do cooldown transcorrido."
+            )
+            expression["action_summary"] = (
+                (f"{cooldown_summary} " if cooldown_summary else "")
+                + f"{label} Sem nova tentativa automatica."
+            )
         event_id = self._register_event(
             user_id=user_id,
             cycle_id=cycle_id,
@@ -1284,7 +1303,7 @@ ESTADO QUALITATIVO:
         if event_status != "triggered":
             summary = expression.get("action_summary") or f"Expressao de {winner} nao foi preparada."
             refreshed = self._apply_failed_release(pressure_state, winner, summary) if event_status == "failed" else pressure_state
-            return {
+            result = {
                 "status": event_status,
                 "event_id": event_id,
                 "winner": winner,
@@ -1292,6 +1311,9 @@ ESTADO QUALITATIVO:
                 "action_summary": summary,
                 "expression": expression.get("expression"),
             }
+            if event_status == "expression_reused" and cooldown_transition in ("waiting", "cooldown_elapsed"):
+                result["cooldown_transition"] = cooldown_transition
+            return result
         from engines.will_delivery_receipt import bind_event
 
         bind_event(self.db, expression["expression"]["id"], event_id)

@@ -1,5 +1,6 @@
 """Offline checks for distinct outcomes of relational message preparation."""
 
+import json
 import sqlite3
 import sys
 from datetime import datetime
@@ -48,6 +49,34 @@ def test_existing_cooldown_exposes_deadline_without_changing_gate(monkeypatch, t
         system.db = SimpleNamespace(conn=conn)
         assert system._relational_cooldown_until("subject") == expected_until
         assert system._is_in_relational_cooldown("subject") is active
+    finally:
+        conn.close()
+
+
+def test_scoped_cooldown_ignores_other_histories():
+    system = object.__new__(proactive.ProactiveAdvancedSystem)
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE proactive_approaches "
+            "(user_id TEXT, agent_instance TEXT, relation_id TEXT, timestamp TEXT)"
+        )
+        conn.executemany("INSERT INTO proactive_approaches VALUES (?, ?, ?, ?)", [
+            ("u", "agent-a", "rel-a", "2026-11-14 10:00:00"),
+            ("u", "agent-a", "rel-b", "2026-11-14 11:00:00"),
+            ("u", "agent-b", "rel-a", "2026-11-14 12:00:00"),
+            ("u", "agent-a", None, "2026-11-14 13:00:00"),
+            ("u", None, None, "2026-11-14 14:00:00"),
+            ("other", "agent-a", "rel-a", "2026-11-14 15:00:00"),
+        ])
+        system.db = SimpleNamespace(conn=conn)
+        assert system._relational_cooldown_until(
+            "u", agent_instance="agent-a", relation_id="rel-a",
+        ) == datetime(2026, 11, 14, 16)
+        assert system._relational_cooldown_until(
+            "u", agent_instance="agent-a", relation_id=None,
+        ) == datetime(2026, 11, 14, 19)
     finally:
         conn.close()
 
@@ -194,6 +223,115 @@ def scoped_db():
         db.conn.close()
 
 
+def test_scoped_generation_excludes_other_history_from_prompt(monkeypatch, scoped_db):
+    db = scoped_db
+    user = "r3c-history-user"
+    relation = db.register_agent_relation(
+        agent_instance=db.agent_instance, participant_user_id=user, consent_status="granted",
+    )
+    db.conn.execute(
+        "CREATE TABLE proactive_approaches (user_id TEXT, agent_instance TEXT, relation_id TEXT, "
+        "timestamp TEXT, autonomous_insight TEXT, topic_extracted TEXT, knowledge_domain TEXT)"
+    )
+    db.conn.executemany("INSERT INTO proactive_approaches VALUES (?, ?, ?, ?, ?, '', '')", [
+        (user, db.agent_instance, relation, "2000-01-01 10:00:00", "same-approach"),
+        (user, db.agent_instance, "other", "2099-01-01 10:00:00", "foreign-approach"),
+        (user, "other", relation, "2099-01-01 11:00:00", "foreign-instance-approach"),
+    ])
+    def conversations(_user, *, limit, relation_id):
+        assert relation_id == relation
+        return [
+            {"agent_instance": db.agent_instance, "relation_id": relation, "user_input": "same-input"},
+            {"agent_instance": db.agent_instance, "relation_id": "other", "user_input": "foreign-input"},
+            {"agent_instance": "other", "relation_id": relation, "user_input": "foreign-instance-input"},
+        ]
+
+    db.get_user_conversations = conversations
+    system = object.__new__(proactive.ProactiveAdvancedSystem)
+    system.db = db
+    system.cooldown_hours = 6
+    system._refresh_runtime_settings = lambda: None
+    prompts = []
+
+    def generate(*, prompt, **kwargs):
+        prompts.append(prompt)
+        return '{"text": "Contato de teste."}'
+
+    monkeypatch.setattr(proactive, "send_to_xai", generate)
+    payload, reason = system.generate_pressure_based_message_with_diagnostics(
+        user, "Teste", {}, scope={"agent_instance": db.agent_instance, "relation_id": relation},
+    )
+    assert reason is None
+    assert payload["text"] == "Contato de teste."
+    assert len(prompts) == 1
+    assert "same-input" in prompts[0] and "same-approach" in prompts[0]
+    assert "foreign-" not in prompts[0]
+
+
+def test_relational_cooldown_replay_reports_elapsed_without_retry(monkeypatch, scoped_db):
+    db = scoped_db
+    user = "r3c-cooldown-user"
+    relation = db.register_agent_relation(
+        agent_instance=db.agent_instance, participant_user_id=user, consent_status="granted",
+    )
+    scope = {"scope_kind": "relation", "relation_id": relation, "agent_instance": db.agent_instance}
+    db.get_user = lambda _: {"platform_id": "synthetic"}
+    db.conn.execute(
+        "CREATE TABLE proactive_approaches "
+        "(user_id TEXT, agent_instance TEXT, relation_id TEXT, timestamp TEXT)"
+    )
+    db.conn.executemany("INSERT INTO proactive_approaches VALUES (?, ?, ?, ?)", [
+        (user, db.agent_instance, relation, "2026-11-14 10:00:00"),
+        (user, db.agent_instance, "other-relation", "2026-11-14 14:00:00"),
+        (user, "other-instance", relation, "2026-11-14 15:00:00"),
+    ])
+    db.conn.commit()
+    clock = [datetime(2026, 11, 14, 15)]
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def utcnow(cls):
+            return clock[0]
+
+    monkeypatch.setattr(proactive, "datetime", FixedDatetime)
+    monkeypatch.setattr(WillExpressionEngine, "_now", staticmethod(lambda: clock[0].isoformat()))
+    monkeypatch.setattr("will_engine.load_latest_will_state", lambda *args, **kwargs: {})
+    engine = WillPressureEngine(db, threshold=51)
+    state = engine._get_or_create_state(user, "cycle", **scope)
+    engine._update_state(state["id"], relacionar_pressure=60)
+    state["relacionar_pressure"] = 60
+    monkeypatch.setattr(engine, "recalculate_pressure", lambda **kwargs: state)
+    system = object.__new__(proactive.ProactiveAdvancedSystem)
+    system.db = db
+    system.cooldown_hours = 6
+    system._refresh_runtime_settings = lambda: None
+    monkeypatch.setattr(proactive, "send_to_xai", lambda **kwargs: pytest.fail("generation ran"))
+
+    def pulse():
+        return engine.run_pulse(user, proactive_system=system, **scope)
+
+    initial = pulse()
+    assert initial["status"] == "failed"
+    assert "pending_delivery" not in initial
+    receipt = db.conn.execute(
+        "SELECT result_code, evidence_json FROM will_expression_receipts"
+    ).fetchone()
+    assert receipt["result_code"] == "proactive_cooldown"
+    assert json.loads(receipt["evidence_json"])["cooldown_until"] == "2026-11-14T16:00:00"
+
+    waiting = pulse()
+    clock[0] = datetime(2026, 11, 14, 16)
+    restarted = WillPressureEngine(db, threshold=51)
+    monkeypatch.setattr(restarted, "recalculate_pressure", lambda **kwargs: state)
+    elapsed = restarted.run_pulse(user, proactive_system=system, **scope)
+    for result, transition in [(waiting, "waiting"), (elapsed, "cooldown_elapsed")]:
+        assert result["status"] == "expression_reused"
+        assert result["cooldown_transition"] == transition
+        assert "pending_delivery" not in result
+        assert result["pressure_state"]["relacionar_pressure"] == 60
+    assert db.conn.execute("SELECT COUNT(*) FROM will_expression_receipts").fetchone()[0] == 1
+
+
 @pytest.mark.parametrize(
     "will,consent,availability,status,reason",
     [
@@ -217,6 +355,10 @@ def test_will_pulse_with_paid_images_off(
     scope = {"scope_kind": "relation", "relation_id": relation, "agent_instance": db.agent_instance}
     db.configure_availability(scope, status=availability)
     db.get_user = lambda _: {"platform_id": "synthetic"}
+    db.conn.execute(
+        "CREATE TABLE proactive_approaches "
+        "(user_id TEXT, agent_instance TEXT, relation_id TEXT, timestamp TEXT)"
+    )
     engine = WillPressureEngine(db, threshold=51)
     state = engine._get_or_create_state(user, "cycle", **scope)
     state[f"{will}_pressure"] = 60.0
@@ -227,7 +369,6 @@ def test_will_pulse_with_paid_images_off(
     system.db = db
     system.cooldown_hours = 6
     system._refresh_runtime_settings = lambda: None
-    system._is_in_relational_cooldown = lambda *args, **kwargs: False
     system._get_rich_conversation_context = lambda *args, **kwargs: "synthetic context"
     system._get_previous_proactive_messages = lambda *args, **kwargs: ""
     generated = []

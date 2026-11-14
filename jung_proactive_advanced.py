@@ -791,10 +791,29 @@ Tópico:"""
         
         return facts[:5]  # Máximo 5 fatos
 
-    def _get_rich_conversation_context(self, user_id: str, limit: int = 5) -> str:
+    def _get_rich_conversation_context(
+        self, user_id: str, limit: int = 5, *, scope: dict | None = None
+    ) -> str:
         """✅ NOVO: Extrai contexto RICO das últimas conversas (não-proativas)"""
 
-        conversations = self.db.get_user_conversations(user_id, limit=30)
+        if scope is not None:
+            missing = {"agent_instance", "relation_id"} - set(scope)
+            if missing:
+                raise KeyError(f"scope missing required keys: {sorted(missing)}")
+
+        kwargs = {}
+        if scope is not None and scope["relation_id"] is not None:
+            kwargs["relation_id"] = scope["relation_id"]
+
+        conversations = self.db.get_user_conversations(user_id, limit=30, **kwargs)
+
+        if scope is not None:
+            conversations = [
+                c for c in conversations
+                if "agent_instance" in c and "relation_id" in c
+                and c["agent_instance"] == scope["agent_instance"]
+                and c["relation_id"] == scope["relation_id"]
+            ]
 
         if not conversations:
             return "Nenhuma conversa recente encontrada."
@@ -835,17 +854,27 @@ Métricas: Tensão {tension:.1f}/10, Afetividade {affective:.0f}/100{archetype_i
 
         return context.strip()
 
-    def _get_previous_proactive_messages(self, user_id: str, limit: int = 3) -> str:
+    def _get_previous_proactive_messages(
+        self, user_id: str, limit: int = 3, *, scope=None
+    ) -> str:
         """✅ NOVO: Busca últimas mensagens proativas enviadas (para evitar repetição)"""
 
+        scope_filter = ""
+        params = [user_id]
+        if scope is not None:
+            agent_instance = scope["agent_instance"]
+            relation_id = scope["relation_id"]
+            scope_filter = "\n            AND agent_instance = ? AND relation_id IS ?"
+            params.extend([agent_instance, relation_id])
+
         cursor = self.db.conn.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT autonomous_insight, topic_extracted, knowledge_domain, timestamp
             FROM proactive_approaches
-            WHERE user_id = ?
+            WHERE user_id = ?{scope_filter}
             ORDER BY timestamp DESC
             LIMIT ?
-        """, (user_id, limit))
+        """, (*params, limit))
 
         rows = cursor.fetchall()
 
@@ -867,15 +896,43 @@ Mensagem enviada: "{message}..."
 
         return history.strip()
 
-    def _relational_cooldown_until(self, user_id: str, minimum_hours: float = 6.0) -> Optional[datetime]:
+    def _relational_cooldown_until(
+        self,
+        user_id: str,
+        minimum_hours: float = 6.0,
+        *,
+        agent_instance: Optional[str] = None,
+        relation_id: Optional[str] = None,
+    ) -> Optional[datetime]:
+        if relation_id is not None and agent_instance is None:
+            raise ValueError("relation_id requires agent_instance")
         cursor = self.db.conn.cursor()
-        cursor.execute("""
-            SELECT timestamp
-            FROM proactive_approaches
-            WHERE user_id = ?
-            ORDER BY timestamp DESC
-            LIMIT 1
-        """, (user_id,))
+        if agent_instance is None:
+            cursor.execute("""
+                SELECT timestamp
+                FROM proactive_approaches
+                WHERE user_id = ?
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """, (user_id,))
+        else:
+            scope_columns = {
+                col[1]
+                for col in cursor.execute("PRAGMA table_info(proactive_approaches)")
+            }
+            missing = {"agent_instance", "relation_id"} - scope_columns
+            if missing:
+                raise ValueError(
+                    "proactive_approaches missing scope columns: "
+                    + ", ".join(sorted(missing))
+                )
+            cursor.execute("""
+                SELECT timestamp
+                FROM proactive_approaches
+                WHERE user_id = ? AND agent_instance = ? AND relation_id IS ?
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """, (user_id, agent_instance, relation_id))
         row = cursor.fetchone()
         if not row:
             return None
@@ -908,12 +965,22 @@ Mensagem enviada: "{message}..."
         user_id: str,
         user_name: str,
         pressure_context: Dict,
+        *,
+        scope=None,
+        diagnostics=None,
     ) -> Tuple[Optional[Dict], Optional[PressureMessageReason]]:
         """Gera uma mensagem relacional ou o motivo da ausencia, sem enviar nem persistir."""
         from core.db.relation_scope import resolve_relation_query_scope
 
         try:
-            resolve_relation_query_scope(self.db, user_id)
+            if scope is None:
+                resolve_relation_query_scope(self.db, user_id)
+            else:
+                resolve_relation_query_scope(
+                    self.db, user_id,
+                    agent_instance=scope["agent_instance"],
+                    relation_id=scope.get("relation_id"),
+                ).require_production()
         except ValueError as scope_err:
             # Revogação/escopo recusado: pulso proativo é pulado com graca, sem mensagem.
             logger.warning(
@@ -922,12 +989,30 @@ Mensagem enviada: "{message}..."
             )
             return None, "scope_denied"
         self._refresh_runtime_settings()
-        if self._is_in_relational_cooldown(user_id, minimum_hours=max(6.0, self.cooldown_hours / 2)):
+        minimum_hours = max(6.0, self.cooldown_hours / 2)
+        if scope is None:
+            in_cooldown = self._is_in_relational_cooldown(user_id, minimum_hours=minimum_hours)
+        else:
+            now = datetime.utcnow()
+            try:
+                deadline = self._relational_cooldown_until(
+                    user_id, minimum_hours,
+                    agent_instance=scope["agent_instance"],
+                    relation_id=scope.get("relation_id"),
+                )
+            except ValueError:
+                logger.warning("WILL: cooldown relacional sem escopo verificavel.")
+                return None, "scope_denied"
+            in_cooldown = deadline is not None and now < deadline
+            if in_cooldown and diagnostics is not None:
+                diagnostics.update(failed_at=now.isoformat(), cooldown_until=deadline.isoformat())
+        if in_cooldown:
             logger.info("⏸️ [PROATIVO] Pulso relacional bloqueado por cooldown secundário.")
             return None, "cooldown"
 
-        rich_context = self._get_rich_conversation_context(user_id, limit=5)
-        previous_proactives = self._get_previous_proactive_messages(user_id, limit=3)
+        context_scope = {"scope": scope} if scope is not None else {}
+        rich_context = self._get_rich_conversation_context(user_id, limit=5, **context_scope)
+        previous_proactives = self._get_previous_proactive_messages(user_id, limit=3, **context_scope)
         current_conflict = pressure_context.get("pressure_summary") or pressure_context.get("last_action_summary") or ""
 
         prompt = f"""
