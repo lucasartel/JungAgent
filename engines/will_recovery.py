@@ -41,6 +41,40 @@ def classify_proactive_cooldown(result_code, *, failed_at, cooldown_until, now):
     return "cooldown_elapsed"
 
 
+def assess_proactive_resumption(
+    receipt_transition,
+    current_transition,
+    consent_confirmed,
+    delivery_uncertain,
+    remaining_attempts,
+):
+    """Classify proactive-resumption candidacy for a paused expression.
+
+    Pure: no side effects. "candidate" requires both the receipt-time and the
+    verified-current-deadline classifier runs to report "cooldown_elapsed",
+    consent confirmed, delivery certain, and a valid positive integer attempt
+    budget; it marks candidacy only and grants no authorization to resume.
+    A valid active cooldown on the verified current deadline yields
+    "waiting"; anything else is "no_transition".
+    """
+    attempts_valid = (
+        isinstance(remaining_attempts, int)
+        and not isinstance(remaining_attempts, bool)
+        and remaining_attempts > 0
+    )
+    if (
+        receipt_transition == "cooldown_elapsed"
+        and current_transition == "cooldown_elapsed"
+        and consent_confirmed is True
+        and delivery_uncertain is False
+        and attempts_valid
+    ):
+        return "candidate"
+    if current_transition == "waiting":
+        return "waiting"
+    return "no_transition"
+
+
 def expire_expression(conn, expression, now):
     """Fence an old preparer, or quarantine transport whose outcome is unknown."""
     status = expression["status"]
