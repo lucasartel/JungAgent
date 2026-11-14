@@ -867,7 +867,7 @@ Mensagem enviada: "{message}..."
 
         return history.strip()
 
-    def _is_in_relational_cooldown(self, user_id: str, minimum_hours: float = 6.0) -> bool:
+    def _relational_cooldown_until(self, user_id: str, minimum_hours: float = 6.0) -> Optional[datetime]:
         cursor = self.db.conn.cursor()
         cursor.execute("""
             SELECT timestamp
@@ -878,13 +878,18 @@ Mensagem enviada: "{message}..."
         """, (user_id,))
         row = cursor.fetchone()
         if not row:
-            return False
+            return None
         try:
             last_dt = datetime.fromisoformat(row["timestamp"])
-            hours_since_last = (datetime.utcnow() - last_dt).total_seconds() / 3600.0
-            return hours_since_last < minimum_hours
+            if last_dt.utcoffset() is not None:
+                return None
+            return last_dt + timedelta(hours=minimum_hours)
         except Exception:
-            return False
+            return None
+
+    def _is_in_relational_cooldown(self, user_id: str, minimum_hours: float = 6.0) -> bool:
+        deadline = self._relational_cooldown_until(user_id, minimum_hours)
+        return deadline is not None and datetime.utcnow() < deadline
 
     def generate_pressure_based_message(
         self,
