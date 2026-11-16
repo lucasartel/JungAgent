@@ -37,9 +37,17 @@ Deploy: Railway (volume em `RAILWAY_VOLUME_MOUNT_PATH`). LLM via OpenRouter.
 
 ## Acesso operacional desta instalação
 
-- Clone ativo local: `/Users/lucaspedro/jungproject` (fora do OneDrive). Use este caminho para trabalho, testes, commits e comandos operacionais.
-- GitHub: o repositório remoto é `lucasartel/JungAgent`; a CLI `gh` está autenticada localmente para a conta `lucasartel`. Use `gh auth status` e `gh repo view` para confirmar antes de abrir PRs.
-- Railway: a CLI `railway` está autenticada localmente e este diretório está linkado ao projeto `JungAgent_Bot`, ambiente `production`, serviço `jungclaude`. Use `railway status` para confirmar o vínculo antes de ler logs ou rodar healthchecks.
+- Clone ativo: descubra a raiz com `git rev-parse --show-toplevel`; caminhos e
+  ferramentas dependem da instalacao. Nao presuma o ambiente de outra maquina.
+- GitHub: o repositorio remoto e `lucasartel/JungAgent`. Confirme a conta com
+  `gh auth status` e o repositorio com `gh repo view` antes de publicar.
+  Login no navegador nao autentica automaticamente a CLI. Se necessario, o
+  mantenedor deve executar `gh auth login --hostname github.com --git-protocol https --web`.
+- Railway: onde a CLI estiver instalada, confirme com `railway status` o
+  vinculo ao projeto `JungAgent_Bot`, ambiente `production`, servico
+  `jungclaude`, antes de ler logs ou rodar healthchecks.
+- Workflow de revisao assistida (MiMo desenvolve, revisor GPT publica PR e
+  mergeia apenas com aprovacao SHA + CI verde): `docs/MIMO_REVIEW_WORKFLOW.md`.
 - Produção: qualquer ação com efeito em produção (deploy manual, restart, alteração de variáveis, comando que modifique banco/volume ou envio real por Telegram/integrações) exige confirmação explícita do mantenedor antes da execução.
 - Nunca registre tokens, API keys ou credenciais em arquivos do repo. A autenticação deve permanecer no keychain/CLI local.
 
@@ -67,8 +75,12 @@ Deploy: Railway (volume em `RAILWAY_VOLUME_MOUNT_PATH`). LLM via OpenRouter.
 3. Se tocou prompt de julgamento ou fórmula cognitiva: runner de regressão + diff documentado
 4. `git diff --check` limpo
 
+Use as dependencias de `requirements-test.txt` em ambiente de testes isolado.
+A CI oficial usa Python 3.11; informe a versao nas validacoes locais.
+
 ## Onde buscar contexto
 
 - Roadmap e critérios de saída da fase: `docs/DOCUMENTO_MESTRE_EMULACAO_COGNITIVA_V2.md`
+- Workflow de revisao assistida MiMo/revisor GPT (papeis, gates SHA, CI, merge): `docs/MIMO_REVIEW_WORKFLOW.md`
 - Histórico e decisões anteriores: `docs/` (ROADMAPs e PLANOs por subsistema)
 - Resultados de pesquisa (avaliação cega, relatórios mensais): `docs/research/`

@@ -5,6 +5,14 @@
 # tecnica (Gemini Argon via Antigravity Remote Agents) ocorrem em branches de PR.
 # A aprovacao final de merge na `main` e o deploy em producao pertencem
 # exclusivamente ao mantenedor (@lucasartel).
+#
+# Autorizacao assistida estreita (Documento Mestre Secao 3 +
+# docs/MIMO_REVIEW_WORKFLOW.md, 16/11/2026): no fluxo OpenCode local, o revisor
+# tecnico GPT pode publicar a PR do desenvolvedor MiMo e mergeiar apenas com
+# aprovacao SHA + CI verde, sem auto-merge e sem acoes manuais de producao.
+# Esta regra so e comentario: as entradas @lucasartel abaixo permanecem
+# inalteradas. A protecao verificada de main exige review de CODEOWNER e CI;
+# nenhuma regra remota foi alterada. Nao usar bypass de protecoes.
 
 * @lucasartel
 
