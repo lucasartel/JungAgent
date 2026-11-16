@@ -121,6 +121,24 @@ Regras transversais:
 
 Fluxo padrao historico: **mantenedor escolhe a tarefa -> executor implementa em branch e abre PR -> CI valida -> mantenedor mergeia -> Railway deploya**. Fluxo atual autorizado para trabalho assistido: quando o mantenedor pedir explicitamente, o executor pode commitar direto em `main`, aguardar CI/Railway e validar por probes. O consultor audita em cadencia mensal ou sob demanda e ajusta o roadmap.
 
+**Fluxo assistido estreito autorizado (MiMo -> revisor tecnico GPT; 16/11/2026).**
+Excecao revogavel para trabalho local sob demanda, detalhada em
+`docs/MIMO_REVIEW_WORKFLOW.md`: o MiMo Flash 2.6 roda como subagente
+(`.opencode/agents/mimo-developer.md`), implementa o escopo definido pelo
+mantenedor e entrega diff e validacao, sem commit/push nem credencial GitHub.
+O revisor GPT pai audita e re-executa os gates, publica a branch e abre a PR.
+So pode mergeiar apos **sua aprovacao tecnica explicita da SHA exata e CI verde**.
+Novo commit invalida a aprovacao; nao usar auto-merge, push direto em `main`
+ou bypass de protecoes. Mudancas futuras de governanca exigem autorizacao do
+mantenedor e ficam com o revisor. O deploy automatico existente, se configurado,
+e efeito autorizado do merge; nenhuma acao manual de producao e autorizada.
+Protecoes verificadas em 16/11/2026 exigem `test`, uma aprovacao e review de
+CODEOWNER; nao foram alteradas. Os novos gates GPT sao procedurais e nao
+substituem essas exigencias. Uma conta nao aprova
+a propria PR; se review independente for exigido, usar identidades autorizadas
+distintas ou aguardar o mantenedor. O protocolo remoto Gemini em
+`.agents/skills/mimo-pr-coordinator/SKILL.md` permanece sem direito de merge.
+
 ## 4. Estado verificado e atualizacoes
 
 **Leitura do estado**: os dados operacionais abaixo de 17/08 e 18/08 sao historicos, nao uma verificacao da saude atual. A Secao 4.1 registra a revisao local de 05/09/2026; a sequencia ativa de desenvolvimento esta nas Secoes 5 e 10.1.2.

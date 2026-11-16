@@ -26,6 +26,28 @@ Harness no Railway).
    ou acionar deploy/mutacao em producao no Railway. O botao final de **Merge** e
    **Deploy** pertence exclusivamente ao mantenedor (`@lucasartel`).
 
+## Relacao com o fluxo assistido autorizado no OpenCode (16/11/2026)
+
+O protocolo original acima (Gemini Argon via Antigravity Remote Agents,
+revisor remoto **sem merge**) **permanece invariavel**: nada nesta secao o
+altera.
+
+Existe agora uma excecao **autorizada, distinta e estreita**, descrita no
+Documento Mestre Secao 3 e em `docs/MIMO_REVIEW_WORKFLOW.md`: no fluxo
+assistido OpenCode local, o **revisor tecnico GPT (sessao pai)** pode publicar
+a PR do desenvolvedor MiMo e executar o merge **somente** depois de aprovacao
+explicita vinculada a SHA exata e CI verde nessa mesma SHA (sem auto-merge,
+sem aprovacao stale apos novo push, sem push direto em `main`, sem acoes
+manuais de producao). Limites da excecao:
+
+- vale apenas para o revisor GPT pai neste repositorio e nesta instalacao;
+  **nao** se estende ao protocolo remoto do Gemini nem a outras automacoes;
+- nao transfere ao revisor o controle de producao (Railway segue com o
+  mantenedor);
+- mudancas de governanca continuam exigindo autorizacao explicita do usuario.
+
+A checklist de revisao abaixo (Passo 2) segue **obrigatoria nos dois fluxos**.
+
 ---
 
 ## Passo a Passo do Ciclo de Revisao Remota
