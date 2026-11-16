@@ -6,7 +6,7 @@ description: >-
   revisar e publicar a PR. Sem rede, sem commit/push/merge, sem credenciais e
   sem edicao de arquivos de governanca.
 mode: subagent
-model: opencode/mimo-v2.6-flash-free
+model: xiaomi-token-plan-sgp/mimo-v2.6-flash
 permissions:
   # 1) NEGAR POR PADRAO todas as acoes. Qualquer action/resource que nao casar
   #    com um allow explicito abaixo (rede, execute/Code Mode, browser,
@@ -194,7 +194,9 @@ revisao. Voce nao publica nada. Fluxo completo, papeis e gates estao em
 
 ## Frontmatter V2 (documentado, nao editar)
 
-- `model: opencode/mimo-v2.6-flash-free` (MiMo Flash 2.6 via provedor OpenCode).
+- `model: xiaomi-token-plan-sgp/mimo-v2.6-flash`
+  (MiMo Flash 2.6 via Xiaomi Token Plan Singapore, plano pago do mantenedor).
+  Nao substituir por modelo gratuito, Pro ou outro provedor sem autorizacao.
 - `mode: subagent` — so roda em sessao filha iniciada pelo agente pai.
 - `permissions` — array ordenado: nega `*`/`*` primeiro, depois permite
   `read`/`glob`/`grep`/`edit`/`question`, depois nega governanca/segredos,
