@@ -144,6 +144,61 @@ def record_confirmed_relational_delivery(
     return True
 
 
+def evaluate_availability_state(
+    state: Dict[str, Any],
+    *,
+    now: Optional[datetime],
+    essential: bool = False,
+) -> Dict[str, Any]:
+    """Pure C10 availability rules for ONE already-loaded state mapping.
+
+    ``AvailabilityEngine.evaluate`` delegates its whole calculation here; the
+    rules (pause, contact window, refractory period, turn/depth budgets and
+    relational reserve with virtual recovery) are exactly the ones the engine
+    applied before this extraction, in the same priority order and with the
+    same reason strings, so the existing runtime path keeps its semantics,
+    messages and priorities unchanged.
+
+    Contract:
+
+    - Inputs only: no database, no clock, no writes. ``now`` is the naive
+      instant the caller already produced with ``AvailabilityEngine._now``
+      (a naive value passes through untouched); it is read only on the
+      non-essential path, because the legacy essential bypass returns before
+      any clock read.
+    - ``state`` is trusted storage/configuration data. Callers reading it
+      from persisted rows must validate and normalize it first: this
+      function deliberately keeps the legacy treatment of missing keys (for
+      example an absent or zero threshold disables the reserve check, and an
+      absent window/refractory field means no boundary) and never invents a
+      limit, cap or threshold of its own.
+    - Returns ``{"allowed": bool, "reason": str | None}`` without echoing
+      ``state``; ``AvailabilityEngine.evaluate`` attaches it.
+    """
+    if essential:
+        return {"allowed": True, "reason": "essential_bypass"}
+    instant = now
+    if state.get("status") == "paused":
+        return {"allowed": False, "reason": "availability_paused"}
+    start = _parse_time(state.get("contact_window_start_at"))
+    end = _parse_time(state.get("contact_window_end_at"))
+    refractory = _parse_time(state.get("refractory_until"))
+    if start and instant < start:
+        return {"allowed": False, "reason": "availability_window_not_open"}
+    if end and instant >= end:
+        return {"allowed": False, "reason": "availability_window_closed"}
+    if refractory and instant < refractory:
+        return {"allowed": False, "reason": "availability_refractory"}
+    if state.get("turn_budget") is not None and int(state["turns_used"]) >= int(state["turn_budget"]):
+        return {"allowed": False, "reason": "availability_turn_budget_exhausted"}
+    if state.get("depth_budget") is not None and int(state["depth_used"]) >= int(state["depth_budget"]):
+        return {"allowed": False, "reason": "availability_depth_budget_exhausted"}
+    if (float(state.get("relational_reserve_threshold") or 0) > 0
+            and _effective_reserve(state, instant) <= float(state["relational_reserve_threshold"])):
+        return {"allowed": False, "reason": "availability_relational_reserve_depleted"}
+    return {"allowed": True, "reason": None}
+
+
 class AvailabilityEngine:
     """Decides whether one scope may consume relational attention right now."""
 
@@ -164,32 +219,20 @@ class AvailabilityEngine:
         now: Optional[datetime] = None,
         essential: bool = False,
     ) -> Dict[str, Any]:
+        """Load the stored state (or the legacy default) and delegate the rules.
+
+        ``evaluate_availability_state`` performs the decision; this method
+        keeps the same signature, clock normalization, state loading and
+        legacy default for a scope WITHOUT a stored row.
+        """
         state = self.db.get_availability_state(scope) or {
             "status": "available", "turn_budget": None, "turns_used": 0,
             "depth_budget": None, "depth_used": 0,
         }
-        if essential:
-            return {"allowed": True, "reason": "essential_bypass", "state": state}
-        instant = self._now(now)
-        if state.get("status") == "paused":
-            return {"allowed": False, "reason": "availability_paused", "state": state}
-        start = _parse_time(state.get("contact_window_start_at"))
-        end = _parse_time(state.get("contact_window_end_at"))
-        refractory = _parse_time(state.get("refractory_until"))
-        if start and instant < start:
-            return {"allowed": False, "reason": "availability_window_not_open", "state": state}
-        if end and instant >= end:
-            return {"allowed": False, "reason": "availability_window_closed", "state": state}
-        if refractory and instant < refractory:
-            return {"allowed": False, "reason": "availability_refractory", "state": state}
-        if state.get("turn_budget") is not None and int(state["turns_used"]) >= int(state["turn_budget"]):
-            return {"allowed": False, "reason": "availability_turn_budget_exhausted", "state": state}
-        if state.get("depth_budget") is not None and int(state["depth_used"]) >= int(state["depth_budget"]):
-            return {"allowed": False, "reason": "availability_depth_budget_exhausted", "state": state}
-        if (float(state.get("relational_reserve_threshold") or 0) > 0
-                and _effective_reserve(state, instant) <= float(state["relational_reserve_threshold"])):
-            return {"allowed": False, "reason": "availability_relational_reserve_depleted", "state": state}
-        return {"allowed": True, "reason": None, "state": state}
+        decision = evaluate_availability_state(
+            state, now=None if essential else self._now(now), essential=essential
+        )
+        return {**decision, "state": state}
 
     def conversational_disposition(self, scope: Dict[str, Optional[str]], *, now: Optional[datetime] = None) -> Dict[str, Any]:
         """Describe relational tone without blocking a received message."""

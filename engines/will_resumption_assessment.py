@@ -1,25 +1,38 @@
-"""Read-only resumption assessment scaffold (R3c-RO1a first subcut).
+"""Read-only resumption assessment scaffold (R3c-RO1a + RO1b partial gate).
 
 ``assess_current_resumption`` inspects an ALREADY-OPEN SQLite connection and
 reports, without deciding anything, which resumption gates are still
 unverified for one failed proactive expression in one exact relation scope.
 
-Deliberate limits of this first subcut:
+Deliberate limits of this cut:
 
 - Only ``SELECT`` with bound parameters and ``PRAGMA`` schema introspection.
   No writes, no ``BEGIN``/``COMMIT``/``ROLLBACK``, no ``PRAGMA`` configuration,
-  no schema creation, no second database, no engine, scheduler, LLM, network,
-  transport or Telegram, no pressure/counter changes and no contact.
+  no schema creation, no second database, no engine, no engine initialization,
+  no scheduler, LLM, network, transport or Telegram, no pressure/counter
+  changes and no contact.
 - This is NOT the complete RO1: there is still no proven canonical source of
   budget for NEW attempts, so ``recovery_attempts``/``MAX_RECOVERY_ATTEMPTS``
   (which budget the recovery of already-bound effects) are deliberately not
   read as a balance here, and no policy, limit, counter, permission or schema
-  is invented.
+  is invented. Cadence, delivery certainty and attempt budget remain
+  unverified.
+- RO1b partial: only AFTER the expression, Relation and receipt basics pass,
+  the CURRENT availability of the exact relation scope is verified from
+  ``agent_availability_states`` inside the SAME snapshot through the strict
+  fail-closed reader in ``engines.will_resumption_availability`` (scope-
+  complete WHERE, validated copy, the engine's own pure rules). When
+  availability is verifiably free, ``current_availability_unverified`` leaves
+  the pending list and ``PENDING_GATE_REASONS`` reports the three remaining
+  gates. When availability is verifiably blocked, the canonical
+  ``availability_*`` reason is returned instead of a pending list; when it
+  cannot be verified (missing row, incomplete schema, malformed state), a
+  separate ``availability_state_missing``/``availability_state_invalid``/
+  ``schema_unavailable`` refusal is returned. Absence is never read as
+  availability and no state row is ever synthesized.
 - Therefore the assessment NEVER returns ``candidate`` or ``waiting``: it is
-  always ``no_transition``. When every basic check passes, the result lists
-  the four still-unverified gates (``PENDING_GATE_REASONS``) instead of a
-  decision. The scaffold does not enable resumption and hard-codes
-  ``authorizes_contact`` to ``False``.
+  always ``no_transition``. The scaffold does not enable resumption and
+  hard-codes ``authorizes_contact`` to ``False``.
 
 Request contract:
 
@@ -47,13 +60,14 @@ Request contract:
   argument itself validated, otherwise ``None``.
 
 Order of refusal: request validation (zero SQL) first, then the caller
-transaction requirement (zero SQL), then schema introspection, then content
-reads.
+transaction requirement (zero SQL), then schema introspection (including
+``agent_availability_states``), then content reads in the fixed order
+expression -> Relation -> receipt -> availability.
 
 Snapshot semantics: because every read happens inside the caller's single
-transaction, metadata, Relation and receipt rows are mutually consistent even
-if another connection commits in between. That consistency is only for the
-duration of the call: it does NOT guarantee the rows are still current after
+transaction, metadata, Relation, receipt and availability rows are mutually
+consistent even if another connection commits in between. That consistency is
+only for the duration of the call: it does NOT guarantee the rows are still current after
 the function returns, does NOT authorize contact (``authorizes_contact``
 stays ``False``) and does NOT replace the revalidation any future transition
 must perform.
@@ -72,16 +86,23 @@ from typing import Any, Dict, Optional
 
 from core.db.relations import is_relation_eligible
 from engines.will_recovery import classify_proactive_cooldown, utc_time
+from engines.will_resumption_availability import (
+    AVAILABILITY_REQUIRED_COLUMNS,
+    availability_refusal_code,
+)
 
 logger = logging.getLogger(__name__)
 
 MODE_READ_ONLY = "read_only"
 ASSESSMENT_NO_TRANSITION = "no_transition"
 
-# The four gates whose reliable sources are not closed yet. Returned together
-# whenever the basic checks pass; their presence never authorizes resumption.
+# The gates whose reliable sources are not closed yet. After the RO1b partial
+# gate verified CURRENT availability inside the snapshot (blocked availability
+# returns its canonical reason instead of this list),
+# ``current_availability_unverified`` is no longer pending; the three below
+# are returned together whenever every basic check and current availability
+# pass, and their presence never authorizes resumption.
 PENDING_GATE_REASONS = (
-    "current_availability_unverified",
     "current_cadence_unverified",
     "delivery_certainty_unverified",
     "attempt_budget_unverifiable",
@@ -107,6 +128,19 @@ REASON_CODES = frozenset({
     "receipt_result_code_mismatch",
     "receipt_evidence_invalid",
     "receipt_chronology_invalid",
+    # RO1b: current availability verifiably blocked -- the canonical engine
+    # reasons, in the priority order of evaluate_availability_state.
+    "availability_paused",
+    "availability_window_not_open",
+    "availability_window_closed",
+    "availability_refractory",
+    "availability_turn_budget_exhausted",
+    "availability_depth_budget_exhausted",
+    "availability_relational_reserve_depleted",
+    # RO1b: current availability NOT verifiable (fail-closed, never a
+    # permissive default and never a synthesized available row).
+    "availability_state_missing",
+    "availability_state_invalid",
     *PENDING_GATE_REASONS,
 })
 
@@ -130,6 +164,10 @@ _REQUIRED_COLUMNS: Dict[str, frozenset] = {
     "will_expression_receipts": frozenset({
         "id", "expression_id", "status", "result_code", "evidence_json",
     }),
+    # RO1b: the availability gate refuses (schema_unavailable) before any
+    # content read when the strict reader's columns are not all present;
+    # no engine/initializer ever creates it here.
+    "agent_availability_states": AVAILABILITY_REQUIRED_COLUMNS,
 }
 
 
@@ -299,6 +337,14 @@ def _read_refusal(conn: Any, scope: dict, expression_id: int, now_dt: datetime):
         return ("receipt_chronology_invalid",)
     # Historical cooldown state only. No current deadline is inferred from the
     # receipt and an elapsed historical cooldown never becomes candidacy here.
+
+    # RO1b partial: current availability is verified only AFTER every basic
+    # gate above passed, from the SAME caller snapshot, with a strict
+    # scope-complete read that validates a copy of the row, never falls back
+    # to another scope and never synthesizes an available row.
+    availability_reason = availability_refusal_code(conn, scope=scope, now=now_dt)
+    if availability_reason is not None:
+        return (availability_reason,)
     return None
 
 
@@ -320,6 +366,16 @@ def assess_current_resumption(conn, expression_id, *, scope, now):
     writes, commits, rolls back, begins or configures the caller's connection.
     Requires the caller to hold an open transaction (``read_snapshot_required``
     otherwise) so all reads share one consistent snapshot.
+
+    RO1b partial: verifies CURRENT availability of the exact relation scope
+    inside that snapshot after the expression/Relation/receipt basics pass.
+    Verified-free availability only removes ``current_availability_unverified``
+    from the pending gates (cadence, delivery certainty and attempt budget
+    stay unverified); blocked availability returns its canonical
+    ``availability_*`` reason; unverifiable availability returns a separate
+    fail-closed ``availability_state_*``/``schema_unavailable`` refusal. Even
+    a successful verification does NOT authorize contact and does NOT
+    guarantee the availability row is still current after this call returns.
     """
     reasons, cleaned, valid_id, now_dt = _validated_request(
         scope, expression_id, now
@@ -367,7 +423,8 @@ def assess_current_resumption(conn, expression_id, *, scope, now):
         )
     if refusal is not None:
         return _result(refusal, evaluated_at=now_dt, expression_id=valid_id)
-    # Basic checks passed: report the four pending gates, nothing else.
+    # Every basic check AND current availability passed: report the three
+    # remaining pending gates, nothing else.
     return _result(
         PENDING_GATE_REASONS, evaluated_at=now_dt, expression_id=valid_id
     )
