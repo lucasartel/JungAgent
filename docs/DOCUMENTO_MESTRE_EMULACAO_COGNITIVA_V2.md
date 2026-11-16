@@ -127,6 +127,10 @@ Excecao revogavel para trabalho local sob demanda, detalhada em
 (`.opencode/agents/mimo-developer.md`), implementa o escopo definido pelo
 mantenedor e entrega diff e validacao, sem commit/push nem credencial GitHub.
 O revisor GPT pai audita e re-executa os gates, publica a branch e abre a PR.
+Para separar autoria de aprovacao, publica a PR como GitHub App privado
+`jungagent-pr-publisher-lucas`, instalado somente no JungAgent; a conta
+`lucasartel` registra o review de CODEOWNER. Chave e tokens ficam fora do
+repositorio e do contexto do desenvolvedor (detalhes no protocolo).
 So pode mergeiar apos **sua aprovacao tecnica explicita da SHA exata e CI verde**.
 Novo commit invalida a aprovacao; nao usar auto-merge, push direto em `main`
 ou bypass de protecoes. Mudancas futuras de governanca exigem autorizacao do

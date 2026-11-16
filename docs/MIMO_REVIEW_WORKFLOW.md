@@ -38,7 +38,8 @@ como agente primario.
    Submissao reprovada volta ao passo 2; esta decisao sobre o diff local e
    preliminar, pois ainda nao existe SHA da entrega.
 5. **Publicacao**: somente o pai commita (mensagem curta em ingles no
-   imperativo, padrao do historico), pusha a branch descritiva e abre a PR.
+   imperativo, padrao do historico), publica a branch descritiva e abre a PR
+   usando a identidade do GitHub App publicador (Secao 7.1).
    O revisor confirma que o commit corresponde ao diff revisado e registra sua
    aprovacao com a **SHA** final no parecer da PR (Secao 3).
    O desenvolvedor nunca recebe credencial do GitHub.
@@ -149,8 +150,41 @@ mesmo que a conta administradora tenha essa possibilidade. O CI existente em
    credenciais ficam com o revisor/mantenedor, fora do repo e fora do contexto
    do subagente.
 7. Escopo: este documento autoriza apenas o workflow local sob demanda descrito
-   aqui; ele nao autoriza features novas, execucao autonoma (Fase VII),
-   novas integracoes, custo novo ou alteracoes de politica de seguranca.
+    aqui; ele nao autoriza features novas, execucao autonoma (Fase VII),
+    novas integracoes, custo novo ou alteracoes de politica de seguranca.
+
+### 7.1 Publicador instalado e separacao de identidade (16/11/2026)
+
+- App privado **JungAgent PR Publisher Lucas**, slug
+  `jungagent-pr-publisher-lucas`, App ID `5784582`, instalado somente em
+  `lucasartel/JungAgent` (instalacao `182573078`).
+- Permissoes: `contents: write`, `pull_requests: write` e `metadata: read`.
+  Sem administracao, acesso a secrets, mudancas de workflows ou bypass.
+  Essas permissoes nao distinguem abertura de PR de merge na API: a proibicao
+  de merge pelo publicador e operacional, apoiada nas protecoes da `main`,
+  nao uma permissao GitHub inexistente de "somente abrir PR".
+- O pai controla um publicador confiavel fora do repositorio. Ele usa a chave
+  privada para obter tokens de instalacao temporarios restritos ao JungAgent,
+  mantidos somente na memoria do processo e revogados apos o uso.
+- Nesta instalacao o helper fica em
+  `~/.local/share/jungagent-publisher/publisher.py`; a chave fica no mesmo
+  diretorio, com modo `0600`, e o diretorio com modo `0700`.
+  O helper permite verificar a instalacao, migrar as PRs #92/#93 e publicar
+  PRs de branches `publisher/*` ja enviadas pelo pai, exigindo a SHA esperada.
+  Exemplo para o revisor, nunca para o desenvolvedor:
+  `python3 ~/.local/share/jungagent-publisher/publisher.py publish --head
+  publisher/<tarefa> --expected-sha <sha40> --title "<titulo>" --body-file
+  /tmp/opencode/pr-body.md`.
+  Instalar esse helper confiavel em cada maquina separadamente; nao presumir
+  que faz parte do clone. Nao entregar tokens ao desenvolvedor ou em stdout.
+- O helper nunca executa codigo ou testes do repositorio. Nao usar a chave em
+  comandos de teste, logs, prompts ou arquivos versionados. Para isolamento
+  forte do desenvolvedor, usar outro usuario/container sem acesso ao diretorio.
+- As PRs sao de `jungagent-pr-publisher-lucas[bot]`; a revisao formal de
+  CODEOWNER e registrada pela conta `lucasartel` apos revisao tecnica GPT.
+  Verificar autor, SHA, CI e exigencias vigentes antes de aprovar/mergeiar.
+- Isso habilita a separacao para o fluxo local. Nenhum workflow novo de
+  GitHub Actions foi ativado; a automacao remota abaixo continua proposta.
 
 ## 8. FUTURO (conceitual — NAO implementado nesta entrega)
 
