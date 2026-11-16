@@ -75,6 +75,87 @@ def assess_proactive_resumption(
     return "no_transition"
 
 
+
+def read_failed_proactive_receipt(conn, expression_id, *, scope):
+    """Return the latest failed proactive receipt in the given relation scope."""
+    if not isinstance(scope, dict):
+        return None
+    if scope.get("scope_kind") != "relation":
+        return None
+    agent_instance = scope.get("agent_instance")
+    relation_id = scope.get("relation_id")
+    user_id = scope.get("user_id")
+    cycle_id = scope.get("cycle_id")
+    for value in (agent_instance, relation_id, user_id, cycle_id):
+        if not isinstance(value, str) or not value.strip():
+            return None
+    return conn.execute(
+        "SELECT r.result_code, r.evidence_json "
+        "FROM will_expressions e "
+        "JOIN will_expression_receipts r ON r.expression_id = e.id "
+        "WHERE e.id = ? "
+        "AND e.agent_instance = ? "
+        "AND e.relation_id = ? "
+        "AND e.scope_kind = 'relation' "
+        "AND e.user_id = ? "
+        "AND e.cycle_id = ? "
+        "AND e.status = 'failed' "
+        "AND e.capability_key = 'relacionar_proactive_message' "
+        "AND e.delivery_event_id IS NULL "
+        "AND r.status = 'failed' "
+        "ORDER BY r.id DESC "
+        "LIMIT 1",
+        (expression_id, agent_instance, relation_id, user_id, cycle_id),
+    ).fetchone()
+
+def assess_resumption_from_receipt(
+    conn,
+    expression_id,
+    *,
+    scope,
+    now,
+    current_deadline,
+    consent_confirmed,
+    delivery_uncertain,
+    remaining_attempts,
+):
+    """Classify resumption from the latest failed proactive receipt.
+
+    Only IO is the sibling receipt read; no callers, no tests added.
+    """
+    receipt = read_failed_proactive_receipt(conn, expression_id, scope=scope)
+    if receipt is None:
+        return "no_transition"
+    result_code, evidence_json = receipt
+    if result_code != "proactive_cooldown":
+        return "no_transition"
+    try:
+        evidence = json.loads(evidence_json)
+    except (TypeError, ValueError):
+        return "no_transition"
+    if not isinstance(evidence, dict):
+        return "no_transition"
+    failed_at = evidence.get("failed_at")
+    cooldown_until = evidence.get("cooldown_until")
+    if not isinstance(failed_at, str) or not isinstance(cooldown_until, str):
+        return "no_transition"
+    receipt_transition = classify_proactive_cooldown(
+        result_code, failed_at=failed_at, cooldown_until=cooldown_until, now=now
+    )
+    current_transition = classify_proactive_cooldown(
+        result_code, failed_at=failed_at, cooldown_until=current_deadline, now=now
+    )
+    if "no_transition" in (receipt_transition, current_transition):
+        return "no_transition"
+    return assess_proactive_resumption(
+        receipt_transition,
+        current_transition,
+        consent_confirmed,
+        delivery_uncertain,
+        remaining_attempts,
+    )
+
+
 def expire_expression(conn, expression, now):
     """Fence an old preparer, or quarantine transport whose outcome is unknown."""
     status = expression["status"]
