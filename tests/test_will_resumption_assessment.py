@@ -2,6 +2,10 @@
 
 Also covers the R3c-RO1a read-only scaffold ``assess_current_resumption``:
 refusal order, no evidence read before the Relation gate, no writes/commits.
+Fixtures seed an EXPLICIT ``available`` availability row for the exact scope
+(``availability=False`` disables it); the RO1b availability gate itself is
+covered in ``test_will_resumption_availability.py`` and the pure-rule
+equivalence in ``test_availability_pure_equivalence.py``.
 """
 
 import json
@@ -21,6 +25,7 @@ for _n, _a in (("openai", "OpenAI"), ("anthropic", "Anthropic")):
         setattr(_m, _a, object)
         sys.modules.setdefault(_n, _m)
 
+from core.db.availability import AvailabilityDatabaseMixin
 from core.db.relations import RelationsDatabaseMixin
 from engines.will_expression import WillExpressionDatabaseMixin
 from engines.will_recovery import assess_proactive_resumption
@@ -131,8 +136,9 @@ def _ev(**overrides):
     return json.dumps(base)
 
 
-class _SchemaDB(RelationsDatabaseMixin, WillExpressionDatabaseMixin):
-    """Canonical mixin schema for agent_relations + will_expressions/receipts."""
+class _SchemaDB(RelationsDatabaseMixin, WillExpressionDatabaseMixin,
+                AvailabilityDatabaseMixin):
+    """Canonical mixin schema for relations + expressions/receipts + availability."""
 
     def __init__(self, conn, instance="agent-a"):
         self.conn = conn
@@ -140,6 +146,7 @@ class _SchemaDB(RelationsDatabaseMixin, WillExpressionDatabaseMixin):
         self.agent_instance = instance
         self._init_relations_schema()
         self._init_will_expression_schema()
+        self._init_availability_schema()
 
 
 def _connect(row_factory=sqlite3.Row):
@@ -172,12 +179,38 @@ def _receipt(conn, expression_id, *, status="failed", code="proactive_cooldown",
     ).lastrowid
 
 
-def _seed(conn, *, relation_kw=None, expression_kw=None, receipt=EVIDENCE):
+def _seed(conn, *, relation_kw=None, expression_kw=None, receipt=EVIDENCE,
+          availability=True):
+    """Seed relation + failed expression + receipt (+ availability row).
+
+    ``availability=True`` writes THIS scope's availability row through the
+    canonical configurator (explicit ``available`` state, NULL boundaries and
+    budgets, explicit reserve numbers) -- no implicit default row is ever
+    synthesized by the reader. ``availability=False`` seeds no row at all so
+    the strict gate can be tested against genuine absence. A dict is passed
+    to ``configure_availability`` as keyword overrides for the same row.
+    """
     db = _SchemaDB(conn, "agent-a")
     relation = {"agent_instance": "agent-a", "participant_user_id": "user-1", "status": "active", "consent_status": "granted"}
     relation.update(relation_kw or {})
     relation_id = db.register_agent_relation(**relation)
     scope = dict(BASE_SCOPE, relation_id=relation_id)
+    if availability is not False:
+        # configure_availability re-reads the row it wrote, and the core
+        # helper _state_row needs a mapping factory. Switch the factory ONLY
+        # for this fixture call: the reader under test accepts Row and tuple
+        # positionally. (Pre-existing quirk of configure_availability on
+        # tuple-factory connections; reported, not fixed in this cut.)
+        previous_factory = conn.row_factory
+        conn.row_factory = sqlite3.Row
+        try:
+            db.configure_availability(
+                scope,
+                **({"status": "available"} if availability is True
+                   else dict(availability)),
+            )
+        finally:
+            conn.row_factory = previous_factory
     expression_id = _expression(conn, scope, **(expression_kw or {}))
     if receipt is not None:
         _receipt(conn, expression_id, evidence=receipt)
@@ -219,11 +252,15 @@ def _state(conn):
             "tables": tables, "schema": schema, "counts": counts}
 
 
-def test_pending_gate_reasons_are_the_documented_four():
-    gates = ("current_availability_unverified", "current_cadence_unverified",
-             "delivery_certainty_unverified", "attempt_budget_unverifiable")
+def test_pending_gate_reasons_are_the_documented_three():
+    gates = ("current_cadence_unverified",
+             "delivery_certainty_unverified",
+             "attempt_budget_unverifiable")
     assert PENDING_GATE_REASONS == gates and set(gates) <= REASON_CODES
-    assert len(REASON_CODES) == 22
+    # 18 basic refusals + 7 canonical availability-blocked + 2 unverifiable
+    # availability + 3 still-pending gates = 30 closed codes.
+    assert len(REASON_CODES) == 30
+    assert "current_availability_unverified" not in REASON_CODES
 
 
 @pytest.mark.parametrize("factory", [sqlite3.Row, None], ids=["row", "tuple"])
@@ -323,11 +360,13 @@ def test_two_relations_two_instances_and_cycles_do_not_cross():
     rel2 = db.register_agent_relation(agent_instance="agent-a", participant_user_id="user-2", **granted)
     rel3 = _SchemaDB(conn, "agent-b").register_agent_relation(
         agent_instance="agent-b", participant_user_id="user-3", **granted)
-    conn.execute("BEGIN")  # caller-side snapshot after the seeding commits
     s1 = dict(BASE_SCOPE, relation_id=rel1)
     s2 = dict(BASE_SCOPE, relation_id=rel2, user_id="user-2")
     s3 = dict(BASE_SCOPE, relation_id=rel3, agent_instance="agent-b",
               user_id="user-3", cycle_id="cycle-2")
+    for seeded_scope in (s1, s2, s3):  # explicit availability row per scope
+        db.configure_availability(seeded_scope, status="available")
+    conn.execute("BEGIN")  # caller-side snapshot after the seeding commits
     e1, e2, e3 = (_expression(conn, s) for s in (s1, s2, s3))
     for eid, scope in ((e1, s1), (e2, s2), (e3, s3)):
         _receipt(conn, eid)
