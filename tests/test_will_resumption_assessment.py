@@ -315,8 +315,9 @@ def test_pending_gate_reasons_are_the_documented_two():
              "attempt_budget_unverifiable")
     assert PENDING_GATE_REASONS == gates and set(gates) <= REASON_CODES
     # 18 basic refusals + 7 canonical availability-blocked + 2 unverifiable
-    # availability + 5 cadence refusals + 2 still-pending gates = 34 codes.
-    assert len(REASON_CODES) == 34
+    # availability + 5 cadence refusals + 2 RO1d evidence refusals + 2
+    # still-pending gates = 36 codes.
+    assert len(REASON_CODES) == 36
     assert "current_availability_unverified" not in REASON_CODES
     # RO1c closed the cadence gate: it is never pending and never returned.
     assert "current_cadence_unverified" not in REASON_CODES
@@ -508,16 +509,23 @@ def test_incoherent_receipt_chronology_is_refused(evidence, now):
                     "receipt_chronology_invalid")
 
 
-def test_latest_failed_receipt_decides_and_non_failed_is_ignored():
+def test_latest_failed_receipt_decides_and_non_failed_receipt_conflicts():
     conn = _connect()
     scope, expression_id = _seed(conn, receipt=None)
     _receipt(conn, expression_id)
+    # A completed receipt registered on the SAME expression is never hidden
+    # by the receipt gate's status='failed' filter: RO1d reads every row.
     _receipt(conn, expression_id, status="completed", code="delivery_confirmed")
-    assert _assess(conn, expression_id, scope)["reason_codes"] == list(PENDING_GATE_REASONS)
+    _assert_refusal(_assess(conn, expression_id, scope), "delivery_evidence_conflict")
+    # The receipt gate still decides on the LATEST FAILED receipt and runs
+    # BEFORE the RO1d scan: a bad failed code refuses on its own.
     _receipt(conn, expression_id, code="delivery_unroutable")
     _assert_refusal(_assess(conn, expression_id, scope), "receipt_result_code_mismatch")
+    # Coherent latest failed receipt again: the still-registered completed
+    # receipt keeps refusing as a conflict; both pending gates are NOT
+    # reported alongside it (the conflict is the only refusal).
     _receipt(conn, expression_id)
-    assert _assess(conn, expression_id, scope)["reason_codes"] == list(PENDING_GATE_REASONS)
+    _assert_refusal(_assess(conn, expression_id, scope), "delivery_evidence_conflict")
 
 
 @pytest.mark.parametrize("break_schema", [
@@ -576,7 +584,8 @@ def test_caller_transaction_state_is_preserved():
     scope, expression_id = _seed(conn)  # _seed leaves the caller transaction open
     _receipt(conn, expression_id, status="completed", code="delivery_confirmed", evidence="{}")
     assert conn.in_transaction is True
-    assert _assess(conn, expression_id, scope)["reason_codes"] == list(PENDING_GATE_REASONS)
+    # The completed receipt conflicts (RO1d) but issues no transaction control.
+    _assert_refusal(_assess(conn, expression_id, scope), "delivery_evidence_conflict")
     assert conn.in_transaction is True
     conn.rollback()
     assert conn.execute("SELECT COUNT(*) FROM will_expression_receipts WHERE status='completed'").fetchone()[0] == 0
