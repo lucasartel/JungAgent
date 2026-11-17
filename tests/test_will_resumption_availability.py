@@ -4,7 +4,7 @@ Covers the strict, scope-complete read of ``agent_availability_states``
 inside the caller's existing snapshot:
 
 - canonical blocked reasons in the engine's own priority order, and free
-  states that remove ONLY ``current_availability_unverified`` (the three
+  states that remove ONLY ``current_availability_unverified`` (the two
   remaining pending gates are still reported);
 - exact boundary instants for windows, refractory period and budgets, and
   NULL budgets meaning "this budget is not configured";
@@ -166,7 +166,7 @@ def _pending(result):
 # Free availability -> ONLY current_availability_unverified leaves the gates
 # ---------------------------------------------------------------------------
 
-def test_verified_free_availability_reports_exactly_three_pending_gates():
+def test_verified_free_availability_reports_exactly_two_pending_gates():
     conn = _connect()
     scope, expression_id = _seed(conn)
     first = _assess(conn, expression_id, scope)
@@ -218,7 +218,7 @@ def test_blocked_availability_returns_canonical_engine_reason(
     {"relational_reserve": 16.0},  # just above the default threshold (15)
     {"relational_reserve": 0.0, "relational_reserve_threshold": 0.0},
 ])
-def test_free_boundaries_keep_the_three_pending_gates(availability_kw):
+def test_free_boundaries_keep_the_two_pending_gates(availability_kw):
     conn = _connect()
     scope, expression_id = _seed(conn, availability=availability_kw)
     _pending(_assess(conn, expression_id, scope))

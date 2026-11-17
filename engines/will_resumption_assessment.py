@@ -1,4 +1,4 @@
-"""Read-only resumption assessment scaffold (R3c-RO1a + RO1b partial gate).
+"""Read-only resumption assessment scaffold (R3c-RO1a + RO1b + RO1c gates).
 
 ``assess_current_resumption`` inspects an ALREADY-OPEN SQLite connection and
 reports, without deciding anything, which resumption gates are still
@@ -15,21 +15,36 @@ Deliberate limits of this cut:
   budget for NEW attempts, so ``recovery_attempts``/``MAX_RECOVERY_ATTEMPTS``
   (which budget the recovery of already-bound effects) are deliberately not
   read as a balance here, and no policy, limit, counter, permission or schema
-  is invented. Cadence, delivery certainty and attempt budget remain
-  unverified.
+  is invented. Delivery certainty and attempt budget remain unverified;
+  current cadence is closed separately by the RO1c gate below.
 - RO1b partial: only AFTER the expression, Relation and receipt basics pass,
   the CURRENT availability of the exact relation scope is verified from
   ``agent_availability_states`` inside the SAME snapshot through the strict
   fail-closed reader in ``engines.will_resumption_availability`` (scope-
   complete WHERE, validated copy, the engine's own pure rules). When
   availability is verifiably free, ``current_availability_unverified`` leaves
-  the pending list and ``PENDING_GATE_REASONS`` reports the three remaining
-  gates. When availability is verifiably blocked, the canonical
+  the pending list. When availability is verifiably blocked, the canonical
   ``availability_*`` reason is returned instead of a pending list; when it
   cannot be verified (missing row, incomplete schema, malformed state), a
   separate ``availability_state_missing``/``availability_state_invalid``/
   ``schema_unavailable`` refusal is returned. Absence is never read as
   availability and no state row is ever synthesized.
+- RO1c: only AFTER availability is verifiably free, the CURRENT deadline of
+  the scoped producer cooldown is proven from the SAME snapshot through the
+  strict fail-closed reader in ``engines.will_resumption_cadence``
+  (``agent_settings`` configuration row first, then EVERY row of the scope up
+  to that reader's documented defensive ceiling, validated with the
+  producer's own parse rules, taking the CHRONOLOGICAL maximum -- never a
+  textual ``ORDER BY`` -- and applying the producer's
+  ``max(6.0, cooldown_hours / 2)`` arithmetic). A proven elapsed deadline
+  removes ``current_cadence_unverified`` from the pending list, so
+  ``PENDING_GATE_REASONS`` reports the two remaining gates; an active
+  deadline returns ``cadence_active``; unprovable configuration, legacy
+  schema, absent evidence, evidence above the ceiling or an unusable
+  timestamp return their own fail-closed refusal. No default, no legacy
+  unscoped history and no receipt deadline is ever read as the current one,
+  and this gate still leaves delivery certainty and attempt budget
+  unverified.
 - Therefore the assessment NEVER returns ``candidate`` or ``waiting``: it is
   always ``no_transition``. The scaffold does not enable resumption and
   hard-codes ``authorizes_contact`` to ``False``.
@@ -62,7 +77,7 @@ Request contract:
 Order of refusal: request validation (zero SQL) first, then the caller
 transaction requirement (zero SQL), then schema introspection (including
 ``agent_availability_states``), then content reads in the fixed order
-expression -> Relation -> receipt -> availability.
+expression -> Relation -> receipt -> availability -> cadence.
 
 Snapshot semantics: because every read happens inside the caller's single
 transaction, metadata, Relation, receipt and availability rows are mutually
@@ -90,6 +105,7 @@ from engines.will_resumption_availability import (
     AVAILABILITY_REQUIRED_COLUMNS,
     availability_refusal_code,
 )
+from engines.will_resumption_cadence import cadence_refusal_code
 
 logger = logging.getLogger(__name__)
 
@@ -97,13 +113,14 @@ MODE_READ_ONLY = "read_only"
 ASSESSMENT_NO_TRANSITION = "no_transition"
 
 # The gates whose reliable sources are not closed yet. After the RO1b partial
-# gate verified CURRENT availability inside the snapshot (blocked availability
-# returns its canonical reason instead of this list),
-# ``current_availability_unverified`` is no longer pending; the three below
-# are returned together whenever every basic check and current availability
-# pass, and their presence never authorizes resumption.
+# gate verified CURRENT availability and the RO1c gate verified the CURRENT
+# scoped cadence deadline inside the snapshot (blocked or unverifiable states
+# return their canonical reason instead of this list),
+# ``current_availability_unverified`` and ``current_cadence_unverified`` are
+# no longer pending; the two below are returned together whenever every basic
+# check, current availability and current cadence pass, and their presence
+# never authorizes resumption.
 PENDING_GATE_REASONS = (
-    "current_cadence_unverified",
     "delivery_certainty_unverified",
     "attempt_budget_unverifiable",
 )
@@ -141,6 +158,15 @@ REASON_CODES = frozenset({
     # permissive default and never a synthesized available row).
     "availability_state_missing",
     "availability_state_invalid",
+    # RO1c: current scoped cadence active or NOT provable from this snapshot
+    # (fail-closed: no catalog/module default, no legacy unscoped history,
+    # no receipt deadline, no textual ORDER BY and no fallback to an older
+    # approach row; the bounded read refuses above its documented ceiling).
+    "cadence_configuration_unverified",
+    "cadence_evidence_missing",
+    "cadence_evidence_unverifiable",
+    "cadence_state_invalid",
+    "cadence_active",
     *PENDING_GATE_REASONS,
 })
 
@@ -345,6 +371,15 @@ def _read_refusal(conn: Any, scope: dict, expression_id: int, now_dt: datetime):
     availability_reason = availability_refusal_code(conn, scope=scope, now=now_dt)
     if availability_reason is not None:
         return (availability_reason,)
+
+    # RO1c: current scoped cadence is verified only AFTER availability is
+    # verifiably free, from the SAME caller snapshot, through the strict
+    # reader that mirrors the scoped producer's own configuration refresh,
+    # latest-row query and deadline arithmetic -- never the legacy unscoped
+    # history and never the historical receipt deadline.
+    cadence_reason = cadence_refusal_code(conn, scope=scope, now=now_dt)
+    if cadence_reason is not None:
+        return (cadence_reason,)
     return None
 
 
@@ -370,12 +405,23 @@ def assess_current_resumption(conn, expression_id, *, scope, now):
     RO1b partial: verifies CURRENT availability of the exact relation scope
     inside that snapshot after the expression/Relation/receipt basics pass.
     Verified-free availability only removes ``current_availability_unverified``
-    from the pending gates (cadence, delivery certainty and attempt budget
-    stay unverified); blocked availability returns its canonical
+    from the pending gates (delivery certainty and attempt budget stay
+    unverified); blocked availability returns its canonical
     ``availability_*`` reason; unverifiable availability returns a separate
     fail-closed ``availability_state_*``/``schema_unavailable`` refusal. Even
     a successful verification does NOT authorize contact and does NOT
     guarantee the availability row is still current after this call returns.
+
+    RO1c: then verifies the CURRENT deadline of the scoped producer cooldown
+    from the same snapshot (bounded read, every row validated, chronological
+    maximum). A proven elapsed deadline removes
+    ``current_cadence_unverified`` from the pending gates; an active deadline
+    returns ``cadence_active``; unprovable configuration, legacy schema,
+    absent or over-ceiling scope evidence or an unusable timestamp return
+    their own fail-closed ``cadence_*``/``schema_unavailable`` refusal.
+    Delivery certainty and attempt budget stay pending either way, and no
+    verification authorizes contact or guarantees the rows are still current
+    after return.
     """
     reasons, cleaned, valid_id, now_dt = _validated_request(
         scope, expression_id, now
@@ -423,8 +469,8 @@ def assess_current_resumption(conn, expression_id, *, scope, now):
         )
     if refusal is not None:
         return _result(refusal, evaluated_at=now_dt, expression_id=valid_id)
-    # Every basic check AND current availability passed: report the three
-    # remaining pending gates, nothing else.
+    # Every basic check, current availability and current cadence passed:
+    # report the two remaining pending gates, nothing else.
     return _result(
         PENDING_GATE_REASONS, evaluated_at=now_dt, expression_id=valid_id
     )
