@@ -45,6 +45,15 @@ Deliberate limits of this cut:
   unscoped history and no receipt deadline is ever read as the current one,
   and this gate still leaves delivery certainty and attempt budget
   unverified.
+- RO1d (last): only after every gate above passes,
+  ``engines.will_delivery_evidence`` reads ``status``/``result_code`` of
+  EVERY receipt of the SAME expression (no ``status = 'failed'`` filter, so
+  a completed/delivering/uncertain receipt recorded before or after the
+  failed one is never hidden): a contradictory or unclassifiable row returns
+  ``delivery_evidence_conflict``/``delivery_evidence_unverifiable`` instead
+  of the pending list; a clean scan still reports both pending gates. The
+  scan never proves delivery or its absence, never removes either pending
+  gate, and changes nothing about ``no_transition``/``authorizes_contact``.
 - Therefore the assessment NEVER returns ``candidate`` or ``waiting``: it is
   always ``no_transition``. The scaffold does not enable resumption and
   hard-codes ``authorizes_contact`` to ``False``.
@@ -77,7 +86,8 @@ Request contract:
 Order of refusal: request validation (zero SQL) first, then the caller
 transaction requirement (zero SQL), then schema introspection (including
 ``agent_availability_states``), then content reads in the fixed order
-expression -> Relation -> receipt -> availability -> cadence.
+expression -> Relation -> receipt -> availability -> cadence ->
+delivery-evidence conflict.
 
 Snapshot semantics: because every read happens inside the caller's single
 transaction, metadata, Relation, receipt and availability rows are mutually
@@ -101,6 +111,7 @@ from typing import Any, Dict, Optional
 
 from core.db.relations import is_relation_eligible
 from engines.will_recovery import classify_proactive_cooldown, utc_time
+from engines.will_delivery_evidence import DELIVERY_EVIDENCE_REASONS, delivery_evidence_refusal_code
 from engines.will_resumption_availability import (
     AVAILABILITY_REQUIRED_COLUMNS,
     availability_refusal_code,
@@ -168,6 +179,9 @@ REASON_CODES = frozenset({
     "cadence_state_invalid",
     "cadence_active",
     *PENDING_GATE_REASONS,
+    # RO1d evidence diagnostics: returned ONLY instead of the pending list
+    # when a conflict is registered; a clean scan keeps both gates above.
+    *DELIVERY_EVIDENCE_REASONS,
 })
 
 _SCOPE_KEYS = ("agent_instance", "relation_id", "user_id", "cycle_id")
@@ -380,6 +394,13 @@ def _read_refusal(conn: Any, scope: dict, expression_id: int, now_dt: datetime):
     cadence_reason = cadence_refusal_code(conn, scope=scope, now=now_dt)
     if cadence_reason is not None:
         return (cadence_reason,)
+
+    # RO1d: registered receipt conflicts on the SAME expression, only after
+    # every other gate; a clean scan keeps PENDING_GATE_REASONS. Never proves
+    # delivery or its absence and never removes either pending gate.
+    evidence_reason = delivery_evidence_refusal_code(conn, expression_id=expression_id)
+    if evidence_reason is not None:
+        return (evidence_reason,)
     return None
 
 
@@ -469,8 +490,8 @@ def assess_current_resumption(conn, expression_id, *, scope, now):
         )
     if refusal is not None:
         return _result(refusal, evaluated_at=now_dt, expression_id=valid_id)
-    # Every basic check, current availability and current cadence passed:
-    # report the two remaining pending gates, nothing else.
+    # Every basic check, current availability, current cadence and the RO1d
+    # evidence scan passed: report the two remaining pending gates, nothing else.
     return _result(
         PENDING_GATE_REASONS, evaluated_at=now_dt, expression_id=valid_id
     )
