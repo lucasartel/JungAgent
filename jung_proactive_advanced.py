@@ -28,6 +28,7 @@ Versão: 4.2.0 - HÍBRIDO PREMIUM (BETA-READY)
 import os
 import json
 import logging
+import sqlite3
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Literal, Tuple
 from dataclasses import dataclass
@@ -58,7 +59,32 @@ except ImportError:
 # ============================================================
 logger = logging.getLogger(__name__)
 
-PressureMessageReason = Literal["scope_denied", "cooldown", "empty_message", "generation_error"]
+PressureMessageReason = Literal[
+    "scope_denied", "cooldown", "cooldown_unverified", "empty_message",
+    "generation_error",
+]
+
+# Limite defensivo EXPLICITO para UMA leitura de historico escopado do
+# cooldown relacional: acima dele o historico e recusado como nao verificavel
+# (fail-closed). Pode BLOQUEAR contatos de escopos com historico muito longo;
+# nunca funciona como permissao -- exceder o teto nunca libera abordagem.
+# Mesmo teto do leitor RO1c (``engines.will_resumption_cadence``.
+# ``MAX_EVIDENCE_ROWS``) para produtor e leitor recusarem no mesmo ponto.
+MAX_SCOPED_COOLDOWN_ROWS = 500
+
+
+class RelationalCooldownHistoryError(Exception):
+    """Historico de cooldown ESCOPADO nao verificavel; o caller deve falhar fechado.
+
+    Carrega apenas um codigo de diagnostico estavel da lista
+    ``cooldown_history_*`` (sem timestamps, payloads, valores de linha ou
+    texto bruto de excecao), para o caller registrar e BLOQUEAR a geracao
+    sem vazar conteudo privado. Nunca e interpretado como "sem cooldown".
+    """
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
 
 # ============================================================
 # CONFIGURAÇÕES DE TEMPO (Editáveis Manualmente)
@@ -904,10 +930,30 @@ Mensagem enviada: "{message}..."
         agent_instance: Optional[str] = None,
         relation_id: Optional[str] = None,
     ) -> Optional[datetime]:
+        """Prazo do cooldown relacional ou ``None`` apenas para ausencia genuina.
+
+        Caminho legado (sem ``agent_instance``): inalterado -- pick textual e
+        leitura permissiva (historico invalido vira "sem cooldown"). Fora do
+        escopo deste corte R3c.
+
+        Caminho ESCOPADO (``agent_instance`` informado): le TODAS as linhas do
+        escopo (sem ``ORDER BY`` textual, com teto ``MAX_SCOPED_COOLDOWN_ROWS``),
+        valida cada linha com as regras do proprio produtor (``str`` nao vazio,
+        ``fromisoformat``, naive) e devolve o MAXIMO CRONOLOGICO + janela.
+        Linha invalida/aware/NAO verificavel, schema de escopo ausente, erro de
+        SQL, historico acima do teto ou estouro de aritmetica levantam
+        ``RelationalCooldownHistoryError`` com codigo estavel (fail-closed):
+        NUNCA viram ``None``. O caller bloqueia a geracao e registra o codigo.
+
+        ``None`` aqui significa SOMENTE ausencia genuina (zero linhas do escopo
+        com schema e consulta comprovados). Timestamps futuros nao sao rejeitados
+        (este helper nao consulta relogio): um instante futuro so empurra o
+        prazo para frente, mantendo o contato bloqueado (fail-closed).
+        """
         if relation_id is not None and agent_instance is None:
             raise ValueError("relation_id requires agent_instance")
-        cursor = self.db.conn.cursor()
         if agent_instance is None:
+            cursor = self.db.conn.cursor()
             cursor.execute("""
                 SELECT timestamp
                 FROM proactive_approaches
@@ -915,34 +961,90 @@ Mensagem enviada: "{message}..."
                 ORDER BY timestamp DESC
                 LIMIT 1
             """, (user_id,))
-        else:
+            row = cursor.fetchone()
+            if not row:
+                return None
+            try:
+                last_dt = datetime.fromisoformat(row["timestamp"])
+                if last_dt.utcoffset() is not None:
+                    return None
+                return last_dt + timedelta(hours=minimum_hours)
+            except Exception:
+                return None
+
+        # --- Caminho escopado (R3c): maximo cronologico, fail-closed. ---
+        try:
+            cursor = self.db.conn.cursor()
             scope_columns = {
                 col[1]
                 for col in cursor.execute("PRAGMA table_info(proactive_approaches)")
             }
-            missing = {"agent_instance", "relation_id"} - scope_columns
-            if missing:
-                raise ValueError(
-                    "proactive_approaches missing scope columns: "
-                    + ", ".join(sorted(missing))
-                )
-            cursor.execute("""
+        except sqlite3.Error as exc:
+            # Apenas o tipo da excecao: mensagem SQL pode carregar valores.
+            logger.warning(
+                "WILL: cooldown relacional escopado sem introspecao de schema"
+                " code=cooldown_history_schema error_type=%s",
+                type(exc).__name__,
+            )
+            raise RelationalCooldownHistoryError("cooldown_history_schema") from None
+        missing = {"agent_instance", "relation_id"} - scope_columns
+        if missing:
+            raise RelationalCooldownHistoryError("cooldown_history_schema")
+        try:
+            rows = cursor.execute("""
                 SELECT timestamp
                 FROM proactive_approaches
                 WHERE user_id = ? AND agent_instance = ? AND relation_id IS ?
-                ORDER BY timestamp DESC
-                LIMIT 1
-            """, (user_id, agent_instance, relation_id))
-        row = cursor.fetchone()
-        if not row:
+                LIMIT ?
+            """, (
+                user_id, agent_instance, relation_id,
+                MAX_SCOPED_COOLDOWN_ROWS + 1,
+            )).fetchall()
+        except sqlite3.Error as exc:
+            logger.warning(
+                "WILL: cooldown relacional escopado sem leitura de historico"
+                " code=cooldown_history_query_failed error_type=%s",
+                type(exc).__name__,
+            )
+            raise RelationalCooldownHistoryError(
+                "cooldown_history_query_failed"
+            ) from None
+        if len(rows) > MAX_SCOPED_COOLDOWN_ROWS:
+            # Teto defensivo explicito (nao e permissao): acima dele o
+            # historico nao e verificavel exaustivamente e o contato e
+            # recusado. PODE BLOQUEAR escopos com historico muito longo.
+            logger.warning(
+                "WILL: cooldown relacional escopado acima do teto"
+                " code=cooldown_history_too_many_rows teto=%s",
+                MAX_SCOPED_COOLDOWN_ROWS,
+            )
+            raise RelationalCooldownHistoryError(
+                "cooldown_history_too_many_rows"
+            )
+        if not rows:
+            # Ausencia genuina: schema e consulta comprovados, zero linhas.
             return None
+        instants = []
+        for row in rows:
+            raw = row[0]
+            if not isinstance(raw, str) or not raw:
+                raise RelationalCooldownHistoryError("cooldown_history_invalid_row")
+            try:
+                parsed = datetime.fromisoformat(raw)
+            except (OverflowError, OSError, ValueError):
+                # Sem log do valor: conteudo da linha e privado.
+                raise RelationalCooldownHistoryError(
+                    "cooldown_history_invalid_row"
+                ) from None
+            if parsed.utcoffset() is not None:
+                # aware/offset/Z: nunca convertido, nunca normalizado.
+                raise RelationalCooldownHistoryError("cooldown_history_invalid_row")
+            instants.append(parsed)
+        last = max(instants)
         try:
-            last_dt = datetime.fromisoformat(row["timestamp"])
-            if last_dt.utcoffset() is not None:
-                return None
-            return last_dt + timedelta(hours=minimum_hours)
-        except Exception:
-            return None
+            return last + timedelta(hours=minimum_hours)
+        except OverflowError:
+            raise RelationalCooldownHistoryError("cooldown_history_overflow") from None
 
     def _is_in_relational_cooldown(self, user_id: str, minimum_hours: float = 6.0) -> bool:
         deadline = self._relational_cooldown_until(user_id, minimum_hours)
@@ -1000,6 +1102,17 @@ Mensagem enviada: "{message}..."
                     agent_instance=scope["agent_instance"],
                     relation_id=scope.get("relation_id"),
                 )
+            except RelationalCooldownHistoryError as history_err:
+                # Historico ESCOPADO nao verificavel: bloqueia a geracao
+                # (fail-closed) e registra apenas o codigo estavel -- nunca
+                # o valor da linha, o timestamp ou a excecao bruta.
+                logger.warning(
+                    "WILL: cooldown relacional nao verificavel: %s",
+                    history_err.code,
+                )
+                if diagnostics is not None:
+                    diagnostics.update(cooldown_history=history_err.code)
+                return None, "cooldown_unverified"
             except ValueError:
                 logger.warning("WILL: cooldown relacional sem escopo verificavel.")
                 return None, "scope_denied"
