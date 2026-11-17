@@ -2,12 +2,19 @@ import argparse
 import json
 import os
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 DEFAULT_ADMIN_USER_ID = "367f9e509e396d51"
 DEFAULT_AGENT_INSTANCE = "jung_v1"
+
+# R3c read-only resumption assessment. It has its own explicit CLI (no
+# environment-backed defaults for scope) and is dispatched BEFORE the generic
+# parser below, so every other probe keeps its current parser, registry and
+# output byte for byte.
+RESUMPTION_PROBE = "resumption"
 
 
 def resolve_default_db_path() -> str:
@@ -2945,7 +2952,15 @@ PROBES: Dict[str, Callable[[sqlite3.Cursor, argparse.Namespace], Dict[str, Any]]
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Read-only probe for JungAgent production diagnostics.")
+    parser = argparse.ArgumentParser(
+        description="Read-only probe for JungAgent production diagnostics.",
+        epilog=(
+            "Additional explicit CLI (not one of the probes above): "
+            "'resumption' runs the R3c read-only resumption assessment with "
+            "no scope or database defaults - see "
+            "'remote_db_probe.py resumption --help'."
+        ),
+    )
     parser.add_argument("probe", choices=sorted(PROBES.keys()))
     parser.add_argument("--db-path", default=resolve_default_db_path())
     parser.add_argument("--world-cache-path", default=resolve_default_world_cache_path())
@@ -2958,8 +2973,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    args = build_parser().parse_args()
+def _run_resumption_probe(argv: List[str]) -> int:
+    """Dispatch the R3c read-only resumption probe (its own explicit CLI).
+
+    Imported lazily so the generic probe path stays stdlib-only: running any
+    other probe must not import the ``engines`` package.
+    """
+    try:
+        from diagnostics import resumption_probe
+    except ImportError:  # package import: ``python -m scripts.remote_db_probe``
+        from scripts.diagnostics import resumption_probe
+    return resumption_probe.main(argv, connect=connect_read_only)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == RESUMPTION_PROBE:
+        return _run_resumption_probe(argv[1:])
+    args = build_parser().parse_args(argv)
     if args.probe == "world":
         payload = query_world(None, args)
     else:
