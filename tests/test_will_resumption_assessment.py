@@ -34,6 +34,7 @@ from engines.will_resumption_assessment import (
     REASON_CODES,
     assess_current_resumption,
 )
+from engines.will_resumption_cadence import CADENCE_BLOCKED_REASONS
 
 COOLDOWN_ELAPSED = "cooldown_elapsed"
 WAITING = "waiting"
@@ -138,7 +139,9 @@ def _ev(**overrides):
 
 class _SchemaDB(RelationsDatabaseMixin, WillExpressionDatabaseMixin,
                 AvailabilityDatabaseMixin):
-    """Canonical mixin schema for relations + expressions/receipts + availability."""
+    """Canonical mixin schema for relations + expressions/receipts +
+    availability, plus the RO1c cadence source tables (scoped producer
+    ``proactive_approaches`` and the global ``agent_settings`` row)."""
 
     def __init__(self, conn, instance="agent-a"):
         self.conn = conn
@@ -147,6 +150,32 @@ class _SchemaDB(RelationsDatabaseMixin, WillExpressionDatabaseMixin,
         self._init_relations_schema()
         self._init_will_expression_schema()
         self._init_availability_schema()
+        self._init_cadence_schema()
+
+    def _init_cadence_schema(self):
+        # Canonical shapes (core/db/schema.py for agent_settings; the scoped
+        # producer columns for proactive_approaches). Never created by the
+        # reader under test -- only by this fixture.
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setting_key TEXT NOT NULL UNIQUE,
+                value_json TEXT NOT NULL,
+                updated_by TEXT,
+                notes TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS proactive_approaches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                agent_instance TEXT,
+                relation_id TEXT,
+                timestamp DATETIME
+            )
+        """)
 
 
 def _connect(row_factory=sqlite3.Row):
@@ -179,8 +208,28 @@ def _receipt(conn, expression_id, *, status="failed", code="proactive_cooldown",
     ).lastrowid
 
 
+def _seed_cadence(conn, scope, timestamp="2026-11-15T10:00:00"):
+    """Explicit RO1c sources: global configuration + THIS scope's evidence.
+
+    The producer deadline is ``timestamp + max(6.0, 12 / 2)h`` = 2026-11-15T16:00,
+    elapsed at ``NOW``; no default is ever synthesized by the reader.
+    """
+    conn.execute(
+        "INSERT INTO agent_settings (setting_key, value_json) VALUES (?, ?) "
+        "ON CONFLICT(setting_key) DO UPDATE SET value_json = excluded.value_json",
+        ("relational_cooldown_hours", "12"),
+    )
+    conn.execute(
+        """INSERT INTO proactive_approaches
+           (user_id, agent_instance, relation_id, timestamp)
+           VALUES (?, ?, ?, ?)""",
+        (scope["user_id"], scope["agent_instance"], scope["relation_id"],
+         timestamp),
+    )
+
+
 def _seed(conn, *, relation_kw=None, expression_kw=None, receipt=EVIDENCE,
-          availability=True):
+          availability=True, cadence=True):
     """Seed relation + failed expression + receipt (+ availability row).
 
     ``availability=True`` writes THIS scope's availability row through the
@@ -189,6 +238,13 @@ def _seed(conn, *, relation_kw=None, expression_kw=None, receipt=EVIDENCE,
     synthesized by the reader. ``availability=False`` seeds no row at all so
     the strict gate can be tested against genuine absence. A dict is passed
     to ``configure_availability`` as keyword overrides for the same row.
+
+    ``cadence=True`` also writes the RO1c sources explicitly: the global
+    ``relational_cooldown_hours`` configuration row and a scoped
+    ``proactive_approaches`` row whose producer deadline (2026-11-15T10:00 +
+    max(6.0, 12/2)h = 2026-11-15T16:00) is elapsed at ``NOW``. No default is
+    ever synthesized by the reader; ``cadence=False`` seeds neither row so
+    the fail-closed refusals can be tested against genuine absence.
     """
     db = _SchemaDB(conn, "agent-a")
     relation = {"agent_instance": "agent-a", "participant_user_id": "user-1", "status": "active", "consent_status": "granted"}
@@ -214,6 +270,8 @@ def _seed(conn, *, relation_kw=None, expression_kw=None, receipt=EVIDENCE,
     expression_id = _expression(conn, scope, **(expression_kw or {}))
     if receipt is not None:
         _receipt(conn, expression_id, evidence=receipt)
+    if cadence:
+        _seed_cadence(conn, scope)
     conn.commit()  # close the implicit DML transaction ...
     conn.execute("BEGIN")  # ... and hold an explicit caller-side snapshot
     return scope, expression_id
@@ -252,15 +310,17 @@ def _state(conn):
             "tables": tables, "schema": schema, "counts": counts}
 
 
-def test_pending_gate_reasons_are_the_documented_three():
-    gates = ("current_cadence_unverified",
-             "delivery_certainty_unverified",
+def test_pending_gate_reasons_are_the_documented_two():
+    gates = ("delivery_certainty_unverified",
              "attempt_budget_unverifiable")
     assert PENDING_GATE_REASONS == gates and set(gates) <= REASON_CODES
     # 18 basic refusals + 7 canonical availability-blocked + 2 unverifiable
-    # availability + 3 still-pending gates = 30 closed codes.
-    assert len(REASON_CODES) == 30
+    # availability + 5 cadence refusals + 2 still-pending gates = 34 codes.
+    assert len(REASON_CODES) == 34
     assert "current_availability_unverified" not in REASON_CODES
+    # RO1c closed the cadence gate: it is never pending and never returned.
+    assert "current_cadence_unverified" not in REASON_CODES
+    assert set(CADENCE_BLOCKED_REASONS) <= REASON_CODES
 
 
 @pytest.mark.parametrize("factory", [sqlite3.Row, None], ids=["row", "tuple"])
@@ -366,6 +426,8 @@ def test_two_relations_two_instances_and_cycles_do_not_cross():
               user_id="user-3", cycle_id="cycle-2")
     for seeded_scope in (s1, s2, s3):  # explicit availability row per scope
         db.configure_availability(seeded_scope, status="available")
+        _seed_cadence(conn, seeded_scope)  # RO1c sources, one row per scope
+    conn.commit()  # close the implicit DML transaction of the seeding above
     conn.execute("BEGIN")  # caller-side snapshot after the seeding commits
     e1, e2, e3 = (_expression(conn, s) for s in (s1, s2, s3))
     for eid, scope in ((e1, s1), (e2, s2), (e3, s3)):
