@@ -429,15 +429,21 @@ def test_semantics_match_the_scoped_producer_with_hand_computed_deadlines(
 ])
 def test_documented_fail_closed_divergences_from_the_permissive_path(
         timestamp, ours):
-    """The scoped path treats these as 'no deadline' (permissive); RO1c refuses.
+    """Both sides now refuse unusable evidence, with different mechanisms.
 
-    This is the deliberate, reviewed divergence: absence or unusable evidence
-    never becomes 'cooldown elapsed' in the assessment.
+    R3c (authorized policy change): the scoped producer path no longer
+    treats unusable timestamps as "no deadline" (permissive). It raises
+    ``RelationalCooldownHistoryError`` so the caller blocks generation with
+    ``cooldown_unverified`` instead of releasing the contact. RO1c keeps
+    its own stable refusal code for the read-only assessment. The legacy
+    UNdynamic path stays permissive by design (out of this cut's scope).
     """
     conn = _connect()
     scope, expression_id = _seed(conn)
     _set_timestamp(conn, scope, timestamp)
-    assert _producer(_producer_system(conn), scope) is None  # permissive today
+    with pytest.raises(proactive.RelationalCooldownHistoryError) as excinfo:
+        _producer(_producer_system(conn), scope)
+    assert excinfo.value.code == "cooldown_history_invalid_row"
     _assert_refusal(_assess(conn, expression_id, scope), ours)
 
 

@@ -84,11 +84,12 @@ def test_mixed_separator_rows_resolve_to_the_chronological_max():
     conn = _connect()
     scope, expression_id = _seed(conn)  # history row 2026-11-15T10:00:00
     _add_rows(conn, scope, ["2026-11-16T07:00:00", "2026-11-16 12:00:00"])
-    # The CURRENT producer picks TEXTUALLY ('T' > ' ', so the T row sorts
-    # first): hand-computed deadline 07:00 + 6h == 13:00 == now -> elapsed.
-    # That is exactly the reproduced bug: T12 would give 18:00 > now (active).
-    assert _producer(_producer_system(conn), scope) == datetime(2026, 11, 16, 13, 0)
-    # The gate instead proves the CHRONOLOGICAL max (12:00 -> deadline 18:00).
+    # R3c authorized fix: the SCOPED producer now proves the CHRONOLOGICAL
+    # maximum too (12:00 -> 18:00 > now 13:00 -> active). Before the fix it
+    # picked TEXTUALLY ('T' > ' '): 07:00 + 6h == 13:00 == now -> elapsed,
+    # releasing the contact early -- the reproduced bug.
+    assert _producer(_producer_system(conn), scope) == datetime(2026, 11, 16, 18, 0)
+    # The gate proves the same chronological maximum.
     _assert_refusal(_assess(conn, expression_id, scope), "cadence_active")
 
 

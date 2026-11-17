@@ -11,13 +11,15 @@ Contract mirrored -- and ONLY this one: the scoped cooldown of
 ``minimum_hours = max(6.0, cooldown_hours / 2)`` ->
 ``_relational_cooldown_until(user_id, minimum_hours, agent_instance,
 relation_id)``). Mirrored: the scope predicate, the configuration-refresh
-order, the parse rules and the deadline arithmetic. Deliberately NOT
-mirrored: that helper's textual ``ORDER BY timestamp DESC`` row pick, which
-is not chronological across the spellings both sides accept (see the evidence
-bullet below) -- the producer runtime is UNCHANGED; only this reader selects
-the chronological maximum. The legacy unscoped path (``user_id`` only, full
-``cooldown_hours``) and the historical receipt deadline are deliberately NOT
-read as the current deadline.
+order, the parse rules, the bounded exhaustive read and the deadline
+arithmetic. Since the authorized R3c fix the scoped producer also selects
+the CHRONOLOGICAL maximum over every validated row (same ceiling:
+``MAX_EVIDENCE_ROWS`` == ``MAX_SCOPED_COOLDOWN_ROWS`` == 500) and fails
+closed on unusable rows, so both sides agree across the ``T``/space
+spellings (see the evidence bullet below). Still NOT mirrored: the legacy
+unscoped path (``user_id`` only, full ``cooldown_hours``, textual pick,
+permissive on unusable rows) and the historical receipt deadline --
+deliberately NOT read as the current deadline.
 
 Deliberate limits (complementing ``engines/will_resumption_assessment``):
 
@@ -71,9 +73,15 @@ Deliberate limits (complementing ``engines/will_resumption_assessment``):
 - Timestamp rules are the scoped path's own restriction, fail-closed: only a
   non-empty naive-UTC ``str`` that parses and is not in the future is usable;
   empty/NULL/unparsable text, aware/offset/``Z`` text (never converted, never
-  stripped) and a future instant all refuse as ``cadence_state_invalid``. The
-  producer treats those as "no deadline" (permissive); this reader treats
-  "not verifiable" as a refusal.
+  stripped) and a future instant all refuse as ``cadence_state_invalid``.
+  Since the authorized R3c fix the scoped producer agrees on the unusable
+  rows: it raises ``RelationalCooldownHistoryError`` and the caller blocks
+  the generation with ``cooldown_unverified`` instead of reading "no
+  deadline". It does not consult a clock for future instants (a future row
+  only pushes its own deadline forward, so contact stays blocked either way);
+  this reader, which receives ``now``, additionally refuses a future instant.
+  The legacy unscoped producer path still treats unusable rows as "no
+  deadline" (permissive) and is deliberately not mirrored.
 - Deadline: ``max_parsed + timedelta(hours=max(6.0, cooldown_hours / 2))``,
   computed inside ``try/except OverflowError``: an instant so close to the
   datetime ceiling that the addition cannot be represented refuses as

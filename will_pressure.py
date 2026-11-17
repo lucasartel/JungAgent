@@ -35,6 +35,7 @@ PRESSURE_ORDER = ("saber", "relacionar", "expressar")
 RELATIONAL_NO_MESSAGE_SUMMARIES = {
     "scope_denied": "A proatividade relacional foi recusada pelo escopo da relacao.",
     "cooldown": "A proatividade relacional esta no intervalo minimo entre contatos.",
+    "cooldown_unverified": "A proatividade relacional nao verificou o historico de cooldown; geracao bloqueada (cooldown_unverified).",
     "empty_message": "A geracao proativa relacional nao retornou texto.",
     "generation_error": "A geracao proativa relacional falhou.",
 }
@@ -1035,13 +1036,19 @@ ESTADO QUALITATIVO:
             **generator_kwargs,
         )
         if not payload:
+            summary = RELATIONAL_NO_MESSAGE_SUMMARIES.get(
+                reason, "A proatividade relacional nao encontrou mensagem valida para enviar.",
+            )
+            history_code = evidence.get("cooldown_history")
+            if reason == "cooldown_unverified" and isinstance(history_code, str):
+                # Registra o codigo fino no recibo (resumo/razao da expressao)
+                # sem nenhum valor de linha: apenas o codigo estavel.
+                summary = f"{summary} [{history_code}]"
             return {
                 "success": False,
                 "preparation_reason": reason,
                 "preparation_evidence": evidence,
-                "action_summary": RELATIONAL_NO_MESSAGE_SUMMARIES.get(
-                    reason, "A proatividade relacional nao encontrou mensagem valida para enviar.",
-                ),
+                "action_summary": summary,
             }
         payload["platform_id"] = platform_id
         payload["cycle_id"] = cycle_id
