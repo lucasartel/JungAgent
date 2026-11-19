@@ -347,11 +347,15 @@ class _FakeVectors:
         self.fail_delete = fail_delete
         self.deleted = []
 
-    def count_namespace(self, namespace):
-        return int(self.counts.get(namespace, 0))
+    def namespace_state(self, namespace):
+        return {
+            "count": int(self.counts.get(namespace, 0)),
+            "truncated": False,
+            "limit": 1000,
+        }
 
-    def count_relation(self, relation_id):
-        return self.count_namespace(f"relation:{relation_id}")
+    def relation_state(self, relation_id):
+        return self.namespace_state(f"relation:{relation_id}")
 
     def delete_relation(self, relation_id):
         if self.fail_delete:
@@ -499,8 +503,9 @@ def test_run_erase_propagates_vector_purge_failure(tmp_path):
         def delete_relation(self, relation_id):
             raise RuntimeError("qdrant recusou")
 
-        def count_namespace(self, namespace):
-            return 0  # o caso perigoso: contagem final zerada apos erro
+        def namespace_state(self, namespace):
+            # O caso perigoso: contagem final zerada apos erro de exclusao.
+            return {"count": 0, "truncated": False, "limit": 1000}
 
     adapter = _FailDelete({"relation:rel-1": 2})
     mod = _load_erase_module()

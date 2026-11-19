@@ -1,10 +1,9 @@
 """C12g: inventario e apagamento verificavel de vetores por Relation.
 
-Cobre ``core/db/erase_vectors.py`` e a chave de namespace do adaptador:
-estado desconhecido sem QDRANT_URL (nao prova inexistencia de vetores
-historicos), falha fechada quando o Qdrant esta configurado mas inacessivel,
-apagamento por namespace EXATO sem passar pelo resolvedor, e a chave
-pre-Relation reportada mas nunca apagada por inferencia.
+Cobre ``core/db/erase_vectors.py``, a chave de namespace do adaptador e a
+contagem autoritativa contra o mem0 real (sem filtrar payload, com limite
+explicito, formato invalido como indisponibilidade e semantica do
+delete_all confirmada na fonte).
 """
 from __future__ import annotations
 
@@ -37,7 +36,11 @@ from core.db.erase_vectors import (
     vectors_are_clean,
     verify_relation_vectors_erased,
 )
-from mem0_memory_adapter import Mem0MemoryAdapter, relation_namespace
+from mem0_memory_adapter import (
+    Mem0MemoryAdapter,
+    _NAMESPACE_LIMIT,
+    relation_namespace,
+)
 
 LEGACY_USER = "user-legacy"
 REL = "rel-1"
@@ -54,13 +57,17 @@ class _FakeVectors:
         self.fail_delete = fail_delete
         self.deleted = []
 
-    def count_namespace(self, namespace):
+    def namespace_state(self, namespace):
         if namespace in self.fail_namespaces:
             raise RuntimeError("qdrant indisponivel")
-        return int(self.counts.get(namespace, 0))
+        return {
+            "count": int(self.counts.get(namespace, 0)),
+            "truncated": False,
+            "limit": _NAMESPACE_LIMIT,
+        }
 
-    def count_relation(self, relation_id):
-        return self.count_namespace(relation_namespace(relation_id))
+    def relation_state(self, relation_id):
+        return self.namespace_state(relation_namespace(relation_id))
 
     def delete_relation(self, relation_id):
         if self.fail_delete:
@@ -68,6 +75,42 @@ class _FakeVectors:
         namespace = relation_namespace(relation_id)
         self.deleted.append(namespace)
         self.counts[namespace] = 0
+
+
+class _ModernMem0:
+    """mem0 atual: filters/top_k/show_expired, rejeita user_id de topo."""
+
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    def get_all(self, *, filters=None, top_k=20, show_expired=False):
+        self.calls.append({"filters": filters, "top_k": top_k, "show_expired": show_expired})
+        if isinstance(self.response, Exception):
+            raise self.response
+        return self.response
+
+
+class _LegacyMem0:
+    """mem0 antigo: user_id/limit de topo."""
+
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    def get_all(self, user_id=None, limit=None):
+        self.calls.append({"user_id": user_id, "limit": limit})
+        if isinstance(self.response, Exception):
+            raise self.response
+        return self.response
+
+
+def _adapter(mem) -> Mem0MemoryAdapter:
+    adapter = Mem0MemoryAdapter.__new__(Mem0MemoryAdapter)
+    adapter.mem = mem
+    adapter._relation_resolver = None
+    adapter._relation_eligibility_checker = None
+    return adapter
 
 
 def test_namespace_is_the_exact_relation_key():
@@ -80,6 +123,101 @@ def test_namespace_is_the_exact_relation_key():
     # Com e sem relation_id expl chegam na MESMA chave.
     assert adapter._memory_user_id("user-1") == "relation:rel-9"
     assert adapter._memory_user_id("user-1", relation_id="rel-9") == "relation:rel-9"
+
+
+def test_count_includes_records_without_memory_field():
+    """Contagem autoritativa: registro sem payload ``memory`` CONTA."""
+    mem = _ModernMem0({"results": [{"memory": "texto"}, {"id": "x"}, {}]})
+    state = _adapter(mem).relation_state(REL)
+
+    # O filtro antigo (`_result_rows`) descartaria 2 dos 3 e daria 1.
+    assert state["count"] == 3
+    assert vectors_are_clean({"state": STATE_VERIFIED, "count": state["count"]}) is False
+
+
+def test_invalid_response_shape_is_not_zero():
+    """Formato inesperado levanta — nao vira lista vazia nem count=0."""
+    mem = _ModernMem0({"foo": 1})
+    try:
+        _adapter(mem).relation_state(REL)
+    except ValueError as exc:
+        assert "mem0_response_without_results" in str(exc)
+    else:
+        raise AssertionError("resposta invalida deveria levantar")
+
+    mem = _ModernMem0("ok")
+    try:
+        _adapter(mem).relation_state(REL)
+    except ValueError as exc:
+        assert "mem0_response_unexpected_type" in str(exc)
+    else:
+        raise AssertionError("tipo inesperado deveria levantar")
+
+
+def test_invalid_response_becomes_unavailable_not_clean():
+    """No nivel do expurgo, a resposta invalida vira indisponibilidade."""
+    mem = _ModernMem0({"foo": 1})
+    remaining = inventory_relation_vectors(REL, _adapter(mem), configured=True)
+    assert remaining["state"] == STATE_UNAVAILABLE
+    assert remaining["error"] == "ValueError"
+    assert not vectors_are_clean(remaining)
+
+
+def test_modern_form_uses_filters_limit_and_show_expired():
+    """A forma atual exige filters=, limite explicito e memorias expiradas.
+
+    Sem ``show_expired=True`` um namespace so com expiradas voltaria vazio e
+    viraria ``count=0`` com dado ainda no store.
+    """
+    mem = _ModernMem0({"results": []})
+    _adapter(mem).relation_state(REL)
+
+    call = mem.calls[0]
+    assert call["filters"] == {"user_id": REL_NS}
+    assert call["top_k"] == _NAMESPACE_LIMIT
+    assert call["top_k"] != 20  # o padrao da API truncaria
+    assert call["show_expired"] is True
+
+
+def test_legacy_form_falls_back_to_user_id():
+    mem = _LegacyMem0({"results": []})
+    _adapter(mem).relation_state(REL)
+
+    call = mem.calls[0]
+    assert call["user_id"] == REL_NS
+    assert call["limit"] == _NAMESPACE_LIMIT
+
+
+def test_hitting_the_limit_marks_truncated_and_is_not_clean():
+    """Estouro do teto vira ``truncated``: a contagem e um piso, nao zero."""
+    mem = _ModernMem0({"results": [{"memory": f"m{i}"} for i in range(_NAMESPACE_LIMIT)]})
+    state = _adapter(mem).relation_state(REL)
+
+    assert state["count"] == _NAMESPACE_LIMIT
+    assert state["truncated"] is True
+    # Nunca limpo: o veredito de vazio continua valido apesar do teto.
+    assert not vectors_are_clean({"state": STATE_VERIFIED, "count": state["count"]})
+
+
+def test_delete_all_success_message_without_removing_is_not_clean():
+    """Semantica real do delete_all: mensagem fixa de sucesso, sem contagem.
+
+    O SDK devolve ``{"message": "Memories deleted successfully!"}`` mesmo se
+    parar cedo (ele so avisa quando o lote se repete). Por isso o retorno e
+    ignorado e a verificacao e uma contagem nova — dado que sobrou e nao limpo.
+    """
+    class _LyingDelete(_ModernMem0):
+        def delete_all(self, **kwargs):
+            return {"message": "Memories deleted successfully!"}
+
+    # Ha 2 memorias e o delete nao remove nada.
+    mem = _LyingDelete({"results": [{"memory": "a"}, {"memory": "b"}]})
+    adapter = _adapter(mem)
+
+    purged = erase_relation_vectors(REL, adapter, configured=True)
+    assert purged["deleted"] is True  # a operacao "passou"...
+    assert purged["count"] == 2  # ...mas a contagem nova denuncia
+    assert not vectors_are_clean(purged)
 
 
 def test_absent_qdrant_url_is_unknown_and_not_clean():

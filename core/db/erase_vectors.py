@@ -8,8 +8,10 @@ esta em ``core/db/erase_files.py``; esta cobre o namespace Qdrant
 devolve.
 
 Nao se cria cliente nem se decide credencial aqui: o adaptador e INJETADO e
-precisa expor ``count_relation``, ``count_namespace`` e ``delete_relation``.
-Isso mantem o nucleo testavel offline e deixa acesso a rede com quem chama.
+precisa expor ``relation_state`` (contagem autoritativa do namespace com
+limite explicito, sem filtrar payload), ``namespace_state`` (idem para uma
+chave crua) e ``delete_relation``. Isso mantem o nucleo testavel offline e
+deixa acesso a rede com quem chama.
 
 Estados do namespace da Relation — um por relatorio, sempre visiveis:
 
@@ -95,12 +97,16 @@ def _legacy_report(adapter: Any, configured: bool, legacy_user_id: str) -> Dict[
     if not configured or adapter is None:
         return report
     try:
-        report["count"] = int(adapter.count_namespace(str(legacy_user_id)))
+        state = adapter.namespace_state(str(legacy_user_id))
     except Exception as exc:
         logger.warning(
             "erase_vectors: falha ao contar legado error_type=%s", type(exc).__name__
         )
         report["error"] = type(exc).__name__
+        return report
+    report["count"] = int(state.get("count", 0) or 0)
+    report["truncated"] = bool(state.get("truncated", False))
+    report["limit"] = state.get("limit")
     return report
 
 
@@ -128,11 +134,17 @@ def inventory_relation_vectors(
         result = {"state": STATE_UNAVAILABLE, "namespace": namespace, "count": None}
     else:
         try:
-            count = int(adapter.count_relation(relation_id))
+            state = adapter.relation_state(relation_id)
         except Exception as exc:  # falha de rede/auth vira estado, nao exit silencioso
             result = _unavailable(namespace, exc)
         else:
-            result = {"state": STATE_VERIFIED, "namespace": namespace, "count": count}
+            result = {
+                "state": STATE_VERIFIED,
+                "namespace": namespace,
+                "count": int(state.get("count", 0) or 0),
+                "truncated": bool(state.get("truncated", False)),
+                "limit": state.get("limit"),
+            }
     if legacy_user_id:
         result["legacy"] = _legacy_report(
             adapter, _is_configured(configured), legacy_user_id
@@ -179,13 +191,23 @@ def erase_relation_vectors(
         result = _unavailable(namespace, exc)
         result["deleted"] = False
         return result
+    # O delete_all do mem0 devolve mensagem fixa de sucesso sem contar nada e
+    # pode parar cedo com so um aviso: o retorno e ignorado e a verificacao e
+    # sempre uma contagem NOVA.
     try:
-        count = int(adapter.count_relation(relation_id))
+        state = adapter.relation_state(relation_id)
     except Exception as exc:
         result = _unavailable(namespace, exc)
         result["deleted"] = True
         return result
-    return {"state": STATE_VERIFIED, "namespace": namespace, "count": count, "deleted": True}
+    return {
+        "state": STATE_VERIFIED,
+        "namespace": namespace,
+        "count": int(state.get("count", 0) or 0),
+        "truncated": bool(state.get("truncated", False)),
+        "limit": state.get("limit"),
+        "deleted": True,
+    }
 
 
 def vectors_are_clean(remaining: Dict[str, Any]) -> bool:

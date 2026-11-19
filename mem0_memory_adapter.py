@@ -27,11 +27,63 @@ Configuração via variáveis de ambiente:
 """
 
 import os
+import inspect
 import logging
 import math
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Limite explicito de leitura do namespace. O padrao do ``get_all`` e 20 — com
+# ele um namespace cheio truncaria a contagem. 1000 acompanha o proprio lote de
+# ``delete_all`` do mem0; ao bater no teto o estado marca ``truncated``.
+_NAMESPACE_LIMIT = 1000
+
+
+def _namespace_rows(results: Any) -> List[Dict[str, Any]]:
+    """Entradas cruas de ``get_all``, SEM filtrar payload.
+
+    Um registro sem campo ``memory`` continua sendo registro: contagem que
+    descarta payload conta menos do que existe. Formato nao reconhecido
+    LEVANTA — resposta inesperada nao pode virar lista vazia, que e como
+    uma falha viraria ``count=0`` e ``clean=True``.
+    """
+    if isinstance(results, dict):
+        if "results" not in results:
+            raise ValueError("mem0_response_without_results")
+        rows = results["results"]
+    elif isinstance(results, (list, tuple)):
+        rows = results
+    else:
+        raise ValueError("mem0_response_unexpected_type")
+    if not isinstance(rows, (list, tuple)):
+        raise ValueError("mem0_results_not_a_list")
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("mem0_entry_not_an_object")
+    return list(rows)
+
+
+def _namespace_query(namespace: str, get_all: Any) -> Dict[str, Any]:
+    """Escolhe a forma de chamada pela assinatura INSTALADA do mem0.
+
+    O mem0 atual pede ``filters={"user_id": ...}`` com ``top_k`` e
+    ``show_expired`` e REJEITA ``user_id`` no topo (levanta ``ValueError``);
+    versoes antigas aceitam ``user_id``/``limit``. ``show_expired=True`` e
+    obrigatoria na forma atual: sem ela memorias expiradas somem da
+    listagem e um namespace so com expiradas contaria zero.
+    """
+    try:
+        parameters = inspect.signature(get_all).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    if "filters" in parameters:
+        return {
+            "filters": {"user_id": namespace},
+            "top_k": _NAMESPACE_LIMIT,
+            "show_expired": True,
+        }
+    return {"user_id": namespace, "limit": _NAMESPACE_LIMIT}
 
 
 def relation_namespace(relation_id) -> str:
@@ -335,33 +387,47 @@ class Mem0MemoryAdapter:
         """Conta quantas memórias o mem0 mantém para o usuário."""
         return len(self.get_all_memories(user_id))
 
-    def count_namespace(self, namespace: str) -> int:
-        """Conta as memórias de um namespace EXATO do Qdrant (chave crua).
+    def namespace_state(self, namespace: str) -> Dict[str, Any]:
+        """Estado autoritativo de um namespace: contagem SEM filtrar payload.
 
-        Não é para apagar por aqui: apagagem só existe por ``delete_relation``,
-        que aceita unicamente ``relation:<id>``. Pode levantar — quem chama
-        classifica a falha, em vez de o adaptador engolir o erro e devolver
-        zero.
+        Conta as entradas como estao — registro sem campo ``memory`` conta.
+        Limites reais da API sao explicitos: ``top_k`` fixado (o padrao de 20
+        truncaria) e ``show_expired=True`` na forma atual. Estouro do teto vira
+        ``truncated=True``, onde a contagem e um piso: o veredito de vazio
+        continua valido, porque zero nunca e artefato de teto. Erro ou formato
+        inesperado LEVANTA — quem chama vira ``unavailable``, nunca zero.
         """
-        results = self.mem.get_all(user_id=namespace)
-        return len(self._result_rows(results))
+        get_all = self.mem.get_all
+        results = get_all(**_namespace_query(namespace, get_all))
+        rows = _namespace_rows(results)
+        return {
+            "count": len(rows),
+            "truncated": len(rows) >= _NAMESPACE_LIMIT,
+            "limit": _NAMESPACE_LIMIT,
+        }
 
-    def count_relation(self, relation_id: str) -> int:
-        """Conta as memórias do namespace EXATO da Relation.
+    def relation_state(self, relation_id: str) -> Dict[str, Any]:
+        """Estado do namespace EXATO da Relation.
 
-        Não passa pelo resolvedor: ``_memory_user_id`` resolveria para a
-        Relation do participante, que pode não ser a Relation pedida (o
-        mesmo participante pode ter Relations em outra instância).
+        Nao passa pelo resolvedor: ``_memory_user_id`` resolveria para a
+        Relation do participante, que pode nao ser a Relation pedida (o
+        mesmo participante pode ter Relations em outra instancia).
         """
-        return self.count_namespace(relation_namespace(relation_id))
+        return self.namespace_state(relation_namespace(relation_id))
 
     def delete_relation(self, relation_id: str) -> None:
         """Apaga o namespace EXATO da Relation.
 
-        Não engole falha: uma exceção daqui é o sinal de que o apagamento
-        não aconteceu, e o chamador tem de reportar ``unavailable`` em vez
-        de afirmar limpo. Não existe caminho aqui para apagar a chave
-        pré-Relation do participante — isso seria apagar por inferência.
+        Nao engole falha: uma excecao daqui e o sinal de que o apagamento nao
+        aconteceu, e o chamador tem de reportar ``unavailable`` em vez de
+        afirmar limpo. Nao existe caminho aqui para apagar a chave
+        pre-Relation do participante — isso seria apagar por inferencia.
+
+        A semantica real do ``delete_all`` do mem0 e: repete listagem+remocao
+        em lotes de 1000 ate achar vazio (nao apaga so a primeira pagina) e
+        devolve uma mensagem fixa de sucesso SEM contar nada — e pode parar
+        cedo com apenas um aviso se o lote se repetir. Por isso o retorno e
+        ignorado e a verificacao e sempre uma contagem nova.
         """
         self.mem.delete_all(user_id=relation_namespace(relation_id))
 
