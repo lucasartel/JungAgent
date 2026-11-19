@@ -23,6 +23,8 @@ from core.db.conversations import ConversationDatabaseMixin
 from core.db.dreams import DreamDatabaseMixin
 from core.db.integrative_self import IntegrativeSelfDatabaseMixin
 from core.db.knowledge_gaps import KnowledgeGapDatabaseMixin
+from core.db.knowledge_units import KnowledgeUnitDatabaseMixin
+from core.db.knowledge_unit_review import KnowledgeUnitReviewMixin
 from core.db.psychometrics import PsychometricsDatabaseMixin
 from core.db.relational_state import RelationalStateDatabaseMixin
 from core.db.relations import RelationsDatabaseMixin
@@ -62,6 +64,8 @@ class HybridDatabaseManager(
     UserDatabaseMixin,
     DreamDatabaseMixin,
     KnowledgeGapDatabaseMixin,
+    KnowledgeUnitDatabaseMixin,
+    KnowledgeUnitReviewMixin,
     WorkingMemoryDatabaseMixin,
     IntegrativeSelfDatabaseMixin,
     RelationalStateDatabaseMixin,

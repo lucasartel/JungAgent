@@ -45,6 +45,7 @@ Dominio                      Conjunto aceito (funcao validadora)
 ``rumination_fragments``     ``CONTENT_SOURCE_KINDS`` / ``validate_source_kind``
 ``work_experience_events``   ``CONTENT_SOURCE_KINDS`` / ``validate_source_kind``
 ``knowledge_gaps``           ``KNOWLEDGE_GAP_SOURCE_KINDS`` / ``validate_gap_source_kind``
+``knowledge_units``          ``KNOWLEDGE_UNIT_SOURCE_KINDS`` / ``validate_unit_source_kind``
 ``agent_will_decisions``     ``engines/will_decision_store.SOURCES``
 ``reconciliation_...``       literais de ``engines/reconciliation_review``
 ============================ ==========================================
@@ -172,3 +173,33 @@ def validate_gap_source_kind(
     if normalized not in KNOWLEDGE_GAP_SOURCE_KINDS:
         return None, f"source_kind_unknown:{normalized}"
     return normalized, None
+
+
+# ---------------------------------------------------------------------------
+# Proveniencia de unidades de conhecimento (fechada) — R1b
+# ---------------------------------------------------------------------------
+# Unidades consolidam material ja elaborado. O conjunto cobre as origens de
+# conteudo reais dos produtores (sem o evento de auditoria ``retention_purge``,
+# que nao e material a ser aprendido) mais ``world``, que alimenta lacunas e
+# agora unidades via a rota publica do F-5. Origem NUNCA autoriza propriedade:
+# ``ownership_class``/``origin_class`` seguem sendo os donos dessa decisao.
+KNOWLEDGE_UNIT_SOURCE_KINDS: FrozenSet[str] = frozenset(
+    (CONTENT_SOURCE_KINDS - AUDIT_EVENT_SOURCE_KINDS) | {WORLD_GAP}
+)
+
+
+def validate_unit_source_kind(value: Any, *, allow_null: bool = False) -> Optional[str]:
+    """Valida a proveniencia de uma unidade de conhecimento (fail-closed).
+
+    Escrita nova de unidade SEMPRE exige origem valida: ``allow_null=True``
+    existe apenas para leitura de linha legada. Nunca normaliza para um
+    default — origem desconhecida nao vira origem de conversa.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if allow_null:
+            return None
+        raise ValueError("source_kind_unset")
+    normalized = str(value).strip()
+    if normalized not in KNOWLEDGE_UNIT_SOURCE_KINDS:
+        raise ValueError(f"source_kind_unknown:{normalized}")
+    return normalized
