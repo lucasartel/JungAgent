@@ -15,11 +15,12 @@ inventariado. Qualquer arquivo sobrevivente tambem derruba o exit code.
 
 A terceira superficie sao os vetores no namespace Qdrant
 ``relation:<relation_id>``, por ``core.db.erase_vectors`` com adaptador
-injetado. Diferente das demais, o inventario de vetores e uma LEITURA em
-rede: quando ``QDRANT_URL`` esta presente o dry-run conta os vetores da
-Relation (sem isso o relatorio marcara ``not_configured``, que e ausencia
-estrutural, nao verificacao). ``clean`` so sai True com banco, arquivos e
-vetores verificados — ``unavailable`` nunca conta como limpo.
+injetado. O inventario de vetores e uma LEITURA em rede: sem ``QDRANT_URL``
+o relatorio marca ``unknown`` — a ausencia da variavel HOJE nao prova
+inexistencia de vetores historicos — e ``unknown``/``unavailable`` nunca
+contam como limpo. A chave pre-Relation do participante entra como
+``legacy``: reportada, nunca apagada por inferencia. ``clean`` so sai True
+com banco, arquivos E vetores verificados.
 
 O expurgo do Work continua sendo ``scripts/purge_work_relation.py`` —
 rotinas separadas, escopos separados (o Work tem arquivo fisico e
@@ -81,15 +82,22 @@ def run_erase(
     injetam o adaptador de vetores e a situacao do ``QDRANT_URL``; ``None``
     deriva do ambiente e cria o adaptador quando houver configuracao. Injecao
     explicita existe para teste — o CLI so deriva do ambiente.
+
+    Participante da Relation e resolvido so para RELATAR a chave pre-Relation
+    do legado; o expurgo de vetores nao o recebe. E uma exclusao que falha
+    herda o resultado: o relatorio nunca troca falha de ``vectors_purged``
+    por uma contagem final zero.
     """
     from core.db.erase_files import (
         erase_relation_files,
         files_are_clean,
         inventory_relation_files,
         legacy_file_inventory,
+        relation_participant,
         verify_relation_files_erased,
     )
     from core.db.erase_vectors import (
+        STATE_VERIFIED,
         erase_relation_vectors,
         inventory_relation_vectors,
         vectors_are_clean,
@@ -104,6 +112,12 @@ def run_erase(
 
         adapter = create_mem0_adapter()
 
+    # Participante da Relation: serve so para RELATAR a chave pre-Relation do
+    # legado no inventario. O expurgo de vetores nao o recebe — passar seria
+    # apagar por inferencia.
+    scope, _scope_status = relation_participant(conn, relation_id)
+    legacy_user_id = scope[1] if scope else None
+
     report: dict = {"relation_id": relation_id, "mode": "verify"}
     # Inventario ANTES de qualquer apagagem: no dry-run mostra o que existiria
     # hoje; no apply registra o que existia antes do expurgo.
@@ -114,7 +128,10 @@ def run_erase(
         conn, relation_id, users_root=users_root
     )
     report["vectors_before"] = inventory_relation_vectors(
-        relation_id, adapter, configured=vectors_configured
+        relation_id,
+        adapter,
+        configured=vectors_configured,
+        legacy_user_id=legacy_user_id,
     )
 
     if apply:
@@ -135,14 +152,20 @@ def run_erase(
     report["files_remaining"] = verify_relation_files_erased(
         conn, relation_id, users_root=users_root
     )
-    # No apply a verificacao de vetors e uma leitura nova; no dry-run a
-    # contagem de antes ja e o estado atual, e repetir so custaria rede.
-    if apply:
+    if not apply:
+        report["vectors_remaining"] = report["vectors_before"]
+    elif report["vectors_purged"].get("state") == STATE_VERIFIED:
+        # Exclusao verificada: leitura nova confirma o estado atual.
         report["vectors_remaining"] = verify_relation_vectors_erased(
-            relation_id, adapter, configured=vectors_configured
+            relation_id,
+            adapter,
+            configured=vectors_configured,
+            legacy_user_id=legacy_user_id,
         )
     else:
-        report["vectors_remaining"] = report["vectors_before"]
+        # Falha ou recusa na exclusao herda o resultado: uma contagem final
+        # zero apos erro NAO pode virar sucesso.
+        report["vectors_remaining"] = dict(report["vectors_purged"])
 
     report["clean"] = (
         erase_is_clean(report["remaining"])

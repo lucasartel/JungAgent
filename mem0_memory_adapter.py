@@ -335,25 +335,33 @@ class Mem0MemoryAdapter:
         """Conta quantas memórias o mem0 mantém para o usuário."""
         return len(self.get_all_memories(user_id))
 
+    def count_namespace(self, namespace: str) -> int:
+        """Conta as memórias de um namespace EXATO do Qdrant (chave crua).
+
+        Não é para apagar por aqui: apagagem só existe por ``delete_relation``,
+        que aceita unicamente ``relation:<id>``. Pode levantar — quem chama
+        classifica a falha, em vez de o adaptador engolir o erro e devolver
+        zero.
+        """
+        results = self.mem.get_all(user_id=namespace)
+        return len(self._result_rows(results))
+
     def count_relation(self, relation_id: str) -> int:
         """Conta as memórias do namespace EXATO da Relation.
 
         Não passa pelo resolvedor: ``_memory_user_id`` resolveria para a
         Relation do participante, que pode não ser a Relation pedida (o
-        mesmo participante pode ter Relations em outra instância). Pode
-        levantar — quem chama classifica a falha, em vez de o adaptador
-        engolir o erro e devolver zero.
+        mesmo participante pode ter Relations em outra instância).
         """
-        namespace = relation_namespace(relation_id)
-        results = self.mem.get_all(user_id=namespace)
-        return len(self._result_rows(results))
+        return self.count_namespace(relation_namespace(relation_id))
 
     def delete_relation(self, relation_id: str) -> None:
         """Apaga o namespace EXATO da Relation.
 
         Não engole falha: uma exceção daqui é o sinal de que o apagamento
         não aconteceu, e o chamador tem de reportar ``unavailable`` em vez
-        de afirmar limpo.
+        de afirmar limpo. Não existe caminho aqui para apagar a chave
+        pré-Relation do participante — isso seria apagar por inferência.
         """
         self.mem.delete_all(user_id=relation_namespace(relation_id))
 

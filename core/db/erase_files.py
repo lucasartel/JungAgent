@@ -111,6 +111,18 @@ def _relation_scope(conn: Any, relation_id: str) -> Tuple[Optional[Tuple[str, st
     return (instance, participant), "resolved"
 
 
+def relation_participant(
+    conn: Any, relation_id: str
+) -> Tuple[Optional[Tuple[str, str]], str]:
+    """Resolve ``(agent_instance, participant_user_id)`` da Relation.
+
+    Publica porque o expurgo de vetores precisa do participante para relatar
+    a chave pre-Relation sem inferir nada — mesma resolucao do escopo de
+    arquivos, sem duplicar a regra.
+    """
+    return _relation_scope(conn, relation_id)
+
+
 def _has_symlink_component(base: Path, target: Path) -> bool:
     """True quando ``base`` ou qualquer segmento ate ``target`` e symlink."""
     try:

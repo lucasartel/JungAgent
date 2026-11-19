@@ -302,15 +302,34 @@ def test_run_erase_covers_files_and_dry_run_keeps_them(tmp_path):
 
     mod = _load_erase_module()
 
+    # Adaptador injetado: sem ele o estado dos vetores seria desconhecido e
+    # ``clean`` nao poderia ser True — este teste cobre a superficie de
+    # ARQUIVOS, entao os vetores entram ja verificados.
+    fake_vectors = _FakeVectors()
+
     try:
-        dry = mod.run_erase(conn, "rel-1", apply=False, users_root=users_root)
+        dry = mod.run_erase(
+            conn,
+            "rel-1",
+            apply=False,
+            users_root=users_root,
+            vector_adapter=fake_vectors,
+            vectors_configured=True,
+        )
         assert dry["mode"] == "verify"
         assert dry["files_before"]["files"] == 1
         assert dry["files_remaining"]["files"] == 1
         assert dry["clean"] is False  # o arquivo sobrevive ao dry-run
         assert (relation_dir / "profile.md").exists()
 
-        applied = mod.run_erase(conn, "rel-1", apply=True, users_root=users_root)
+        applied = mod.run_erase(
+            conn,
+            "rel-1",
+            apply=True,
+            users_root=users_root,
+            vector_adapter=fake_vectors,
+            vectors_configured=True,
+        )
         assert applied["mode"] == "apply"
         assert applied["files_purged"]["files_removed"] == 1
         assert applied["files_remaining"]["files"] == 0
@@ -321,18 +340,25 @@ def test_run_erase_covers_files_and_dry_run_keeps_them(tmp_path):
 
 
 class _FakeVectors:
-    """Adaptador de vetores minimo para injecao em run_erase (sem rede)."""
+    """Adaptador de vetores minimo por namespace, para injecao em run_erase."""
 
-    def __init__(self, counts):
-        self.counts = dict(counts)
+    def __init__(self, counts=None, *, fail_delete=False):
+        self.counts = dict(counts or {})
+        self.fail_delete = fail_delete
         self.deleted = []
 
+    def count_namespace(self, namespace):
+        return int(self.counts.get(namespace, 0))
+
     def count_relation(self, relation_id):
-        return int(self.counts.get(relation_id, 0))
+        return self.count_namespace(f"relation:{relation_id}")
 
     def delete_relation(self, relation_id):
-        self.deleted.append(relation_id)
-        self.counts[relation_id] = 0
+        if self.fail_delete:
+            raise RuntimeError("qdrant recusou")
+        namespace = f"relation:{relation_id}"
+        self.deleted.append(namespace)
+        self.counts[namespace] = 0
 
 
 def test_run_erase_folds_vectors_into_clean(tmp_path):
@@ -362,7 +388,7 @@ def test_run_erase_folds_vectors_into_clean(tmp_path):
     )
     conn.commit()
 
-    adapter = _FakeVectors({"rel-1": 2})
+    adapter = _FakeVectors({"relation:rel-1": 2})
     mod = _load_erase_module()
 
     try:
@@ -392,13 +418,17 @@ def test_run_erase_folds_vectors_into_clean(tmp_path):
         assert applied["vectors_remaining"]["state"] == "verified"
         assert applied["vectors_remaining"]["count"] == 0
         assert applied["clean"] is True
-        assert adapter.deleted == ["rel-1"]
+        assert adapter.deleted == ["relation:rel-1"]
     finally:
         conn.close()
 
 
-def test_run_erase_without_qdrant_keeps_previous_semantics(tmp_path):
-    """Sem QDRANT_URL o comportamento anterior e preservado: not_configured."""
+def test_run_erase_without_qdrant_reports_unknown_and_not_clean(tmp_path):
+    """Sem QDRANT_URL o estado e desconhecido — e desconhecido nao e limpo.
+
+    A ausencia da variavel HOJE nao prova inexistencia de vetores
+    historicos: a instalacao pode ter gravado em Qdrant antes.
+    """
     users_root = tmp_path / "users"
     relation_dir = (
         users_root / "instances" / "jung_v1" / "relations" / "rel-1" / "users" / "u1"
@@ -429,8 +459,115 @@ def test_run_erase_without_qdrant_keeps_previous_semantics(tmp_path):
             users_root=users_root,
             vectors_configured=False,
         )
-        assert applied["vectors_remaining"]["state"] == "not_configured"
+        assert applied["vectors_remaining"]["state"] == "unknown"
+        assert applied["vectors_remaining"]["reason"] == "qdrant_url_absent"
+        # Arquivos e banco passaram, mas sem evidencia de vetores nao ha limpo.
         assert applied["files_remaining"]["files"] == 0
-        assert applied["clean"] is True
+        assert applied["clean"] is False
+    finally:
+        conn.close()
+
+
+def test_run_erase_propagates_vector_purge_failure(tmp_path):
+    """Falha de exclusao seguida de contagem zero NAO pode virar sucesso.
+
+    O resultado herda o estado da operacao: uma contagem final zerada apos
+    erro de exclusao seria afirmar limpo sem ter apagado nada comprovado.
+    """
+    users_root = tmp_path / "users"
+    relation_dir = (
+        users_root / "instances" / "jung_v1" / "relations" / "rel-1" / "users" / "u1"
+    )
+    relation_dir.mkdir(parents=True)
+    (relation_dir / "profile.md").write_text("conteudo privado")
+
+    db_path = tmp_path / "faildelete.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        """
+        CREATE TABLE agent_relations (
+            relation_id TEXT PRIMARY KEY,
+            agent_instance TEXT NOT NULL,
+            participant_user_id TEXT NOT NULL
+        );
+        INSERT INTO agent_relations VALUES ('rel-1', 'jung_v1', 'u1');
+        """
+    )
+    conn.commit()
+
+    class _FailDelete(_FakeVectors):
+        def delete_relation(self, relation_id):
+            raise RuntimeError("qdrant recusou")
+
+        def count_namespace(self, namespace):
+            return 0  # o caso perigoso: contagem final zerada apos erro
+
+    adapter = _FailDelete({"relation:rel-1": 2})
+    mod = _load_erase_module()
+
+    try:
+        applied = mod.run_erase(
+            conn,
+            "rel-1",
+            apply=True,
+            users_root=users_root,
+            vector_adapter=adapter,
+            vectors_configured=True,
+        )
+        assert applied["vectors_purged"]["state"] == "unavailable"
+        assert applied["vectors_purged"]["deleted"] is False
+        # O resultado da operacao falha em vez de virar "vazio verificado".
+        assert applied["vectors_remaining"]["state"] == "unavailable"
+        assert applied["clean"] is False
+        assert adapter.deleted == []
+    finally:
+        conn.close()
+
+
+def test_run_erase_reports_legacy_namespace_without_erasing_it(tmp_path):
+    """A chave pre-Relation e reportada no relatorio e sobrevive ao expurgo."""
+    users_root = tmp_path / "users"
+    relation_dir = (
+        users_root / "instances" / "jung_v1" / "relations" / "rel-1" / "users" / "u1"
+    )
+    relation_dir.mkdir(parents=True)
+    (relation_dir / "profile.md").write_text("conteudo privado")
+
+    db_path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        """
+        CREATE TABLE agent_relations (
+            relation_id TEXT PRIMARY KEY,
+            agent_instance TEXT NOT NULL,
+            participant_user_id TEXT NOT NULL
+        );
+        INSERT INTO agent_relations VALUES ('rel-1', 'jung_v1', 'u1');
+        """
+    )
+    conn.commit()
+
+    # u1 = participante: chave pre-Relation com vetor historico orfao.
+    adapter = _FakeVectors({"relation:rel-1": 2, "u1": 7})
+    mod = _load_erase_module()
+
+    try:
+        applied = mod.run_erase(
+            conn,
+            "rel-1",
+            apply=True,
+            users_root=users_root,
+            vector_adapter=adapter,
+            vectors_configured=True,
+        )
+        legacy = applied["vectors_before"]["legacy"]
+        assert legacy["namespace"] == "u1"
+        assert legacy["count"] == 7
+        assert legacy["erased"] is False
+        assert legacy["reason"] == "not_erased_by_inference"
+        # Sobreviveu: apagamento por inferencia nao aconteceu.
+        assert adapter.counts["u1"] == 7
+        assert adapter.deleted == ["relation:rel-1"]
+        assert applied["clean"] is True  # veredito cobre o namespace da Relation
     finally:
         conn.close()
