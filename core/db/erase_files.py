@@ -3,7 +3,8 @@
 Espelho de ``core/db/erase.py`` (celulas SQLite) e de ``work/retention.py``
 (anexos do Work) para a terceira superficie de dados privados: os arquivos
 ``.md`` de perfil e de sessao escritos por ``user_profile_writer`` sob o volume
-persistente.
+persistente. As primitivas de filesystem que nunca seguem symlink vivem em
+``core/db/erase_fs.py``.
 
 Escopo:
 
@@ -17,26 +18,37 @@ Escopo:
 - sem ``agent_relations`` verificavel (tabela ausente, linha ausente, campos
   vazios ou segmentos invalidos) nao ha escopo atribuivel: nada e apagado e o
   relatorio marca o motivo — inferir um caminho a partir de um ``relation_id``
-  errado apagaria arquivo de outra pessoa;
-- nenhum componente do caminho pode ser symlink: um link recusa o expurgo
-  inteiro (fail-closed) e links dentro da arvore sao removidos como links,
-  nunca como alvo.
+  errado apagaria arquivo de outra pessoa.
 
-Garantias espelhadas:
+Falha fechada em leitura (revisao da PR #102): varredura que nao consegue
+abrir ou classificar um diretorio NAO vira "arquivo nenhum". ``scan_tree``
+devolve as falhas por tipo, o inventario e a verificacao as expoem como
+``scan_failures`` e ``files_are_clean`` recusa qualquer relatorio com falha —
+um diretorio ilegivel com dados sobreviventes reporta ``clean=False``.
 
-- ``mode=ro``/dry-run nao toca em arquivo: apagagem somente com
-  ``apply=True`` (chamado por ``scripts/erase_relation.py --apply``);
-- sem ``except Exception: pass`` — falha de remocao e logada com o tipo da
-  excecao, deixa o expurgo incompleto e ``verify`` denuncia os sobreviventes.
+Contra troca concorrente de diretorio por symlink (revisao da PR #102): a
+remocao nao reutiliza a arvore de caminho ja resolvida; cada entrada sai por
+``dir_fd`` com ``O_NOFOLLOW``. Um componente trocado por link apos a
+varredura vira ``symlink_refused`` em ``removal_failures`` e o ``verify``
+denuncia o que sobreviveu. Sem ``O_DIRECTORY``/``O_NOFOLLOW`` a remocao e
+RECUSADA, nao degradada.
+
+Sem ``except Exception: pass``: falha de leitura, classificacao ou remocao e
+contada por tipo e aparece no relatorio.
 """
 from __future__ import annotations
 
 import logging
-import os
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.db.erase_fs import (
+    ScanFailures,
+    erase_tree_entries,
+    file_bytes,
+    scan_tree,
+)
 from engines.participant_files import participant_dir
 
 logger = logging.getLogger(__name__)
@@ -45,8 +57,8 @@ logger = logging.getLogger(__name__)
 # arvore inteira; o corte e apenas para o tamanho do JSON.
 _MAX_REPORTED_PATHS = 50
 
-# Motivos de recusa. Um valor diferente de "resolved" em ``scope`` significa
-# que o escopo nao e verificavel — nunca "limpo por omissao".
+# Motivos de recusa de escopo. Um valor diferente de "resolved" em ``scope``
+# significa que o escopo nao e verificavel — nunca "limpo por omissao".
 SCOPE_REGISTRY_UNAVAILABLE = "registry_unavailable"
 SCOPE_RELATION_NOT_FOUND = "relation_not_found"
 SCOPE_INCOMPLETE = "scope_incomplete"
@@ -114,46 +126,6 @@ def _has_symlink_component(base: Path, target: Path) -> bool:
     return False
 
 
-def _scan(root: Path) -> List[Tuple[Path, bool]]:
-    """Lista ``(caminho, e_diretorio)`` sob ``root`` sem seguir symlink.
-
-    Um symlink de diretorio nasce como ``e_diretorio=False`` — o que faz o
-    expurgo remover o link (``unlink``) em vez de descer para o alvo.
-    """
-    entries: List[Tuple[Path, bool]] = []
-    if not root.is_dir() or root.is_symlink():
-        return entries
-    stack = [root]
-    while stack:
-        current = stack.pop()
-        try:
-            with os.scandir(current) as iterator:
-                children = list(iterator)
-        except OSError as exc:
-            logger.warning(
-                "erase_files: leitura de diretorio falhou error_type=%s",
-                type(exc).__name__,
-            )
-            continue
-        for child in children:
-            path = Path(child.path)
-            try:
-                is_dir = child.is_dir(follow_symlinks=False)
-            except OSError:
-                is_dir = False
-            entries.append((path, is_dir))
-            if is_dir:
-                stack.append(path)
-    return entries
-
-
-def _file_bytes(path: Path) -> int:
-    try:
-        return os.lstat(path).st_size
-    except OSError:
-        return 0
-
-
 def relation_files_dir(
     conn: Any, relation_id: str, *, users_root: Optional[Path] = None
 ) -> Tuple[Optional[Path], str]:
@@ -186,6 +158,13 @@ def relation_files_dir(
     return root, "resolved"
 
 
+def _failure_fields(failures: ScanFailures) -> Dict[str, Any]:
+    return {
+        "scan_failures": sum(failures.values()),
+        "scan_failure_types": sorted(failures),
+    }
+
+
 def inventory_relation_files(
     conn: Any, relation_id: str, *, users_root: Optional[Path] = None
 ) -> Dict[str, Any]:
@@ -200,20 +179,21 @@ def inventory_relation_files(
             "directories": 0,
             "paths": [],
             "paths_truncated": False,
+            "scan_failures": 0,
+            "scan_failure_types": [],
         }
-    entries = _scan(root)
-    files = sorted(path for path, is_dir in entries if not is_dir)
-    directories = sum(1 for _path, is_dir in entries if is_dir)
+    entries, failures = scan_tree(root)
+    files = sorted(rel for rel, is_dir in entries if not is_dir)
+    directories = sum(1 for _rel, is_dir in entries if is_dir)
     return {
         "scope": "resolved",
         "root": str(root),
         "files": len(files),
-        "bytes": sum(_file_bytes(path) for path in files),
+        "bytes": sum(file_bytes(root / rel) for rel in files),
         "directories": directories,
-        "paths": [
-            str(path.relative_to(root)) for path in files[:_MAX_REPORTED_PATHS]
-        ],
+        "paths": [str(rel) for rel in files[:_MAX_REPORTED_PATHS]],
         "paths_truncated": len(files) > _MAX_REPORTED_PATHS,
+        **_failure_fields(failures),
     }
 
 
@@ -223,24 +203,34 @@ def verify_relation_files_erased(
     """Conta o que sobreviveu ao expurgo da Relation."""
     root, status = relation_files_dir(conn, relation_id, users_root=users_root)
     if root is None:
-        return {"scope": status, "files": 0, "bytes": 0}
-    files = [path for path, is_dir in _scan(root) if not is_dir]
+        return {
+            "scope": status,
+            "files": 0,
+            "bytes": 0,
+            "scan_failures": 0,
+            "scan_failure_types": [],
+        }
+    entries, failures = scan_tree(root)
+    files = [rel for rel, is_dir in entries if not is_dir]
     return {
         "scope": "resolved",
         "files": len(files),
-        "bytes": sum(_file_bytes(path) for path in files),
+        "bytes": sum(file_bytes(root / rel) for rel in files),
+        **_failure_fields(failures),
     }
 
 
 def files_are_clean(remaining: Dict[str, Any]) -> bool:
-    """True somente com escopo verificado E zero arquivos sobreviventes.
+    """True somente com escopo verificado, varredura integra e zero sobreviventes.
 
-    Escopo nao resolvido nunca conta como limpo: ``verify`` que nao consegue
-    localizar a Relation nao pode afirmar que nao ha arquivo restante.
+    Escopo nao resolvido ou falha de leitura nunca contam como limpo: ``verify``
+    que nao conseguiu abrir um diretorio nao pode afirmar que nao ha arquivo.
     """
-    return remaining.get("scope") == "resolved" and int(
-        remaining.get("files", 0) or 0
-    ) == 0
+    return (
+        remaining.get("scope") == "resolved"
+        and int(remaining.get("scan_failures", 0) or 0) == 0
+        and int(remaining.get("files", 0) or 0) == 0
+    )
 
 
 def erase_relation_files(
@@ -248,50 +238,34 @@ def erase_relation_files(
 ) -> Dict[str, Any]:
     """Apaga o namespace privado da Relation e o diretorio vazio.
 
-    Sem escopo verificavel nada e apagado. Diretorios sao removidos do mais
-    profundo para o mais raso; um arquivo que sobreviver mantem o diretorio
-    de origem de pé, o que ``verify`` reporta.
+    Sem escopo verificavel nada e apagado. Falha de leitura limita a remocao ao
+    que foi classificado e aparece em ``scan_failures``; o que sobreviver fica
+    para ``verify`` denunciar.
     """
+    empty = {
+        "scope": "resolved",
+        "files_removed": 0,
+        "dirs_removed": 0,
+        "scan_failures": 0,
+        "scan_failure_types": [],
+        "removal_failures": 0,
+        "removal_failure_types": [],
+    }
     root, status = relation_files_dir(conn, relation_id, users_root=users_root)
     if root is None:
-        return {"scope": status, "files_removed": 0, "dirs_removed": 0}
+        return {**empty, "scope": status}
     if not root.is_dir():
-        return {"scope": "resolved", "files_removed": 0, "dirs_removed": 0}
+        return empty
 
-    entries = _scan(root)
-    # Mais profundo primeiro: filho sai antes do pai, senao o rmdir falha.
-    entries.sort(key=lambda item: len(item[0].parts), reverse=True)
-
-    files_removed = 0
-    dirs_removed = 0
-    for path, is_dir in entries:
-        try:
-            if is_dir:
-                path.rmdir()
-                dirs_removed += 1
-            else:
-                # Symlink tambem cai aqui: unlink remove o link, nao o alvo.
-                path.unlink()
-                files_removed += 1
-        except OSError as exc:
-            logger.warning(
-                "erase_files: remocao falhou error_type=%s is_dir=%s",
-                type(exc).__name__,
-                is_dir,
-            )
-
-    try:
-        root.rmdir()
-        dirs_removed += 1
-    except OSError as exc:
-        logger.warning(
-            "erase_files: diretorio da Relation nao removido error_type=%s",
-            type(exc).__name__,
-        )
+    entries, scan_failures = scan_tree(root)
+    files_removed, dirs_removed, removal_failures = erase_tree_entries(root, entries)
     return {
         "scope": "resolved",
         "files_removed": files_removed,
         "dirs_removed": dirs_removed,
+        **_failure_fields(scan_failures),
+        "removal_failures": sum(removal_failures.values()),
+        "removal_failure_types": sorted(removal_failures),
     }
 
 
@@ -342,17 +316,20 @@ def legacy_file_inventory(
                     "files": 0,
                     "bytes": 0,
                     "action": "refused_symlink",
+                    "scan_failures": 0,
                 }
             )
             continue
-        files = [entry for entry, is_dir in _scan(path) if not is_dir]
+        entries, failures = scan_tree(path)
+        files = [rel for rel, is_dir in entries if not is_dir]
         candidates.append(
             {
                 "kind": kind,
                 "path": str(path),
                 "files": len(files),
-                "bytes": sum(_file_bytes(entry) for entry in files),
+                "bytes": sum(file_bytes(path / rel) for rel in files),
                 "action": "quarantined_not_erased",
+                "scan_failures": sum(failures.values()),
             }
         )
     return {"scope": "resolved", "candidates": candidates}

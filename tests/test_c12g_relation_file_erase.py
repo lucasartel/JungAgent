@@ -26,6 +26,7 @@ anthropic_stub.Anthropic = object
 if not hasattr(sys.modules.get("anthropic"), "Anthropic"):
     sys.modules["anthropic"] = anthropic_stub
 
+from core.db import erase_files, erase_fs
 from core.db.erase_files import (
     erase_relation_files,
     files_are_clean,
@@ -120,6 +121,8 @@ def test_erase_removes_only_target_and_never_touches_legacy(tmp_path):
     result = erase_relation_files(conn, "rel-a", users_root=users)
     assert result["scope"] == "resolved"
     assert result["files_removed"] == 2
+    assert result["scan_failures"] == 0
+    assert result["removal_failures"] == 0
 
     relation_dir = users / "instances" / "inst-a" / "relations" / "rel-a"
     assert not relation_dir.exists()
@@ -282,8 +285,106 @@ def test_missing_directory_is_clean(tmp_path):
     users.mkdir()
 
     remaining = verify_relation_files_erased(conn, "rel-a", users_root=users)
-    assert remaining == {"scope": "resolved", "files": 0, "bytes": 0}
+    assert remaining == {
+        "scope": "resolved",
+        "files": 0,
+        "bytes": 0,
+        "scan_failures": 0,
+        "scan_failure_types": [],
+    }
     assert files_are_clean(remaining)
     erased = erase_relation_files(conn, "rel-a", users_root=users)
     assert erased["files_removed"] == 0
     assert not (users / "instances").exists()
+
+
+def test_unreadable_directory_fails_closed(tmp_path, monkeypatch):
+    """Diretorio ilegivel nao pode virar 'zero arquivos' e clean=True.
+
+    Sem propagar a falha de scandir, o verify devolveria files=0 e
+    ``files_are_clean`` seria True com dados vivos dentro do diretorio.
+    """
+    conn = _conn()
+    users = _volume(tmp_path)
+
+    real_scandir = os.scandir
+
+    def scandir_denied(path, *args, **kwargs):
+        if str(path).rstrip("/").endswith(os.path.join("relations", "rel-a")):
+            raise PermissionError(13, "Permission denied")
+        return real_scandir(path, *args, **kwargs)
+
+    monkeypatch.setattr(erase_fs.os, "scandir", scandir_denied)
+
+    inventory = inventory_relation_files(conn, "rel-a", users_root=users)
+    assert inventory["files"] == 0
+    assert inventory["scan_failures"] == 1
+    assert inventory["scan_failure_types"] == ["PermissionError"]
+
+    remaining = verify_relation_files_erased(conn, "rel-a", users_root=users)
+    assert remaining["files"] == 0
+    assert remaining["scan_failures"] == 1
+    assert not files_are_clean(remaining)
+
+    erased = erase_relation_files(conn, "rel-a", users_root=users)
+    assert erased["files_removed"] == 0
+    assert erased["scan_failures"] == 1
+    # O namespace nao ficou vazio, entao o rmdir da raiz tambem falha.
+    assert erased["removal_failures"] >= 1
+
+    # Nada foi apagado: o profile.md continua la.
+    assert (
+        users / "instances" / "inst-a" / "relations" / "rel-a"
+        / "users" / "user-1" / "profile.md"
+    ).exists()
+
+
+def test_symlink_swap_between_scan_and_unlink_is_refused(tmp_path, monkeypatch):
+    """Troca de diretorio por symlink APOS a varredura nao desvia a remocao.
+
+    Simula a janela TOCTOU: ``_scan`` roda sobre a arvore real e devolve as
+    entradas; em seguida ``users/`` e substituido por um link para fora do
+    namespace. A remocao por caminho apagaria a vitima — a remocao por
+    ``dir_fd`` com ``O_NOFOLLOW`` recusa e reporta ``removal_failures``.
+    """
+    conn = _conn()
+    users = _volume(tmp_path)
+
+    outside = tmp_path / "outside"
+    (outside / "user-1").mkdir(parents=True)
+    victim = outside / "user-1" / "profile.md"
+    victim.write_text("vítima fora do namespace")
+
+    real_scan = erase_fs.scan_tree
+    state = {"swapped": False}
+
+    def scan_then_swap(root):
+        entries, failures = real_scan(root)
+        subtree = root / "users"
+        if not state["swapped"] and subtree.is_dir() and not subtree.is_symlink():
+            state["swapped"] = True
+            subtree.rename(tmp_path / "moved_away")
+            os.symlink(outside, subtree)
+        return entries, failures
+
+    monkeypatch.setattr(erase_files, "scan_tree", scan_then_swap)
+
+    erased = erase_relation_files(conn, "rel-a", users_root=users)
+    assert state["swapped"] is True
+    assert erased["files_removed"] == 0
+    assert erased["removal_failures"] >= 1
+    # Garantia verificavel: a recusa veio da guarda anti-symlink, com rotulo
+    # proprio — nao de um erro generico de E/S.
+    assert "symlink_refused" in erased["removal_failure_types"]
+
+    # A vítima fora do namespace sobrevive e a arvore real tambem: nada foi
+    # removido — o caminho do link agora resolve para a propria vitima, entao
+    # o que se verifica e a subarvore original, movida para fora.
+    assert victim.exists()
+    assert (tmp_path / "moved_away" / "user-1" / "profile.md").exists()
+    assert (tmp_path / "moved_away" / "user-1" / "sessions" / "2026-01-01.md").exists()
+
+    # E a verificacao continua negando clean.
+    assert not files_are_clean(
+        verify_relation_files_erased(conn, "rel-a", users_root=users)
+    )
