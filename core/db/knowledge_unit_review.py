@@ -6,10 +6,12 @@ idempotente), com transicoes protegidas contra atualizacoes concorrentes
 (CAS + releitura antes de gravar), e a leitura fail-closed por escopo — sem
 Relation devolve apenas material global admitido; com Relation devolve o
 privado da propria Relation mais o admitido da instancia, sempre apos o
-gate de elegibilidade.
+gate de elegibilidade. Apos cada transicao gravada a projecao de
+recuperacao (R1c-1, ``core/db/knowledge_unit_index.py``) acompanha o
+status: derivado nunca sobrevive a saida de ``active``.
 
-Fora do escopo: recuperacao semantica (R1c), sondas/cockpit e qualquer
-efeito volitivo, prompt, envio ou custo.
+Fora do escopo: a recuperacao por consulta (R1c-1, modulo proprio),
+sondas/cockpit e qualquer efeito volitivo, prompt, envio ou custo.
 """
 from __future__ import annotations
 
@@ -23,8 +25,8 @@ from core.db.knowledge_units import (
     UNIT_STATUSES,
     VALIDATED_EPISTEMIC,
     _now_iso,
+    unit_scope_clause,
 )
-from core.db.relations import require_eligible_relation
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,23 @@ class KnowledgeUnitReviewMixin:
     # ------------------------------------------------------------------
     # Revisao (unica via para validated_synthesis)
     # ------------------------------------------------------------------
+    def _refresh_index_after_review(self, unit_id: int) -> None:
+        """Pos-commit R1c-1: o derivado acompanha a transicao de status.
+
+        Sai de ``active`` (hold/retract) a projecao e apagada na hora;
+        volta a ``active`` (validate) o item idempotente e drenado. Roda
+        depois do commit e nunca propaga — falha vira log e item pendente.
+        """
+        try:
+            from core.db.knowledge_unit_index import refresh_unit_index
+        except Exception as exc:
+            logger.warning(
+                "knowledge_unit_review: modulo de indexacao indisponivel tipo=%s",
+                type(exc).__name__,
+            )
+            return
+        refresh_unit_index(self, unit_id)
+
     def review_knowledge_unit(
         self,
         unit_id: int,
@@ -163,6 +182,7 @@ class KnowledgeUnitReviewMixin:
                 )
                 if cursor.rowcount == 1:
                     self.conn.commit()
+                    self._refresh_index_after_review(int(unit_id))
                     return {
                         "unit_id": int(unit_id),
                         "changed": True,
@@ -204,21 +224,8 @@ class KnowledgeUnitReviewMixin:
 
         placeholders = ",".join("?" for _ in wanted)
         params: List[Any] = [instance, *wanted]
-        if relation_id:
-            relation = require_eligible_relation(self, relation_id)
-            scope_sql = f"""
-                AND (
-                    (ownership_class = 'relation_private' AND origin_relation_id = ?)
-                    OR (ownership_class IN ('authorized_aggregate', 'instance_global')
-                        AND origin_quarantined = 0)
-                )
-            """
-            params.append(str(relation["relation_id"]))
-        else:
-            scope_sql = """
-                AND ownership_class IN ('authorized_aggregate', 'instance_global')
-                AND origin_quarantined = 0
-            """
+        scope_sql, scope_params = unit_scope_clause(self, relation_id)
+        params.extend(scope_params)
         validated_sql = "AND epistemic_status = ?" if validated_only else ""
         if validated_only:
             params.append(VALIDATED_EPISTEMIC)

@@ -90,7 +90,15 @@ _ERASE_CHILD_FIELDS: Dict[str, list] = {
 # R1a-2: processing_queue segue o mesmo contrato — item de fila carimbo com
 # a Relation aponta material que o expurgo remove; manter a linha deixaria
 # trabalho pendente sobre conteudo ja apagado. Linha apagada, nao redigida.
-_ERASE_DELETE_TABLES = ("symbolic_triples", "processing_queue")
+#
+# R1c-1: knowledge_unit_index e projecao DERIVADA das unidades (busca);
+# apagar a unidade sem apagar a projecao deixaria texto privado indexado.
+# A linha tombstone da canonica continua em ``knowledge_units``.
+_ERASE_DELETE_TABLES = (
+    "symbolic_triples",
+    "processing_queue",
+    "knowledge_unit_index",
+)
 
 # Revisao da PR #59 (Rodada 5, conferencia de produtores): conteudo
 # vinculado a Relation escondido em tabela SEM coluna relation_id —
@@ -288,6 +296,10 @@ _ERASE_FIELDS: Dict[str, list] = {
         "provenance_json",
         "origin_participant_user_id",
     ],
+    # R1c-1: projecao de recuperacao das unidades — linha inteira apagada
+    # (``_ERASE_DELETE_TABLES``); o mapa cobre a coluna de conteudo para a
+    # inventario de colunas sem decisao continuar fechado.
+    "knowledge_unit_index": ["search_text"],
     "scholar_runs": [
         "topic",
         "history_excerpt",

@@ -218,8 +218,12 @@ def _reconcile_exhausted_running(
         (_iso(now), str(queue_kind), agent_instance, _iso(now)),
     )
     moved = cursor.rowcount
+    # Commit incondicional: o sqlite3 do Python inicia transacao em
+    # QUALQUER DML, inclusive um UPDATE sem correspondencia; deixá-la aberta
+    # segura o lock de escrita e derruba outras conexoes com
+    # "database is locked" ate o timeout.
+    db.conn.commit()
     if moved:
-        db.conn.commit()
         logger.warning(
             "processing_queue: %s item(ns) interrompido(s) sem tentativas "
             "restantes em queue_kind=%s -> exhausted",
@@ -278,9 +282,10 @@ def claim_due(
                 str(queue_kind), instance, _iso(moment),
             ),
         )
-        if cursor.rowcount != 1:
+        applied = cursor.rowcount == 1
+        db.conn.commit()  # fecha a transacao do UPDATE mesmo sem match
+        if not applied:
             continue
-        db.conn.commit()
         row = _fetch(db, item_id)
         if row:
             claimed.append(row)
