@@ -15,13 +15,15 @@ deixa acesso a rede com quem chama.
 
 Estados do namespace da Relation — um por relatorio, sempre visiveis:
 
-- ``unknown`` (``reason="qdrant_url_absent"``) — sem ``QDRANT_URL`` HOJE nao
-  prova que nao existem vetores HISTORICOS: a instalacao pode ter gravado em
-  Qdrant antes e depois removido a variavel, deixando vetores orfaos. Estado
-  desconhecido, **nunca limpo**;
-- ``unavailable`` — configurado mas sem adaptador ou com falha de contagem:
+- ``unknown`` — dois motivos, ambos **nunca limpos**: ``qdrant_url_absent``
+  (sem ``QDRANT_URL`` HOJE nao prova que nao existem vetores HISTORICOS: a
+  instalacao pode ter gravado em Qdrant antes e removido a variavel) e
+  ``expired_unverifiable`` (a assinatura instalada nao tem ``show_expired``,
+  entao nao da para provar que expiradas estao incluidas na leitura);
+- ``unavailable`` — configurado mas sem adaptador, com falha de contagem,
+  ou com estado de adaptador sem estrutura/tipo/truncamento coerentes:
   falha fechada, nunca limpo;
-- ``verified`` — contagem obtida; limpo somente com ``count == 0``.
+- ``verified`` — contagem obtida e validada; limpo somente com ``count == 0``.
 
 Chave pre-Relation (``legacy``): antes das Relations o participante gravava
 sob o ``user_id`` cru, e o admin original tem a propria chave anterior. Essa
@@ -38,9 +40,9 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
-from mem0_memory_adapter import relation_namespace
+from mem0_memory_adapter import NamespaceReadUnsupported, relation_namespace
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +75,61 @@ def _unavailable(namespace: str, exc: BaseException) -> Dict[str, Any]:
         type(exc).__name__,
         namespace,
     )
-    return {
+    result: Dict[str, Any] = {
         "state": STATE_UNAVAILABLE,
         "namespace": namespace,
         "count": None,
         "error": type(exc).__name__,
     }
+    message = str(exc).strip()
+    if message:
+        # Mensagem propria (sem segredo): distingue qual checagem de estado
+        # falhou sem abrir o relatorio a texto livre do provedor.
+        result["detail"] = message
+    return result
+
+
+def _unknown(namespace: str, reason: str) -> Dict[str, Any]:
+    """Capacidade da API nao comprovada: desconhecido, nunca limpo."""
+    return {
+        "state": STATE_UNKNOWN,
+        "reason": reason,
+        "namespace": namespace,
+        "count": None,
+    }
+
+
+def _read_state(state: Any) -> Tuple[int, bool, int]:
+    """Le e valida o estado do adaptador; falha fechada em vez de zero.
+
+    ``state.get('count', 0) or 0`` transformaria um adaptador sem ``count``
+    (ou com ``count=None``, ou com ``count='3'``) em zero VERIFICADO — o
+    falso limpo apontado nesta revisao. Estrutura, tipo e truncamento sao
+    conferidos aqui e qualquer duvida vira excecao, que o chamador converte
+    em ``unavailable``.
+    """
+    if not isinstance(state, dict):
+        raise ValueError("adapter_state_not_a_mapping")
+    if "count" not in state:
+        raise ValueError("adapter_state_without_count")
+    count = state["count"]
+    if isinstance(count, bool) or not isinstance(count, int):
+        raise ValueError("adapter_count_not_an_integer")
+    if count < 0:
+        raise ValueError("adapter_count_negative")
+    truncated = state.get("truncated")
+    if not isinstance(truncated, bool):
+        raise ValueError("adapter_truncated_not_a_boolean")
+    limit = state.get("limit")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        raise ValueError("adapter_limit_invalid")
+    if truncated and count < limit:
+        # Truncado abaixo do teto e incoerente: o corte so existe para marcar
+        # que a contagem bateu no limite.
+        raise ValueError("adapter_truncated_below_limit")
+    if not truncated and count > limit:
+        raise ValueError("adapter_count_above_limit_without_truncation")
+    return count, truncated, limit
 
 
 def _legacy_report(adapter: Any, configured: bool, legacy_user_id: str) -> Dict[str, Any]:
@@ -98,15 +149,16 @@ def _legacy_report(adapter: Any, configured: bool, legacy_user_id: str) -> Dict[
         return report
     try:
         state = adapter.namespace_state(str(legacy_user_id))
+        count, truncated, limit = _read_state(state)
     except Exception as exc:
         logger.warning(
             "erase_vectors: falha ao contar legado error_type=%s", type(exc).__name__
         )
         report["error"] = type(exc).__name__
         return report
-    report["count"] = int(state.get("count", 0) or 0)
-    report["truncated"] = bool(state.get("truncated", False))
-    report["limit"] = state.get("limit")
+    report["count"] = count
+    report["truncated"] = truncated
+    report["limit"] = limit
     return report
 
 
@@ -135,15 +187,19 @@ def inventory_relation_vectors(
     else:
         try:
             state = adapter.relation_state(relation_id)
+            count, truncated, limit = _read_state(state)
+        except NamespaceReadUnsupported as exc:
+            # Capacidade nao comprovada (ex.: sem show_expired): desconhecido.
+            result = _unknown(namespace, str(exc))
         except Exception as exc:  # falha de rede/auth vira estado, nao exit silencioso
             result = _unavailable(namespace, exc)
         else:
             result = {
                 "state": STATE_VERIFIED,
                 "namespace": namespace,
-                "count": int(state.get("count", 0) or 0),
-                "truncated": bool(state.get("truncated", False)),
-                "limit": state.get("limit"),
+                "count": count,
+                "truncated": truncated,
+                "limit": limit,
             }
     if legacy_user_id:
         result["legacy"] = _legacy_report(
@@ -178,13 +234,15 @@ def erase_relation_vectors(
     namespace = relation_namespace(relation_id)
     ready = _phase(adapter, _is_configured(configured))
     if ready != "ready":
-        return {
+        result: Dict[str, Any] = {
             "state": ready,
-            "reason": REASON_QDRANT_URL_ABSENT if ready == STATE_UNKNOWN else None,
             "namespace": namespace,
             "count": None,
             "deleted": False,
         }
+        if ready == STATE_UNKNOWN:
+            result["reason"] = REASON_QDRANT_URL_ABSENT
+        return result
     try:
         adapter.delete_relation(relation_id)
     except Exception as exc:
@@ -196,6 +254,11 @@ def erase_relation_vectors(
     # sempre uma contagem NOVA.
     try:
         state = adapter.relation_state(relation_id)
+        count, truncated, limit = _read_state(state)
+    except NamespaceReadUnsupported as exc:
+        result = _unknown(namespace, str(exc))
+        result["deleted"] = True
+        return result
     except Exception as exc:
         result = _unavailable(namespace, exc)
         result["deleted"] = True
@@ -203,9 +266,9 @@ def erase_relation_vectors(
     return {
         "state": STATE_VERIFIED,
         "namespace": namespace,
-        "count": int(state.get("count", 0) or 0),
-        "truncated": bool(state.get("truncated", False)),
-        "limit": state.get("limit"),
+        "count": count,
+        "truncated": truncated,
+        "limit": limit,
         "deleted": True,
     }
 

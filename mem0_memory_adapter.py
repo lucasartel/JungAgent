@@ -40,24 +40,38 @@ logger = logging.getLogger(__name__)
 _NAMESPACE_LIMIT = 1000
 
 
+class NamespaceReadUnsupported(RuntimeError):
+    """A API instalada nao consegue provar a ausencia de vetores.
+
+    Nao e erro de rede: e incompatibilidade de capacidade (falta escopo,
+    limite ou opt-in de expiradas). Vira ``unknown`` no relatorio, nunca
+    limpo.
+    """
+
+
 def _namespace_rows(results: Any) -> List[Dict[str, Any]]:
     """Entradas cruas de ``get_all``, SEM filtrar payload.
 
     Um registro sem campo ``memory`` continua sendo registro: contagem que
-    descarta payload conta menos do que existe. Formato nao reconhecido
-    LEVANTA — resposta inesperada nao pode virar lista vazia, que e como
-    uma falha viraria ``count=0`` e ``clean=True``.
+    descarta payload conta menos do que existe. Aceita as chaves provadas nas
+    versoes publicadas — ``results`` (>=0.1.23) e ``memories`` (0.1.x
+    antigo) — e lista pura (api_version antiga). Formato nao reconhecido
+    LEVANTA: resposta inesperada nao pode virar lista vazia, que e como uma
+    falha viraria ``count=0`` e ``clean=True``.
     """
     if isinstance(results, dict):
-        if "results" not in results:
-            raise ValueError("mem0_response_without_results")
-        rows = results["results"]
+        if "results" in results:
+            rows = results["results"]
+        elif "memories" in results:
+            rows = results["memories"]
+        else:
+            raise ValueError("mem0_response_without_known_key")
     elif isinstance(results, (list, tuple)):
         rows = results
     else:
         raise ValueError("mem0_response_unexpected_type")
     if not isinstance(rows, (list, tuple)):
-        raise ValueError("mem0_results_not_a_list")
+        raise ValueError("mem0_entries_not_a_list")
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError("mem0_entry_not_an_object")
@@ -65,25 +79,43 @@ def _namespace_rows(results: Any) -> List[Dict[str, Any]]:
 
 
 def _namespace_query(namespace: str, get_all: Any) -> Dict[str, Any]:
-    """Escolhe a forma de chamada pela assinatura INSTALADA do mem0.
+    """Kwargs de ``get_all`` escolhidos POR PARAMETRO, nao por palheta.
 
-    O mem0 atual pede ``filters={"user_id": ...}`` com ``top_k`` e
-    ``show_expired`` e REJEITA ``user_id`` no topo (levanta ``ValueError``);
-    versoes antigas aceitam ``user_id``/``limit``. ``show_expired=True`` e
-    obrigatoria na forma atual: sem ela memorias expiradas somem da
-    listagem e um namespace so com expiradas contaria zero.
+    A assinatura varia muito entre as versoes permitidas por
+    ``mem0ai>=0.1.0`` (levantdado na propria PyPI): 0.1.0 tem
+    ``user_id``/``limit`` sem ``filters``; 0.1.104..1.0.4 tem ``filters``
+    JUNTO COM ``user_id``/``limit`` e sem ``top_k``/``show_expired`` (probar
+    so ``filters`` e passar ``top_k`` quebraria com TypeError); 2.0.2 tem
+    ``top_k`` sem ``show_expired``; 2.0.15+ tem os tres. Entao cada
+    capacidade e conferida separadamente e so entao e usada.
+
+    Sem ``show_expired`` nao ha como provar que expiradas estao incluidas:
+    levanta ``NamespaceReadUnsupported`` para o chamador reportar
+    ``unknown`` em vez de limpo.
     """
     try:
         parameters = inspect.signature(get_all).parameters
-    except (TypeError, ValueError):
-        parameters = {}
+    except (TypeError, ValueError) as exc:
+        raise NamespaceReadUnsupported("signature_unavailable") from exc
+
     if "filters" in parameters:
-        return {
-            "filters": {"user_id": namespace},
-            "top_k": _NAMESPACE_LIMIT,
-            "show_expired": True,
-        }
-    return {"user_id": namespace, "limit": _NAMESPACE_LIMIT}
+        kwargs: Dict[str, Any] = {"filters": {"user_id": namespace}}
+    elif "user_id" in parameters:
+        kwargs = {"user_id": namespace}
+    else:
+        raise NamespaceReadUnsupported("no_scope_parameter")
+
+    if "top_k" in parameters:
+        kwargs["top_k"] = _NAMESPACE_LIMIT
+    elif "limit" in parameters:
+        kwargs["limit"] = _NAMESPACE_LIMIT
+    else:
+        raise NamespaceReadUnsupported("no_limit_parameter")
+
+    if "show_expired" not in parameters:
+        raise NamespaceReadUnsupported("expired_unverifiable")
+    kwargs["show_expired"] = True
+    return kwargs
 
 
 def relation_namespace(relation_id) -> str:
@@ -391,8 +423,11 @@ class Mem0MemoryAdapter:
         """Estado autoritativo de um namespace: contagem SEM filtrar payload.
 
         Conta as entradas como estao — registro sem campo ``memory`` conta.
-        Limites reais da API sao explicitos: ``top_k`` fixado (o padrao de 20
-        truncaria) e ``show_expired=True`` na forma atual. Estouro do teto vira
+        Antes de ler, confere as capacidades da assinatura instalada
+        (``_namespace_query``): ``NamespaceReadUnsupported`` propaga para o
+        chamador reportar ``unknown`` em vez de limpo. Limites reais da API
+        sao explicitos: ``top_k``/``limit`` fixado (o padrao de 20 truncaria
+        a contagem) e ``show_expired=True``. Estouro do teto vira
         ``truncated=True``, onde a contagem e um piso: o veredito de vazio
         continua valido, porque zero nunca e artefato de teto. Erro ou formato
         inesperado LEVANTA — quem chama vira ``unavailable``, nunca zero.
