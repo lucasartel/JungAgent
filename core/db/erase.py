@@ -279,6 +279,15 @@ _ERASE_FIELDS: Dict[str, list] = {
         "provenance_json",
         "origin_participant_user_id",
     ],
+    # R1b: unidades de conhecimento — conteudo consolidado e suas ancoras
+    # sao conteudo privado da Relation; a linha tombstone (chave, kind,
+    # estados, contadores) permanece para auditoria, como em knowledge_gaps.
+    "knowledge_units": [
+        "content",
+        "source_refs_json",
+        "provenance_json",
+        "origin_participant_user_id",
+    ],
     "scholar_runs": [
         "topic",
         "history_excerpt",

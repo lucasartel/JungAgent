@@ -790,6 +790,49 @@ class SchemaDatabaseMixin:
             "ON knowledge_gaps(agent_instance, dedup_key)"
         )
 
+        # ========== UNIDADES DE CONHECIMENTO (R1b — consolidacao conceitual) ==========
+        # Registro canonico da consolidacao: cada unidade tem identidade,
+        # versao, escopo de propriedade, proveniencia e estado epistemico.
+        # A escrita e gateada em core/db/knowledge_units.py (ancoras
+        # verificaveis, admissao F-5 para global, revisao para
+        # validated_synthesis); este CREATE so define o armazenamento.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_units (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                unit_key TEXT NOT NULL,
+                content TEXT NOT NULL,
+                unit_kind TEXT NOT NULL,
+                content_version INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'active',
+                epistemic_status TEXT NOT NULL,
+                agent_instance TEXT NOT NULL,
+                ownership_class TEXT NOT NULL,
+                origin_class TEXT NOT NULL,
+                origin_relation_id TEXT,
+                origin_participant_user_id TEXT,
+                source_kind TEXT NOT NULL,
+                source_refs_json TEXT NOT NULL DEFAULT '[]',
+                provenance_json TEXT NOT NULL DEFAULT '{}',
+                origin_quarantined INTEGER NOT NULL DEFAULT 0,
+                observation_count INTEGER NOT NULL DEFAULT 1,
+                last_observed_at DATETIME,
+                superseded_by INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        # Idempotencia entre conexoes/processos: a chave embute o escopo
+        # declarado (mesma decisao R1a-4 — a classe GRAVADA nao entra na
+        # chave, para nao partir a mesma unidade em admitida e recusada).
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_units_scope "
+            "ON knowledge_units(agent_instance, unit_key)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_units_scope "
+            "ON knowledge_units(agent_instance, origin_relation_id, status)"
+        )
+
         # ========== LOOP DE CONSCIENCIA ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS consciousness_loop_state (
