@@ -249,5 +249,3 @@ class KnowledgeUnitReviewMixin:
                 item["source_refs"] = []
             rows.append(item)
         return rows
-
-
