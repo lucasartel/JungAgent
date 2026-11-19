@@ -15,15 +15,25 @@ deixa acesso a rede com quem chama.
 
 Estados do namespace da Relation — um por relatorio, sempre visiveis:
 
-- ``unknown`` — dois motivos, ambos **nunca limpos**: ``qdrant_url_absent``
+- ``unknown`` — nunca limpo, com o motivo no campo certo: ``qdrant_url_absent``
   (sem ``QDRANT_URL`` HOJE nao prova que nao existem vetores HISTORICOS: a
-  instalacao pode ter gravado em Qdrant antes e removido a variavel) e
+  instalacao pode ter gravado em Qdrant antes e removido a variavel),
   ``expired_unverifiable`` (a assinatura instalada nao tem ``show_expired``,
-  entao nao da para provar que expiradas estao incluidas na leitura);
+  entao nao da para provar que expiradas estao incluidas na leitura) ou o
+  codigo de ``scope`` quando a Relation nao e verificavel;
 - ``unavailable`` — configurado mas sem adaptador, com falha de contagem,
   ou com estado de adaptador sem estrutura/tipo/truncamento coerentes:
   falha fechada, nunca limpo;
 - ``verified`` — contagem obtida e validada; limpo somente com ``count == 0``.
+
+Gate de escopo (o MESMO dos arquivos): ``erase_relation_vectors`` exige
+``conn`` e resolve a Relation ANTES de qualquer leitura de rede. Sem
+``agent_relations`` verificavel — tabela ausente, linha ausente, campos
+vazios ou segmento invalido — o resultado carrega ``scope`` com o codigo de
+recusa dos arquivos (``registry_unavailable``, ``relation_not_found``,
+``scope_incomplete``, ``invalid_scope``) em vez de ``resolved``, e
+``delete`` nenhum e chamado. So o CODIGO vai para o relatorio: instancia e
+participante ficam de fora.
 
 Redacao do relatorio: ``detail``/``reason`` so reproduzem CODIGO PROPRIO
 conhecido (lista fixa abaixo). Mensagem de rede, auth ou provedor pode
@@ -49,8 +59,17 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from core.db.erase_files import (
+    SCOPE_INCOMPLETE,
+    SCOPE_INVALID,
+    SCOPE_REGISTRY_UNAVAILABLE,
+    SCOPE_RELATION_NOT_FOUND,
+    relation_participant,
+)
+from engines.participant_files import participant_dir
 from mem0_memory_adapter import NamespaceReadUnsupported, relation_namespace
 
 logger = logging.getLogger(__name__)
@@ -58,6 +77,9 @@ logger = logging.getLogger(__name__)
 STATE_UNKNOWN = "unknown"
 STATE_UNAVAILABLE = "unavailable"
 STATE_VERIFIED = "verified"
+
+# Escopo verificavel — mesmo literal de ``core.db.erase_files``.
+SCOPE_RESOLVED = "resolved"
 
 # Motivo do estado desconhecido: hoje nao ha como afirmar inexistencia.
 REASON_QDRANT_URL_ABSENT = "qdrant_url_absent"
@@ -114,6 +136,44 @@ def _phase(adapter: Any, configured: bool) -> str:
     if adapter is None:
         return STATE_UNAVAILABLE
     return "ready"
+
+
+def _scope_status(conn: Any, relation_id: Any) -> str:
+    """Gate de escopo: a mesma resolução dos arquivos, antes de apagar.
+
+    Devolve ``resolved`` ou o MESMO codigo de recusa de
+    ``core.db.erase_files`` (``registry_unavailable``, ``relation_not_found``,
+    ``scope_incomplete``, ``invalid_scope``). Nada do escopo — instancia,
+    participante — sai daqui: so o codigo. Sem ``conn`` o registry nao e
+    acessivel, entao o estado e ``registry_unavailable`` (falha fechada).
+    """
+    if conn is None:
+        return SCOPE_REGISTRY_UNAVAILABLE
+    try:
+        scope, status = relation_participant(conn, relation_id)
+    except Exception as exc:  # conexao/objeto invalido: recusa, so o tipo no log
+        logger.warning(
+            "erase_vectors: falha ao resolver escopo error_type=%s",
+            type(exc).__name__,
+        )
+        return SCOPE_REGISTRY_UNAVAILABLE
+    if scope is None:
+        return status
+    instance, participant = scope
+    try:
+        # Mesma regra de segmento do caminho de arquivos (participant_dir):
+        # valida o identificador e o escopo SEM duplicar a regex. A raiz nao
+        # importa aqui — a funcao so monta o caminho, nao abre nada.
+        participant_dir(
+            Path("."),
+            agent_instance=instance,
+            relation_id=str(relation_id),
+            user_id=participant,
+        )
+    except ValueError:
+        logger.warning("erase_vectors: segmento de escopo invalido")
+        return SCOPE_INVALID
+    return SCOPE_RESOLVED
 
 
 def _unavailable(namespace: str, exc: BaseException) -> Dict[str, Any]:
@@ -278,9 +338,15 @@ def verify_relation_vectors_erased(
 
 
 def erase_relation_vectors(
-    relation_id: str, adapter: Any, *, configured: Optional[bool] = None
+    relation_id: str, adapter: Any, *, conn: Any, configured: Optional[bool] = None
 ) -> Dict[str, Any]:
     """Apaga APENAS o namespace ``relation:<id>`` e volta a contar.
+
+    ``conn`` e OBRIGATORIO: o gate de escopo — o mesmo que os arquivos
+    exigem — roda PRIMEIRO e so com Relation verificavel e que ``delete``
+    acontece (ver ``_scope_status``). Sem escopo o resultado traz ``scope``
+    com o codigo de recusa e ``deleted=False``; instancia e participante
+    ficam de fora do relatorio.
 
     Nao recebe o participante: a chave pre-Relation (``legacy``) nao tem
     caminho estrutural para ser apagada aqui — apagaria por inferencia. So
@@ -295,12 +361,25 @@ def erase_relation_vectors(
     ``delete_relation``.
     """
     namespace = relation_namespace(relation_id)
+    # GATE (igual aos arquivos): sem Relation verificavel nada e apagado, e
+    # antes de qualquer leitura de rede.
+    scope = _scope_status(conn, relation_id)
+    if scope != SCOPE_RESOLVED:
+        logger.warning("erase_vectors: escopo nao verificavel scope=%s", scope)
+        return {
+            "state": STATE_UNKNOWN,
+            "namespace": namespace,
+            "count": None,
+            "scope": scope,
+            "deleted": False,
+        }
     ready = _phase(adapter, _is_configured(configured))
     if ready != "ready":
         result: Dict[str, Any] = {
             "state": ready,
             "namespace": namespace,
             "count": None,
+            "scope": SCOPE_RESOLVED,
             "deleted": False,
         }
         if ready == STATE_UNKNOWN:
@@ -313,16 +392,19 @@ def erase_relation_vectors(
         _read_state(state)
     except NamespaceReadUnsupported as exc:
         result = _unknown(namespace, exc)
+        result["scope"] = SCOPE_RESOLVED
         result["deleted"] = False
         return result
     except Exception as exc:
         result = _unavailable(namespace, exc)
+        result["scope"] = SCOPE_RESOLVED
         result["deleted"] = False
         return result
     try:
         adapter.delete_relation(relation_id)
     except Exception as exc:
         result = _unavailable(namespace, exc)
+        result["scope"] = SCOPE_RESOLVED
         result["deleted"] = False
         return result
     # O delete_all do mem0 devolve mensagem fixa de sucesso sem contar nada e
@@ -333,10 +415,12 @@ def erase_relation_vectors(
         count, truncated, limit = _read_state(state)
     except NamespaceReadUnsupported as exc:
         result = _unknown(namespace, exc)
+        result["scope"] = SCOPE_RESOLVED
         result["deleted"] = True
         return result
     except Exception as exc:
         result = _unavailable(namespace, exc)
+        result["scope"] = SCOPE_RESOLVED
         result["deleted"] = True
         return result
     return {
@@ -345,19 +429,28 @@ def erase_relation_vectors(
         "count": count,
         "truncated": truncated,
         "limit": limit,
+        "scope": SCOPE_RESOLVED,
         "deleted": True,
     }
 
 
 def vectors_are_clean(remaining: Dict[str, Any]) -> bool:
-    """True SOMENTE com contagem verificada e zerada no namespace da Relation.
+    """True SOMENTE com escopo verificado, contagem verificada e zerada.
 
     ``unknown`` e ``unavailable`` nunca contam como limpo: sem evidencia
-    verificavel nao ha como afirmar que sobrou nada. A secao ``legacy`` nao
-    entra aqui — legado e reportado e removido so por decisao do mantenedor,
-    igual ao ``legacy_files`` dos arquivos.
+    verificavel nao ha como afirmar que sobrou nada. ``scope`` distingue a
+    Relation verificavel (``resolved``) — recusa de escopo tambem derruba o
+    veredito, mesmo com contagem zerada. Relatorio sem ``scope`` (inventario,
+    leitura pura) passa por esse campo; a contagem precisa ser inteira de
+    verdade, sem ``or 0`` transformando ausente em zero.
+    A secao ``legacy`` nao entra aqui — legado e reportado e removido so por
+    decisao do mantenedor, igual ao ``legacy_files`` dos arquivos.
     """
+    count = remaining.get("count")
     return (
-        remaining.get("state") == STATE_VERIFIED
-        and int(remaining.get("count", 0) or 0) == 0
+        remaining.get("scope", SCOPE_RESOLVED) == SCOPE_RESOLVED
+        and remaining.get("state") == STATE_VERIFIED
+        and isinstance(count, int)
+        and not isinstance(count, bool)
+        and count == 0
     )

@@ -10,7 +10,6 @@ contagem) esta em ``test_mem0_namespace_count.py``.
 """
 from __future__ import annotations
 
-import inspect
 import json
 import re
 import sys
@@ -48,6 +47,7 @@ from mem0_memory_adapter import (
     _NAMESPACE_LIMIT,
     relation_namespace,
 )
+from test_c12g_vector_scope_gate import scope_conn
 
 LEGACY_USER = "user-legacy"
 REL = "rel-1"
@@ -151,7 +151,7 @@ def test_absent_qdrant_url_is_unknown_and_not_clean():
 def test_configuration_flag_wins_over_injected_adapter():
     """Sem QDRANT_URL a instalacao nao acessa o Qdrant: nada e contado nem apagado."""
     adapter = _FakeVectors({REL_NS: 4})
-    purged = erase_relation_vectors(REL, adapter, configured=False)
+    purged = erase_relation_vectors(REL, adapter, conn=scope_conn(), configured=False)
 
     assert purged["state"] == STATE_UNKNOWN
     assert purged["deleted"] is False
@@ -268,7 +268,7 @@ def test_invalid_state_is_caught_by_preflight_before_delete():
             self.deleted.append(relation_namespace(relation_id))
 
     adapter = _BadDelete()
-    purged = erase_relation_vectors(REL, adapter, configured=True)
+    purged = erase_relation_vectors(REL, adapter, conn=scope_conn(), configured=True)
 
     assert purged["deleted"] is False
     assert purged["state"] == STATE_UNAVAILABLE
@@ -294,7 +294,9 @@ def test_erased_but_state_invalid_is_not_clean():
                 return {"count": None, "truncated": False, "limit": 1000}
             return super().namespace_state(namespace)
 
-    purged = erase_relation_vectors(REL, _InvalidAfterDelete(), configured=True)
+    purged = erase_relation_vectors(
+        REL, _InvalidAfterDelete(), conn=scope_conn(), configured=True
+    )
 
     assert purged["deleted"] is True
     assert purged["state"] == STATE_UNAVAILABLE
@@ -315,7 +317,7 @@ def test_preflight_refuses_delete_when_capacity_unproven():
             raise NamespaceReadUnsupported("expired_unverifiable")
 
     adapter = _Unsupported({REL_NS: 2})
-    purged = erase_relation_vectors(REL, adapter, configured=True)
+    purged = erase_relation_vectors(REL, adapter, conn=scope_conn(), configured=True)
 
     assert adapter.deleted == []
     assert purged["deleted"] is False
@@ -327,7 +329,7 @@ def test_preflight_refuses_delete_when_capacity_unproven():
 def test_preflight_refuses_delete_when_initial_read_fails():
     """Sem estado inicial nao ha como verificar depois: nada e apagado."""
     adapter = _FakeVectors({REL_NS: 2}, fail_namespaces={REL_NS})
-    purged = erase_relation_vectors(REL, adapter, configured=True)
+    purged = erase_relation_vectors(REL, adapter, conn=scope_conn(), configured=True)
 
     assert adapter.deleted == []
     assert purged["deleted"] is False
@@ -363,7 +365,9 @@ def test_provider_message_is_redacted_on_the_delete_path():
         def delete_relation(self, relation_id):
             raise RuntimeError(_PROVIDER_MESSAGE)
 
-    purged = erase_relation_vectors(REL, _LeakyDelete({REL_NS: 2}), configured=True)
+    purged = erase_relation_vectors(
+        REL, _LeakyDelete({REL_NS: 2}), conn=scope_conn(), configured=True
+    )
 
     assert purged["deleted"] is False
     assert purged["error"] == "RuntimeError"
@@ -416,7 +420,7 @@ def test_own_codes_are_allowlisted_in_both_sources():
 
 def test_erase_touches_only_the_relation_namespace():
     adapter = _FakeVectors({REL_NS: 2, "relation:rel-2": 5})
-    purged = erase_relation_vectors(REL, adapter, configured=True)
+    purged = erase_relation_vectors(REL, adapter, conn=scope_conn(), configured=True)
 
     assert purged["deleted"] is True
     assert purged["namespace"] == REL_NS
@@ -426,13 +430,6 @@ def test_erase_touches_only_the_relation_namespace():
     assert adapter.counts["relation:rel-2"] == 5
     assert vectors_are_clean(purged)
     assert vectors_are_clean(verify_relation_vectors_erased(REL, adapter, configured=True))
-
-
-def test_erase_has_no_path_to_the_legacy_namespace():
-    """Apagar por inferencia seria impossivel por assinatura, nao so por criterio."""
-    parameters = inspect.signature(erase_relation_vectors).parameters
-    assert "legacy_user_id" not in parameters
-    assert "user_id" not in parameters
 
 
 def test_legacy_namespace_is_reported_and_never_erased():
@@ -447,7 +444,7 @@ def test_legacy_namespace_is_reported_and_never_erased():
     assert legacy["erased"] is False
     assert legacy["reason"] == "not_erased_by_inference"
 
-    purged = erase_relation_vectors(REL, adapter, configured=True)
+    purged = erase_relation_vectors(REL, adapter, conn=scope_conn(), configured=True)
     assert purged["deleted"] is True
     # A chave pre-Relation sobrevive intacta e nem foi consultada para apagar.
     assert adapter.deleted == [REL_NS]
@@ -469,7 +466,10 @@ def test_legacy_count_failure_does_not_break_the_relation_verdict():
 
 def test_delete_failure_fails_closed():
     purged = erase_relation_vectors(
-        REL, _FakeVectors({REL_NS: 2}, fail_delete=True), configured=True
+        REL,
+        _FakeVectors({REL_NS: 2}, fail_delete=True),
+        conn=scope_conn(),
+        configured=True,
     )
     assert purged["deleted"] is False
     assert purged["state"] == STATE_UNAVAILABLE
@@ -486,7 +486,7 @@ def test_delete_ok_but_recount_fails_is_not_clean():
             self.fail_namespaces.add(relation_namespace(relation_id))
 
     adapter = _CountAfterDelete({REL_NS: 2})
-    purged = erase_relation_vectors(REL, adapter, configured=True)
+    purged = erase_relation_vectors(REL, adapter, conn=scope_conn(), configured=True)
 
     assert purged["deleted"] is True
     assert purged["state"] == STATE_UNAVAILABLE

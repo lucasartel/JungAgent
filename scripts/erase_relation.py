@@ -88,6 +88,12 @@ def run_erase(
     herda o resultado: o relatorio nunca troca falha de ``vectors_purged``
     por uma contagem final zero.
 
+    Vetores exigem o MESMO gate de escopo dos arquivos: sem Relation
+    verificavel (``agent_relations`` ausente, linha ausente, campos vazios ou
+    segmento invalido) o namespace nao e apagado e ``vectors_purged`` traz o
+    codigo de recusa em ``scope`` — mesmo vocabulario dos arquivos, sem
+    instancia nem participante no relatorio.
+
     OPERACAO PARCIAL E PRETENDIDA (e reportada em ``partial``): as tres
     superficies sao independentes, cada uma verificavel por si, e o apply as
     roda em ordem — banco, arquivos, vetores. Vetores e a unica com
@@ -152,7 +158,10 @@ def run_erase(
             conn, relation_id, users_root=users_root
         )
         report["vectors_purged"] = erase_relation_vectors(
-            relation_id, adapter, configured=vectors_configured
+            relation_id,
+            adapter,
+            conn=conn,
+            configured=vectors_configured,
         )
 
     from core.db.erase import erase_is_clean, verify_relation_erase
