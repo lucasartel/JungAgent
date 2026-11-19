@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Expurgo verificavel FORA do Work por Relation (T3-3, C12).
+"""Expurgo verificavel FORA do Work por Relation (T3-3, C12 + C12g).
 
 Espelho de ``scripts/purge_work_relation.py``: ``erase_relation`` so era
 alcancado por testes — este script e o gatilho de producao para as
 familias de tabela fora do domínio Work, e SEMPRE roda a verificacao
 campo a campo no final (``verify_relation_erase``). Qualquer celula
 sobrevivente derruba o exit code.
+
+C12g acrescenta a segunda superficie: os arquivos privados da Relation
+sob ``users/instances/<instance>/relations/<relation_id>/`` (perfil e
+sessoes), inventariados e apagados por ``core.db.erase_files`` com as
+mesmas garantias — escopo verificavel, sem symlink, legado apenas
+inventariado. Qualquer arquivo sobrevivente tambem derruba o exit code.
 
 O expurgo do Work continua sendo ``scripts/purge_work_relation.py`` —
 rotinas separadas, escopos separados (o Work tem arquivo fisico e
@@ -44,19 +50,54 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run_erase(conn, relation_id: str, *, apply: bool = False) -> dict:
-    """Executa o fluxo dry-run/apply+verify sobre uma conexao ja aberta."""
+def run_erase(conn, relation_id: str, *, apply: bool = False, users_root=None) -> dict:
+    """Executa o fluxo dry-run/apply+verify sobre uma conexao ja aberta.
+
+    Cobre as DUAS superficies do expurgo fora do Work: celulas SQLite
+    (``core.db.erase``) e arquivos privados da Relation (``core.db.erase_files``).
+    ``clean`` so e True quando ambas passam; o legado de arquivos entra apenas
+    como inventario, nunca como apagamento.
+
+    ``users_root`` e a raiz dos arquivos privados; ``None`` usa a mesma cadeia
+    do ``user_profile_writer`` (volume persistente). Injecao explicita existe
+    para teste — o CLI nunca passa.
+    """
+    from core.db.erase_files import (
+        erase_relation_files,
+        files_are_clean,
+        inventory_relation_files,
+        legacy_file_inventory,
+        verify_relation_files_erased,
+    )
+
     report: dict = {"relation_id": relation_id, "mode": "verify"}
+    # Inventario ANTES de qualquer apagagem: no dry-run mostra o que existiria
+    # hoje; no apply registra o que existia antes do expurgo.
+    report["files_before"] = inventory_relation_files(
+        conn, relation_id, users_root=users_root
+    )
+    report["legacy_files"] = legacy_file_inventory(
+        conn, relation_id, users_root=users_root
+    )
+
     if apply:
         from core.db.erase import erase_relation
 
         report["mode"] = "apply"
         report["purged"] = erase_relation(conn, relation_id)
+        report["files_purged"] = erase_relation_files(
+            conn, relation_id, users_root=users_root
+        )
 
     from core.db.erase import erase_is_clean, verify_relation_erase
 
     report["remaining"] = verify_relation_erase(conn, relation_id)
-    report["clean"] = erase_is_clean(report["remaining"])
+    report["files_remaining"] = verify_relation_files_erased(
+        conn, relation_id, users_root=users_root
+    )
+    report["clean"] = erase_is_clean(report["remaining"]) and files_are_clean(
+        report["files_remaining"]
+    )
     return report
 
 

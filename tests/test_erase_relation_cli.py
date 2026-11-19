@@ -41,6 +41,20 @@ def _load_erase_module():
         except Exception:
             del sys.modules["core.db.erase"]
             raise
+    # Same isolation for the C12g file surface (scripts/erase_relation.py
+    # imports it lazily inside run_erase).
+    if "core.db.erase_files" not in sys.modules:
+        files_path = REPO_ROOT / "core" / "db" / "erase_files.py"
+        spec_f = importlib.util.spec_from_file_location(
+            "core.db.erase_files", files_path
+        )
+        mod_f = importlib.util.module_from_spec(spec_f)
+        sys.modules["core.db.erase_files"] = mod_f
+        try:
+            spec_f.loader.exec_module(mod_f)
+        except Exception:
+            del sys.modules["core.db.erase_files"]
+            raise
     spec = importlib.util.spec_from_file_location(
         "erase_relation_test", REPO_ROOT / "scripts" / "erase_relation.py"
     )
@@ -248,3 +262,46 @@ def test_cli_reports_database_not_found(monkeypatch):
     )
     rc = mod.main()
     assert rc == 2  # database_not_found exit code
+
+
+def test_run_erase_covers_files_and_dry_run_keeps_them(tmp_path):
+    """C12g: run_erase inventaria e apaga arquivos privados, mas so em apply."""
+    users_root = tmp_path / "users"
+    relation_dir = (
+        users_root / "instances" / "jung_v1" / "relations" / "rel-1" / "users" / "u1"
+    )
+    relation_dir.mkdir(parents=True)
+    (relation_dir / "profile.md").write_text("conteudo privado")
+
+    db_path = tmp_path / "files.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        """
+        CREATE TABLE agent_relations (
+            relation_id TEXT PRIMARY KEY,
+            agent_instance TEXT NOT NULL,
+            participant_user_id TEXT NOT NULL
+        );
+        INSERT INTO agent_relations VALUES ('rel-1', 'jung_v1', 'u1');
+        """
+    )
+    conn.commit()
+
+    mod = _load_erase_module()
+
+    try:
+        dry = mod.run_erase(conn, "rel-1", apply=False, users_root=users_root)
+        assert dry["mode"] == "verify"
+        assert dry["files_before"]["files"] == 1
+        assert dry["files_remaining"]["files"] == 1
+        assert dry["clean"] is False  # o arquivo sobrevive ao dry-run
+        assert (relation_dir / "profile.md").exists()
+
+        applied = mod.run_erase(conn, "rel-1", apply=True, users_root=users_root)
+        assert applied["mode"] == "apply"
+        assert applied["files_purged"]["files_removed"] == 1
+        assert applied["files_remaining"]["files"] == 0
+        assert applied["clean"] is True
+        assert not relation_dir.exists()
+    finally:
+        conn.close()
