@@ -7,9 +7,10 @@ fonte verificavel e selecao de compreensao distinta de extracao.
 Contrato: escopo C12 por linha (``agent_instance`` + propriedade/
 ``origin_relation_id``); material privado exige Relation elegivel e material
 global nasce so pela admissao F-5 (``assess_global_admission``), nunca por
-declaracao do chamador. Toda unidade nova carrega ao menos uma ancora
-``tipo#id`` valida. A admissao so grava ``source_claim``, ``extractive_only``
-ou ``uncertain``: ``validated_synthesis`` nasce exclusivamente da revisao
+declaracao do chamador — inclusive no reforco de uma unidade global ja
+existente (escrita recusada nao estende referencias alheias). Toda unidade
+nova carrega ao menos uma ancora ``tipo#id`` valida. A admissao so grava
+``source_claim``, ``extractive_only`` ou ``uncertain``: ``validated_synthesis`` nasce exclusivamente da revisao
 registrada (``review_knowledge_unit``, revisor e motivo obrigatorios) —
 extracao contingente ou hipotese interna nunca e promovida; sem
 ``confidence`` fabricado. Recorrencia reforca a unidade existente
@@ -324,6 +325,14 @@ class KnowledgeUnitDatabaseMixin:
                 existing = cursor.fetchone()
                 if existing is None:
                     break
+                # Admissao F-5 tambem governa o REFORCO: uma escrita global
+                # RECUSADA nao soma observacao nem acrescenta referencias a
+                # unidade global existente — a recusa vira erro auditavel e
+                # nada e escrito (mesma condicao 1 da quarentena na criacao).
+                if admission_refused is not None:
+                    raise ValueError(
+                        f"reinforce_admission_refused:{admission_refused}"
+                    )
                 existing_dict = dict(existing)
                 status = str(existing_dict["status"])
                 if status in {"superseded", "retracted"}:

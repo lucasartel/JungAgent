@@ -2,9 +2,11 @@
 
 Complementa ``core/db/knowledge_units.py``: a revisao registrada e a unica
 via para ``validated_synthesis`` (revisor + motivo obrigatorios, replay
-idempotente) e a leitura fail-closed por escopo — sem Relation devolve
-apenas material global admitido; com Relation devolve o privado da propria
-Relation mais o admitido da instancia, sempre apos o gate de elegibilidade.
+idempotente), com transicoes protegidas contra atualizacoes concorrentes
+(CAS + releitura antes de gravar), e a leitura fail-closed por escopo — sem
+Relation devolve apenas material global admitido; com Relation devolve o
+privado da propria Relation mais o admitido da instancia, sempre apos o
+gate de elegibilidade.
 
 Fora do escopo: recuperacao semantica (R1c), sondas/cockpit e qualquer
 efeito volitivo, prompt, envio ou custo.
@@ -45,6 +47,13 @@ class KnowledgeUnitReviewMixin:
         (``under_review``) e ``retract`` (terminal). Revisao identica
         repetida nao regrava historico (idempotente). Falha fechada com
         ``ValueError``; revisor e motivo sao obrigatorios.
+
+        Transicoes protegidas contra atualizacoes concorrentes: o ``UPDATE``
+        so grava se o estado lido ainda e o vigente (CAS sobre status,
+        epistemico e proveniencia); em corrida o metodo relê e revalida
+        (maximo 3 tentativas) — ``review_transition_conflict`` quando o
+        estado nao para de mudar. Uma escrita concorrente (retracao,
+        supersede, expurgo, outra revisao) nunca e sobrescrita.
         """
         if decision not in REVIEW_DECISIONS:
             raise ValueError(f"invalid_review_decision:{decision}")
@@ -56,105 +65,119 @@ class KnowledgeUnitReviewMixin:
         instance = self._unit_instance()
         cursor = self.conn.cursor()
         try:
-            cursor.execute(
-                """
-                SELECT id, status, epistemic_status, unit_kind, provenance_json
-                FROM knowledge_units
-                WHERE id = ? AND agent_instance = ?
-                """,
-                (int(unit_id), instance),
-            )
-            row = cursor.fetchone()
-            if row is None:
-                raise ValueError("unit_not_found")
-            row_dict = dict(row)
-            current_status = str(row_dict["status"])
-            current_epistemic = str(row_dict["epistemic_status"])
+            for _ in range(3):
+                cursor.execute(
+                    """
+                    SELECT id, status, epistemic_status, unit_kind,
+                           provenance_json
+                    FROM knowledge_units
+                    WHERE id = ? AND agent_instance = ?
+                    """,
+                    (int(unit_id), instance),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise ValueError("unit_not_found")
+                row_dict = dict(row)
+                current_status = str(row_dict["status"])
+                current_epistemic = str(row_dict["epistemic_status"])
 
-            if decision == "validate":
-                if row_dict["unit_kind"] in NON_VALIDATABLE_KINDS:
-                    raise ValueError("validated_synthesis_not_applicable")
-                if current_status in {"superseded", "retracted"}:
-                    raise ValueError(f"invalid_unit_transition:{current_status}")
-                if current_epistemic == VALIDATED_EPISTEMIC and current_status == "active":
-                    return {
-                        "unit_id": int(unit_id),
-                        "changed": False,
-                        "status": current_status,
-                        "epistemic_status": current_epistemic,
-                    }
-                new_status = "active"
-                new_epistemic = VALIDATED_EPISTEMIC
-            elif decision == "hold":
-                if current_status in {"superseded", "retracted"}:
-                    raise ValueError(f"invalid_unit_transition:{current_status}")
-                if current_status == "under_review":
-                    return {
-                        "unit_id": int(unit_id),
-                        "changed": False,
-                        "status": current_status,
-                        "epistemic_status": current_epistemic,
-                    }
-                new_status = "under_review"
-                new_epistemic = current_epistemic
-            else:  # retract
-                if current_status == "superseded":
-                    raise ValueError(f"invalid_unit_transition:{current_status}")
-                if current_status == "retracted":
-                    return {
-                        "unit_id": int(unit_id),
-                        "changed": False,
-                        "status": current_status,
-                        "epistemic_status": current_epistemic,
-                    }
-                new_status = "retracted"
-                new_epistemic = current_epistemic
+                if decision == "validate":
+                    if row_dict["unit_kind"] in NON_VALIDATABLE_KINDS:
+                        raise ValueError("validated_synthesis_not_applicable")
+                    if current_status in {"superseded", "retracted"}:
+                        raise ValueError(f"invalid_unit_transition:{current_status}")
+                    if current_epistemic == VALIDATED_EPISTEMIC and current_status == "active":
+                        return {
+                            "unit_id": int(unit_id),
+                            "changed": False,
+                            "status": current_status,
+                            "epistemic_status": current_epistemic,
+                        }
+                    new_status = "active"
+                    new_epistemic = VALIDATED_EPISTEMIC
+                elif decision == "hold":
+                    if current_status in {"superseded", "retracted"}:
+                        raise ValueError(f"invalid_unit_transition:{current_status}")
+                    if current_status == "under_review":
+                        return {
+                            "unit_id": int(unit_id),
+                            "changed": False,
+                            "status": current_status,
+                            "epistemic_status": current_epistemic,
+                        }
+                    new_status = "under_review"
+                    new_epistemic = current_epistemic
+                else:  # retract
+                    if current_status == "superseded":
+                        raise ValueError(f"invalid_unit_transition:{current_status}")
+                    if current_status == "retracted":
+                        return {
+                            "unit_id": int(unit_id),
+                            "changed": False,
+                            "status": current_status,
+                            "epistemic_status": current_epistemic,
+                        }
+                    new_status = "retracted"
+                    new_epistemic = current_epistemic
 
-            try:
-                provenance = json.loads(row_dict.get("provenance_json") or "{}")
-            except ValueError:
-                provenance = {}
-            if not isinstance(provenance, dict):
-                provenance = {}
-            history = provenance.get("review_history")
-            if not isinstance(history, list):
-                history = []
-            history.append(
-                {
-                    "decision": decision,
-                    "reviewer": str(reviewer),
-                    "reason": str(reason),
-                    "at": _now_iso(),
-                }
-            )
-            provenance["review_history"] = history
-            now = _now_iso()
-            cursor.execute(
-                """
-                UPDATE knowledge_units
-                SET status = ?, epistemic_status = ?, provenance_json = ?,
-                    updated_at = ?
-                WHERE id = ? AND agent_instance = ?
-                """,
-                (
-                    new_status,
-                    new_epistemic,
-                    json.dumps(provenance, ensure_ascii=False, sort_keys=True),
-                    now,
-                    int(unit_id),
-                    instance,
-                ),
-            )
-            self.conn.commit()
+                try:
+                    provenance = json.loads(row_dict.get("provenance_json") or "{}")
+                except ValueError:
+                    provenance = {}
+                if not isinstance(provenance, dict):
+                    provenance = {}
+                history = provenance.get("review_history")
+                if not isinstance(history, list):
+                    history = []
+                history.append(
+                    {
+                        "decision": decision,
+                        "reviewer": str(reviewer),
+                        "reason": str(reason),
+                        "at": _now_iso(),
+                    }
+                )
+                provenance["review_history"] = history
+                now = _now_iso()
+                cursor.execute(
+                    """
+                    UPDATE knowledge_units
+                    SET status = ?, epistemic_status = ?, provenance_json = ?,
+                        updated_at = ?
+                    WHERE id = ? AND agent_instance = ?
+                      AND status = ? AND epistemic_status = ?
+                      AND provenance_json = ?
+                    """,
+                    (
+                        new_status,
+                        new_epistemic,
+                        json.dumps(provenance, ensure_ascii=False, sort_keys=True),
+                        now,
+                        int(unit_id),
+                        instance,
+                        current_status,
+                        current_epistemic,
+                        row_dict["provenance_json"],
+                    ),
+                )
+                if cursor.rowcount == 1:
+                    self.conn.commit()
+                    return {
+                        "unit_id": int(unit_id),
+                        "changed": True,
+                        "status": new_status,
+                        "epistemic_status": new_epistemic,
+                    }
+                # Corrida: o estado mudou entre a leitura e a escrita e o
+                # UPDATE nao tocou nenhuma linha. Fecha a transacao vazia e
+                # relê/revalida contra o estado novo — nada do escritor
+                # concorrente e sobrescrito.
+                self.conn.rollback()
+            raise ValueError("review_transition_conflict")
         except Exception:
             self.conn.rollback()
             raise
-        return {
-            "unit_id": int(unit_id),
-            "changed": True,
-            "status": new_status,
-            "epistemic_status": new_epistemic,
-        }
 
     # ------------------------------------------------------------------
     # Leitura (fail-closed)
