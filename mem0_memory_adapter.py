@@ -34,6 +34,17 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def relation_namespace(relation_id) -> str:
+    """Namespace Qdrant de uma Relation: ``relation:<relation_id>``.
+
+    Unica fonte da convencao — ``_memory_user_id`` monta a mesma chave e o
+    expurgo (``core/db/erase_vectors.py``) apaga por ela sem passar pelo
+    resolvedor, que resolveria para a Relation do participante e nao para a
+    Relation pedida.
+    """
+    return f"relation:{relation_id}"
+
+
 def _default_collection_name() -> str:
     configured = os.getenv("QDRANT_COLLECTION_NAME")
     if configured:
@@ -228,7 +239,7 @@ class Mem0MemoryAdapter:
                 is_legacy_admin = False
             if not is_legacy_admin:
                 raise ValueError("relation_scope_required_for_semantic_memory")
-        return f"relation:{resolved}" if resolved else str(user_id)
+        return relation_namespace(resolved) if resolved else str(user_id)
 
     def get_context(self, user_id: str, query: str, limit: int = 10, relation_id=None) -> str:
         """
@@ -323,6 +334,28 @@ class Mem0MemoryAdapter:
     def count_all_memories(self, user_id: str) -> int:
         """Conta quantas memórias o mem0 mantém para o usuário."""
         return len(self.get_all_memories(user_id))
+
+    def count_relation(self, relation_id: str) -> int:
+        """Conta as memórias do namespace EXATO da Relation.
+
+        Não passa pelo resolvedor: ``_memory_user_id`` resolveria para a
+        Relation do participante, que pode não ser a Relation pedida (o
+        mesmo participante pode ter Relations em outra instância). Pode
+        levantar — quem chama classifica a falha, em vez de o adaptador
+        engolir o erro e devolver zero.
+        """
+        namespace = relation_namespace(relation_id)
+        results = self.mem.get_all(user_id=namespace)
+        return len(self._result_rows(results))
+
+    def delete_relation(self, relation_id: str) -> None:
+        """Apaga o namespace EXATO da Relation.
+
+        Não engole falha: uma exceção daqui é o sinal de que o apagamento
+        não aconteceu, e o chamador tem de reportar ``unavailable`` em vez
+        de afirmar limpo.
+        """
+        self.mem.delete_all(user_id=relation_namespace(relation_id))
 
     def health_check(self) -> bool:
         """Verifica se mem0 está operacional."""

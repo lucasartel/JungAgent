@@ -55,6 +55,19 @@ def _load_erase_module():
         except Exception:
             del sys.modules["core.db.erase_files"]
             raise
+    # Same isolation for the C12g vector surface (run_erase imports it lazily).
+    if "core.db.erase_vectors" not in sys.modules:
+        vectors_path = REPO_ROOT / "core" / "db" / "erase_vectors.py"
+        spec_v = importlib.util.spec_from_file_location(
+            "core.db.erase_vectors", vectors_path
+        )
+        mod_v = importlib.util.module_from_spec(spec_v)
+        sys.modules["core.db.erase_vectors"] = mod_v
+        try:
+            spec_v.loader.exec_module(mod_v)
+        except Exception:
+            del sys.modules["core.db.erase_vectors"]
+            raise
     spec = importlib.util.spec_from_file_location(
         "erase_relation_test", REPO_ROOT / "scripts" / "erase_relation.py"
     )
@@ -303,5 +316,121 @@ def test_run_erase_covers_files_and_dry_run_keeps_them(tmp_path):
         assert applied["files_remaining"]["files"] == 0
         assert applied["clean"] is True
         assert not relation_dir.exists()
+    finally:
+        conn.close()
+
+
+class _FakeVectors:
+    """Adaptador de vetores minimo para injecao em run_erase (sem rede)."""
+
+    def __init__(self, counts):
+        self.counts = dict(counts)
+        self.deleted = []
+
+    def count_relation(self, relation_id):
+        return int(self.counts.get(relation_id, 0))
+
+    def delete_relation(self, relation_id):
+        self.deleted.append(relation_id)
+        self.counts[relation_id] = 0
+
+
+def test_run_erase_folds_vectors_into_clean(tmp_path):
+    """C12g: clean exige banco, arquivos E vetores verificados.
+
+    Com QDRANT configurado, dry-run com vetores vivos nao pode reportar
+    limpo, e apply so reporta limpo apos apagar e recontar o namespace.
+    """
+    users_root = tmp_path / "users"
+    relation_dir = (
+        users_root / "instances" / "jung_v1" / "relations" / "rel-1" / "users" / "u1"
+    )
+    relation_dir.mkdir(parents=True)
+    (relation_dir / "profile.md").write_text("conteudo privado")
+
+    db_path = tmp_path / "vectors.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        """
+        CREATE TABLE agent_relations (
+            relation_id TEXT PRIMARY KEY,
+            agent_instance TEXT NOT NULL,
+            participant_user_id TEXT NOT NULL
+        );
+        INSERT INTO agent_relations VALUES ('rel-1', 'jung_v1', 'u1');
+        """
+    )
+    conn.commit()
+
+    adapter = _FakeVectors({"rel-1": 2})
+    mod = _load_erase_module()
+
+    try:
+        dry = mod.run_erase(
+            conn,
+            "rel-1",
+            apply=False,
+            users_root=users_root,
+            vector_adapter=adapter,
+            vectors_configured=True,
+        )
+        assert dry["vectors_before"]["state"] == "verified"
+        assert dry["vectors_before"]["count"] == 2
+        # Arquivo e vetores vivos: nada de limpo no dry-run.
+        assert dry["clean"] is False
+        assert adapter.deleted == []
+
+        applied = mod.run_erase(
+            conn,
+            "rel-1",
+            apply=True,
+            users_root=users_root,
+            vector_adapter=adapter,
+            vectors_configured=True,
+        )
+        assert applied["vectors_purged"]["deleted"] is True
+        assert applied["vectors_remaining"]["state"] == "verified"
+        assert applied["vectors_remaining"]["count"] == 0
+        assert applied["clean"] is True
+        assert adapter.deleted == ["rel-1"]
+    finally:
+        conn.close()
+
+
+def test_run_erase_without_qdrant_keeps_previous_semantics(tmp_path):
+    """Sem QDRANT_URL o comportamento anterior e preservado: not_configured."""
+    users_root = tmp_path / "users"
+    relation_dir = (
+        users_root / "instances" / "jung_v1" / "relations" / "rel-1" / "users" / "u1"
+    )
+    relation_dir.mkdir(parents=True)
+    (relation_dir / "profile.md").write_text("conteudo privado")
+
+    db_path = tmp_path / "noqdrant.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        """
+        CREATE TABLE agent_relations (
+            relation_id TEXT PRIMARY KEY,
+            agent_instance TEXT NOT NULL,
+            participant_user_id TEXT NOT NULL
+        );
+        INSERT INTO agent_relations VALUES ('rel-1', 'jung_v1', 'u1');
+        """
+    )
+    conn.commit()
+
+    mod = _load_erase_module()
+    try:
+        applied = mod.run_erase(
+            conn,
+            "rel-1",
+            apply=True,
+            users_root=users_root,
+            vectors_configured=False,
+        )
+        assert applied["vectors_remaining"]["state"] == "not_configured"
+        assert applied["files_remaining"]["files"] == 0
+        assert applied["clean"] is True
     finally:
         conn.close()
