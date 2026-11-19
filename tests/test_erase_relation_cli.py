@@ -408,6 +408,8 @@ def test_run_erase_folds_vectors_into_clean(tmp_path):
         assert dry["vectors_before"]["count"] == 2
         # Arquivo e vetores vivos: nada de limpo no dry-run.
         assert dry["clean"] is False
+        # Dry-run nao escreve: nunca e parcial.
+        assert dry["partial"] is False
         assert adapter.deleted == []
 
         applied = mod.run_erase(
@@ -422,6 +424,7 @@ def test_run_erase_folds_vectors_into_clean(tmp_path):
         assert applied["vectors_remaining"]["state"] == "verified"
         assert applied["vectors_remaining"]["count"] == 0
         assert applied["clean"] is True
+        assert applied["partial"] is False
         assert adapter.deleted == ["relation:rel-1"]
     finally:
         conn.close()
@@ -432,6 +435,9 @@ def test_run_erase_without_qdrant_reports_unknown_and_not_clean(tmp_path):
 
     A ausencia da variavel HOJE nao prova inexistencia de vetores
     historicos: a instalacao pode ter gravado em Qdrant antes.
+
+    Tambem fixa a OPERACAO PARCIAL como pretendida: banco e arquivos passam,
+    vetores ficam recusados, ``partial`` marca a escrita sem veredito limpo.
     """
     users_root = tmp_path / "users"
     relation_dir = (
@@ -467,6 +473,73 @@ def test_run_erase_without_qdrant_reports_unknown_and_not_clean(tmp_path):
         assert applied["vectors_remaining"]["reason"] == "qdrant_url_absent"
         # Arquivos e banco passaram, mas sem evidencia de vetores nao ha limpo.
         assert applied["files_remaining"]["files"] == 0
+        assert applied["clean"] is False
+        # Escrita parcial EXPLICITA: superficies independentes, exit code 1.
+        assert applied["partial"] is True
+    finally:
+        conn.close()
+
+
+def test_run_erase_apply_is_partial_when_vector_preflight_refuses(tmp_path):
+    """Preflight recusa o delete de vetores; banco e arquivos ja passaram.
+
+    E a operacao parcial pretendida: as superficies sao independentes e
+    ``partial`` a torna visivel no relatorio. O delete de vetores NAO e
+    chamado e o veredito continua nao-limpo.
+    """
+    from mem0_memory_adapter import NamespaceReadUnsupported
+
+    users_root = tmp_path / "users"
+    relation_dir = (
+        users_root / "instances" / "jung_v1" / "relations" / "rel-1" / "users" / "u1"
+    )
+    relation_dir.mkdir(parents=True)
+    (relation_dir / "profile.md").write_text("conteudo privado")
+
+    db_path = tmp_path / "preflight.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        """
+        CREATE TABLE agent_relations (
+            relation_id TEXT PRIMARY KEY,
+            agent_instance TEXT NOT NULL,
+            participant_user_id TEXT NOT NULL
+        );
+        INSERT INTO agent_relations VALUES ('rel-1', 'jung_v1', 'u1');
+        """
+    )
+    conn.commit()
+
+    class _NoExpiryCapable(_FakeVectors):
+        """API instalada sem ``show_expired``: nao da para provar o resultado."""
+
+        def namespace_state(self, namespace):
+            raise NamespaceReadUnsupported("expired_unverifiable")
+
+        def relation_state(self, relation_id):
+            raise NamespaceReadUnsupported("expired_unverifiable")
+
+    adapter = _NoExpiryCapable({"relation:rel-1": 2})
+    mod = _load_erase_module()
+
+    try:
+        applied = mod.run_erase(
+            conn,
+            "rel-1",
+            apply=True,
+            users_root=users_root,
+            vector_adapter=adapter,
+            vectors_configured=True,
+        )
+        # Nenhuma exclusao de vetor: o preflight recusou antes.
+        assert adapter.deleted == []
+        assert applied["vectors_purged"]["deleted"] is False
+        assert applied["vectors_purged"]["state"] == "unknown"
+        assert applied["vectors_purged"]["reason"] == "expired_unverifiable"
+        assert applied["vectors_remaining"]["state"] == "unknown"
+        # As outras superficies passaram — parcial e pretendido e visivel.
+        assert applied["files_remaining"]["files"] == 0
+        assert applied["partial"] is True
         assert applied["clean"] is False
     finally:
         conn.close()
@@ -524,6 +597,8 @@ def test_run_erase_propagates_vector_purge_failure(tmp_path):
         # O resultado da operacao falha em vez de virar "vazio verificado".
         assert applied["vectors_remaining"]["state"] == "unavailable"
         assert applied["clean"] is False
+        # Banco/arquivos ja apagados com a exclusao de vetores falhando.
+        assert applied["partial"] is True
         assert adapter.deleted == []
     finally:
         conn.close()

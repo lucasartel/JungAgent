@@ -87,6 +87,15 @@ def run_erase(
     do legado; o expurgo de vetores nao o recebe. E uma exclusao que falha
     herda o resultado: o relatorio nunca troca falha de ``vectors_purged``
     por uma contagem final zero.
+
+    OPERACAO PARCIAL E PRETENDIDA (e reportada em ``partial``): as tres
+    superficies sao independentes, cada uma verificavel por si, e o apply as
+    roda em ordem — banco, arquivos, vetores. Vetores e a unica com
+    preflight: se a API instalada nao consegue PROVAR o resultado (ex.: sem
+    ``show_expired``), o delete de vetores e recusado, mas banco e arquivos
+    JA foram apagados. Nada e desfeito — o exit code continua 1, ``partial``
+    marca que houve escrita sem veredito limpo e um rerun apos corrigir a
+    capacidade completa o expurgo (banco e arquivos sao idempotentes).
     """
     from core.db.erase_files import (
         erase_relation_files,
@@ -172,6 +181,14 @@ def run_erase(
         and files_are_clean(report["files_remaining"])
         and vectors_are_clean(report["vectors_remaining"])
     )
+    # Escrita sem veredito limpo: superficies apagadas enquanto outra foi
+    # recusada ou falhou. Sem escrita (dry-run ou nada a apagar) e False.
+    mutated = (
+        bool(report.get("purged"))
+        or bool((report.get("files_purged") or {}).get("files_removed"))
+        or bool((report.get("vectors_purged") or {}).get("deleted"))
+    )
+    report["partial"] = bool(mutated) and not report["clean"]
     return report
 
 

@@ -25,6 +25,15 @@ Estados do namespace da Relation — um por relatorio, sempre visiveis:
   falha fechada, nunca limpo;
 - ``verified`` — contagem obtida e validada; limpo somente com ``count == 0``.
 
+Redacao do relatorio: ``detail``/``reason`` so reproduzem CODIGO PROPRIO
+conhecido (lista fixa abaixo). Mensagem de rede, auth ou provedor pode
+carregar URL, credencial ou payload e fica de fora — o relatorio mostra so o
+tipo da excecao em ``error``. Codigo fora da lista e omitido (falha fechada).
+
+Preflight: ``erase_relation_vectors`` le e valida o namespace ANTES de
+apagar. Sem ``show_expired`` (ou com leitura falhando) nao ha como provar o
+resultado, entao a exclusao e RECUSADA — ``delete`` nenhum e chamado.
+
 Chave pre-Relation (``legacy``): antes das Relations o participante gravava
 sob o ``user_id`` cru, e o admin original tem a propria chave anterior. Essa
 chave e REPORTADA no relatorio e **nunca apagada por inferencia** —
@@ -52,6 +61,44 @@ STATE_VERIFIED = "verified"
 
 # Motivo do estado desconhecido: hoje nao ha como afirmar inexistencia.
 REASON_QDRANT_URL_ABSENT = "qdrant_url_absent"
+
+# Motivo quando a mensagem que bloqueou a leitura NAO e codigo proprio.
+REASON_CAPABILITY_UNPROVEN = "capability_unproven"
+
+# Codigos PRODUZIDOS POR ESTE SISTEMA: o unico texto que pode aparecer em
+# ``detail`` (unavailable) ou ``reason`` (unknown). Mensagem de rede, auth ou
+# provedor pode conter URL, credencial ou dado do provedor, entao NAO entra no
+# relatorio — la fica so o tipo da excecao, no campo ``error``. Falha fechada
+# na redacao: codigo fora desta lista e OMITIDO, nunca reproduzido por parecido.
+# Fontes: ``_read_state`` (``adapter_*``), ``mem0_memory_adapter._namespace_rows``
+# (``mem0_*``) e ``mem0_memory_adapter._namespace_query``
+# (``NamespaceReadUnsupported``).
+_OWN_DETAIL_CODES = frozenset(
+    {
+        "adapter_state_not_a_mapping",
+        "adapter_state_without_count",
+        "adapter_count_not_an_integer",
+        "adapter_count_negative",
+        "adapter_truncated_not_a_boolean",
+        "adapter_limit_invalid",
+        "adapter_truncated_below_limit",
+        "adapter_count_above_limit_without_truncation",
+        "mem0_response_without_known_key",
+        "mem0_response_unexpected_type",
+        "mem0_entries_not_a_list",
+        "mem0_entry_not_an_object",
+        "signature_unavailable",
+        "no_scope_parameter",
+        "no_limit_parameter",
+        "expired_unverifiable",
+    }
+)
+
+
+def _own_code(message: Any) -> Optional[str]:
+    """A mensagem, so se for codigo proprio da lista; caso contrario ``None``."""
+    text = str(message or "").strip()
+    return text if text in _OWN_DETAIL_CODES else None
 
 
 def _is_configured(explicit: Optional[bool]) -> bool:
@@ -81,22 +128,31 @@ def _unavailable(namespace: str, exc: BaseException) -> Dict[str, Any]:
         "count": None,
         "error": type(exc).__name__,
     }
-    message = str(exc).strip()
-    if message:
-        # Mensagem propria (sem segredo): distingue qual checagem de estado
-        # falhou sem abrir o relatorio a texto livre do provedor.
-        result["detail"] = message
+    # Redacao: texto so se for codigo proprio. ``str(exc)`` de falha de
+    # rede/auth do provedor pode conter URL, credencial ou payload — sai apenas
+    # o tipo, que e o que o operador precisa para distinguir a falha.
+    code = _own_code(str(exc))
+    if code:
+        result["detail"] = code
     return result
 
 
-def _unknown(namespace: str, reason: str) -> Dict[str, Any]:
-    """Capacidade da API nao comprovada: desconhecido, nunca limpo."""
-    return {
+def _unknown(namespace: str, exc: BaseException) -> Dict[str, Any]:
+    """Capacidade da API nao comprovada: desconhecido, nunca limpo.
+
+    ``reason`` segue a mesma redacao de ``_unavailable``: codigo proprio da
+    lista, ou ``capability_unproven`` com o tipo da excecao em ``error``.
+    """
+    result: Dict[str, Any] = {
         "state": STATE_UNKNOWN,
-        "reason": reason,
         "namespace": namespace,
         "count": None,
     }
+    code = _own_code(str(exc))
+    result["reason"] = code or REASON_CAPABILITY_UNPROVEN
+    if not code:
+        result["error"] = type(exc).__name__
+    return result
 
 
 def _read_state(state: Any) -> Tuple[int, bool, int]:
@@ -190,7 +246,7 @@ def inventory_relation_vectors(
             count, truncated, limit = _read_state(state)
         except NamespaceReadUnsupported as exc:
             # Capacidade nao comprovada (ex.: sem show_expired): desconhecido.
-            result = _unknown(namespace, str(exc))
+            result = _unknown(namespace, exc)
         except Exception as exc:  # falha de rede/auth vira estado, nao exit silencioso
             result = _unavailable(namespace, exc)
         else:
@@ -230,6 +286,13 @@ def erase_relation_vectors(
     caminho estrutural para ser apagada aqui — apagaria por inferencia. So
     devolve ``count`` novo apos a apagagem; se o apagar passa mas o recount
     falha, o estado e ``unavailable`` — apagado sem verificar nao e limpo.
+
+    PREFLIGHT antes de qualquer exclusao: a leitura e validada primeiro, e
+    ``delete`` so roda se ela passa. A API instalada sem ``show_expired`` (ou
+    com leitura falhando) nao consegue PROVAR o resultado — apagaria sem
+    verificar, de forma irreversivel. Nesses casos o retorno e ``unknown`` ou
+    ``unavailable`` com ``deleted=False`` e o adaptador nunca recebe
+    ``delete_relation``.
     """
     namespace = relation_namespace(relation_id)
     ready = _phase(adapter, _is_configured(configured))
@@ -242,6 +305,19 @@ def erase_relation_vectors(
         }
         if ready == STATE_UNKNOWN:
             result["reason"] = REASON_QDRANT_URL_ABSENT
+        return result
+    # Preflight: mesma leitura e mesma validacao do recount. Se ela falha aqui,
+    # falharia depois do delete — entao nada e apagado.
+    try:
+        state = adapter.relation_state(relation_id)
+        _read_state(state)
+    except NamespaceReadUnsupported as exc:
+        result = _unknown(namespace, exc)
+        result["deleted"] = False
+        return result
+    except Exception as exc:
+        result = _unavailable(namespace, exc)
+        result["deleted"] = False
         return result
     try:
         adapter.delete_relation(relation_id)
@@ -256,7 +332,7 @@ def erase_relation_vectors(
         state = adapter.relation_state(relation_id)
         count, truncated, limit = _read_state(state)
     except NamespaceReadUnsupported as exc:
-        result = _unknown(namespace, str(exc))
+        result = _unknown(namespace, exc)
         result["deleted"] = True
         return result
     except Exception as exc:

@@ -11,6 +11,8 @@ contagem) esta em ``test_mem0_namespace_count.py``.
 from __future__ import annotations
 
 import inspect
+import json
+import re
 import sys
 import types
 from pathlib import Path
@@ -30,10 +32,12 @@ if not hasattr(sys.modules.get("anthropic"), "Anthropic"):
     sys.modules["anthropic"] = anthropic_stub
 
 from core.db.erase_vectors import (
+    REASON_CAPABILITY_UNPROVEN,
     REASON_QDRANT_URL_ABSENT,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
     STATE_VERIFIED,
+    _OWN_DETAIL_CODES,
     erase_relation_vectors,
     inventory_relation_vectors,
     vectors_are_clean,
@@ -253,8 +257,9 @@ def test_non_mapping_state_is_invalid():
     _assert_invalid("[]", "adapter_state_not_a_mapping")
 
 
-def test_erased_but_state_invalid_is_not_clean():
-    """Exclusao passou mas o estado nao e confiavel: nada de limpo."""
+def test_invalid_state_is_caught_by_preflight_before_delete():
+    """Estado ilegivel: o preflight recusa ANTES — delete nenhum e chamado."""
+
     class _BadDelete(_BadState):
         def __init__(self):
             super().__init__({"count": None, "truncated": False, "limit": 1000})
@@ -262,10 +267,147 @@ def test_erased_but_state_invalid_is_not_clean():
         def delete_relation(self, relation_id):
             self.deleted.append(relation_namespace(relation_id))
 
-    purged = erase_relation_vectors(REL, _BadDelete(), configured=True)
+    adapter = _BadDelete()
+    purged = erase_relation_vectors(REL, adapter, configured=True)
+
+    assert purged["deleted"] is False
+    assert purged["state"] == STATE_UNAVAILABLE
+    assert purged["detail"] == "adapter_count_not_an_integer"
+    assert adapter.deleted == []
+    assert not vectors_are_clean(purged)
+
+
+def test_erased_but_state_invalid_is_not_clean():
+    """Exclusao passou e o estado invalido so veio DEPOIS: nada de limpo."""
+
+    class _InvalidAfterDelete(_FakeVectors):
+        def __init__(self):
+            super().__init__({REL_NS: 2})
+            self._after = False
+
+        def delete_relation(self, relation_id):
+            super().delete_relation(relation_id)
+            self._after = True
+
+        def namespace_state(self, namespace):
+            if self._after:
+                return {"count": None, "truncated": False, "limit": 1000}
+            return super().namespace_state(namespace)
+
+    purged = erase_relation_vectors(REL, _InvalidAfterDelete(), configured=True)
+
     assert purged["deleted"] is True
     assert purged["state"] == STATE_UNAVAILABLE
     assert not vectors_are_clean(purged)
+
+
+# ---------------------------------------------------------------------------
+# Preflight: capacidade comprovada ANTES de apagar
+# ---------------------------------------------------------------------------
+
+def test_preflight_refuses_delete_when_capacity_unproven():
+    """Sem ``show_expired`` nao da para provar o resultado: nada e apagado."""
+    class _Unsupported(_FakeVectors):
+        def namespace_state(self, namespace):
+            raise NamespaceReadUnsupported("expired_unverifiable")
+
+        def relation_state(self, relation_id):
+            raise NamespaceReadUnsupported("expired_unverifiable")
+
+    adapter = _Unsupported({REL_NS: 2})
+    purged = erase_relation_vectors(REL, adapter, configured=True)
+
+    assert adapter.deleted == []
+    assert purged["deleted"] is False
+    assert purged["state"] == STATE_UNKNOWN
+    assert purged["reason"] == "expired_unverifiable"
+    assert not vectors_are_clean(purged)
+
+
+def test_preflight_refuses_delete_when_initial_read_fails():
+    """Sem estado inicial nao ha como verificar depois: nada e apagado."""
+    adapter = _FakeVectors({REL_NS: 2}, fail_namespaces={REL_NS})
+    purged = erase_relation_vectors(REL, adapter, configured=True)
+
+    assert adapter.deleted == []
+    assert purged["deleted"] is False
+    assert purged["state"] == STATE_UNAVAILABLE
+    assert not vectors_are_clean(purged)
+
+
+# ---------------------------------------------------------------------------
+# Redacao: so codigo proprio entra no relatorio
+# ---------------------------------------------------------------------------
+
+_PROVIDER_MESSAGE = (
+    "https://alice:senha@qdrant.internal:6333/collections"
+    "?api_key=sk-1234567890abcdef Authorization: Bearer token-secreto"
+)
+
+
+def test_provider_message_is_redacted_from_detail():
+    """Falha de rede/auth nao vaza no relatorio: so o tipo da excecao."""
+    remaining = inventory_relation_vectors(
+        REL, _BadState(RuntimeError(_PROVIDER_MESSAGE)), configured=True
+    )
+
+    assert remaining["state"] == STATE_UNAVAILABLE
+    assert remaining["error"] == "RuntimeError"
+    assert "detail" not in remaining
+    assert _PROVIDER_MESSAGE not in json.dumps(remaining)
+    assert not vectors_are_clean(remaining)
+
+
+def test_provider_message_is_redacted_on_the_delete_path():
+    class _LeakyDelete(_FakeVectors):
+        def delete_relation(self, relation_id):
+            raise RuntimeError(_PROVIDER_MESSAGE)
+
+    purged = erase_relation_vectors(REL, _LeakyDelete({REL_NS: 2}), configured=True)
+
+    assert purged["deleted"] is False
+    assert purged["error"] == "RuntimeError"
+    assert "detail" not in purged
+    assert _PROVIDER_MESSAGE not in json.dumps(purged)
+
+
+def test_third_party_reason_is_redacted_to_a_generic_code():
+    class _LeakyUnsupported(_FakeVectors):
+        def relation_state(self, relation_id):
+            raise NamespaceReadUnsupported(_PROVIDER_MESSAGE)
+
+    remaining = inventory_relation_vectors(REL, _LeakyUnsupported(), configured=True)
+
+    assert remaining["state"] == STATE_UNKNOWN
+    assert remaining["reason"] == REASON_CAPABILITY_UNPROVEN
+    assert remaining["error"] == "NamespaceReadUnsupported"
+    assert _PROVIDER_MESSAGE not in json.dumps(remaining)
+    assert not vectors_are_clean(remaining)
+
+
+def test_own_codes_are_allowlisted_in_both_sources():
+    """Guarda contra drift: codigo proprio novo precisa entrar na lista.
+
+    Sem isso o codigo proprio perde ``detail`` (dificulta diagnostico) — a
+    redacao e falha fechada, entao a lista e que precisa ser atualizada.
+    """
+    sources = {
+        _REPO_ROOT / "core" / "db" / "erase_vectors.py": [
+            r'raise ValueError\("([a-z_]+)"\)'
+        ],
+        _REPO_ROOT / "mem0_memory_adapter.py": [
+            r'raise ValueError\("(mem0_[a-z_]+)"\)',
+            r'raise NamespaceReadUnsupported\("([a-z_]+)"\)',
+        ],
+    }
+    found = set()
+    for path, patterns in sources.items():
+        text = path.read_text(encoding="utf-8")
+        for pattern in patterns:
+            found.update(re.findall(pattern, text))
+
+    assert found, "nenhum codigo proprio encontrado: o teste nao prova nada"
+    assert found <= _OWN_DETAIL_CODES, found - _OWN_DETAIL_CODES
 
 
 # ---------------------------------------------------------------------------
