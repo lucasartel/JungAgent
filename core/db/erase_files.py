@@ -20,18 +20,16 @@ Escopo:
   relatorio marca o motivo — inferir um caminho a partir de um ``relation_id``
   errado apagaria arquivo de outra pessoa.
 
-Falha fechada em leitura (revisao da PR #102): varredura que nao consegue
-abrir ou classificar um diretorio NAO vira "arquivo nenhum". ``scan_tree``
-devolve as falhas por tipo, o inventario e a verificacao as expoem como
-``scan_failures`` e ``files_are_clean`` recusa qualquer relatorio com falha —
-um diretorio ilegivel com dados sobreviventes reporta ``clean=False``.
+Validacao e abertura sao duas etapas (revisao da PR #102): a validacao
+(``_has_symlink_component``) so olha o caminho, e a abertura da cadeia por
+descritor acontece depois. Um ancestral trocado por symlink nessa janela e
+recusado por ``open_namespace_chain`` — a leitura e a remocao trabalham contra
+os inodes ja pinados, entao o alvo externo permanece intacto e a recusa
+aparece no relatorio (``symlink_refused``).
 
-Contra troca concorrente de diretorio por symlink (revisao da PR #102): a
-remocao nao reutiliza a arvore de caminho ja resolvida; cada entrada sai por
-``dir_fd`` com ``O_NOFOLLOW``. Um componente trocado por link apos a
-varredura vira ``symlink_refused`` em ``removal_failures`` e o ``verify``
-denuncia o que sobreviveu. Sem ``O_DIRECTORY``/``O_NOFOLLOW`` a remocao e
-RECUSADA, nao degradada.
+Falha fechada em leitura: varredura que nao consegue abrir ou classificar um
+diretorio NAO vira "arquivo nenhum" — vira ``scan_failures`` por tipo, e
+``files_are_clean`` recusa qualquer relatorio com falha.
 
 Sem ``except Exception: pass``: falha de leitura, classificacao ou remocao e
 contada por tipo e aparece no relatorio.
@@ -44,10 +42,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.db.erase_fs import (
+    ScanEntries,
     ScanFailures,
+    close_chain,
     erase_tree_entries,
     file_bytes,
-    scan_tree,
+    open_namespace_chain,
+    scan_open_dir,
 )
 from engines.participant_files import participant_dir
 
@@ -126,13 +127,18 @@ def _has_symlink_component(base: Path, target: Path) -> bool:
     return False
 
 
-def relation_files_dir(
-    conn: Any, relation_id: str, *, users_root: Optional[Path] = None
-) -> Tuple[Optional[Path], str]:
-    """Diretorio privado da Relation, ou ``(None, motivo)`` se nao verificavel."""
+def _resolve_target(
+    conn: Any, relation_id: str, users_root: Optional[Path] = None
+) -> Tuple[Optional[Path], Optional[Path], str]:
+    """Valida o escopo e devolve ``(raiz dos volumes, namespace, motivo)``.
+
+    Etapa de VALIDACAO: monta o caminho e confere que nenhum componente e
+    symlink. Nao abre nada — a abertura da cadeia acontece depois, e e la que
+    uma troca posterior e recusada.
+    """
     scope, status = _relation_scope(conn, relation_id)
     if scope is None:
-        return None, status
+        return None, None, status
     instance, participant = scope
     root_users = Path(users_root) if users_root is not None else _users_root()
     try:
@@ -146,7 +152,7 @@ def relation_files_dir(
         logger.warning(
             "erase_files: segmento de escopo invalido relation=%s", relation_id
         )
-        return None, SCOPE_INVALID
+        return None, None, SCOPE_INVALID
     # participant_dir devolve .../instances/<i>/relations/<r>/users/<u>;
     # o namespace da Relation e dois niveis acima do usuario.
     root = user_dir.parents[1]
@@ -154,8 +160,43 @@ def relation_files_dir(
         logger.warning(
             "erase_files: componente symlink recusado relation=%s", relation_id
         )
-        return None, SCOPE_SYMLINK
-    return root, "resolved"
+        return None, None, SCOPE_SYMLINK
+    return root_users, root, "resolved"
+
+
+def relation_files_dir(
+    conn: Any, relation_id: str, *, users_root: Optional[Path] = None
+) -> Tuple[Optional[Path], str]:
+    """Diretorio privado da Relation, ou ``(None, motivo)`` se nao verificavel."""
+    _root_users, root, status = _resolve_target(conn, relation_id, users_root)
+    return root, status
+
+
+def _segments_of(root_users: Path, root: Path) -> Optional[Tuple[str, ...]]:
+    try:
+        return root.relative_to(root_users).parts
+    except ValueError:
+        return None
+
+
+def _scan_via_chain(
+    root_users: Path, root: Path
+) -> Tuple[ScanEntries, ScanFailures]:
+    """Abre a cadeia da Relation, varre pelo fd pinado e fecha.
+
+    Entradas vazias com nenhuma falha significam namespace ausente: nao ha o
+    que verificar. Qualquer outro problema vira ``ScanFailures`` por tipo.
+    """
+    segments = _segments_of(root_users, root)
+    if segments is None:
+        return [], {"chain_outside_base": 1}
+    fds, reason = open_namespace_chain(root_users, segments)
+    if fds is None:
+        return [], {} if reason == "namespace_absent" else {reason: 1}
+    try:
+        return scan_open_dir(fds[-1])
+    finally:
+        close_chain(fds)
 
 
 def _failure_fields(failures: ScanFailures) -> Dict[str, Any]:
@@ -169,7 +210,7 @@ def inventory_relation_files(
     conn: Any, relation_id: str, *, users_root: Optional[Path] = None
 ) -> Dict[str, Any]:
     """Inventario (somente leitura) dos arquivos privados da Relation."""
-    root, status = relation_files_dir(conn, relation_id, users_root=users_root)
+    root_users, root, status = _resolve_target(conn, relation_id, users_root)
     if root is None:
         return {
             "scope": status,
@@ -182,7 +223,7 @@ def inventory_relation_files(
             "scan_failures": 0,
             "scan_failure_types": [],
         }
-    entries, failures = scan_tree(root)
+    entries, failures = _scan_via_chain(root_users, root)
     files = sorted(rel for rel, is_dir in entries if not is_dir)
     directories = sum(1 for _rel, is_dir in entries if is_dir)
     return {
@@ -201,7 +242,7 @@ def verify_relation_files_erased(
     conn: Any, relation_id: str, *, users_root: Optional[Path] = None
 ) -> Dict[str, Any]:
     """Conta o que sobreviveu ao expurgo da Relation."""
-    root, status = relation_files_dir(conn, relation_id, users_root=users_root)
+    root_users, root, status = _resolve_target(conn, relation_id, users_root)
     if root is None:
         return {
             "scope": status,
@@ -210,7 +251,7 @@ def verify_relation_files_erased(
             "scan_failures": 0,
             "scan_failure_types": [],
         }
-    entries, failures = scan_tree(root)
+    entries, failures = _scan_via_chain(root_users, root)
     files = [rel for rel, is_dir in entries if not is_dir]
     return {
         "scope": "resolved",
@@ -238,9 +279,10 @@ def erase_relation_files(
 ) -> Dict[str, Any]:
     """Apaga o namespace privado da Relation e o diretorio vazio.
 
-    Sem escopo verificavel nada e apagado. Falha de leitura limita a remocao ao
-    que foi classificado e aparece em ``scan_failures``; o que sobreviver fica
-    para ``verify`` denunciar.
+    A cadeia e aberta DEPOIS da validacao e mantida aberta durante a
+    varredura e a remocao: uma troca de ancestral nessa janela e recusada na
+    abertura e reportada, sem tocar no alvo externo. Sem escopo verificavel
+    nada e apagado; o que sobreviver fica para ``verify`` denunciar.
     """
     empty = {
         "scope": "resolved",
@@ -251,14 +293,33 @@ def erase_relation_files(
         "removal_failures": 0,
         "removal_failure_types": [],
     }
-    root, status = relation_files_dir(conn, relation_id, users_root=users_root)
+    root_users, root, status = _resolve_target(conn, relation_id, users_root)
     if root is None:
         return {**empty, "scope": status}
-    if not root.is_dir():
-        return empty
+    segments = _segments_of(root_users, root)
+    if segments is None:
+        return {**empty, "scan_failures": 1, "scan_failure_types": ["chain_outside_base"]}
 
-    entries, scan_failures = scan_tree(root)
-    files_removed, dirs_removed, removal_failures = erase_tree_entries(root, entries)
+    fds, reason = open_namespace_chain(root_users, segments)
+    if fds is None:
+        if reason == "namespace_absent":
+            return empty
+        # Nao foi possivel nem ler nem apagar: reporta nos dois campos, que
+        # e exatamente o que aconteceu.
+        return {
+            **empty,
+            "scan_failures": 1,
+            "scan_failure_types": [reason],
+            "removal_failures": 1,
+            "removal_failure_types": [reason],
+        }
+    try:
+        entries, scan_failures = scan_open_dir(fds[-1])
+        files_removed, dirs_removed, removal_failures = erase_tree_entries(
+            fds, entries, root.name
+        )
+    finally:
+        close_chain(fds)
     return {
         "scope": "resolved",
         "files_removed": files_removed,
@@ -294,8 +355,8 @@ def legacy_file_inventory(
         return {"scope": SCOPE_INVALID, "candidates": []}
 
     candidates: List[Dict[str, Any]] = []
-    for kind, path in (
-        ("pre_namespace", root_users / participant),
+    for kind, path, segments in (
+        ("pre_namespace", root_users / participant, (participant,)),
         (
             "legacy_unscoped",
             root_users
@@ -304,23 +365,43 @@ def legacy_file_inventory(
             / "legacy_unscoped"
             / "users"
             / participant,
+            ("instances", instance, "legacy_unscoped", "users", participant),
         ),
     ):
-        if not path.exists():
-            continue
         if _has_symlink_component(root_users, path):
+            if path.exists():
+                candidates.append(
+                    {
+                        "kind": kind,
+                        "path": str(path),
+                        "files": 0,
+                        "bytes": 0,
+                        "action": "refused_symlink",
+                        "scan_failures": 0,
+                        "scan_failure_types": [],
+                    }
+                )
+            continue
+        fds, reason = open_namespace_chain(root_users, segments)
+        if fds is None:
+            if reason == "namespace_absent":
+                continue
             candidates.append(
                 {
                     "kind": kind,
                     "path": str(path),
                     "files": 0,
                     "bytes": 0,
-                    "action": "refused_symlink",
-                    "scan_failures": 0,
+                    "action": "refused_scan",
+                    "scan_failures": 1,
+                    "scan_failure_types": [reason],
                 }
             )
             continue
-        entries, failures = scan_tree(path)
+        try:
+            entries, failures = scan_open_dir(fds[-1])
+        finally:
+            close_chain(fds)
         files = [rel for rel, is_dir in entries if not is_dir]
         candidates.append(
             {
@@ -329,7 +410,7 @@ def legacy_file_inventory(
                 "files": len(files),
                 "bytes": sum(file_bytes(path / rel) for rel in files),
                 "action": "quarantined_not_erased",
-                "scan_failures": sum(failures.values()),
+                **_failure_fields(failures),
             }
         )
     return {"scope": "resolved", "candidates": candidates}

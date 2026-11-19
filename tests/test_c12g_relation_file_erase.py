@@ -310,7 +310,15 @@ def test_unreadable_directory_fails_closed(tmp_path, monkeypatch):
     real_scandir = os.scandir
 
     def scandir_denied(path, *args, **kwargs):
-        if str(path).rstrip("/").endswith(os.path.join("relations", "rel-a")):
+        # A varredura entra por /proc/self/fd/<fd>; resolve o inode alvo para
+        # achar a raiz da Relation mesmo depois da abertura por descritor.
+        target = str(path)
+        if target.startswith("/proc/self/fd/"):
+            try:
+                target = os.readlink(target)
+            except OSError:
+                pass
+        if target.rstrip("/").endswith(os.path.join("relations", "rel-a")):
             raise PermissionError(13, "Permission denied")
         return real_scandir(path, *args, **kwargs)
 
@@ -339,13 +347,12 @@ def test_unreadable_directory_fails_closed(tmp_path, monkeypatch):
     ).exists()
 
 
-def test_symlink_swap_between_scan_and_unlink_is_refused(tmp_path, monkeypatch):
-    """Troca de diretorio por symlink APOS a varredura nao desvia a remocao.
+def test_component_swap_between_scan_and_unlink_is_refused(tmp_path, monkeypatch):
+    """Troca de um componente INTERNO por symlink apos a varredura.
 
-    Simula a janela TOCTOU: ``_scan`` roda sobre a arvore real e devolve as
-    entradas; em seguida ``users/`` e substituido por um link para fora do
-    namespace. A remocao por caminho apagaria a vitima — a remocao por
-    ``dir_fd`` com ``O_NOFOLLOW`` recusa e reporta ``removal_failures``.
+    Janela: a varredura le a arvore real e devolve as entradas; em seguida
+    ``users/`` (dentro do namespace) vira link para fora. A remocao por
+    caminho apagaria a vitima — a remocao recusa o componente e reporta.
     """
     conn = _conn()
     users = _volume(tmp_path)
@@ -355,19 +362,24 @@ def test_symlink_swap_between_scan_and_unlink_is_refused(tmp_path, monkeypatch):
     victim = outside / "user-1" / "profile.md"
     victim.write_text("vítima fora do namespace")
 
-    real_scan = erase_fs.scan_tree
+    real_scan = erase_fs.scan_open_dir
     state = {"swapped": False}
 
-    def scan_then_swap(root):
-        entries, failures = real_scan(root)
-        subtree = root / "users"
-        if not state["swapped"] and subtree.is_dir() and not subtree.is_symlink():
-            state["swapped"] = True
-            subtree.rename(tmp_path / "moved_away")
-            os.symlink(outside, subtree)
+    def scan_then_swap(fd):
+        entries, failures = real_scan(fd)
+        if not state["swapped"]:
+            try:
+                root_path = Path(os.readlink(f"/proc/self/fd/{fd}"))
+            except OSError:
+                root_path = None
+            subtree = root_path / "users" if root_path else None
+            if subtree is not None and subtree.is_dir() and not subtree.is_symlink():
+                state["swapped"] = True
+                subtree.rename(tmp_path / "moved_away")
+                os.symlink(outside, subtree)
         return entries, failures
 
-    monkeypatch.setattr(erase_files, "scan_tree", scan_then_swap)
+    monkeypatch.setattr(erase_files, "scan_open_dir", scan_then_swap)
 
     erased = erase_relation_files(conn, "rel-a", users_root=users)
     assert state["swapped"] is True
@@ -378,13 +390,60 @@ def test_symlink_swap_between_scan_and_unlink_is_refused(tmp_path, monkeypatch):
     assert "symlink_refused" in erased["removal_failure_types"]
 
     # A vítima fora do namespace sobrevive e a arvore real tambem: nada foi
-    # removido — o caminho do link agora resolve para a propria vitima, entao
-    # o que se verifica e a subarvore original, movida para fora.
+    # removido — o caminho do link resolve para a propria vitima, entao o que
+    # se verifica e a subarvore original, movida para fora.
     assert victim.exists()
     assert (tmp_path / "moved_away" / "user-1" / "profile.md").exists()
     assert (tmp_path / "moved_away" / "user-1" / "sessions" / "2026-01-01.md").exists()
 
     # E a verificacao continua negando clean.
+    assert not files_are_clean(
+        verify_relation_files_erased(conn, "rel-a", users_root=users)
+    )
+
+
+def test_ancestor_symlink_swap_between_validation_and_open_is_refused(
+    tmp_path, monkeypatch
+):
+    """Troca de um ANCESTRAL entre a validacao e a abertura nao desvia nada.
+
+    ``_resolve_target`` so monta e confere o caminho; a cadeia e aberta depois.
+    Aqui ``instances/inst-a/relations`` vira link para fora nessa janela. O
+    ``O_NOFOLLOW`` de um caminho completo nao protegeria ancestrais — e a
+    abertura componente a componente e o que recusa, mantendo o alvo externo
+    intacto e reportando a recusa.
+    """
+    conn = _conn()
+    users = _volume(tmp_path)
+
+    outside = tmp_path / "outside_relations"
+    victim = outside / "rel-a" / "users" / "user-1" / "profile.md"
+    victim.parent.mkdir(parents=True)
+    victim.write_text("vítima fora do namespace")
+
+    real_open = erase_files.open_namespace_chain
+    state = {"swapped": False}
+
+    def open_after_swap(base, segments):
+        if not state["swapped"]:
+            state["swapped"] = True
+            ancestor = Path(base) / "instances" / "inst-a" / "relations"
+            ancestor.rename(tmp_path / "moved_relations")
+            os.symlink(outside, ancestor)
+        return real_open(base, segments)
+
+    monkeypatch.setattr(erase_files, "open_namespace_chain", open_after_swap)
+
+    erased = erase_relation_files(conn, "rel-a", users_root=users)
+    assert state["swapped"] is True
+    assert erased["files_removed"] == 0
+    assert erased["removal_failures"] >= 1
+    assert "symlink_refused" in erased["removal_failure_types"]
+
+    # O alvo externo permanece intacto: nada foi removido pelo link.
+    assert victim.exists()
+
+    # A verificacao tambem nega clean — agora a validacao ja enxerga o link.
     assert not files_are_clean(
         verify_relation_files_erased(conn, "rel-a", users_root=users)
     )
