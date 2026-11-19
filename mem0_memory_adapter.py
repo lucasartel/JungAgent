@@ -27,11 +27,106 @@ Configuração via variáveis de ambiente:
 """
 
 import os
+import inspect
 import logging
 import math
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Limite explicito de leitura do namespace. O padrao do ``get_all`` e 20 — com
+# ele um namespace cheio truncaria a contagem. 1000 acompanha o proprio lote de
+# ``delete_all`` do mem0; ao bater no teto o estado marca ``truncated``.
+_NAMESPACE_LIMIT = 1000
+
+
+class NamespaceReadUnsupported(RuntimeError):
+    """A API instalada nao consegue provar a ausencia de vetores.
+
+    Nao e erro de rede: e incompatibilidade de capacidade (falta escopo,
+    limite ou opt-in de expiradas). Vira ``unknown`` no relatorio, nunca
+    limpo.
+    """
+
+
+def _namespace_rows(results: Any) -> List[Dict[str, Any]]:
+    """Entradas cruas de ``get_all``, SEM filtrar payload.
+
+    Um registro sem campo ``memory`` continua sendo registro: contagem que
+    descarta payload conta menos do que existe. Aceita as chaves provadas nas
+    versoes publicadas — ``results`` (>=0.1.23) e ``memories`` (0.1.x
+    antigo) — e lista pura (api_version antiga). Formato nao reconhecido
+    LEVANTA: resposta inesperada nao pode virar lista vazia, que e como uma
+    falha viraria ``count=0`` e ``clean=True``.
+    """
+    if isinstance(results, dict):
+        if "results" in results:
+            rows = results["results"]
+        elif "memories" in results:
+            rows = results["memories"]
+        else:
+            raise ValueError("mem0_response_without_known_key")
+    elif isinstance(results, (list, tuple)):
+        rows = results
+    else:
+        raise ValueError("mem0_response_unexpected_type")
+    if not isinstance(rows, (list, tuple)):
+        raise ValueError("mem0_entries_not_a_list")
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("mem0_entry_not_an_object")
+    return list(rows)
+
+
+def _namespace_query(namespace: str, get_all: Any) -> Dict[str, Any]:
+    """Kwargs de ``get_all`` escolhidos POR PARAMETRO, nao por palheta.
+
+    A assinatura varia muito entre as versoes permitidas por
+    ``mem0ai>=0.1.0`` (levantdado na propria PyPI): 0.1.0 tem
+    ``user_id``/``limit`` sem ``filters``; 0.1.104..1.0.4 tem ``filters``
+    JUNTO COM ``user_id``/``limit`` e sem ``top_k``/``show_expired`` (probar
+    so ``filters`` e passar ``top_k`` quebraria com TypeError); 2.0.2 tem
+    ``top_k`` sem ``show_expired``; 2.0.15+ tem os tres. Entao cada
+    capacidade e conferida separadamente e so entao e usada.
+
+    Sem ``show_expired`` nao ha como provar que expiradas estao incluidas:
+    levanta ``NamespaceReadUnsupported`` para o chamador reportar
+    ``unknown`` em vez de limpo.
+    """
+    try:
+        parameters = inspect.signature(get_all).parameters
+    except (TypeError, ValueError) as exc:
+        raise NamespaceReadUnsupported("signature_unavailable") from exc
+
+    if "filters" in parameters:
+        kwargs: Dict[str, Any] = {"filters": {"user_id": namespace}}
+    elif "user_id" in parameters:
+        kwargs = {"user_id": namespace}
+    else:
+        raise NamespaceReadUnsupported("no_scope_parameter")
+
+    if "top_k" in parameters:
+        kwargs["top_k"] = _NAMESPACE_LIMIT
+    elif "limit" in parameters:
+        kwargs["limit"] = _NAMESPACE_LIMIT
+    else:
+        raise NamespaceReadUnsupported("no_limit_parameter")
+
+    if "show_expired" not in parameters:
+        raise NamespaceReadUnsupported("expired_unverifiable")
+    kwargs["show_expired"] = True
+    return kwargs
+
+
+def relation_namespace(relation_id) -> str:
+    """Namespace Qdrant de uma Relation: ``relation:<relation_id>``.
+
+    Unica fonte da convencao — ``_memory_user_id`` monta a mesma chave e o
+    expurgo (``core/db/erase_vectors.py``) apaga por ela sem passar pelo
+    resolvedor, que resolveria para a Relation do participante e nao para a
+    Relation pedida.
+    """
+    return f"relation:{relation_id}"
 
 
 def _default_collection_name() -> str:
@@ -228,7 +323,7 @@ class Mem0MemoryAdapter:
                 is_legacy_admin = False
             if not is_legacy_admin:
                 raise ValueError("relation_scope_required_for_semantic_memory")
-        return f"relation:{resolved}" if resolved else str(user_id)
+        return relation_namespace(resolved) if resolved else str(user_id)
 
     def get_context(self, user_id: str, query: str, limit: int = 10, relation_id=None) -> str:
         """
@@ -323,6 +418,53 @@ class Mem0MemoryAdapter:
     def count_all_memories(self, user_id: str) -> int:
         """Conta quantas memórias o mem0 mantém para o usuário."""
         return len(self.get_all_memories(user_id))
+
+    def namespace_state(self, namespace: str) -> Dict[str, Any]:
+        """Estado autoritativo de um namespace: contagem SEM filtrar payload.
+
+        Conta as entradas como estao — registro sem campo ``memory`` conta.
+        Antes de ler, confere as capacidades da assinatura instalada
+        (``_namespace_query``): ``NamespaceReadUnsupported`` propaga para o
+        chamador reportar ``unknown`` em vez de limpo. Limites reais da API
+        sao explicitos: ``top_k``/``limit`` fixado (o padrao de 20 truncaria
+        a contagem) e ``show_expired=True``. Estouro do teto vira
+        ``truncated=True``, onde a contagem e um piso: o veredito de vazio
+        continua valido, porque zero nunca e artefato de teto. Erro ou formato
+        inesperado LEVANTA — quem chama vira ``unavailable``, nunca zero.
+        """
+        get_all = self.mem.get_all
+        results = get_all(**_namespace_query(namespace, get_all))
+        rows = _namespace_rows(results)
+        return {
+            "count": len(rows),
+            "truncated": len(rows) >= _NAMESPACE_LIMIT,
+            "limit": _NAMESPACE_LIMIT,
+        }
+
+    def relation_state(self, relation_id: str) -> Dict[str, Any]:
+        """Estado do namespace EXATO da Relation.
+
+        Nao passa pelo resolvedor: ``_memory_user_id`` resolveria para a
+        Relation do participante, que pode nao ser a Relation pedida (o
+        mesmo participante pode ter Relations em outra instancia).
+        """
+        return self.namespace_state(relation_namespace(relation_id))
+
+    def delete_relation(self, relation_id: str) -> None:
+        """Apaga o namespace EXATO da Relation.
+
+        Nao engole falha: uma excecao daqui e o sinal de que o apagamento nao
+        aconteceu, e o chamador tem de reportar ``unavailable`` em vez de
+        afirmar limpo. Nao existe caminho aqui para apagar a chave
+        pre-Relation do participante — isso seria apagar por inferencia.
+
+        A semantica real do ``delete_all`` do mem0 e: repete listagem+remocao
+        em lotes de 1000 ate achar vazio (nao apaga so a primeira pagina) e
+        devolve uma mensagem fixa de sucesso SEM contar nada — e pode parar
+        cedo com apenas um aviso se o lote se repetir. Por isso o retorno e
+        ignorado e a verificacao e sempre uma contagem nova.
+        """
+        self.mem.delete_all(user_id=relation_namespace(relation_id))
 
     def health_check(self) -> bool:
         """Verifica se mem0 está operacional."""

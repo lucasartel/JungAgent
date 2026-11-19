@@ -13,6 +13,15 @@ sessoes), inventariados e apagados por ``core.db.erase_files`` com as
 mesmas garantias — escopo verificavel, sem symlink, legado apenas
 inventariado. Qualquer arquivo sobrevivente tambem derruba o exit code.
 
+A terceira superficie sao os vetores no namespace Qdrant
+``relation:<relation_id>``, por ``core.db.erase_vectors`` com adaptador
+injetado. O inventario de vetores e uma LEITURA em rede: sem ``QDRANT_URL``
+o relatorio marca ``unknown`` — a ausencia da variavel HOJE nao prova
+inexistencia de vetores historicos — e ``unknown``/``unavailable`` nunca
+contam como limpo. A chave pre-Relation do participante entra como
+``legacy``: reportada, nunca apagada por inferencia. ``clean`` so sai True
+com banco, arquivos E vetores verificados.
+
 O expurgo do Work continua sendo ``scripts/purge_work_relation.py`` —
 rotinas separadas, escopos separados (o Work tem arquivo fisico e
 auditoria proprios).
@@ -33,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -50,25 +60,78 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run_erase(conn, relation_id: str, *, apply: bool = False, users_root=None) -> dict:
+def run_erase(
+    conn,
+    relation_id: str,
+    *,
+    apply: bool = False,
+    users_root=None,
+    vector_adapter=None,
+    vectors_configured=None,
+) -> dict:
     """Executa o fluxo dry-run/apply+verify sobre uma conexao ja aberta.
 
-    Cobre as DUAS superficies do expurgo fora do Work: celulas SQLite
-    (``core.db.erase``) e arquivos privados da Relation (``core.db.erase_files``).
-    ``clean`` so e True quando ambas passam; o legado de arquivos entra apenas
-    como inventario, nunca como apagamento.
+    Cobre as TRES superficies do expurgo fora do Work: celulas SQLite
+    (``core.db.erase``), arquivos privados da Relation
+    (``core.db.erase_files``) e vetores no namespace Qdrant
+    (``core.db.erase_vectors``). ``clean`` so e True quando as tres passam;
+    o legado de arquivos entra apenas como inventario, nunca como apagamento.
 
     ``users_root`` e a raiz dos arquivos privados; ``None`` usa a mesma cadeia
-    do ``user_profile_writer`` (volume persistente). Injecao explicita existe
-    para teste — o CLI nunca passa.
+    do ``user_profile_writer``. ``vector_adapter`` e ``vectors_configured``
+    injetam o adaptador de vetores e a situacao do ``QDRANT_URL``; ``None``
+    deriva do ambiente e cria o adaptador quando houver configuracao. Injecao
+    explicita existe para teste — o CLI so deriva do ambiente.
+
+    Participante da Relation e resolvido so para RELATAR a chave pre-Relation
+    do legado; o expurgo de vetores nao o recebe. E uma exclusao que falha
+    herda o resultado: o relatorio nunca troca falha de ``vectors_purged``
+    por uma contagem final zero.
+
+    Vetores exigem o MESMO gate de escopo dos arquivos: sem Relation
+    verificavel (``agent_relations`` ausente, linha ausente, campos vazios ou
+    segmento invalido) o namespace nao e apagado e ``vectors_purged`` traz o
+    codigo de recusa em ``scope`` — mesmo vocabulario dos arquivos, sem
+    instancia nem participante no relatorio.
+
+    OPERACAO PARCIAL E PRETENDIDA (e reportada em ``partial``): as tres
+    superficies sao independentes, cada uma verificavel por si, e o apply as
+    roda em ordem — banco, arquivos, vetores. Vetores e a unica com
+    preflight: se a API instalada nao consegue PROVAR o resultado (ex.: sem
+    ``show_expired``), o delete de vetores e recusado, mas banco e arquivos
+    JA foram apagados. Nada e desfeito — o exit code continua 1, ``partial``
+    marca que houve escrita sem veredito limpo e um rerun apos corrigir a
+    capacidade completa o expurgo (banco e arquivos sao idempotentes).
     """
     from core.db.erase_files import (
         erase_relation_files,
         files_are_clean,
         inventory_relation_files,
         legacy_file_inventory,
+        relation_participant,
         verify_relation_files_erased,
     )
+    from core.db.erase_vectors import (
+        STATE_VERIFIED,
+        erase_relation_vectors,
+        inventory_relation_vectors,
+        vectors_are_clean,
+        verify_relation_vectors_erased,
+    )
+
+    if vectors_configured is None:
+        vectors_configured = bool(os.getenv("QDRANT_URL"))
+    adapter = vector_adapter
+    if adapter is None and vectors_configured:
+        from mem0_memory_adapter import create_mem0_adapter
+
+        adapter = create_mem0_adapter()
+
+    # Participante da Relation: serve so para RELATAR a chave pre-Relation do
+    # legado no inventario. O expurgo de vetores nao o recebe — passar seria
+    # apagar por inferencia.
+    scope, _scope_status = relation_participant(conn, relation_id)
+    legacy_user_id = scope[1] if scope else None
 
     report: dict = {"relation_id": relation_id, "mode": "verify"}
     # Inventario ANTES de qualquer apagagem: no dry-run mostra o que existiria
@@ -79,6 +142,12 @@ def run_erase(conn, relation_id: str, *, apply: bool = False, users_root=None) -
     report["legacy_files"] = legacy_file_inventory(
         conn, relation_id, users_root=users_root
     )
+    report["vectors_before"] = inventory_relation_vectors(
+        relation_id,
+        adapter,
+        configured=vectors_configured,
+        legacy_user_id=legacy_user_id,
+    )
 
     if apply:
         from core.db.erase import erase_relation
@@ -88,6 +157,12 @@ def run_erase(conn, relation_id: str, *, apply: bool = False, users_root=None) -
         report["files_purged"] = erase_relation_files(
             conn, relation_id, users_root=users_root
         )
+        report["vectors_purged"] = erase_relation_vectors(
+            relation_id,
+            adapter,
+            conn=conn,
+            configured=vectors_configured,
+        )
 
     from core.db.erase import erase_is_clean, verify_relation_erase
 
@@ -95,9 +170,34 @@ def run_erase(conn, relation_id: str, *, apply: bool = False, users_root=None) -
     report["files_remaining"] = verify_relation_files_erased(
         conn, relation_id, users_root=users_root
     )
-    report["clean"] = erase_is_clean(report["remaining"]) and files_are_clean(
-        report["files_remaining"]
+    if not apply:
+        report["vectors_remaining"] = report["vectors_before"]
+    elif report["vectors_purged"].get("state") == STATE_VERIFIED:
+        # Exclusao verificada: leitura nova confirma o estado atual.
+        report["vectors_remaining"] = verify_relation_vectors_erased(
+            relation_id,
+            adapter,
+            configured=vectors_configured,
+            legacy_user_id=legacy_user_id,
+        )
+    else:
+        # Falha ou recusa na exclusao herda o resultado: uma contagem final
+        # zero apos erro NAO pode virar sucesso.
+        report["vectors_remaining"] = dict(report["vectors_purged"])
+
+    report["clean"] = (
+        erase_is_clean(report["remaining"])
+        and files_are_clean(report["files_remaining"])
+        and vectors_are_clean(report["vectors_remaining"])
     )
+    # Escrita sem veredito limpo: superficies apagadas enquanto outra foi
+    # recusada ou falhou. Sem escrita (dry-run ou nada a apagar) e False.
+    mutated = (
+        bool(report.get("purged"))
+        or bool((report.get("files_purged") or {}).get("files_removed"))
+        or bool((report.get("vectors_purged") or {}).get("deleted"))
+    )
+    report["partial"] = bool(mutated) and not report["clean"]
     return report
 
 

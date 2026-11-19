@@ -1,0 +1,456 @@
+"""Inventario e apagamento verificavel de vetores por Relation (C12g).
+
+Segunda metade do item "inventario e apagamento verificavel de arquivos e
+vetores historicos" (Documento Mestre, Secao 10.1.2). A metade de arquivos
+esta em ``core/db/erase_files.py``; esta cobre o namespace Qdrant
+``relation:<relation_id>`` — a mesma chave que
+``mem0_memory_adapter.relation_namespace`` monta e que ``_memory_user_id``
+devolve.
+
+Nao se cria cliente nem se decide credencial aqui: o adaptador e INJETADO e
+precisa expor ``relation_state`` (contagem autoritativa do namespace com
+limite explicito, sem filtrar payload), ``namespace_state`` (idem para uma
+chave crua) e ``delete_relation``. Isso mantem o nucleo testavel offline e
+deixa acesso a rede com quem chama.
+
+Estados do namespace da Relation — um por relatorio, sempre visiveis:
+
+- ``unknown`` — nunca limpo, com o motivo no campo certo: ``qdrant_url_absent``
+  (sem ``QDRANT_URL`` HOJE nao prova que nao existem vetores HISTORICOS: a
+  instalacao pode ter gravado em Qdrant antes e removido a variavel),
+  ``expired_unverifiable`` (a assinatura instalada nao tem ``show_expired``,
+  entao nao da para provar que expiradas estao incluidas na leitura) ou o
+  codigo de ``scope`` quando a Relation nao e verificavel;
+- ``unavailable`` — configurado mas sem adaptador, com falha de contagem,
+  ou com estado de adaptador sem estrutura/tipo/truncamento coerentes:
+  falha fechada, nunca limpo;
+- ``verified`` — contagem obtida e validada; limpo somente com ``count == 0``.
+
+Gate de escopo (o MESMO dos arquivos): ``erase_relation_vectors`` exige
+``conn`` e resolve a Relation ANTES de qualquer leitura de rede. Sem
+``agent_relations`` verificavel — tabela ausente, linha ausente, campos
+vazios ou segmento invalido — o resultado carrega ``scope`` com o codigo de
+recusa dos arquivos (``registry_unavailable``, ``relation_not_found``,
+``scope_incomplete``, ``invalid_scope``) em vez de ``resolved``, e
+``delete`` nenhum e chamado. So o CODIGO vai para o relatorio: instancia e
+participante ficam de fora.
+
+Redacao do relatorio: ``detail``/``reason`` so reproduzem CODIGO PROPRIO
+conhecido (lista fixa abaixo). Mensagem de rede, auth ou provedor pode
+carregar URL, credencial ou payload e fica de fora — o relatorio mostra so o
+tipo da excecao em ``error``. Codigo fora da lista e omitido (falha fechada).
+
+Preflight: ``erase_relation_vectors`` le e valida o namespace ANTES de
+apagar. Sem ``show_expired`` (ou com leitura falhando) nao ha como provar o
+resultado, entao a exclusao e RECUSADA — ``delete`` nenhum e chamado.
+
+Chave pre-Relation (``legacy``): antes das Relations o participante gravava
+sob o ``user_id`` cru, e o admin original tem a propria chave anterior. Essa
+chave e REPORTADA no relatorio e **nunca apagada por inferencia** —
+``erase_relation_vectors`` nem recebe o participante, entao nao ha caminho
+estrutural para tocar nela. Remocao do legado exige decisao registrada do
+mantenedor, igual ao ``legacy_files`` dos arquivos; por isso ``legacy`` nao
+entra em ``vectors_are_clean``: o veredito cobre o namespace da Relation.
+
+Sem ``except Exception: pass``: toda falha de adaptador e logada com o tipo da
+excecao e refletida em ``count``/``error``.
+"""
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+
+from core.db.erase_files import (
+    SCOPE_INCOMPLETE,
+    SCOPE_INVALID,
+    SCOPE_REGISTRY_UNAVAILABLE,
+    SCOPE_RELATION_NOT_FOUND,
+    relation_participant,
+)
+from engines.participant_files import participant_dir
+from mem0_memory_adapter import NamespaceReadUnsupported, relation_namespace
+
+logger = logging.getLogger(__name__)
+
+STATE_UNKNOWN = "unknown"
+STATE_UNAVAILABLE = "unavailable"
+STATE_VERIFIED = "verified"
+
+# Escopo verificavel — mesmo literal de ``core.db.erase_files``.
+SCOPE_RESOLVED = "resolved"
+
+# Motivo do estado desconhecido: hoje nao ha como afirmar inexistencia.
+REASON_QDRANT_URL_ABSENT = "qdrant_url_absent"
+
+# Motivo quando a mensagem que bloqueou a leitura NAO e codigo proprio.
+REASON_CAPABILITY_UNPROVEN = "capability_unproven"
+
+# Codigos PRODUZIDOS POR ESTE SISTEMA: o unico texto que pode aparecer em
+# ``detail`` (unavailable) ou ``reason`` (unknown). Mensagem de rede, auth ou
+# provedor pode conter URL, credencial ou dado do provedor, entao NAO entra no
+# relatorio — la fica so o tipo da excecao, no campo ``error``. Falha fechada
+# na redacao: codigo fora desta lista e OMITIDO, nunca reproduzido por parecido.
+# Fontes: ``_read_state`` (``adapter_*``), ``mem0_memory_adapter._namespace_rows``
+# (``mem0_*``) e ``mem0_memory_adapter._namespace_query``
+# (``NamespaceReadUnsupported``).
+_OWN_DETAIL_CODES = frozenset(
+    {
+        "adapter_state_not_a_mapping",
+        "adapter_state_without_count",
+        "adapter_count_not_an_integer",
+        "adapter_count_negative",
+        "adapter_truncated_not_a_boolean",
+        "adapter_limit_invalid",
+        "adapter_truncated_below_limit",
+        "adapter_count_above_limit_without_truncation",
+        "mem0_response_without_known_key",
+        "mem0_response_unexpected_type",
+        "mem0_entries_not_a_list",
+        "mem0_entry_not_an_object",
+        "signature_unavailable",
+        "no_scope_parameter",
+        "no_limit_parameter",
+        "expired_unverifiable",
+    }
+)
+
+
+def _own_code(message: Any) -> Optional[str]:
+    """A mensagem, so se for codigo proprio da lista; caso contrario ``None``."""
+    text = str(message or "").strip()
+    return text if text in _OWN_DETAIL_CODES else None
+
+
+def _is_configured(explicit: Optional[bool]) -> bool:
+    """``QDRANT_URL`` diz se esta instalacao ACESSA o Qdrant — nao se ele ja existiu."""
+    if explicit is not None:
+        return bool(explicit)
+    return bool(os.getenv("QDRANT_URL"))
+
+
+def _phase(adapter: Any, configured: bool) -> str:
+    if not configured:
+        return STATE_UNKNOWN
+    if adapter is None:
+        return STATE_UNAVAILABLE
+    return "ready"
+
+
+def _scope_status(conn: Any, relation_id: Any) -> str:
+    """Gate de escopo: a mesma resolução dos arquivos, antes de apagar.
+
+    Devolve ``resolved`` ou o MESMO codigo de recusa de
+    ``core.db.erase_files`` (``registry_unavailable``, ``relation_not_found``,
+    ``scope_incomplete``, ``invalid_scope``). Nada do escopo — instancia,
+    participante — sai daqui: so o codigo. Sem ``conn`` o registry nao e
+    acessivel, entao o estado e ``registry_unavailable`` (falha fechada).
+    """
+    if conn is None:
+        return SCOPE_REGISTRY_UNAVAILABLE
+    try:
+        scope, status = relation_participant(conn, relation_id)
+    except Exception as exc:  # conexao/objeto invalido: recusa, so o tipo no log
+        logger.warning(
+            "erase_vectors: falha ao resolver escopo error_type=%s",
+            type(exc).__name__,
+        )
+        return SCOPE_REGISTRY_UNAVAILABLE
+    if scope is None:
+        return status
+    instance, participant = scope
+    try:
+        # Mesma regra de segmento do caminho de arquivos (participant_dir):
+        # valida o identificador e o escopo SEM duplicar a regex. A raiz nao
+        # importa aqui — a funcao so monta o caminho, nao abre nada.
+        participant_dir(
+            Path("."),
+            agent_instance=instance,
+            relation_id=str(relation_id),
+            user_id=participant,
+        )
+    except ValueError:
+        logger.warning("erase_vectors: segmento de escopo invalido")
+        return SCOPE_INVALID
+    return SCOPE_RESOLVED
+
+
+def _unavailable(namespace: str, exc: BaseException) -> Dict[str, Any]:
+    logger.warning(
+        "erase_vectors: falha de adaptador error_type=%s namespace=%s",
+        type(exc).__name__,
+        namespace,
+    )
+    result: Dict[str, Any] = {
+        "state": STATE_UNAVAILABLE,
+        "namespace": namespace,
+        "count": None,
+        "error": type(exc).__name__,
+    }
+    # Redacao: texto so se for codigo proprio. ``str(exc)`` de falha de
+    # rede/auth do provedor pode conter URL, credencial ou payload — sai apenas
+    # o tipo, que e o que o operador precisa para distinguir a falha.
+    code = _own_code(str(exc))
+    if code:
+        result["detail"] = code
+    return result
+
+
+def _unknown(namespace: str, exc: BaseException) -> Dict[str, Any]:
+    """Capacidade da API nao comprovada: desconhecido, nunca limpo.
+
+    ``reason`` segue a mesma redacao de ``_unavailable``: codigo proprio da
+    lista, ou ``capability_unproven`` com o tipo da excecao em ``error``.
+    """
+    result: Dict[str, Any] = {
+        "state": STATE_UNKNOWN,
+        "namespace": namespace,
+        "count": None,
+    }
+    code = _own_code(str(exc))
+    result["reason"] = code or REASON_CAPABILITY_UNPROVEN
+    if not code:
+        result["error"] = type(exc).__name__
+    return result
+
+
+def _read_state(state: Any) -> Tuple[int, bool, int]:
+    """Le e valida o estado do adaptador; falha fechada em vez de zero.
+
+    ``state.get('count', 0) or 0`` transformaria um adaptador sem ``count``
+    (ou com ``count=None``, ou com ``count='3'``) em zero VERIFICADO — o
+    falso limpo apontado nesta revisao. Estrutura, tipo e truncamento sao
+    conferidos aqui e qualquer duvida vira excecao, que o chamador converte
+    em ``unavailable``.
+    """
+    if not isinstance(state, dict):
+        raise ValueError("adapter_state_not_a_mapping")
+    if "count" not in state:
+        raise ValueError("adapter_state_without_count")
+    count = state["count"]
+    if isinstance(count, bool) or not isinstance(count, int):
+        raise ValueError("adapter_count_not_an_integer")
+    if count < 0:
+        raise ValueError("adapter_count_negative")
+    truncated = state.get("truncated")
+    if not isinstance(truncated, bool):
+        raise ValueError("adapter_truncated_not_a_boolean")
+    limit = state.get("limit")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        raise ValueError("adapter_limit_invalid")
+    if truncated and count < limit:
+        # Truncado abaixo do teto e incoerente: o corte so existe para marcar
+        # que a contagem bateu no limite.
+        raise ValueError("adapter_truncated_below_limit")
+    if not truncated and count > limit:
+        raise ValueError("adapter_count_above_limit_without_truncation")
+    return count, truncated, limit
+
+
+def _legacy_report(adapter: Any, configured: bool, legacy_user_id: str) -> Dict[str, Any]:
+    """Chave pre-Relation do participante: reportada, nunca apagada aqui.
+
+    Contagem e opcional (rede); falha so marca ``error`` nesta secao, que nao
+    entra no veredito — legado nao e apagado por inferencia, entao tambem nao
+    decide se o namespace da Relation esta limpo.
+    """
+    report: Dict[str, Any] = {
+        "namespace": str(legacy_user_id),
+        "erased": False,
+        "reason": "not_erased_by_inference",
+        "count": None,
+    }
+    if not configured or adapter is None:
+        return report
+    try:
+        state = adapter.namespace_state(str(legacy_user_id))
+        count, truncated, limit = _read_state(state)
+    except Exception as exc:
+        logger.warning(
+            "erase_vectors: falha ao contar legado error_type=%s", type(exc).__name__
+        )
+        report["error"] = type(exc).__name__
+        return report
+    report["count"] = count
+    report["truncated"] = truncated
+    report["limit"] = limit
+    return report
+
+
+def inventory_relation_vectors(
+    relation_id: str,
+    adapter: Any,
+    *,
+    configured: Optional[bool] = None,
+    legacy_user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Conta os vetores da Relation (somente leitura) e relata o legado.
+
+    Serve tambem como verificacao pos-apagagem: a leitura e a mesma.
+    """
+    namespace = relation_namespace(relation_id)
+    ready = _phase(adapter, _is_configured(configured))
+    if ready == STATE_UNKNOWN:
+        result: Dict[str, Any] = {
+            "state": STATE_UNKNOWN,
+            "reason": REASON_QDRANT_URL_ABSENT,
+            "namespace": namespace,
+            "count": None,
+        }
+    elif ready == STATE_UNAVAILABLE:
+        result = {"state": STATE_UNAVAILABLE, "namespace": namespace, "count": None}
+    else:
+        try:
+            state = adapter.relation_state(relation_id)
+            count, truncated, limit = _read_state(state)
+        except NamespaceReadUnsupported as exc:
+            # Capacidade nao comprovada (ex.: sem show_expired): desconhecido.
+            result = _unknown(namespace, exc)
+        except Exception as exc:  # falha de rede/auth vira estado, nao exit silencioso
+            result = _unavailable(namespace, exc)
+        else:
+            result = {
+                "state": STATE_VERIFIED,
+                "namespace": namespace,
+                "count": count,
+                "truncated": truncated,
+                "limit": limit,
+            }
+    if legacy_user_id:
+        result["legacy"] = _legacy_report(
+            adapter, _is_configured(configured), legacy_user_id
+        )
+    return result
+
+
+def verify_relation_vectors_erased(
+    relation_id: str,
+    adapter: Any,
+    *,
+    configured: Optional[bool] = None,
+    legacy_user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Verificacao pos-apagagem: a mesma contagem, somente leitura."""
+    return inventory_relation_vectors(
+        relation_id, adapter, configured=configured, legacy_user_id=legacy_user_id
+    )
+
+
+def erase_relation_vectors(
+    relation_id: str, adapter: Any, *, conn: Any, configured: Optional[bool] = None
+) -> Dict[str, Any]:
+    """Apaga APENAS o namespace ``relation:<id>`` e volta a contar.
+
+    ``conn`` e OBRIGATORIO: o gate de escopo — o mesmo que os arquivos
+    exigem — roda PRIMEIRO e so com Relation verificavel e que ``delete``
+    acontece (ver ``_scope_status``). Sem escopo o resultado traz ``scope``
+    com o codigo de recusa e ``deleted=False``; instancia e participante
+    ficam de fora do relatorio.
+
+    Nao recebe o participante: a chave pre-Relation (``legacy``) nao tem
+    caminho estrutural para ser apagada aqui — apagaria por inferencia. So
+    devolve ``count`` novo apos a apagagem; se o apagar passa mas o recount
+    falha, o estado e ``unavailable`` — apagado sem verificar nao e limpo.
+
+    PREFLIGHT antes de qualquer exclusao: a leitura e validada primeiro, e
+    ``delete`` so roda se ela passa. A API instalada sem ``show_expired`` (ou
+    com leitura falhando) nao consegue PROVAR o resultado — apagaria sem
+    verificar, de forma irreversivel. Nesses casos o retorno e ``unknown`` ou
+    ``unavailable`` com ``deleted=False`` e o adaptador nunca recebe
+    ``delete_relation``.
+    """
+    namespace = relation_namespace(relation_id)
+    # GATE (igual aos arquivos): sem Relation verificavel nada e apagado, e
+    # antes de qualquer leitura de rede.
+    scope = _scope_status(conn, relation_id)
+    if scope != SCOPE_RESOLVED:
+        logger.warning("erase_vectors: escopo nao verificavel scope=%s", scope)
+        return {
+            "state": STATE_UNKNOWN,
+            "namespace": namespace,
+            "count": None,
+            "scope": scope,
+            "deleted": False,
+        }
+    ready = _phase(adapter, _is_configured(configured))
+    if ready != "ready":
+        result: Dict[str, Any] = {
+            "state": ready,
+            "namespace": namespace,
+            "count": None,
+            "scope": SCOPE_RESOLVED,
+            "deleted": False,
+        }
+        if ready == STATE_UNKNOWN:
+            result["reason"] = REASON_QDRANT_URL_ABSENT
+        return result
+    # Preflight: mesma leitura e mesma validacao do recount. Se ela falha aqui,
+    # falharia depois do delete — entao nada e apagado.
+    try:
+        state = adapter.relation_state(relation_id)
+        _read_state(state)
+    except NamespaceReadUnsupported as exc:
+        result = _unknown(namespace, exc)
+        result["scope"] = SCOPE_RESOLVED
+        result["deleted"] = False
+        return result
+    except Exception as exc:
+        result = _unavailable(namespace, exc)
+        result["scope"] = SCOPE_RESOLVED
+        result["deleted"] = False
+        return result
+    try:
+        adapter.delete_relation(relation_id)
+    except Exception as exc:
+        result = _unavailable(namespace, exc)
+        result["scope"] = SCOPE_RESOLVED
+        result["deleted"] = False
+        return result
+    # O delete_all do mem0 devolve mensagem fixa de sucesso sem contar nada e
+    # pode parar cedo com so um aviso: o retorno e ignorado e a verificacao e
+    # sempre uma contagem NOVA.
+    try:
+        state = adapter.relation_state(relation_id)
+        count, truncated, limit = _read_state(state)
+    except NamespaceReadUnsupported as exc:
+        result = _unknown(namespace, exc)
+        result["scope"] = SCOPE_RESOLVED
+        result["deleted"] = True
+        return result
+    except Exception as exc:
+        result = _unavailable(namespace, exc)
+        result["scope"] = SCOPE_RESOLVED
+        result["deleted"] = True
+        return result
+    return {
+        "state": STATE_VERIFIED,
+        "namespace": namespace,
+        "count": count,
+        "truncated": truncated,
+        "limit": limit,
+        "scope": SCOPE_RESOLVED,
+        "deleted": True,
+    }
+
+
+def vectors_are_clean(remaining: Dict[str, Any]) -> bool:
+    """True SOMENTE com escopo verificado, contagem verificada e zerada.
+
+    ``unknown`` e ``unavailable`` nunca contam como limpo: sem evidencia
+    verificavel nao ha como afirmar que sobrou nada. ``scope`` distingue a
+    Relation verificavel (``resolved``) — recusa de escopo tambem derruba o
+    veredito, mesmo com contagem zerada. Relatorio sem ``scope`` (inventario,
+    leitura pura) passa por esse campo; a contagem precisa ser inteira de
+    verdade, sem ``or 0`` transformando ausente em zero.
+    A secao ``legacy`` nao entra aqui — legado e reportado e removido so por
+    decisao do mantenedor, igual ao ``legacy_files`` dos arquivos.
+    """
+    count = remaining.get("count")
+    return (
+        remaining.get("scope", SCOPE_RESOLVED) == SCOPE_RESOLVED
+        and remaining.get("state") == STATE_VERIFIED
+        and isinstance(count, int)
+        and not isinstance(count, bool)
+        and count == 0
+    )
