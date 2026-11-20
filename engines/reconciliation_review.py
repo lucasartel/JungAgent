@@ -53,8 +53,100 @@ class ReconciliationReview:
                    and event["cycle_id"] == row["cycle_id"] and event["winning_will"] == row["will_name"])
         return receipt_evidence, "matched" if matches else "scope_mismatch"
 
+    @staticmethod
+    def _table_exists(conn, table):
+        return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
+
+    @staticmethod
+    def _columns(conn, table):
+        return {item[1] for item in conn.execute(f"PRAGMA table_info({table})")}
+
+    def _partial_effects(self, conn, phase_result_id, *, failure):
+        """Which local effects already exist for an unintegrated result, or None.
+
+        Espelha exatamente as checagens de existencia dos dois integradores
+        (``loop_post_commit_integration`` e ``loop_failure_post_commit_integration``):
+        observacao em Working Memory pela ``source_ref``, evento de auditoria e,
+        em falha, o fragmento de ruminacao. Uma tabela ausente ou sem coluna de
+        escopo vira ``unverifiable`` e **nunca** conta como efeito existente: um
+        estado desconhecido nao vira um estado parcial. Retorna ``None`` quando
+        nenhum efeito esta confirmado, para que o chamador use o caminho normal.
+        """
+        source_ref = f"loop#{phase_result_id}"
+        effects = {}
+        if self._table_exists(conn, "working_memory_items"):
+            effects["observation"] = conn.execute("""SELECT 1 FROM working_memory_items WHERE agent_instance = ?
+                AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(source_refs_json)
+                    THEN source_refs_json ELSE '[]' END) WHERE value = ?) LIMIT 1""",
+                (self.agent_instance, source_ref)).fetchone() is not None
+        else:
+            effects["observation"] = "unverifiable"
+        if self._table_exists(conn, "consciousness_loop_events"):
+            effects["audit_event"] = conn.execute("""SELECT 1 FROM consciousness_loop_events
+                WHERE agent_instance = ? AND phase_result_id = ? LIMIT 1""",
+                (self.agent_instance, phase_result_id)).fetchone() is not None
+        else:
+            effects["audit_event"] = "unverifiable"
+        if failure:
+            has_scope = (self._table_exists(conn, "rumination_fragments")
+                         and "agent_instance" in self._columns(conn, "rumination_fragments"))
+            if has_scope:
+                effects["failure_fragment"] = conn.execute("""SELECT 1 FROM rumination_fragments
+                    WHERE agent_instance = ? AND source_kind = 'loop_failure'
+                    AND source_table = 'consciousness_loop_phase_results' AND source_id = ? LIMIT 1""",
+                    (self.agent_instance, str(phase_result_id))).fetchone() is not None
+            else:
+                effects["failure_fragment"] = "unverifiable"
+        if not any(value is True for value in effects.values()):
+            return None
+        return effects
+
+    def _loop_post_commit_candidates(self, conn, limit):
+        """Integrations whose local effects exist without their commit marker."""
+        found = []
+        for table, kind in (("consciousness_loop_post_commit_effects", "normal_post_commit"),
+                            ("consciousness_loop_failure_post_commit_effects", "failure_post_commit")):
+            if not self._table_exists(conn, table):
+                continue
+            failure = kind == "failure_post_commit"
+            rows = conn.execute(f"""SELECT phase_result_id, phase, cycle_id, integration_attempts, integration_error
+                FROM {table} WHERE agent_instance = ? AND integration_at IS NULL
+                ORDER BY phase_result_id DESC LIMIT ?""", (self.agent_instance, limit)).fetchall()
+            for row in rows:
+                effects = self._partial_effects(conn, row["phase_result_id"], failure=failure)
+                if effects is not None:
+                    found.append({"source_kind": kind, "source_id": str(row["phase_result_id"]),
+                        "state": "partial_effects",
+                        "evidence": {"phase": row["phase"], "cycle_id": row["cycle_id"],
+                            "attempts": row["integration_attempts"], "reason": row["integration_error"],
+                            "effects": effects}})
+                elif row["integration_attempts"] >= 5:
+                    found.append({"source_kind": kind, "source_id": str(row["phase_result_id"]), "state": "exhausted",
+                        "evidence": {"phase": row["phase"], "attempts": row["integration_attempts"],
+                            "reason": row["integration_error"]}})
+        return found
+
+    def _proactive_effect_candidates(self, conn, limit):
+        """Post-send hook claims that no path will ever retry on their own."""
+        if not (self._table_exists(conn, "will_expressions")
+                and self._table_exists(conn, "will_proactive_effects")):
+            return []
+        rows = conn.execute("""SELECT p.expression_id, p.effect, p.status, p.error_type, p.claimed_at, p.updated_at,
+            e.will_name, e.capability_key, e.scope_kind, e.relation_id, e.user_id, e.cycle_id
+            FROM will_proactive_effects p JOIN will_expressions e ON e.id = p.expression_id
+            WHERE e.agent_instance = ? AND p.status IN ('running', 'uncertain')
+            ORDER BY p.expression_id DESC, p.effect LIMIT ?""", (self.agent_instance, limit)).fetchall()
+        return [{"source_kind": "proactive_effect",
+            "source_id": f"{row['expression_id']}:{row['effect']}", "state": row["status"],
+            "evidence": {"expression_id": row["expression_id"], "effect": row["effect"],
+                "error_type": row["error_type"], "will_name": row["will_name"],
+                "capability_key": row["capability_key"], "scope_kind": row["scope_kind"],
+                "relation_id": row["relation_id"], "user_id": row["user_id"], "cycle_id": row["cycle_id"],
+                "claimed_at": row["claimed_at"], "updated_at": row["updated_at"]}}
+            for row in rows]
+
     def candidates(self, limit=50):
-        """Return concise local evidence for terminal pulses and exhausted integrations."""
+        """Return concise local evidence for terminal, partial or interrupted records."""
         limit = max(1, min(int(limit), 200))
         rows = self.db.conn.execute("""SELECT id, phase, cycle_id, status, attempts, last_error
             FROM consciousness_phase_pulses WHERE agent_instance = ?
@@ -63,17 +155,8 @@ class ReconciliationReview:
         candidates = [{"source_kind": "phase_pulse", "source_id": str(row["id"]),
             "state": row["status"], "evidence": {"phase": row["phase"], "cycle_id": row["cycle_id"],
             "attempts": row["attempts"], "reason": row["last_error"]}} for row in rows]
-        for table, kind in (("consciousness_loop_post_commit_effects", "normal_post_commit"),
-                            ("consciousness_loop_failure_post_commit_effects", "failure_post_commit")):
-            exists = self.db.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
-            if not exists:
-                continue
-            rows = self.db.conn.execute(f"""SELECT phase_result_id, phase, integration_attempts, integration_error
-                FROM {table} WHERE agent_instance = ? AND integration_at IS NULL AND integration_attempts >= 5
-                ORDER BY phase_result_id DESC LIMIT ?""", (self.agent_instance, limit)).fetchall()
-            candidates.extend({"source_kind": kind, "source_id": str(row["phase_result_id"]), "state": "exhausted",
-                "evidence": {"phase": row["phase"], "attempts": row["integration_attempts"], "reason": row["integration_error"]}}
-                for row in rows)
+        candidates.extend(self._loop_post_commit_candidates(self.db.conn, limit))
+        candidates.extend(self._proactive_effect_candidates(self.db.conn, limit))
         exists = self.db.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='will_expressions'").fetchone()
         if exists:
             rows = self.db.conn.execute("""SELECT e.id, e.agent_instance, e.status, e.will_name, e.capability_key, e.scope_kind,
