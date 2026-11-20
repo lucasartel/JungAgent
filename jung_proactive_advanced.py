@@ -957,18 +957,21 @@ Métricas: Tensão {tension:.1f}/10, Afetividade {affective:.0f}/100{archetype_i
             scope_filter = "\n            AND agent_instance = ? AND relation_id IS ?"
             params.extend([agent_instance, relation_id])
         else:
-            # C12g: caminho legado sem scope recebido tambem nao lhe historico
-            # de outra Relation — visibilidade pessoal (Relation propria ou
-            # linha legada sem Relation); negado vira ` AND 1 = 0`.
-            from core.db.relation_scope import personal_read_clause
+            # C12g (revisao): este historico entra no PROMPT, entao e fluxo
+            # cross-Relation/Will — escopo ESTRITO de Relation. Linha sem
+            # Relation (NULL) nao comprova origem global e fica de fora;
+            # sem Relation verificada nao ha historico nenhum (fail-closed).
+            from core.db.relation_scope import resolve_relation_query_scope
 
-            scope_filter, scope_params = personal_read_clause(
-                self.db.conn.cursor(),
-                self.db,
-                user_id,
-                table="proactive_approaches",
-                relation_column="relation_id",
-            )
+            try:
+                resolved = resolve_relation_query_scope(self.db, user_id)
+            except ValueError:
+                resolved = None
+            if resolved is not None and resolved.allowed and resolved.relation_id:
+                scope_filter = " AND relation_id = ?"
+                scope_params = [resolved.relation_id]
+            else:
+                scope_filter, scope_params = " AND 1 = 0", []
             params.extend(scope_params)
 
         cursor = self.db.conn.cursor()

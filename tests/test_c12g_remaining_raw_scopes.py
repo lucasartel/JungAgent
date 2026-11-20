@@ -7,7 +7,7 @@ leituras proativas do Telegram"):
 - proativas: ``ProactiveAdvancedDB`` (leitor do comando de jornada do bot
   Telegram), historico anterior do prompt, ultima proativa do gate;
 - familia de acoes: bloco ``action_proposals`` do prompt de identidade;
-- diario: fetcher de ``agent_will_states``;
+- diario: ver ``test_c12g_diary_will_scope.py`` (arquivo companheiro);
 - world: insumos epistemicos de ``world_consciousness``.
 
 Sentinelas preservados: ``relation_scope_required_for_production``,
@@ -96,7 +96,6 @@ RELATIONS = {
     "rel-a": {"agent_instance": INSTANCE, "participant_user_id": PARTICIPANT},
     "rel-b": {"agent_instance": INSTANCE, "participant_user_id": PARTICIPANT},
 }
-
 
 def _proactive_db(*, relations=RELATIONS, revoked=()):
     db = _ScopeDB()
@@ -213,6 +212,47 @@ def test_previous_proactive_messages_legacy_path_hides_other_relation():
     db.close()
 
 
+def test_previous_proactive_history_excludes_relationless_rows():
+    """Historico SEM Relation nao entra no prompt: escopo estrito (C12g/revisao).
+
+    Este leitor alimenta o prompt, logo e fluxo cross-Relation/Will: linha
+    ``relation_id NULL`` nao comprova origem global e fica de fora junto com
+    a linha de outra Relation — so a Relation verificada do usuario serve.
+    """
+    db = _proactive_db()
+    _seed_approach(db, user_id=PARTICIPANT, relation_id=None,
+                   insight="HISTORICO_SEM_RELATION", ts="2026-11-20 09:00:00")
+    _seed_approach(db, user_id=PARTICIPANT, relation_id="rel-b",
+                   insight="HISTORICO_DE_OUTRA_RELATION", ts="2026-11-20 09:30:00")
+    _seed_approach(db, user_id=PARTICIPANT, relation_id="rel-a",
+                   insight="HISTORICO_DA_PROPRIA_RELATION", ts="2026-11-20 08:00:00")
+
+    system = object.__new__(ProactiveAdvancedSystem)
+    system.db = db
+
+    text = system._get_previous_proactive_messages(PARTICIPANT, limit=5)
+
+    assert "HISTORICO_DA_PROPRIA_RELATION" in text
+    assert "HISTORICO_SEM_RELATION" not in text
+    assert "HISTORICO_DE_OUTRA_RELATION" not in text
+    db.close()
+
+
+def test_previous_proactive_history_empty_without_verified_relation():
+    """Sem Relation verificada nao ha historico no prompt (fail-closed)."""
+    db = _proactive_db(relations={})
+    _seed_approach(db, user_id=LEGACY_USER, relation_id=None,
+                   insight="HISTORICO_SEM_RELATION", ts="2026-11-20 09:00:00")
+
+    system = object.__new__(ProactiveAdvancedSystem)
+    system.db = db
+
+    text = system._get_previous_proactive_messages(LEGACY_USER, limit=5)
+
+    assert text == "Nenhuma mensagem proativa anterior."
+    db.close()
+
+
 def test_last_proactive_timestamp_is_scoped_and_fails_closed():
     db = _proactive_db()
     _seed_approach(db, user_id=PARTICIPANT, relation_id="rel-b",
@@ -302,154 +342,6 @@ def test_action_proposals_block_absent_without_user():
 
     assert "Iniciativas Propostas" not in text
     assert "do_meu_usuario" not in text
-    db.close()
-
-
-# ---------------------------------------------------------------------------
-# Diario: fetcher de agent_will_states
-# ---------------------------------------------------------------------------
-
-def _diary_db():
-    db = _ScopeDB()
-    db.conn.executescript(
-        """
-        CREATE TABLE agent_will_states (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT,
-            agent_instance TEXT,
-            relation_id TEXT,
-            cycle_id TEXT,
-            phase TEXT,
-            status TEXT,
-            saber_score REAL,
-            relacionar_score REAL,
-            expressar_score REAL,
-            dominant_will TEXT,
-            secondary_will TEXT,
-            constrained_will TEXT,
-            will_conflict TEXT,
-            attention_bias_note TEXT,
-            daily_text TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-        INSERT INTO agent_will_states (user_id, agent_instance, relation_id, cycle_id, daily_text)
-        VALUES ('participant', 'instance-a', 'rel-a', '2026-11-20', 'will da propria relation'),
-               ('participant', 'instance-a', 'rel-b', '2026-11-20', 'will de outra relation'),
-               ('participant', 'instance-a', NULL, '2026-11-20', 'will global legado');
-        """
-    )
-    _register(db, RELATIONS)
-    db.conn.commit()
-    return db
-
-
-def test_diary_will_states_show_own_relation_and_global_only(tmp_path):
-    db = _diary_db()
-    diary = AgentDiaryWriter(db, tmp_path, user_id=PARTICIPANT, agent_instance=INSTANCE)
-
-    rows = diary._fetch_will_states("2026-11-20")
-    texts = [row["daily_text"] for row in rows]
-
-    assert "will da propria relation" in texts
-    assert "will global legado" in texts
-    assert "will de outra relation" not in texts
-    db.close()
-
-
-def test_diary_will_states_hide_everything_for_denied_scope(tmp_path):
-    db = _diary_db()
-    diary = AgentDiaryWriter(db, tmp_path, user_id=LEGACY_USER, agent_instance=INSTANCE)
-
-    rows = diary._fetch_will_states("2026-11-20")
-
-    assert rows == []
-    db.close()
-
-
-def test_will_scope_fragment_binds_participant_and_relation(tmp_path):
-    """O fragmento carrega as duas condicoes, sem depender do WHERE externo."""
-    from core.db.relation_scope import resolve_relation_query_scope
-
-    db = _diary_db()
-    diary = AgentDiaryWriter(db, tmp_path, user_id=PARTICIPANT, agent_instance=INSTANCE)
-
-    scope = resolve_relation_query_scope(db, PARTICIPANT, agent_instance=INSTANCE)
-    clause, params = diary._will_scope_fragment(scope)
-
-    assert "user_id = ?" in clause
-    assert "relation_id IS NULL" in clause
-    assert "relation_id = ?" in clause
-    assert params[0] == PARTICIPANT
-    assert scope.relation_id in params
-
-    denied = resolve_relation_query_scope(db, LEGACY_USER, agent_instance=INSTANCE)
-    denied_clause, denied_params = diary._will_scope_fragment(denied)
-
-    assert denied_clause == " AND 1 = 0"
-    assert denied_params == []
-    db.close()
-
-
-def test_diary_will_states_ignore_other_participants_rows(tmp_path):
-    """Linha SEM Relation de outro participante nao e "estado global" deste usuario.
-
-    O escopo pessoal so preserva dois conjuntos: estados globais do PROPIO
-    participante e estados da Relation verificada dele. Qualquer linha de outro
-    participante — com ou sem Relation — fica de fora, mesmo na mesma instancia
-    e no mesmo ciclo.
-    """
-    db = _diary_db()
-    db.conn.executescript(
-        """
-        INSERT INTO agent_will_states
-            (user_id, agent_instance, relation_id, cycle_id, daily_text)
-        VALUES ('other-participant', 'instance-a', NULL, '2026-11-20',
-                'global sem relation de outro participante'),
-               ('other-participant', 'instance-a', 'rel-z', '2026-11-20',
-                'relation de outro participante');
-        """
-    )
-    db.conn.commit()
-
-    diary = AgentDiaryWriter(db, tmp_path, user_id=PARTICIPANT, agent_instance=INSTANCE)
-    texts = [row["daily_text"] for row in diary._fetch_will_states("2026-11-20")]
-
-    # O proprio usuario continua vendo o estado global dele e a Relation dele.
-    assert "will global legado" in texts
-    assert "will da propria relation" in texts
-    # Nada do outro participante.
-    assert "global sem relation de outro participante" not in texts
-    assert "relation de outro participante" not in texts
-    assert "will de outra relation" not in texts
-    db.close()
-
-
-def test_diary_will_states_label_each_row_with_real_scope(tmp_path):
-    """Contrato ``personal_scope_clause``: a saida do diario rotula a origem.
-
-    ``relation_id`` NULL nao comprova que o conteudo seja global. Cada linha
-    do fetcher carrega ``scope`` — ``relation`` para a Relation verificada do
-    participante, ``no_relation`` para a ausencia de Relation — a distincao
-    sobrevive no snapshot e o markdown identifica o escopo do estado exibido.
-    """
-    db = _diary_db()
-    diary = AgentDiaryWriter(db, tmp_path, user_id=PARTICIPANT, agent_instance=INSTANCE)
-
-    rows = diary._fetch_will_states("2026-11-20")
-    scopes = {row["daily_text"]: row.get("scope") for row in rows}
-
-    assert scopes["will da propria relation"] == "relation"
-    # Linha sem Relation NAO e rotulada como global: origem nao classificada.
-    assert scopes["will global legado"] == "no_relation"
-    assert set(scopes.values()) <= {"relation", "no_relation"}
-
-    snapshot = diary.build_snapshot("2026-11-20")
-    snapshot_scopes = {
-        row["daily_text"]: row.get("scope") for row in snapshot["will_states"]
-    }
-    assert snapshot_scopes["will global legado"] == "no_relation"
-    assert "escopo=no_relation" in diary.render_markdown(snapshot)
     db.close()
 
 
