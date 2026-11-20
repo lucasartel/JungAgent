@@ -367,6 +367,12 @@ class AgentDiaryWriter:
         failed_phases = [row for row in loop_results if row.get("status") == "failed"]
         latest_will = will_states[0] if will_states else {}
         latest_meta = meta_states[0] if meta_states else {}
+        # Origem do estado exibido (contrato personal_scope_clause): a ausencia
+        # de Relation nao comprova conteudo global, entao o diario identifica
+        # se a linha veio de ``relation`` ou de ``no_relation``.
+        will_ref = f"will#{latest_will.get('id')}" if latest_will else ""
+        if will_ref and latest_will.get("scope"):
+            will_ref = f"{will_ref}, escopo={latest_will['scope']}"
 
         lines: List[str] = [
             f"# Diario autobiografico - {cycle_id}",
@@ -392,7 +398,7 @@ class AgentDiaryWriter:
                 f"secundaria={latest_will.get('secondary_will') or '?'}",
                 f"constrangida={latest_will.get('constrained_will') or '?'}",
             ]
-            lines.append(f"- Will do dia: {', '.join(will_bits)}. Fonte: will#{latest_will.get('id')}.")
+            lines.append(f"- Will do dia: {', '.join(will_bits)}. Fonte: {will_ref}.")
 
         if development:
             lines.append(
@@ -419,11 +425,11 @@ class AgentDiaryWriter:
             daily_text = _as_text(latest_will.get("daily_text"), 600)
             conflict = _as_text(latest_will.get("will_conflict"), 240)
             bias = _as_text(latest_will.get("attention_bias_note"), 240)
-            lines.append(f"- Will: {daily_text or 'estado volitivo registrado sem texto diario'} [will#{latest_will.get('id')}].")
+            lines.append(f"- Will: {daily_text or 'estado volitivo registrado sem texto diario'} [{will_ref}].")
             if conflict:
-                lines.append(f"- Conflito volitivo: {conflict} [will#{latest_will.get('id')}].")
+                lines.append(f"- Conflito volitivo: {conflict} [{will_ref}].")
             if bias:
-                lines.append(f"- Vies de atencao: {bias} [will#{latest_will.get('id')}].")
+                lines.append(f"- Vies de atencao: {bias} [{will_ref}].")
         else:
             lines.append("_Sem estado de Will registrado para o ciclo._")
 
@@ -956,9 +962,35 @@ Evidencias:
             (self.user_id, *clause_params, cycle_id),
         )
 
+    def _will_scope_fragment(self, scope) -> Tuple[str, List[Any]]:
+        """Escopo do estado de Will com as DUAS condicoes no proprio fragmento (C12g).
+
+        Contrato ``will_relation_state``: o estado visivel neste diario e o do
+        PROPIO participante — estado global autorizado (``relation_id IS NULL``)
+        ou da Relation verificada dele. O participante entra amarrado aqui, nao
+        depende do ``WHERE`` externo, entao uma linha sem Relation de OUTRO
+        participante nunca conta como estado global deste. Escopo negado vira
+        `` AND 1 = 0``; tabela pre-migracao (sem coluna de Relation) mantem a
+        amarracao do participante.
+        """
+        if not scope.allowed:
+            return " AND 1 = 0", []
+        from core.db.relation_scope import personal_scope_clause
+
+        relation_clause, relation_params = personal_scope_clause(
+            self.conn.cursor(),
+            table="agent_will_states",
+            relation_column="relation_id",
+            relation_id=scope.relation_id,
+            include_instance=False,
+        )
+        if not relation_clause:
+            return " AND user_id = ?", [self.user_id]
+        return f" AND user_id = ?{relation_clause}", [self.user_id, *relation_params]
+
     def _fetch_will_states(self, cycle_id: str) -> List[Dict[str, Any]]:
         scope = self._query_scope()
-        clause, clause_params = scope.sql(("id", "user_id", "agent_instance"))
+        clause, clause_params = self._will_scope_fragment(scope)
         if not self._table_exists("agent_will_states"):
             return []
         from engines.will_scope import instance_where_clause
@@ -966,11 +998,18 @@ Evidencias:
         instance_clause, instance_params = instance_where_clause(
             self.conn.cursor(), "agent_will_states", self.agent_instance
         )
-        return self._fetch_all(
+        # Contrato ``personal_scope_clause``: cada linha sai rotulada com o
+        # escopo REAL (``relation`` / ``no_relation``) — ``relation_id`` NULL
+        # nao comprova origem global. Tabela pre-migracao sem a coluna nao
+        # quebra o SELECT e as linhas saem ``no_relation`` (sem Relation).
+        has_relation = self._has_column("agent_will_states", "relation_id")
+        relation_select = "relation_id, " if has_relation else ""
+        rows = self._fetch_all(
             f"""
-            SELECT id, cycle_id, phase, status, saber_score, relacionar_score,
-                   expressar_score, dominant_will, secondary_will, constrained_will,
-                   will_conflict, attention_bias_note, daily_text, created_at, updated_at
+            SELECT {relation_select}id, cycle_id, phase, status, saber_score,
+                   relacionar_score, expressar_score, dominant_will,
+                   secondary_will, constrained_will, will_conflict,
+                   attention_bias_note, daily_text, created_at, updated_at
             FROM agent_will_states
             WHERE user_id = ?{instance_clause}{clause} AND cycle_id = ?
             ORDER BY created_at DESC, id DESC
@@ -978,6 +1017,9 @@ Evidencias:
             """,
             (self.user_id, *instance_params, *clause_params, cycle_id),
         )
+        for row in rows:
+            row["scope"] = "relation" if row.get("relation_id") else "no_relation"
+        return rows
 
     def _fetch_meta_states(self, cycle_id: str) -> List[Dict[str, Any]]:
         scope = self._query_scope()
@@ -1154,6 +1196,11 @@ Evidencias:
             (table_name,),
         )
         return cursor.fetchone() is not None
+
+    def _has_column(self, table_name: str, column_name: str) -> bool:
+        cursor = self.conn.cursor()
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        return column_name in {row[1] for row in cursor.fetchall()}
 
     def _normalize_cycle_id(self, cycle_id: Optional[str]) -> str:
         if not cycle_id:
