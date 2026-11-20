@@ -20,7 +20,8 @@ anterior ``superseded`` na mesma transacao. Leitura fail-closed em
 ``core/db/knowledge_unit_review.py``; ``knowledge_units`` entrou no mapa de
 redacao de ``core/db/erase.py`` (tombstone auditavel).
 
-Fora do escopo: R1c (recuperacao semantica), confianca justificada,
+Fora do escopo: a recuperacao por consulta e a fila de indexacao (R1c-1,
+em ``core/db/knowledge_unit_index.py``), confianca justificada,
 sondas/cockpit de observabilidade e qualquer efeito volitivo, prompt,
 envio ou custo.
 """
@@ -149,6 +150,36 @@ def knowledge_unit_key(
     )
 
 
+def unit_scope_clause(
+    db: Any, relation_id: Optional[str], *, alias: str = ""
+) -> tuple[str, List[Any]]:
+    """Clause SQL de escopo fail-closed — regra unica das leituras R1b/R1c.
+
+    Sem ``relation_id``: somente material global admitido da instancia
+    (nunca privado de ninguem). Com ``relation_id``: a Relation passa pelo
+    gate de elegibilidade antes de qualquer leitura e a consulta ve o
+    privado dela mais o admitido da instancia. ``alias`` qualifica as
+    colunas quando a juncao usa mais de uma tabela.
+    """
+    prefix = f"{alias}." if alias else ""
+    if relation_id:
+        relation = require_eligible_relation(db, relation_id)
+        scope_sql = f"""
+                AND (
+                    ({prefix}ownership_class = 'relation_private'
+                     AND {prefix}origin_relation_id = ?)
+                    OR ({prefix}ownership_class IN ('authorized_aggregate', 'instance_global')
+                        AND {prefix}origin_quarantined = 0)
+                )
+            """
+        return scope_sql, [str(relation["relation_id"])]
+    scope_sql = f"""
+            AND {prefix}ownership_class IN ('authorized_aggregate', 'instance_global')
+            AND {prefix}origin_quarantined = 0
+        """
+    return scope_sql, []
+
+
 class KnowledgeUnitDatabaseMixin:
     """Escrita/leitura gateada de ``knowledge_units`` (R1b)."""
 
@@ -178,6 +209,24 @@ class KnowledgeUnitDatabaseMixin:
             raise ValueError("relation_required_for_knowledge_unit")
         relation = require_eligible_relation(self, resolved)
         return str(resolved), relation
+
+    def _refresh_index_after_commit(self, unit_id: int, *more: int) -> None:
+        """Pos-commit R1c-1: a projecao acompanha a escrita ja gravada.
+
+        Roda so depois do commit e nunca propaga: falha de indexacao vira
+        log + item pendente na fila (backfill do scheduler completa), sem
+        desfazer a unidade persistida.
+        """
+        try:
+            from core.db.knowledge_unit_index import refresh_unit_index
+        except Exception as exc:
+            logger.warning(
+                "knowledge_units: modulo de indexacao indisponivel tipo=%s",
+                type(exc).__name__,
+            )
+            return
+        for uid in (unit_id, *more):
+            refresh_unit_index(self, int(uid))
 
     # ------------------------------------------------------------------
     # Admissao (R1b)
@@ -351,6 +400,7 @@ class KnowledgeUnitDatabaseMixin:
                     (now, now, json.dumps(merged_refs, ensure_ascii=False), existing_dict["id"]),
                 )
                 self.conn.commit()
+                self._refresh_index_after_commit(int(existing_dict["id"]))
                 return {
                     "unit_id": int(existing_dict["id"]),
                     "reinforced": True,
@@ -409,6 +459,11 @@ class KnowledgeUnitDatabaseMixin:
                 if cursor.rowcount != 1:
                     raise ValueError("supersede_conflict")
             self.conn.commit()
+            # Projecao da unidade nova; a superada sai da projecao na hora.
+            if previous is not None:
+                self._refresh_index_after_commit(unit_id, int(previous["id"]))
+            else:
+                self._refresh_index_after_commit(unit_id)
         except Exception:
             self.conn.rollback()
             raise

@@ -833,6 +833,30 @@ class SchemaDatabaseMixin:
             "ON knowledge_units(agent_instance, origin_relation_id, status)"
         )
 
+        # R1c-1: projecao de recuperacao das unidades — DERIVADA de
+        # knowledge_units (a canonica manda; a projecao nunca serve como
+        # evidencia propria). ``id`` e o id da unidade (1:1 com
+        # knowledge_units.id, mesmo nome de PK das demais tabelas);
+        # search_text guarda a normalizacao de busca (caixa baixa sem
+        # acentos); a linha sai daqui quando a unidade sai de `active` e no
+        # expurgo da Relation (core/db/erase.py: linha apagada, nao redigida).
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_unit_index (
+                id INTEGER PRIMARY KEY,
+                agent_instance TEXT NOT NULL,
+                unit_key TEXT NOT NULL,
+                content_version INTEGER NOT NULL,
+                ownership_class TEXT NOT NULL,
+                origin_relation_id TEXT,
+                search_text TEXT NOT NULL,
+                indexed_at DATETIME
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_unit_index_scope "
+            "ON knowledge_unit_index(agent_instance, origin_relation_id)"
+        )
+
         # ========== LOOP DE CONSCIENCIA ==========
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS consciousness_loop_state (

@@ -310,6 +310,31 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(maturation_drain_scheduler())
     logger.info("✅ Job de dreno de maturação (R1a-2) agendado!")
 
+    async def knowledge_unit_index_scheduler():
+        """R1c-1: drena a fila de indexação de unidades de conhecimento."""
+        from core.db.knowledge_unit_index import run_knowledge_unit_index_drain
+
+        logger.info("⏳ [UNIT INDEX] Aguardando 5 min antes da primeira rodada...")
+        await asyncio.sleep(300)
+
+        while True:
+            try:
+                result = await asyncio.to_thread(
+                    run_knowledge_unit_index_drain, bot_state.db
+                )
+                if any(
+                    result.get(key)
+                    for key in ("enqueued", "removed", "done", "failed", "exhausted")
+                ):
+                    logger.info("📚 [UNIT INDEX] %s", result)
+            except Exception as e:
+                logger.error(f"❌ Erro no scheduler de indexação de unidades: {e}")
+
+            await asyncio.sleep(900)
+
+    asyncio.create_task(knowledge_unit_index_scheduler())
+    logger.info("✅ Job de indexação de unidades (R1c-1) agendado!")
+
     async def will_pulse_scheduler():
         """Mede pressão psíquica e aciona proatividade endógena quando houver transbordamento."""
         from instance_config import ADMIN_USER_ID
