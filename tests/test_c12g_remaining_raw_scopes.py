@@ -425,6 +425,34 @@ def test_diary_will_states_ignore_other_participants_rows(tmp_path):
     db.close()
 
 
+def test_diary_will_states_label_each_row_with_real_scope(tmp_path):
+    """Contrato ``personal_scope_clause``: a saida do diario rotula a origem.
+
+    ``relation_id`` NULL nao comprova que o conteudo seja global. Cada linha
+    do fetcher carrega ``scope`` — ``relation`` para a Relation verificada do
+    participante, ``no_relation`` para a ausencia de Relation — a distincao
+    sobrevive no snapshot e o markdown identifica o escopo do estado exibido.
+    """
+    db = _diary_db()
+    diary = AgentDiaryWriter(db, tmp_path, user_id=PARTICIPANT, agent_instance=INSTANCE)
+
+    rows = diary._fetch_will_states("2026-11-20")
+    scopes = {row["daily_text"]: row.get("scope") for row in rows}
+
+    assert scopes["will da propria relation"] == "relation"
+    # Linha sem Relation NAO e rotulada como global: origem nao classificada.
+    assert scopes["will global legado"] == "no_relation"
+    assert set(scopes.values()) <= {"relation", "no_relation"}
+
+    snapshot = diary.build_snapshot("2026-11-20")
+    snapshot_scopes = {
+        row["daily_text"]: row.get("scope") for row in snapshot["will_states"]
+    }
+    assert snapshot_scopes["will global legado"] == "no_relation"
+    assert "escopo=no_relation" in diary.render_markdown(snapshot)
+    db.close()
+
+
 # ---------------------------------------------------------------------------
 # World consciencia: insumos epistemicos
 # ---------------------------------------------------------------------------
