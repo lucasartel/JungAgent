@@ -102,7 +102,15 @@ class ReconciliationReview:
         return effects
 
     def _loop_post_commit_candidates(self, conn, limit):
-        """Integrations whose local effects exist without their commit marker."""
+        """Integrations whose local effects exist without their commit marker.
+
+        A elegibilidade e testada **antes** do limite: registros recentes sem
+        efeitos locais confirmados e sem tentativas esgotadas nunca podem
+        esconder registros mais antigos que ainda precisam de revisao. O
+        limite portanto corta apenas ja elegiveis, por origem, como antes.
+        A query nao pagina mais no SQL: o cursor e percorrido em ordem ate o
+        numero de candidatos elegiveis atingir o limite.
+        """
         found = []
         for table, kind in (("consciousness_loop_post_commit_effects", "normal_post_commit"),
                             ("consciousness_loop_failure_post_commit_effects", "failure_post_commit")):
@@ -111,19 +119,24 @@ class ReconciliationReview:
             failure = kind == "failure_post_commit"
             rows = conn.execute(f"""SELECT phase_result_id, phase, cycle_id, integration_attempts, integration_error
                 FROM {table} WHERE agent_instance = ? AND integration_at IS NULL
-                ORDER BY phase_result_id DESC LIMIT ?""", (self.agent_instance, limit)).fetchall()
+                ORDER BY phase_result_id DESC""", (self.agent_instance,))
+            eligible = 0
             for row in rows:
                 effects = self._partial_effects(conn, row["phase_result_id"], failure=failure)
                 if effects is not None:
+                    eligible += 1
                     found.append({"source_kind": kind, "source_id": str(row["phase_result_id"]),
                         "state": "partial_effects",
                         "evidence": {"phase": row["phase"], "cycle_id": row["cycle_id"],
                             "attempts": row["integration_attempts"], "reason": row["integration_error"],
                             "effects": effects}})
                 elif row["integration_attempts"] >= 5:
+                    eligible += 1
                     found.append({"source_kind": kind, "source_id": str(row["phase_result_id"]), "state": "exhausted",
                         "evidence": {"phase": row["phase"], "attempts": row["integration_attempts"],
                             "reason": row["integration_error"]}})
+                if eligible >= limit:
+                    break
         return found
 
     def _proactive_effect_candidates(self, conn, limit):

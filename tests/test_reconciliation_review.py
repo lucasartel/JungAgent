@@ -230,6 +230,28 @@ def test_exhausted_without_confirmed_effects_keeps_the_previous_shape(loop_db):
     assert set(rows[0]["evidence"]) == {"phase", "attempts", "reason"}
 
 
+def test_limit_never_hides_older_records_that_still_need_review(loop_db):
+    """O limite so e aplicado depois de identificar os candidatos elegiveis.
+
+    Registros recentes sem efeitos parciais confirmados e com tentativas
+    ainda nao esgotadas nao podem ocupar a vaga de registros mais antigos
+    que precisam de revisao.
+    """
+    for phase_result_id in (12, 11, 9):
+        _post_commit_queue(loop_db, "consciousness_loop_post_commit_effects",
+                           phase_result_id=phase_result_id)
+    _post_commit_queue(loop_db, "consciousness_loop_post_commit_effects", phase_result_id=10,
+                       attempts=5, error="loop_post_commit_stale_result_requires_review")
+    loop_db.conn.execute("""INSERT INTO consciousness_loop_events
+        (cycle_id, agent_instance, phase, status, phase_result_id)
+        VALUES ('2026-11-20', 'test_jung_v0', 'work', 'completed', 9)""")
+    loop_db.conn.commit()
+    rows = [row for row in ReconciliationReview(loop_db, "test_jung_v0").candidates(limit=2)
+            if row["source_kind"] == "normal_post_commit"]
+    assert [(row["source_id"], row["state"]) for row in rows] == [
+        ("10", "exhausted"), ("9", "partial_effects")]
+
+
 def test_partial_effects_win_over_exhausted_and_survive_a_review(loop_db):
     _post_commit_queue(loop_db, "consciousness_loop_post_commit_effects", attempts=5,
                        error="loop_post_commit_partial_effects_require_review")
