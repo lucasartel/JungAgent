@@ -701,6 +701,12 @@ class KnowledgeGapDatabaseMixin:
                     SELECT * FROM knowledge_gaps
                     WHERE agent_instance = ? AND status = 'open' AND {visibility}
                       AND origin_quarantined = 0
+                      -- Complemento R1 (modo observacao): questao candidata
+                      -- NAO e servida por aqui — as leitoras atuais (contexto
+                      -- de identidade, proatividade, pressao do WILL) nao
+                      -- recebem questoes. A leitura dedicada e
+                      -- knowledge_questions.list_candidate_questions.
+                      AND question_kind IS NULL
                     ORDER BY importance_score DESC, created_at DESC
                     LIMIT ? OFFSET ?
                 """, (*params, batch, offset))

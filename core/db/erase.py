@@ -91,13 +91,15 @@ _ERASE_CHILD_FIELDS: Dict[str, list] = {
 # a Relation aponta material que o expurgo remove; manter a linha deixaria
 # trabalho pendente sobre conteudo ja apagado. Linha apagada, nao redigida.
 #
-# R1c-1: knowledge_unit_index e projecao DERIVADA das unidades (busca);
-# apagar a unidade sem apagar a projecao deixaria texto privado indexado.
-# A linha tombstone da canonica continua em ``knowledge_units``.
+# R1c-1 + Complemento R1: projecoes/derivados apagados por inteiro com a
+# Relation (knowledge_unit_index das unidades e knowledge_gap_revisions
+# do historico de revisoes das questoes). As linhas tombstone canonicas
+# permanecem em ``knowledge_units`` e ``knowledge_gaps``.
 _ERASE_DELETE_TABLES = (
     "symbolic_triples",
     "processing_queue",
     "knowledge_unit_index",
+    "knowledge_gap_revisions",
 )
 
 # Revisao da PR #59 (Rodada 5, conferencia de produtores): conteudo
@@ -286,6 +288,25 @@ _ERASE_FIELDS: Dict[str, list] = {
         "source_refs_json",
         "provenance_json",
         "origin_participant_user_id",
+        # Complemento R1: conteudo de questao candidata (interpretacao,
+        # relevancia justificada, vinculos, veredito de sustentacao e
+        # motivo de estado). ``question_kind``/``question_version`` sao
+        # classificador e contador — audit-safe pelo padrao preserved_field.
+        "question_state",
+        "question_interpretation_json",
+        "relevance_justification",
+        "linked_unit_ids",
+        "question_support_json",
+        "question_state_reason",
+    ],
+    # Complemento R1: historico de revisoes das questoes — linha inteira
+    # apagada com a Relation (``_ERASE_DELETE_TABLES``); o mapa cobre as
+    # colunas de conteudo para o inventario de colunas sem decisao
+    # continuar fechado (precedente das projecoes derivadas apagadas).
+    "knowledge_gap_revisions": [
+        "question_state",
+        "reason",
+        "snapshot_json",
     ],
     # R1b: unidades de conhecimento — conteudo consolidado e suas ancoras
     # sao conteudo privado da Relation; a linha tombstone (chave, kind,

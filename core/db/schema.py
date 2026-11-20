@@ -790,6 +790,50 @@ class SchemaDatabaseMixin:
             "ON knowledge_gaps(agent_instance, dedup_key)"
         )
 
+        # ========== QUESTOES CANDIDATAS (Complemento R1 — fronteira 1) ==========
+        # Additive: estende knowledge_gaps (nao cria um quarto sistema de
+        # memoria). ``question_kind``/``question_version`` sao classificador
+        # e contador (audit-safe no expurgo); os demais conteuem material
+        # privado e estao em _ERASE_FIELDS. NULL = linha nao registrada
+        # neste complemento (legado permanece legado, sem backfill).
+        # Escrita: core/db/knowledge_questions.py (modo observacao).
+        for column_def in [
+            "question_kind TEXT",
+            "question_state TEXT",
+            "question_version INTEGER",
+            "question_interpretation_json TEXT",
+            "relevance_justification TEXT",
+            "linked_unit_ids TEXT",
+            "question_support_json TEXT",
+            "question_state_reason TEXT",
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE knowledge_gaps ADD COLUMN {column_def}")
+            except sqlite3.OperationalError:
+                pass
+
+        # Historico de revisoes das questoes (derivado da lacuna): apagado
+        # inteiro com a Relation no expurgo (_ERASE_DELETE_TABLES), como as
+        # demais projecoes derivadas.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_gap_revisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                gap_id INTEGER NOT NULL,
+                agent_instance TEXT,
+                origin_relation_id TEXT,
+                question_version INTEGER,
+                question_state TEXT,
+                change_kind TEXT,
+                reason TEXT,
+                snapshot_json TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_gap_revisions_gap "
+            "ON knowledge_gap_revisions(gap_id, question_version)"
+        )
+
         # ========== UNIDADES DE CONHECIMENTO (R1b — consolidacao conceitual) ==========
         # Registro canonico da consolidacao: cada unidade tem identidade,
         # versao, escopo de propriedade, proveniencia e estado epistemico.
