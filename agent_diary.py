@@ -956,23 +956,35 @@ Evidencias:
             (self.user_id, *clause_params, cycle_id),
         )
 
+    def _will_scope_fragment(self, scope) -> Tuple[str, List[Any]]:
+        """Escopo do estado de Will com as DUAS condicoes no proprio fragmento (C12g).
+
+        Contrato ``will_relation_state``: o estado visivel neste diario e o do
+        PROPIO participante — estado global autorizado (``relation_id IS NULL``)
+        ou da Relation verificada dele. O participante entra amarrado aqui, nao
+        depende do ``WHERE`` externo, entao uma linha sem Relation de OUTRO
+        participante nunca conta como estado global deste. Escopo negado vira
+        `` AND 1 = 0``; tabela pre-migracao (sem coluna de Relation) mantem a
+        amarracao do participante.
+        """
+        if not scope.allowed:
+            return " AND 1 = 0", []
+        from core.db.relation_scope import personal_scope_clause
+
+        relation_clause, relation_params = personal_scope_clause(
+            self.conn.cursor(),
+            table="agent_will_states",
+            relation_column="relation_id",
+            relation_id=scope.relation_id,
+            include_instance=False,
+        )
+        if not relation_clause:
+            return " AND user_id = ?", [self.user_id]
+        return f" AND user_id = ?{relation_clause}", [self.user_id, *relation_params]
+
     def _fetch_will_states(self, cycle_id: str) -> List[Dict[str, Any]]:
         scope = self._query_scope()
-        if not scope.allowed:
-            # C12g: escopo negado nunca vira leitura vazia "silenciosa" de outra Relation.
-            clause, clause_params = " AND 1 = 0", []
-        else:
-            # Visibilidade pessoal: as linhas globais (sem Relation) e as da
-            # Relation verificada do proprio usuario — nunca de outra Relation.
-            from core.db.relation_scope import personal_scope_clause
-
-            clause, clause_params = personal_scope_clause(
-                self.conn.cursor(),
-                table="agent_will_states",
-                relation_column="relation_id",
-                relation_id=scope.relation_id,
-                include_instance=False,
-            )
+        clause, clause_params = self._will_scope_fragment(scope)
         if not self._table_exists("agent_will_states"):
             return []
         from engines.will_scope import instance_where_clause

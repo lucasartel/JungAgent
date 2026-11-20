@@ -367,6 +367,64 @@ def test_diary_will_states_hide_everything_for_denied_scope(tmp_path):
     db.close()
 
 
+def test_will_scope_fragment_binds_participant_and_relation(tmp_path):
+    """O fragmento carrega as duas condicoes, sem depender do WHERE externo."""
+    from core.db.relation_scope import resolve_relation_query_scope
+
+    db = _diary_db()
+    diary = AgentDiaryWriter(db, tmp_path, user_id=PARTICIPANT, agent_instance=INSTANCE)
+
+    scope = resolve_relation_query_scope(db, PARTICIPANT, agent_instance=INSTANCE)
+    clause, params = diary._will_scope_fragment(scope)
+
+    assert "user_id = ?" in clause
+    assert "relation_id IS NULL" in clause
+    assert "relation_id = ?" in clause
+    assert params[0] == PARTICIPANT
+    assert scope.relation_id in params
+
+    denied = resolve_relation_query_scope(db, LEGACY_USER, agent_instance=INSTANCE)
+    denied_clause, denied_params = diary._will_scope_fragment(denied)
+
+    assert denied_clause == " AND 1 = 0"
+    assert denied_params == []
+    db.close()
+
+
+def test_diary_will_states_ignore_other_participants_rows(tmp_path):
+    """Linha SEM Relation de outro participante nao e "estado global" deste usuario.
+
+    O escopo pessoal so preserva dois conjuntos: estados globais do PROPIO
+    participante e estados da Relation verificada dele. Qualquer linha de outro
+    participante — com ou sem Relation — fica de fora, mesmo na mesma instancia
+    e no mesmo ciclo.
+    """
+    db = _diary_db()
+    db.conn.executescript(
+        """
+        INSERT INTO agent_will_states
+            (user_id, agent_instance, relation_id, cycle_id, daily_text)
+        VALUES ('other-participant', 'instance-a', NULL, '2026-11-20',
+                'global sem relation de outro participante'),
+               ('other-participant', 'instance-a', 'rel-z', '2026-11-20',
+                'relation de outro participante');
+        """
+    )
+    db.conn.commit()
+
+    diary = AgentDiaryWriter(db, tmp_path, user_id=PARTICIPANT, agent_instance=INSTANCE)
+    texts = [row["daily_text"] for row in diary._fetch_will_states("2026-11-20")]
+
+    # O proprio usuario continua vendo o estado global dele e a Relation dele.
+    assert "will global legado" in texts
+    assert "will da propria relation" in texts
+    # Nada do outro participante.
+    assert "global sem relation de outro participante" not in texts
+    assert "relation de outro participante" not in texts
+    assert "will de outra relation" not in texts
+    db.close()
+
+
 # ---------------------------------------------------------------------------
 # World consciencia: insumos epistemicos
 # ---------------------------------------------------------------------------
