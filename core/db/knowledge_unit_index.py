@@ -460,6 +460,7 @@ class KnowledgeUnitIndexDatabaseMixin:
             JOIN knowledge_units u ON u.id = ix.id
             WHERE ix.agent_instance = ?
               AND u.agent_instance = ?
+              AND ix.content_version = u.content_version
               AND u.status = 'active'
               AND u.origin_quarantined = 0
               AND ({like_sql})

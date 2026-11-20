@@ -488,3 +488,26 @@ def test_query_guards_and_result_shape(tmp_path):
     assert hit["content_version"] == 1
     assert hit["source_refs"] == ["conversation#5"]
     assert hit["epistemic_status"] == "validated_synthesis"
+
+
+def test_search_ignores_stale_projection_until_drained(tmp_path):
+    db = _db(tmp_path)
+    rel = _register(db, "alice")
+    unit_id = _write(db, rel, content="Sintese declarativa sobre termo_antigo_exclusivo na hermeneutica")["unit_id"]
+    assert [h["id"] for h in db.search_knowledge_units(query="termo_antigo_exclusivo", relation_id=rel)] == [unit_id]
+
+    # Simula atraso/falha na projecao apos avanco da unidade canonica.
+    db.conn.execute(
+        "UPDATE knowledge_units SET content = ?, content_version = content_version + 1 WHERE id = ?",
+        ("Sintese declarativa sobre termo_novo_atualizado na hermeneutica", unit_id),
+    )
+    db.conn.commit()
+
+    # Projecao desatualizada (ix.content_version != u.content_version) nao pode
+    # casar pelo texto antigo e devolver o conteudo novo.
+    assert db.search_knowledge_units(query="termo_antigo_exclusivo", relation_id=rel) == []
+    assert db.search_knowledge_units(query="termo_novo_atualizado", relation_id=rel) == []
+
+    # Apos o dreno/backfill sincronizar a projecao, o texto novo passa a ser encontrado.
+    db.run_knowledge_unit_index_drain()
+    assert [h["id"] for h in db.search_knowledge_units(query="termo_novo_atualizado", relation_id=rel)] == [unit_id]
