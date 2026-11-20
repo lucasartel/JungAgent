@@ -53,6 +53,43 @@ def current_agent_instance(db: Optional[object] = None) -> str:
     return str(instance).strip() or "jung_v1"
 
 
+def work_instance_clause(
+    cursor: sqlite3.Cursor,
+    table: str,
+    *,
+    alias: str = "",
+    instance: Optional[str] = None,
+) -> Tuple[str, list]:
+    """Clausula aditiva de tenancy para LEITORES Work (C12g).
+
+    Os INSERTs do Work ja carimbam ``agent_instance`` (``tenancy_insert_values``)
+    e a migracao faz backfill honesto, mas varios leitores liam a tabela inteira:
+    em banco compartilhado, uma instancia contava orcamento, escolhia brief e
+    exibia material de outra. Regra:
+
+    - sem a coluna (banco pre-tenancy) a clausula nao aparece — comportamento
+      inalterado;
+    - linha de OUTRA instancia some (o corte pedido);
+    - linha sem ``agent_instance`` continua visivel, como no
+      ``legacy_quarantine_clause`` do C12g — origem nao atribuivel nao pode
+      travar o loop em silencio, e a migracao ja classifica o historico.
+
+    ``alias`` evita ambiguidade em JOINs com mais de uma tabela com a coluna.
+    """
+    from engines.will_scope import resolve_instance, table_columns
+
+    if "agent_instance" not in table_columns(cursor, table):
+        return "", []
+    prefix = f"{alias}." if alias else ""
+    value = str(instance).strip() if instance else resolve_instance(None)
+    if not value:
+        value = "jung_v1"
+    return (
+        f" AND ({prefix}agent_instance = ? OR {prefix}agent_instance IS NULL)",
+        [value],
+    )
+
+
 def work_scope_clause(
     admin: Optional[Dict],
     *,

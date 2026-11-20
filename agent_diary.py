@@ -1058,27 +1058,48 @@ Evidencias:
             (self.user_id, *clause_params, cycle_id),
         )
 
+    def _work_tenancy_clause(self, table: str, *, alias: str = "") -> Tuple[str, List[Any]]:
+        """Tenancy Work no diario (C12g) — mesma regra de ``work.tenancy``.
+
+        Linha de outra instancia some; linha sem ``agent_instance`` continua
+        visivel (origem nao atribuivel nao pode apagar o proprio historico);
+        tabela pre-tenancy sem a coluna mantem o SQL antigo. Mantido local para
+        o diario nao puxar o pacote ``work`` (que importa o motor inteiro).
+        """
+        from engines.will_scope import resolve_instance, table_columns
+
+        if "agent_instance" not in table_columns(self.conn.cursor(), table):
+            return "", []
+        prefix = f"{alias}." if alias else ""
+        value = (self.agent_instance or "").strip() or resolve_instance(None)
+        return f" AND ({prefix}agent_instance = ? OR {prefix}agent_instance IS NULL)", [value]
+
     def _fetch_work_runs(self, cycle_id: str) -> List[Dict[str, Any]]:
         if not self._table_exists("work_runs"):
             return []
+        instance_clause, instance_params = self._work_tenancy_clause("work_runs")
         return self._fetch_all(
-            """
+            f"""
             SELECT id, cycle_id, phase, trigger_source, selected_brief_id,
                    destination_id, status, input_summary, output_summary,
                    metrics_json, errors_json, created_at, updated_at
             FROM work_runs
-            WHERE cycle_id = ?
+            WHERE cycle_id = ?{instance_clause}
             ORDER BY created_at ASC, id ASC
             LIMIT 12
             """,
-            (cycle_id,),
+            (cycle_id, *instance_params),
         )
 
     def _fetch_work_tickets(self, cycle_id: str, next_cycle: str) -> List[Dict[str, Any]]:
         if not self._table_exists("work_approval_tickets"):
             return []
+        # Alias ``t``: tres tabelas do JOIN tem agent_instance (C12g).
+        instance_clause, instance_params = self._work_tenancy_clause(
+            "work_approval_tickets", alias="t"
+        )
         return self._fetch_all(
-            """
+            f"""
             SELECT t.id, t.action, t.status, t.created_at, t.reviewed_at, t.executed_at,
                    t.review_note, a.title AS artifact_title, a.external_url,
                    b.objective AS brief_objective
@@ -1088,26 +1109,27 @@ Evidencias:
             WHERE (
                 (t.created_at >= ? AND t.created_at < ?)
                 OR (t.executed_at >= ? AND t.executed_at < ?)
-            )
+            ){instance_clause}
             ORDER BY COALESCE(t.executed_at, t.created_at) ASC, t.id ASC
             LIMIT 12
             """,
-            (cycle_id, next_cycle, cycle_id, next_cycle),
+            (cycle_id, next_cycle, cycle_id, next_cycle, *instance_params),
         )
 
     def _fetch_work_deliveries(self, cycle_id: str, next_cycle: str) -> List[Dict[str, Any]]:
         if not self._table_exists("work_delivery_events"):
             return []
+        instance_clause, instance_params = self._work_tenancy_clause("work_delivery_events")
         return self._fetch_all(
-            """
+            f"""
             SELECT id, ticket_id, artifact_id, destination_id, provider_key,
                    action, status, external_id, external_url, error_message, created_at
             FROM work_delivery_events
-            WHERE created_at >= ? AND created_at < ?
+            WHERE created_at >= ? AND created_at < ?{instance_clause}
             ORDER BY created_at ASC, id ASC
             LIMIT 12
             """,
-            (cycle_id, next_cycle),
+            (cycle_id, next_cycle, *instance_params),
         )
 
     def _fetch_hobby_artifacts(self, cycle_id: str) -> List[Dict[str, Any]]:

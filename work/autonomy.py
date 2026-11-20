@@ -15,6 +15,7 @@ from work.common import (
     _looks_like_objective_echo,
     _truncate,
 )
+from work.tenancy import current_agent_instance, work_instance_clause
 
 logger = logging.getLogger(__name__)
 
@@ -22,43 +23,62 @@ logger = logging.getLogger(__name__)
 class WorkAutonomyMixin:
     def _autonomous_actions_today(self) -> int:
         cursor = self.db.conn.cursor()
+        # C12g: orcamento de autonomia conta so a instancia corrente.
+        instance_clause, instance_params = work_instance_clause(
+            cursor, "work_briefs", instance=current_agent_instance(self.db)
+        )
         cursor.execute(
-            """
+            f"""
             SELECT COUNT(*)
             FROM work_briefs
             WHERE origin = 'autonomous_project'
-              AND created_at >= datetime('now', 'start of day')
-            """
+              AND created_at >= datetime('now', 'start of day'){instance_clause}
+            """,
+            instance_params,
         )
         return int(cursor.fetchone()[0] or 0)
 
     def _autonomous_actions_today_for_provider(self, provider_key: str) -> int:
         cursor = self.db.conn.cursor()
+        instance_clause, instance_params = work_instance_clause(
+            cursor, "work_briefs", alias="b", instance=current_agent_instance(self.db)
+        )
         cursor.execute(
-            """
+            f"""
             SELECT COUNT(*)
             FROM work_briefs b
             LEFT JOIN work_destinations d ON d.id = b.destination_id
             WHERE b.origin = 'autonomous_project'
               AND d.provider_key = ?
-              AND b.created_at >= datetime('now', 'start of day')
+              AND b.created_at >= datetime('now', 'start of day'){instance_clause}
             """,
-            ((provider_key or "").strip().lower(),),
+            ((provider_key or "").strip().lower(), *instance_params),
         )
         return int(cursor.fetchone()[0] or 0)
 
     def _pending_ticket_count(self) -> int:
         cursor = self.db.conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM work_approval_tickets WHERE status = 'pending'")
+        instance_clause, instance_params = work_instance_clause(
+            cursor, "work_approval_tickets", instance=current_agent_instance(self.db)
+        )
+        cursor.execute(
+            f"SELECT COUNT(*) FROM work_approval_tickets "
+            f"WHERE status = 'pending'{instance_clause}",
+            instance_params,
+        )
         return int(cursor.fetchone()[0] or 0)
 
     def _pending_ticket_count_for_project(self, project_id: Optional[int]) -> int:
         if not project_id:
             return 0
         cursor = self.db.conn.cursor()
+        instance_clause, instance_params = work_instance_clause(
+            cursor, "work_approval_tickets", instance=current_agent_instance(self.db)
+        )
         cursor.execute(
-            "SELECT COUNT(*) FROM work_approval_tickets WHERE status = 'pending' AND project_id = ?",
-            (project_id,),
+            "SELECT COUNT(*) FROM work_approval_tickets "
+            f"WHERE status = 'pending' AND project_id = ?{instance_clause}",
+            (project_id, *instance_params),
         )
         return int(cursor.fetchone()[0] or 0)
 
@@ -265,6 +285,12 @@ Regras:
         params: List[Any] = [project_id, source_seed]
         if action_type:
             params.append(action_type)
+        # C12g: dedup tambem e por instancia — brief de outra instancia nao
+        # suprime a criacao desta.
+        instance_clause, instance_params = work_instance_clause(
+            cursor, "work_briefs", instance=current_agent_instance(self.db)
+        )
+        params.extend(instance_params)
         cursor.execute(
             f"""
             SELECT id
@@ -273,7 +299,7 @@ Regras:
               AND source_seed = ?
               {action_clause}
               AND status NOT IN ('rejected', 'failed')
-              AND created_at >= datetime('now', '-7 days')
+              AND created_at >= datetime('now', '-7 days'){instance_clause}
             LIMIT 1
             """,
             tuple(params),
@@ -480,17 +506,22 @@ Regras:
 
     def _select_next_brief(self) -> Optional[Dict[str, Any]]:
         cursor = self.db.conn.cursor()
+        # C12g: o loop so pega brief da PROPRIA instancia — nunca o de outra.
+        instance_clause, instance_params = work_instance_clause(
+            cursor, "work_briefs", alias="b", instance=current_agent_instance(self.db)
+        )
         cursor.execute(
-            """
+            f"""
             SELECT b.id
             FROM work_briefs b
-            WHERE b.status = 'queued'
+            WHERE b.status = 'queued'{instance_clause}
             ORDER BY
                 CASE WHEN b.origin = 'admin' THEN 0 WHEN b.origin = 'hybrid' THEN 1 ELSE 2 END,
                 b.priority DESC,
                 b.created_at ASC
             LIMIT 1
-            """
+            """,
+            instance_params,
         )
         row = cursor.fetchone()
         return self.get_brief(row[0]) if row else None
