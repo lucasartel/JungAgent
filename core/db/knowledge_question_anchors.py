@@ -196,8 +196,16 @@ def support_reason(verdicts: Dict[str, str]) -> Optional[str]:
     return ";".join(parts) or None
 
 
-def validate_linked_units(db: Any, unit_ids: Any, *, agent_instance: str) -> List[int]:
-    """Vinculos com unidades: existem, mesma instancia e ativas (fail-closed)."""
+def validate_linked_units(
+    db: Any,
+    unit_ids: Any,
+    *,
+    agent_instance: str,
+    relation_id: Optional[str] = None,
+) -> List[int]:
+    """Vinculos com unidades: existencia, instancia, status, quarentena,
+    admissao global F-5 e escopo C12 da questao (fail-closed).
+    """
     if not unit_ids:
         return []
     validated: List[int] = []
@@ -207,14 +215,33 @@ def validate_linked_units(db: Any, unit_ids: Any, *, agent_instance: str) -> Lis
         except (TypeError, ValueError):
             raise ValueError(f"linked_unit_invalid:{raw}")
         row = db.conn.execute(
-            "SELECT agent_instance, status FROM knowledge_units WHERE id = ?",
+            "SELECT * FROM knowledge_units WHERE id = ?",
             (unit_id,),
         ).fetchone()
         if row is None:
             raise ValueError(f"linked_unit_unknown:{unit_id}")
-        if str(row["agent_instance"]) != str(agent_instance):
+        data = dict(row)
+        if str(data.get("agent_instance") or "") != str(agent_instance):
             raise ValueError(f"linked_unit_wrong_instance:{unit_id}")
-        if str(row["status"]) != "active":
+        if str(data.get("status") or "") != "active":
             raise ValueError(f"linked_unit_not_active:{unit_id}")
+        if int(data.get("origin_quarantined") or 0) != 0:
+            raise ValueError(f"linked_unit_quarantined:{unit_id}")
+        ownership = str(data.get("ownership_class") or "")
+        origin = str(data.get("origin_class") or "")
+        unit_rel = data.get("origin_relation_id")
+        if ownership == "relation_private" or (
+            unit_rel and ownership not in {INSTANCE_GLOBAL, AUTHORIZED_AGGREGATE}
+        ):
+            if not relation_id or str(unit_rel or "") != str(relation_id):
+                raise ValueError(f"linked_unit_out_of_scope:{unit_id}")
+        else:
+            if ownership not in {INSTANCE_GLOBAL, AUTHORIZED_AGGREGATE} or origin not in {
+                INSTANCE_GLOBAL,
+                AUTHORIZED_AGGREGATE,
+            }:
+                raise ValueError(f"linked_unit_out_of_scope:{unit_id}")
+            if not is_globally_readable(data, agent_instance=str(agent_instance)):
+                raise ValueError(f"linked_unit_out_of_scope:{unit_id}")
         validated.append(unit_id)
     return validated

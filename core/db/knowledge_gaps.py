@@ -269,6 +269,7 @@ class KnowledgeGapDatabaseMixin:
         public_question: Optional[str] = None,
         private_trigger: Optional[Dict[str, Any]] = None,
         source_kind: Optional[str] = None,
+        dedup_namespace: Optional[str] = None,
     ) -> Optional[int]:
         """Adiciona uma nova lacuna de conhecimento (gap) para o usuÃ¡rio"""
         with self._lock:
@@ -369,6 +370,8 @@ class KnowledgeGapDatabaseMixin:
                 participant=participant,
                 fingerprint=gap_fingerprint(the_gap),
             )
+            if dedup_namespace:
+                identity_key = f"{dedup_namespace}|{identity_key}"
             cursor = self.conn.cursor()
 
             observed = observe_gap_occurrence(

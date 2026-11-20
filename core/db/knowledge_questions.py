@@ -208,7 +208,9 @@ def register_candidate_question(
         origin_class=origin_class,
         agent_instance=agent_instance,
     )
-    links = validate_linked_units(db, linked_unit_ids, agent_instance=instance)
+    links = validate_linked_units(
+        db, linked_unit_ids, agent_instance=instance, relation_id=resolved_relation
+    )
 
     support = verify_anchor_support(
         db, refs, agent_instance=instance, relation_id=resolved_relation
@@ -229,6 +231,7 @@ def register_candidate_question(
         provenance=provenance,
         public_question=public_question,
         source_kind=source_kind,
+        dedup_namespace="candidate_question",
     )
     if gap_id is None:
         # Politica recusou (gate C12g): falsa sucesso nenhum.
@@ -305,13 +308,17 @@ def transition_question_state(
     reason: Optional[str] = None,
     interpretation: Optional[Dict[str, Any]] = None,
     relevance_justification: Optional[str] = None,
+    relation_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    agent_instance: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Transiciona o estado conceitual de uma questao candidata.
 
     Motivo obrigatorio para ``postponed``/``abandoned``/``blocked``/
     ``reformulated`` e para qualquer reabertura de encerrado ->
-    ``active``. Cada transicao incrementa a versao e grava a revisao
-    (CAS) com o snapshot anterior; ``status`` nao e alterado.
+    ``active``. Valida escopo da instancia/Relation (fail-closed),
+    exige Relation elegivel e, na reabertura de questao bloqueada,
+    revalida as ancoras e atualiza o veredito de sustentacao.
     """
     target = str(new_state or "").strip().lower()
     if target not in QUESTION_STATES:
@@ -330,6 +337,7 @@ def transition_question_state(
 
     for _ in range(_MAX_TRANSITION_ATTEMPTS):
         with _db_lock(db):
+            instance = cognitive_agent_instance(db, agent_instance)
             row = db.conn.execute(
                 "SELECT * FROM knowledge_gaps WHERE id = ?", (gap_id,)
             ).fetchone()
@@ -338,6 +346,29 @@ def transition_question_state(
             parent = dict(row)
             if parent.get("question_kind") is None:
                 raise ValueError("question_not_registered")
+            if str(parent.get("agent_instance") or "") != str(instance):
+                raise ValueError("question_out_of_scope")
+
+            row_relation = parent.get("origin_relation_id")
+            caller_relation = relation_id
+            if user_id is not None:
+                resolver = getattr(db, "resolve_relation_id", None)
+                if callable(resolver):
+                    caller_relation = resolver(
+                        agent_instance=instance,
+                        participant_user_id=user_id,
+                        relation_id=relation_id,
+                    )
+            if row_relation:
+                if caller_relation is not None and str(caller_relation) != str(row_relation):
+                    raise ValueError("question_out_of_scope")
+                if user_id is not None and caller_relation is None:
+                    raise ValueError("question_out_of_scope")
+                require_eligible_relation(db, str(row_relation))
+            else:
+                if caller_relation is not None:
+                    raise ValueError("question_out_of_scope")
+
             current = str(parent.get("question_state") or STATE_ACTIVE)
             if target == current:
                 raise ValueError(f"question_state_same:{target}")
@@ -346,6 +377,23 @@ def transition_question_state(
             reason_required = target in _REASON_ALWAYS or current in _REOPEN_FROM
             if reason_required and not clean_reason:
                 raise ValueError("question_state_reason_required")
+
+            support_json_value = parent.get("question_support_json")
+            support_obj = json.loads(support_json_value or "{}")
+            if current == "blocked" and target == STATE_ACTIVE:
+                stored_refs = json.loads(parent.get("source_refs_json") or "[]")
+                if not stored_refs:
+                    raise ValueError("source_refs_required")
+                support_obj = verify_anchor_support(
+                    db, stored_refs, agent_instance=instance, relation_id=row_relation
+                )
+                blocking = [
+                    r for r, v in support_obj["refs"].items() if v in BLOCKING_VERDICTS
+                ]
+                if blocking:
+                    block_reason = support_reason(support_obj["refs"])
+                    raise ValueError(f"question_support_blocked:{block_reason}")
+                support_json_value = json_payload(support_obj, {})
 
             version = int(parent.get("question_version") or 1) + 1
             if new_interpretation is not None:
@@ -365,7 +413,8 @@ def transition_question_state(
                     SET question_state = ?, question_version = ?,
                         question_state_reason = ?,
                         question_interpretation_json = ?,
-                        relevance_justification = ?
+                        relevance_justification = ?,
+                        question_support_json = ?
                     WHERE id = ? AND question_version = ? AND question_state = ?
                     """,
                     (
@@ -374,6 +423,7 @@ def transition_question_state(
                         clean_reason or None,
                         interpretation_value,
                         relevance_value,
+                        support_json_value,
                         gap_id,
                         version - 1,
                         current,
@@ -405,6 +455,7 @@ def transition_question_state(
                 "question_state": target,
                 "question_version": version,
                 "reason": clean_reason or None,
+                "support": support_obj,
             }
     raise ValueError(f"question_transition_conflict:{gap_id}")
 
