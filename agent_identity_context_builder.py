@@ -2735,16 +2735,23 @@ class AgentIdentityContextBuilder:
                     pass
                 local_lines.append("")
 
-        if include_action_proposals and self._identity_table_exists(cursor, "action_proposals"):
+        # C12g (familia de acoes): a tabela nao tem coluna de Relation — o
+        # escopo exigivel aqui e o do participante. Sem user_id o bloco fica
+        # ausente: proposta de outro participante nunca entra neste prompt.
+        if (
+            include_action_proposals
+            and user_id
+            and self._identity_table_exists(cursor, "action_proposals")
+        ):
             cursor.execute(
                 """
                 SELECT action_type, gate_level, status, confidence, rationale, cycle_id
                 FROM action_proposals
-                WHERE agent_instance = ?
+                WHERE agent_instance = ? AND user_id = ?
                 ORDER BY created_at DESC, id DESC
                 LIMIT 4
                 """,
-                (agent_instance,),
+                (agent_instance, user_id),
             )
             ap_rows = cursor.fetchall()
             if ap_rows:

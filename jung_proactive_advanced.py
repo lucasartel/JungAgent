@@ -30,7 +30,7 @@ import json
 import logging
 import sqlite3
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Literal, Tuple
+from typing import Optional, Dict, List, Literal, Tuple, Any
 from dataclasses import dataclass
 from enum import Enum
 from instance_settings import get_setting_value
@@ -253,6 +253,68 @@ class ProactiveAdvancedDB:
         
         self.db.conn.commit()
     
+    def _personal_scope(self, user_id: str) -> Tuple[str, list]:
+        """Escopo pessoal fail-closed das leituras brutas de proativas (C12g).
+
+        Visibilidade do proprio usuario: a Relation verificada dele OU as
+        linhas legadas sem Relation (mesma regra da diario/entrega pessoal);
+        escopo negado ou inelegivel vira `` AND 1 = 0`` — nunca leitura de
+        outra Relation. Tabela pre-migracao (sem colunas de escopo) mantem o
+        comportamento atual.
+        """
+        from core.db.relation_scope import personal_read_clause
+
+        return personal_read_clause(
+            self.db.conn.cursor(),
+            self.db,
+            user_id,
+            table="proactive_approaches",
+            relation_column="relation_id",
+        )
+
+    def get_journey_stats(self, user_id: str) -> Dict[str, Any]:
+        """Jornada proativa do usuario, com o escopo pessoal acima.
+
+        Leitura unica usada pelo comando de jornada do bot Telegram: total,
+        ultima proativa e dominios. Nenhum texto de outra Relation entra.
+        """
+        clause, clause_params = self._personal_scope(user_id)
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT COUNT(*) AS total FROM proactive_approaches
+            WHERE user_id = ?{clause}
+            """,
+            (user_id, *clause_params),
+        )
+        row = cursor.fetchone()
+        total = int(row[0] if row is not None else 0)
+        cursor.execute(
+            f"""
+            SELECT autonomous_insight, timestamp FROM proactive_approaches
+            WHERE user_id = ?{clause}
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """,
+            (user_id, *clause_params),
+        )
+        last = cursor.fetchone()
+        cursor.execute(
+            f"""
+            SELECT knowledge_domain, COUNT(*) AS count FROM proactive_approaches
+            WHERE user_id = ?{clause}
+            GROUP BY knowledge_domain
+            ORDER BY count DESC
+            """,
+            (user_id, *clause_params),
+        )
+        domains = [dict(row) for row in cursor.fetchall()]
+        return {
+            "proactive_count": total,
+            "last_proactive": dict(last) if last is not None else None,
+            "domains": domains,
+        }
+
     def record_approach(self, approach: ProactiveApproach, user_id: str):
         """Registra abordagem proativa"""
         
@@ -280,15 +342,16 @@ class ProactiveAdvancedDB:
     def get_last_archetype_pair(self, user_id: str) -> Optional[Tuple[str, str]]:
         """Retorna último par arquetípico usado"""
         
+        clause, clause_params = self._personal_scope(user_id)
         cursor = self.db.conn.cursor()
         
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT archetype_primary, archetype_secondary
             FROM proactive_approaches
-            WHERE user_id = ?
+            WHERE user_id = ?{clause}
             ORDER BY timestamp DESC
             LIMIT 1
-        """, (user_id,))
+        """, (user_id, *clause_params))
         
         row = cursor.fetchone()
         
@@ -297,13 +360,14 @@ class ProactiveAdvancedDB:
     def get_complexity_level(self, user_id: str) -> float:
         """Calcula nível de complexidade atual do agente para este usuário"""
         
+        clause, clause_params = self._personal_scope(user_id)
         cursor = self.db.conn.cursor()
         
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT AVG(complexity_score) as avg_complexity
             FROM proactive_approaches
-            WHERE user_id = ?
-        """, (user_id,))
+            WHERE user_id = ?{clause}
+        """, (user_id, *clause_params))
         
         row = cursor.fetchone()
         
@@ -892,6 +956,20 @@ Métricas: Tensão {tension:.1f}/10, Afetividade {affective:.0f}/100{archetype_i
             relation_id = scope["relation_id"]
             scope_filter = "\n            AND agent_instance = ? AND relation_id IS ?"
             params.extend([agent_instance, relation_id])
+        else:
+            # C12g: caminho legado sem scope recebido tambem nao lhe historico
+            # de outra Relation — visibilidade pessoal (Relation propria ou
+            # linha legada sem Relation); negado vira ` AND 1 = 0`.
+            from core.db.relation_scope import personal_read_clause
+
+            scope_filter, scope_params = personal_read_clause(
+                self.db.conn.cursor(),
+                self.db,
+                user_id,
+                table="proactive_approaches",
+                relation_column="relation_id",
+            )
+            params.extend(scope_params)
 
         cursor = self.db.conn.cursor()
         cursor.execute(f"""
@@ -921,6 +999,42 @@ Mensagem enviada: "{message}..."
 """
 
         return history.strip()
+
+    def _last_proactive_timestamp(self, user_id: str) -> Optional[datetime]:
+        """Ultima proativa na visibilidade pessoal do usuario (C12g).
+
+        Relation verificada do usuario OU linha legada sem Relation; escopo
+        negado/inelegivel levanta ``ValueError`` com a sentinela canonica
+        (o chamador pulsa com graca), ``None`` significa ausencia genuina.
+        """
+        from core.db.relation_scope import (
+            personal_scope_clause,
+            resolve_relation_query_scope,
+        )
+
+        scope = resolve_relation_query_scope(self.db, user_id)
+        if not scope.allowed:
+            raise ValueError(scope.denied)
+        cursor = self.db.conn.cursor()
+        clause, clause_params = personal_scope_clause(
+            cursor,
+            table="proactive_approaches",
+            relation_column="relation_id",
+            relation_id=scope.relation_id,
+        )
+        cursor.execute(
+            f"""
+            SELECT timestamp FROM proactive_approaches
+            WHERE user_id = ?{clause}
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """,
+            (user_id, *clause_params),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return datetime.fromisoformat(row["timestamp"])
 
     def _relational_cooldown_until(
         self,
@@ -1349,19 +1463,16 @@ Tom esperado: {archetype_pair.description}
                 logger.info(f"🚫 [PROATIVO] Usuário inativo há muito tempo ({delta.days} dias > limite de {self.max_inactivity_days}). Abortando abordagens proativas.")
                 return None
 
-        # Checar cooldown de última proativa
-        cursor = self.db.conn.cursor()
-        cursor.execute("""
-            SELECT timestamp FROM proactive_approaches
-            WHERE user_id = ?
-            ORDER BY timestamp DESC
-            LIMIT 1
-        """, (user_id,))
+        # Checar cooldown de última proativa (C12g: escopo pessoal de Relation;
+        # sem escopo elegivel o pulso e pulado com graca, nunca vira "sem historico")
+        try:
+            last_dt = self._last_proactive_timestamp(user_id)
+        except ValueError as scope_err:
+            # Escopo negado OU historico nao verificavel: pulso pulado com graca.
+            logger.warning("⏸️ [PROATIVO] Pulso proativo recusado (escopo/historico): %s", scope_err)
+            return None
 
-        last_proactive = cursor.fetchone()
-
-        if last_proactive:
-            last_dt = datetime.fromisoformat(last_proactive['timestamp'])
+        if last_dt is not None:
             delta = datetime.utcnow() - last_dt  # ✅ FIX: usar utcnow() pois SQLite CURRENT_TIMESTAMP retorna UTC
             hours_since_last = delta.total_seconds() / 3600
 
@@ -1532,14 +1643,23 @@ Tom esperado: {archetype_pair.description}
             completeness = gaps.get("overall_completeness", 1.0)
             logger.info(f"   📊 Completude do perfil: {completeness:.1%}")
 
-            # Verificar últimas 2 proativas
+            # Verificar últimas 2 proativas (C12g: só a visibilidade pessoal)
+            from core.db.relation_scope import personal_read_clause
+
             cursor = self.db.conn.cursor()
-            cursor.execute("""
+            recent_clause, recent_params = personal_read_clause(
+                cursor,
+                self.db,
+                user_id,
+                table="proactive_approaches",
+                relation_column="relation_id",
+            )
+            cursor.execute(f"""
                 SELECT message_type FROM proactive_approaches
-                WHERE user_id = ?
+                WHERE user_id = ?{recent_clause}
                 ORDER BY timestamp DESC
                 LIMIT 2
-            """, (user_id,))
+            """, (user_id, *recent_params))
 
             recent_types = [row[0] for row in cursor.fetchall() if row[0]]
 

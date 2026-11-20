@@ -958,7 +958,21 @@ Evidencias:
 
     def _fetch_will_states(self, cycle_id: str) -> List[Dict[str, Any]]:
         scope = self._query_scope()
-        clause, clause_params = scope.sql(("id", "user_id", "agent_instance"))
+        if not scope.allowed:
+            # C12g: escopo negado nunca vira leitura vazia "silenciosa" de outra Relation.
+            clause, clause_params = " AND 1 = 0", []
+        else:
+            # Visibilidade pessoal: as linhas globais (sem Relation) e as da
+            # Relation verificada do proprio usuario — nunca de outra Relation.
+            from core.db.relation_scope import personal_scope_clause
+
+            clause, clause_params = personal_scope_clause(
+                self.conn.cursor(),
+                table="agent_will_states",
+                relation_column="relation_id",
+                relation_id=scope.relation_id,
+                include_instance=False,
+            )
         if not self._table_exists("agent_will_states"):
             return []
         from engines.will_scope import instance_where_clause

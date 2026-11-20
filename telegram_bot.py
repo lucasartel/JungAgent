@@ -726,31 +726,12 @@ async def minha_jornada_command(update: Update, context: ContextTypes.DEFAULT_TY
         # Buscar primeira conversa
         first_conv_date = conversations[-1]['timestamp'][:10] if conversations else "N/A"
 
-        # Buscar mensagens proativas
-        cursor = bot_state.db.conn.cursor()
-        cursor.execute("""
-            SELECT COUNT(*) as total FROM proactive_approaches
-            WHERE user_id = ?
-        """, (user_id,))
-        proactive_count = cursor.fetchone()['total']
-
-        cursor.execute("""
-            SELECT autonomous_insight, timestamp FROM proactive_approaches
-            WHERE user_id = ?
-            ORDER BY timestamp DESC
-            LIMIT 1
-        """, (user_id,))
-        last_proactive = cursor.fetchone()
-
-        # Buscar domínios desenvolvidos
-        cursor.execute("""
-            SELECT knowledge_domain, COUNT(*) as count
-            FROM proactive_approaches
-            WHERE user_id = ?
-            GROUP BY knowledge_domain
-            ORDER BY count DESC
-        """, (user_id,))
-        domains = cursor.fetchall()
+        # Buscar mensagens proativas — leitura única e escopada por Relation
+        # (C12g): visibilidade pessoal do usuário, nunca histórico de outra Relation.
+        journey = bot_state.proactive.proactive_db.get_journey_stats(user_id)
+        proactive_count = journey["proactive_count"]
+        last_proactive = journey["last_proactive"]
+        domains = journey["domains"]
 
         # Definir fase atual (baseado em número de conversas e complexidade)
         PHASES = {
