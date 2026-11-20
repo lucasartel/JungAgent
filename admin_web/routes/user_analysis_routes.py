@@ -26,6 +26,43 @@ def get_db():
     return _db_manager
 
 
+def _proactive_scope_sql(
+    cursor,
+    db,
+    *,
+    user_id: str,
+    relation_id,
+    instance,
+):
+    """Escopo das leituras de ``proactive_approaches`` desta pagina (C12g/PR-C).
+
+    A tabela ganhou colunas de escopo na migracao de
+    ``engines/will_expression.py``, entao as tres leituras deixam de ler a
+    tabela inteira e passam a seguir a MESMA trinca das conversas da rota:
+
+    - Relation verificada do usuario -> ``relation_id = ?`` (estrito);
+    - admin legado sem Relation -> so a instancia;
+    - qualquer outro caso -> ``1 = 0`` (fail-closed).
+
+    Tabela pre-tenancy sem as colunas mantem o filtro por usuario.
+    """
+    columns = {
+        row[1] for row in cursor.execute("PRAGMA table_info(proactive_approaches)")
+    }
+    clauses = ["user_id = ?"]
+    params = [user_id]
+    if relation_id and "relation_id" in columns:
+        clauses.append("relation_id = ?")
+        params.append(relation_id)
+    elif relation_id or db._legacy_admin_conversation_allowed(user_id):
+        if instance and "agent_instance" in columns:
+            clauses.append("agent_instance = ?")
+            params.append(instance)
+    else:
+        clauses.append("1 = 0")
+    return " AND ".join(clauses), params
+
+
 def verify_user_access(admin: Dict, user_id: str, db_manager) -> bool:
     """Verifica se o admin pode acessar dados de um usuario especifico."""
     if admin["role"] == "master":
@@ -161,6 +198,16 @@ async def user_agent_data_page(request: Request, user_id: str, admin: Dict = Dep
         conv_clauses.append("1 = 0")
     conv_scope_sql = " AND ".join(conv_clauses)
 
+    # C12g (PR-C): as leituras de proactive_approaches seguem a mesma trinca
+    # das conversas (helper proprio) em vez de ler a tabela inteira.
+    proact_scope_sql, proact_params = _proactive_scope_sql(
+        scope_cursor,
+        db,
+        user_id=user_id,
+        relation_id=conv_relation,
+        instance=conv_instance,
+    )
+
     cursor.execute(
         f"SELECT COUNT(*) as count FROM conversations WHERE {conv_scope_sql}",
         conv_params,
@@ -176,15 +223,14 @@ async def user_agent_data_page(request: Request, user_id: str, admin: Dict = Dep
     )
     reactive_count = cursor.fetchone()["count"]
 
-    # C12c6: proactive_approaches não tem colunas de escopo — segue atrás da
-    # trinca acima e é registrado como contrato BLOCKED/C12g em
-    # core/db/cognitive_ownership.py (domínio generated_artifacts).
+    # C12g (PR-C): escopo da trinca acima — Relation estrita do usuario,
+    # instancia para o admin legado e 1 = 0 quando nao ha escopo verificavel.
     cursor.execute(
-        """
+        f"""
         SELECT COUNT(*) as count FROM proactive_approaches
-        WHERE user_id = ?
+        WHERE {proact_scope_sql}
     """,
-        (user_id,),
+        proact_params,
     )
     proactive_count = cursor.fetchone()["count"]
 
@@ -205,13 +251,13 @@ async def user_agent_data_page(request: Request, user_id: str, admin: Dict = Dep
     last_activity = cursor.fetchone()["last_ts"] or "N/A"
 
     cursor.execute(
-        """
+        f"""
         SELECT timestamp FROM proactive_approaches
-        WHERE user_id = ?
+        WHERE {proact_scope_sql}
         ORDER BY timestamp DESC
         LIMIT 1
     """,
-        (user_id,),
+        proact_params,
     )
     last_proactive = cursor.fetchone()
 
@@ -261,7 +307,7 @@ async def user_agent_data_page(request: Request, user_id: str, admin: Dict = Dep
         )
 
     cursor.execute(
-        """
+        f"""
         SELECT
             autonomous_insight,
             timestamp,
@@ -270,11 +316,11 @@ async def user_agent_data_page(request: Request, user_id: str, admin: Dict = Dep
             topic_extracted,
             knowledge_domain
         FROM proactive_approaches
-        WHERE user_id = ?
+        WHERE {proact_scope_sql}
         ORDER BY timestamp DESC
         LIMIT 10
     """,
-        (user_id,),
+        proact_params,
     )
 
     proactive_messages = []

@@ -905,7 +905,7 @@
     "path": "/wellness",
     "full_path": "/admin/wellness",
     "endpoint": "wellness_dashboard",
-    "line": 70,
+    "line": 107,
     "migration_bucket": "user_analysis_routes"
   },
   {
@@ -914,7 +914,7 @@
     "path": "/user/{user_id}/analysis",
     "full_path": "/admin/user/{user_id}/analysis",
     "endpoint": "user_analysis_page",
-    "line": 76,
+    "line": 113,
     "migration_bucket": "user_analysis_routes"
   },
   {
@@ -923,7 +923,7 @@
     "path": "/user/{user_id}/agent-data",
     "full_path": "/admin/user/{user_id}/agent-data",
     "endpoint": "user_agent_data_page",
-    "line": 119,
+    "line": 156,
     "migration_bucket": "user_analysis_routes"
   },
   {

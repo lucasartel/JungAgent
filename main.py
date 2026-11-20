@@ -742,14 +742,25 @@ async def test_proactive():
             # 2. Inatividade suficiente?
             user_result["has_enough_inactivity"] = hours_inactive and hours_inactive >= 3
 
-            # 3. Cooldown OK?
+            # 3. Cooldown OK? (C12g/PR-C: visibilidade pessoal — a Relation
+            # verificada do usuario ou linhas legadas sem Relation; escopo
+            # negado vira 1 = 0, nunca historico de outra Relation)
+            from core.db.relation_scope import personal_read_clause
+
             cursor = bot_state.db.conn.cursor()
-            cursor.execute("""
+            proact_clause, proact_params = personal_read_clause(
+                cursor,
+                bot_state.db,
+                user_id,
+                table="proactive_approaches",
+                relation_column="relation_id",
+            )
+            cursor.execute(f"""
                 SELECT timestamp FROM proactive_approaches
-                WHERE user_id = ?
+                WHERE user_id = ?{proact_clause}
                 ORDER BY timestamp DESC
                 LIMIT 1
-            """, (user_id,))
+            """, (user_id, *proact_params))
             last_proactive = cursor.fetchone()
 
             if last_proactive:
