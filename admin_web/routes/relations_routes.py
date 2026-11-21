@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -248,20 +247,20 @@ async def create_or_update_relation(
     if memory_scope not in _ALLOWED_SCOPES:
         raise HTTPException(400, "Invalid memory scope")
     try:
-        # Preservar as chaves de escopo ja gravadas (R1): gravar so
-        # ``memory`` apagaria silenciosamente ``global_interiority``.
-        existing = db.get_agent_relation_for_participant(
-            agent_instance=AGENT_INSTANCE, participant_user_id=participant_user_id.strip()
-        )
-        scope = dict((existing or {}).get("scope") or {})
-        scope["memory"] = memory_scope
+        # Preservar escopo E auditoria ja gravados (R1): gravar so ``memory``
+        # apagaria ``global_interiority`` e substituir ``metadata`` apagaria
+        # ``global_interiority_history``. A fusao acontece dentro da
+        # gravacao (``merge_existing``: leitura sob o lock + CAS) — nunca
+        # contra a leitura desta requisicao. Aqui vai so a intencao deste
+        # formulario: o ``memory`` escolhido e a fonte do cadastro.
         db.register_agent_relation(
             agent_instance=AGENT_INSTANCE, org_id=target_org,
             participant_user_id=participant_user_id.strip(),
             relation_type=relation_type, role=(role or "").strip() or None,
             status="active", consent_status=(consent_status or "pending").strip().lower(),
-            scope=scope,
+            scope={"memory": memory_scope},
             metadata={"source": "admin_relations_cockpit"},
+            merge_existing=True,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -281,15 +280,18 @@ async def update_relation_state(
         raise HTTPException(404, "Relation not found")
     _ensure_access(admin, relation)
     try:
+        # ``merge_existing`` sem escopo/metadados da requisicao: a rota
+        # altera so status/consentimento, e o que ja esta gravado (chaves de
+        # escopo, auditoria do opt-in) fica intacto — sem copia stale vinda
+        # da leitura la de cima (R1).
         db.register_agent_relation(
             agent_instance=relation["agent_instance"], org_id=relation.get("org_id"),
             participant_user_id=relation["participant_user_id"],
             relation_type=relation.get("relation_type") or "participant",
             role=relation.get("role"), status=status, consent_status=consent_status,
-            scope=relation.get("scope") or {},
             cadence_baseline_hours=relation.get("cadence_baseline_hours"),
             last_interaction_at=relation.get("last_interaction_at"),
-            metadata=relation.get("metadata") or {},
+            merge_existing=True,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -306,11 +308,12 @@ async def update_global_interiority(
 
     O campo ja e consumido pelos gates de admissao global
     (``assess_global_admission``) mas nao tinha superficie de escrita: sem
-    isto o opt-in so existia como SQL manual. O toggle nao mexe em nenhuma
-    outra chave de ``scope`` nem em status/consentimento, aceita apenas
-    ``true``/``false`` (mesma disciplina do ``explicit_flag`` dos gates —
-    nada de string ambigua lida como consentimento) e registra quem mudou,
-    quando e de qual valor, no ``metadata`` da Relation.
+    isto o opt-in so existia como SQL manual. A rota valida e autoriza
+    (``true``/``false`` apenas — mesma disciplina do ``explicit_flag`` dos
+    gates, nada de string ambigua lida como consentimento); a gravacao e do
+    nucleo: ``set_relation_scope_flag`` escreve so escopo/metadados sob CAS
+    (``consented_at``/``revoked_at`` intactos) e registra quem mudou, quando
+    e de qual valor, no ``metadata`` da Relation.
     """
     if enabled not in {"true", "false"}:
         raise HTTPException(400, "Invalid global_interiority value")
@@ -321,39 +324,18 @@ async def update_global_interiority(
         raise HTTPException(404, "Relation not found")
     _ensure_access(admin, relation)
 
-    scope = dict(relation.get("scope") or {})
-    previous = bool(scope.get("global_interiority"))
-    target = enabled == "true"
-    if previous == target:
-        return RedirectResponse(
-            "/admin/relations?success=Global interiority unchanged", status_code=303
-        )
-
-    scope["global_interiority"] = target
-    metadata = dict(relation.get("metadata") or {})
-    history = list(metadata.get("global_interiority_history") or [])
-    history.append({
-        "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "admin": str(admin.get("admin_id") or admin.get("email") or "master"),
-        "from": previous,
-        "to": target,
-    })
-    metadata["global_interiority_history"] = history[-10:]
-
     try:
-        db.register_agent_relation(
-            agent_instance=relation["agent_instance"], org_id=relation.get("org_id"),
-            participant_user_id=relation["participant_user_id"],
-            relation_type=relation.get("relation_type") or "participant",
-            role=relation.get("role"), status=relation.get("status") or "active",
-            consent_status=relation.get("consent_status") or "pending",
-            scope=scope,
-            cadence_baseline_hours=relation.get("cadence_baseline_hours"),
-            last_interaction_at=relation.get("last_interaction_at"),
-            metadata=metadata,
+        result = db.set_relation_scope_flag(
+            relation_id=relation_id, flag="global_interiority",
+            enabled=enabled == "true",
+            admin=str(admin.get("admin_id") or admin.get("email") or "master"),
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    if not result["changed"]:
+        return RedirectResponse(
+            "/admin/relations?success=Global interiority unchanged", status_code=303
+        )
     return RedirectResponse(
         "/admin/relations?success=Global interiority updated", status_code=303
     )

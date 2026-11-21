@@ -144,8 +144,14 @@ class FakeDB:
             return dict(self.relation)
         return None
 
-    def register_agent_relation(self, *, agent_instance, participant_user_id, **kwargs):
-        # Upsert do core: mantem relation_id, troca o que foi passado.
+    def register_agent_relation(
+        self, *, agent_instance, participant_user_id, merge_existing=False, **kwargs
+    ):
+        # Upsert do core: mantem relation_id, troca o que foi passado;
+        # merge_existing (R1) funde com o que ja esta gravado (escopo e
+        # auditoria), em vez de substituir.
+        provided_scope = dict(kwargs.get("scope") or {})
+        provided_metadata = dict(kwargs.get("metadata") or {})
         if self.relation is None:
             self.relation = {
                 "relation_id": "rel-new",
@@ -156,10 +162,15 @@ class FakeDB:
                 "role": kwargs.get("role"),
                 "status": kwargs.get("status") or "active",
                 "consent_status": kwargs.get("consent_status") or "pending",
-                "scope": dict(kwargs.get("scope") or {}),
-                "metadata": dict(kwargs.get("metadata") or {}),
+                "scope": provided_scope,
+                "metadata": provided_metadata,
             }
             return self.relation["relation_id"]
+        scope = provided_scope
+        metadata = provided_metadata
+        if merge_existing:
+            scope = {**self.relation["scope"], **provided_scope}
+            metadata = {**self.relation["metadata"], **provided_metadata}
         self.relation.update(
             {
                 "org_id": kwargs.get("org_id", self.relation.get("org_id")),
@@ -169,11 +180,35 @@ class FakeDB:
                 "status": kwargs.get("status") or self.relation.get("status"),
                 "consent_status": kwargs.get("consent_status")
                 or self.relation.get("consent_status"),
-                "scope": dict(kwargs.get("scope") or {}),
-                "metadata": dict(kwargs.get("metadata") or {}),
+                "scope": scope,
+                "metadata": metadata,
             }
         )
         return self.relation["relation_id"]
+
+    def set_relation_scope_flag(self, *, relation_id, flag, enabled, admin, history_limit=10):
+        # Nucleo: escreve so scope/metadata, idempotente, auditoria
+        # calculada sobre a leitura vigente (mesmo contrato do real).
+        if not self.relation or self.relation["relation_id"] != relation_id:
+            raise ValueError("relation_not_found")
+        scope = dict(self.relation["scope"])
+        previous = bool(scope.get(flag))
+        if previous == bool(enabled):
+            return {"relation": dict(self.relation), "changed": False}
+        metadata = dict(self.relation["metadata"])
+        history_key = f"{flag}_history"
+        history = list(metadata.get(history_key) or [])
+        history.append({
+            "at": "2026-11-21T12:00:00Z",
+            "admin": str(admin or "master"),
+            "from": previous,
+            "to": bool(enabled),
+        })
+        metadata[history_key] = history[-max(1, int(history_limit)):]
+        scope[flag] = bool(enabled)
+        self.relation["scope"] = scope
+        self.relation["metadata"] = metadata
+        return {"relation": dict(self.relation), "changed": True}
 
 
 def _relation(**overrides):
@@ -281,9 +316,17 @@ def test_toggle_requires_an_existing_relation():
 
 
 def test_cockpit_save_preserves_the_existing_opt_in():
-    """Regressao: gravar so ``memory`` por cima apagaria o opt-in dado."""
+    """Regressao: gravar so ``memory`` por cima apagaria o opt-in dado, e
+    substituir ``metadata`` apagaria a auditoria da R1."""
+    history = [{"at": "2026-11-01T10:00:00Z", "admin": "master-1", "from": False, "to": True}]
     db = FakeDB(
-        _relation(scope={"memory": "private", "global_interiority": True})
+        _relation(
+            scope={"memory": "private", "global_interiority": True},
+            metadata={
+                "source": "manual_sql",
+                "global_interiority_history": history,
+            },
+        )
     )
     relations_routes._db_manager = db
 
@@ -304,6 +347,8 @@ def test_cockpit_save_preserves_the_existing_opt_in():
         "memory": "shared",
         "global_interiority": True,
     }
+    assert db.relation["metadata"]["global_interiority_history"] == history
+    assert db.relation["metadata"]["source"] == "admin_relations_cockpit"
 
 
 def test_relation_rows_expose_the_flag_for_the_template():
