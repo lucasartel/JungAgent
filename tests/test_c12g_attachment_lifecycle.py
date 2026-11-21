@@ -8,6 +8,9 @@ O item em aberto do C12g (``docs/DOCUMENTO_MESTRE_EMULACAO_COGNITIVA_V2.md`:
 - um ciclo aplica a expiracao ja decidida no upload (``expires_at`` = TTL)
   e APENAS AUDITA a reconciliacao arquivo<->linha (orfao nao e apagado
   sozinho; apagar arquivo nao referenciado segue manual);
+- a limpeza recalcula as referencias vivas dentro da trava compartilhada
+  com o upload antes do unlink: um upload concorrente que reutilize o
+  caminho preserva o arquivo recem-enviado (revisao da PR #113);
 - o scheduler espera o aquecimento, roda cada rodada em thread e sobrevive
   a erro de uma rodada, como os demais jobs do ``lifespan``;
 - o ``main.py`` registra o job junto aos demais.
@@ -124,6 +127,60 @@ def test_lifecycle_expires_overdue_rows_and_only_audits_orphans(monkeypatch, tmp
     assert report["removed_files"] == 1
     assert report["orphan_files"] == 1
     assert report["missing_files"] == 0
+
+
+def test_lifecycle_keeps_a_path_reused_by_a_concurrent_upload(monkeypatch, tmp_path):
+    """Revisao PR #113: entre a consulta de sobreviventes e o unlink um
+    upload novo reutiliza o mesmo stored_path — o arquivo recem-enviado
+    nao pode sair junto com o registro expirado."""
+    from work import retention
+    from work.retention import run_attachment_lifecycle
+
+    monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", str(tmp_path))
+    db = _real_schema_db()
+    engine = _engine(db)
+    project_id = _project_with_relation(engine)
+
+    overdue = _attach(engine, project_id, "contrato_vencido.pdf", content=b"antigo")
+    _expire(db, overdue["id"])
+
+    original_remove = retention._remove_attached_files
+    fresh_box = {}
+
+    def remove_after_a_concurrent_upload(paths, **kwargs):
+        # A fresta real: o upload aterra DEPOIS da consulta de sobreviventes
+        # e ANTES do unlink, reutilizando o caminho do anexo expirado.
+        fresh_box["row"] = engine.save_project_attachment(
+            project_id=project_id,
+            filename="contrato_vencido.pdf",
+            content=b"novo",
+            uploaded_by="master@corp",
+            extract_text=False,
+        )
+        assert str(fresh_box["row"]["stored_path"]) == str(overdue["stored_path"]), (
+            "premissa do teste: o reenvio do mesmo nome reutiliza o caminho"
+        )
+        return original_remove(paths, **kwargs)
+
+    monkeypatch.setattr(
+        retention, "_remove_attached_files", remove_after_a_concurrent_upload
+    )
+
+    report = run_attachment_lifecycle(db)
+
+    assert report["expired_rows"] == 1
+    assert report["removed_files"] == 0, "o arquivo reutilizado nao pode sair"
+    rows = db.conn.execute(
+        "SELECT id FROM work_project_attachments WHERE stored_path = ?",
+        (overdue["stored_path"],),
+    ).fetchall()
+    assert len(rows) == 1, "a linha expirada sai; a do upload vigente fica"
+    assert rows[0]["id"] == fresh_box["row"]["id"]
+    kept = Path(overdue["stored_path"])
+    assert kept.exists(), "arquivo recem-enviado deve ser preservado"
+    assert kept.read_bytes() == b"novo"
+    assert report["missing_files"] == 0
+    assert report["orphan_files"] == 0
 
 
 def test_lifecycle_reports_missing_file_without_deleting_the_row(monkeypatch, tmp_path):

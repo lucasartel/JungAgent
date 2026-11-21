@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -17,6 +18,13 @@ from work.common import _now_iso
 from work.tenancy import tenancy_insert_columns, tenancy_insert_placeholders, tenancy_insert_values
 
 logger = logging.getLogger(__name__)
+
+# Trava unica entre a escrita do upload e a exclusao fisica da limpeza
+# automatica (revisao da PR #113): o unlink do job so acontece sem nenhuma
+# linha viva apontando para o caminho, e o upload grava arquivo + linha como
+# uma unidade. Fecha a fresta em que um reenvio do mesmo nome reutilizava o
+# stored_path do anexo expirado entre a consulta de sobreviventes e o apagao.
+ATTACHMENT_FILE_LOCK = threading.Lock()
 
 
 def _attachment_ttl_days() -> int:
@@ -81,29 +89,33 @@ class WorkAttachmentMixin:
         att_dir = _resolve_attachment_dir()
         safe_name = Path(filename).name or f"attachment_project{project_id}"
         stored_path = att_dir / f"project{project_id}_{safe_name}"
-        stored_path.write_bytes(content)
         size_bytes = len(content)
         mime_type = _guess_mime_type(filename)
 
         cursor = self.db.conn.cursor()
-        cursor.execute(
-            f"""
-            INSERT INTO work_project_attachments (
-                project_id, filename, stored_path, size_bytes, mime_type,
-                uploaded_by, extraction_status, {tenancy_insert_columns()},
-                uploaded_at, expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', {tenancy_insert_placeholders()}, ?, ?)
-            """,
-            (project_id, safe_name, str(stored_path), size_bytes, mime_type,
-             uploaded_by, *tenancy_insert_values(
-                 self.db,
-                 # C12f (T3-2): o anexo herda a Relation da LINHA DE ORIGEM
-                 # (o projeto) — Seção 4 da auditoria: nunca org inferida do
-                 # admin; sem Relation no projeto a origem fica NULL.
-                 origin_relation_id=(project or {}).get("origin_relation_id"),
-             ), _now_iso(), attachment_expiry_iso()),
-        )
-        self.db.conn.commit()
+        # Revisao da PR #113: arquivo + linha e uma unidade sob a trava
+        # compartilhada com a limpeza automatica — o unlink do job nunca
+        # acontece entre escrever os bytes e gravar a referencia.
+        with ATTACHMENT_FILE_LOCK:
+            stored_path.write_bytes(content)
+            cursor.execute(
+                f"""
+                INSERT INTO work_project_attachments (
+                    project_id, filename, stored_path, size_bytes, mime_type,
+                    uploaded_by, extraction_status, {tenancy_insert_columns()},
+                    uploaded_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', {tenancy_insert_placeholders()}, ?, ?)
+                """,
+                (project_id, safe_name, str(stored_path), size_bytes, mime_type,
+                 uploaded_by, *tenancy_insert_values(
+                     self.db,
+                     # C12f (T3-2): o anexo herda a Relation da LINHA DE ORIGEM
+                     # (o projeto) — Seção 4 da auditoria: nunca org inferida do
+                     # admin; sem Relation no projeto a origem fica NULL.
+                     origin_relation_id=(project or {}).get("origin_relation_id"),
+                 ), _now_iso(), attachment_expiry_iso()),
+            )
+            self.db.conn.commit()
         attachment_id = cursor.lastrowid
 
         if extract_text and mime_type == "application/pdf":

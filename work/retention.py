@@ -114,25 +114,59 @@ def _allowed_file_roots() -> list:
     return resolved
 
 
-def _remove_attached_files(paths) -> int:
-    """Remove arquivos fisicos sob raizes conhecidas do Work (guarda contra
-    path arbitrario mantida: nada fora de data/ ou do volume de anexos)."""
-    removed = 0
-    roots = _allowed_file_roots()
-    for raw in paths:
-        if not raw:
-            continue
+def _live_referenced_paths(conn) -> set:
+    """Caminhos apontados por linhas vivas de ``work_project_attachments``.
+
+    Consulta fresca, chamada dentro da trava de upload — serve de recheque
+    imediatamente antes do unlink (revisao da PR #113).
+    """
+    live = set()
+    cursor = conn.cursor()
+    if not _table_exists(cursor, "work_project_attachments"):
+        return live
+    for (raw,) in cursor.execute(
+        "SELECT DISTINCT stored_path FROM work_project_attachments"
+        " WHERE stored_path IS NOT NULL AND stored_path <> ''"
+    ).fetchall():
         try:
-            candidate = Path(raw).resolve()
-            if not any(
-                candidate == root or root in candidate.parents for root in roots
-            ):
-                continue
-            if candidate.is_file():
-                candidate.unlink()
-                removed += 1
+            live.add(Path(raw).resolve())
         except OSError:
             continue
+    return live
+
+
+def _remove_attached_files(paths, *, conn=None) -> int:
+    """Remove arquivos fisicos sob raizes conhecidas do Work (guarda contra
+    path arbitrario mantida: nada fora de data/ ou do volume de anexos).
+
+    Com ``conn`` (limpeza automatica), as referencias vivas sao recalculadas
+    DENTRO da trava compartilhada com o upload, imediatamente antes do
+    unlink: um upload concorrente que reutilize o caminho depois da consulta
+    de sobreviventes preserva o arquivo recem-enviado. Sem ``conn``
+    (expurgo manual) o comportamento e o de antes.
+    """
+    from work.attachments import ATTACHMENT_FILE_LOCK
+
+    removed = 0
+    roots = _allowed_file_roots()
+    with ATTACHMENT_FILE_LOCK:
+        live = _live_referenced_paths(conn) if conn is not None else set()
+        for raw in paths:
+            if not raw:
+                continue
+            try:
+                candidate = Path(raw).resolve()
+                if not any(
+                    candidate == root or root in candidate.parents for root in roots
+                ):
+                    continue
+                if candidate in live:
+                    continue
+                if candidate.is_file():
+                    candidate.unlink()
+                    removed += 1
+            except OSError:
+                continue
     return removed
 
 
@@ -399,6 +433,10 @@ def cleanup_expired_attachments(db, *, apply: bool = False) -> Dict:
     # P1 (r1): reenviar o mesmo nome no mesmo projeto REUSA o stored_path —
     # capturar as referências que SOBREVIVEM à limpeza antes de apagar; o
     # arquivo de uma linha vigente nunca sai junto com o registro expirado.
+    # P2 (revisão PR #113): esse conjunto é um instante — entre ele e o
+    # unlink um upload novo pode reutilizar o caminho. Por isso o recheque
+    # das referências acontece de novo dentro da trava, em
+    # _remove_attached_files(conn=...), logo abaixo.
     survivor_paths = {
         row[0]
         for row in cursor.execute(
@@ -418,7 +456,7 @@ def cleanup_expired_attachments(db, *, apply: bool = False) -> Dict:
         [(expired_id,) for expired_id in expired_ids],
     )
     conn.commit()
-    result["removed_files"] = _remove_attached_files(paths_to_remove)
+    result["removed_files"] = _remove_attached_files(paths_to_remove, conn=conn)
     return result
 
 
