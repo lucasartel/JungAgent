@@ -1,10 +1,27 @@
 """Persistence for scoped relationships between an agent and participants."""
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
+
+try:
+    from core.db.cognitive_ownership import explicit_flag, flag_enabled
+except ImportError:  # Same direct-file guard as core/db/knowledge_gaps.py.
+    _own_path = Path(__file__).with_name("cognitive_ownership.py")
+    _own_spec = importlib.util.spec_from_file_location(
+        "cognitive_ownership_for_relations", _own_path
+    )
+    _own_mod = importlib.util.module_from_spec(_own_spec)
+    assert _own_spec.loader is not None
+    sys.modules[_own_spec.name] = _own_mod
+    _own_spec.loader.exec_module(_own_mod)
+    explicit_flag = _own_mod.explicit_flag
+    flag_enabled = _own_mod.flag_enabled
 
 
 RELATION_STATUSES = {"active", "paused", "revoked", "archived"}
@@ -326,7 +343,9 @@ class RelationsDatabaseMixin:
             raise ValueError("flag_required")
         history_key = f"{clean_flag}_history"
         limit = max(1, int(history_limit))
-        target = bool(enabled)
+        # Entrada pela regra do gate (explicit_flag): bool("false") era
+        # True e habilitaria sem querer; string ambigua recusa.
+        target = explicit_flag(enabled, param=clean_flag, absent=False)
         with self._lock:
             cursor = self.conn.cursor()
             try:
@@ -344,7 +363,11 @@ class RelationsDatabaseMixin:
                         raise ValueError("relation_not_found")
                     scope = _json_loads(row[0])
                     metadata = _json_loads(row[1])
-                    previous = bool(scope.get(clean_flag))
+                    # Leitura pela regra do gate (flag_enabled): valor
+                    # legado "false" conta como desligado, nunca como
+                    # opt-in — bool("false") era True e o enable virava
+                    # "sem alteracao".
+                    previous = flag_enabled(scope.get(clean_flag), absent=False)
                     if previous == target:
                         return {
                             "relation": self.get_agent_relation(clean_relation_id),

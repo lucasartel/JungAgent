@@ -1,7 +1,10 @@
 """Admin cockpit for scoped agent relations."""
 from __future__ import annotations
 
+import importlib.util
 import logging
+import sys
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -10,6 +13,22 @@ from fastapi.templating import Jinja2Templates
 
 from admin_web.auth.middleware import require_org_admin
 from instance_config import AGENT_INSTANCE
+
+try:
+    from core.db.cognitive_ownership import flag_enabled
+except ImportError:  # Same direct-file guard as core/db/knowledge_gaps.py.
+    # Testes carregam esta rota isolada com o stub do conftest sem
+    # ``OpenAI``; o modulo do gate so depende de stdlib.
+    _own_root = Path(__file__).resolve().parents[2]
+    _own_path = _own_root / "core" / "db" / "cognitive_ownership.py"
+    _own_spec = importlib.util.spec_from_file_location(
+        "cognitive_ownership_for_relations_routes", _own_path
+    )
+    _own_mod = importlib.util.module_from_spec(_own_spec)
+    assert _own_spec.loader is not None
+    sys.modules[_own_spec.name] = _own_mod
+    _own_spec.loader.exec_module(_own_mod)
+    flag_enabled = _own_mod.flag_enabled
 
 router = APIRouter(prefix="/admin/relations", tags=["relations"])
 templates = Jinja2Templates(directory="admin_web/templates")
@@ -157,9 +176,11 @@ def _relation_rows(db, relations: List[Dict]) -> List[Dict]:
             view["availability_disposition"] = disposition["disposition"]
             view["availability_effective_reserve"] = round(disposition["effective_reserve"], 1)
         # Opt-in de material global (R1): visivel na mesma tabela que o resto
-        # do escopo, sem depender de leitura de JSON no template.
-        view["global_interiority"] = bool(
-            (relation.get("scope") or {}).get("global_interiority")
+        # do escopo. Leitura pela regra do gate (flag_enabled): string
+        # legada "false" mostra OFF — bool() a lia como truthy e mostrava
+        # ON sem consentimento explicito.
+        view["global_interiority"] = flag_enabled(
+            (relation.get("scope") or {}).get("global_interiority"), absent=False
         )
         rows.append(view)
     return rows

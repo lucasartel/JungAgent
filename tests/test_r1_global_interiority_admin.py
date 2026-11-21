@@ -192,8 +192,14 @@ class FakeDB:
         if not self.relation or self.relation["relation_id"] != relation_id:
             raise ValueError("relation_not_found")
         scope = dict(self.relation["scope"])
-        previous = bool(scope.get(flag))
-        if previous == bool(enabled):
+        # Mesmo predicado do nucleo: flag_enabled (regra do gate) na
+        # leitura e no alvo — string legada "false" nao e opt-in, entao
+        # enable vira mudanca de verdade. Entrada de string e recusada
+        # pelo explicit_flag do nucleo (testada no arquivo de banco
+        # real); aqui a rota so passa bool ja validado.
+        previous = relations_routes.flag_enabled(scope.get(flag), absent=False)
+        target = relations_routes.flag_enabled(enabled, absent=False)
+        if previous == target:
             return {"relation": dict(self.relation), "changed": False}
         metadata = dict(self.relation["metadata"])
         history_key = f"{flag}_history"
@@ -202,10 +208,10 @@ class FakeDB:
             "at": "2026-11-21T12:00:00Z",
             "admin": str(admin or "master"),
             "from": previous,
-            "to": bool(enabled),
+            "to": target,
         })
         metadata[history_key] = history[-max(1, int(history_limit)):]
-        scope[flag] = bool(enabled)
+        scope[flag] = target
         self.relation["scope"] = scope
         self.relation["metadata"] = metadata
         return {"relation": dict(self.relation), "changed": True}
@@ -360,6 +366,65 @@ def test_relation_rows_expose_the_flag_for_the_template():
 
     off = relations_routes._relation_rows(FakeDB(), [_relation(scope={"memory": "private"})])
     assert off[0]["global_interiority"] is False
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        # Regua do gate (explicit_flag): so True/1 afirma opt-in.
+        (True, True),
+        (1, True),
+        (False, False),
+        (0, False),
+        (None, False),
+        # Valores nao booleanos: nunca viram ON por bool() (PR #114).
+        ("false", False),
+        ("true", False),
+        ("0", False),
+        (1.0, False),
+        ([False], False),
+    ],
+)
+def test_relation_rows_reads_the_flag_with_the_gate_rule(stored, expected):
+    """A interface usa ``flag_enabled`` (regra do gate), nao ``bool()``.
+
+    Regressao da PR #114: a string legada ``"false"`` e truthy em
+    Python e a tela mostrava ON sem consentimento explicito.
+    """
+    rows = relations_routes._relation_rows(
+        FakeDB(),
+        [_relation(scope={"memory": "private", "global_interiority": stored})],
+    )
+    assert rows[0]["global_interiority"] is expected
+
+
+def test_toggle_enable_on_a_legacy_string_false_is_a_real_change():
+    """Regressao da PR #114: ``bool("false")`` era True, entao o enable
+    em valor legado era tratado como ``changed=False`` (sem alteracao)."""
+    db = FakeDB(_relation(scope={"memory": "private", "global_interiority": "false"}))
+
+    response = _toggle(db, "true")
+
+    assert response.status_code == 303
+    assert "updated" in response.url
+    scope = db.relation["scope"]
+    assert scope["global_interiority"] is True
+    assert scope["memory"] == "private"
+    history = db.relation["metadata"]["global_interiority_history"]
+    assert history[-1]["from"] is False and history[-1]["to"] is True
+
+
+def test_toggle_disable_on_a_legacy_string_false_is_a_noop():
+    """Pela regra do gate ``"false"`` ja le como desligado: desligar nao
+    grava nada nem inventa auditoria."""
+    db = FakeDB(_relation(scope={"memory": "private", "global_interiority": "false"}))
+
+    response = _toggle(db, "false")
+
+    assert response.status_code == 303
+    assert "unchanged" in response.url
+    assert db.relation["scope"]["global_interiority"] == "false", "nada e gravado"
+    assert "global_interiority_history" not in db.relation["metadata"]
 
 
 def test_template_renders_the_toggle():

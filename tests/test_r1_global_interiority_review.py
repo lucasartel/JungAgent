@@ -113,6 +113,10 @@ else:
     _oai.OpenAI = object
     sys.modules["openai"] = _oai
 
+from core.db.cognitive_ownership import (  # noqa: E402
+    explicit_flag,
+    flag_enabled,
+)
 from core.database import HybridDatabaseManager  # noqa: E402
 import core.db.relations as relations_core  # noqa: E402
 
@@ -445,3 +449,93 @@ def test_toggle_repeated_is_still_idempotent_with_a_real_db(tmp_path):
         "global_interiority_history"
     ]
     assert len(history) == 1
+
+
+# ---------------------------------------------------------------------------
+# 4) Valores nao booleanos (revisao da PR #114): interface e toggle
+#    alinhados ao explicit_flag, nunca a bool()
+# ---------------------------------------------------------------------------
+
+def _seed_legacy_scope(db, participant, value):
+    """Relation com ``scope_json`` legado gravando ``value`` cru."""
+    relation_id = _seed(db, participant)
+    db.conn.execute(
+        "UPDATE agent_relations SET scope_json = ? WHERE relation_id = ?",
+        (json.dumps({"memory": "private", "global_interiority": value}), relation_id),
+    )
+    db.conn.commit()
+    return relation_id
+
+
+def test_interface_reads_a_legacy_string_false_as_off(tmp_path):
+    """``bool("false")`` era True e a tela mostrava ON sem consentimento."""
+    db = _db(tmp_path)
+    relation_id = _seed_legacy_scope(db, "alice", "false")
+
+    rows = relations_routes._relation_rows(db, [db.get_agent_relation(relation_id)])
+
+    assert rows[0]["global_interiority"] is False
+
+
+def test_toggle_enable_on_a_legacy_string_false_writes_the_change(tmp_path):
+    """Antes: ``previous = bool("false") = True == target`` → ``changed=False``."""
+    db = _db(tmp_path)
+    relation_id = _seed_legacy_scope(db, "alice", "false")
+
+    response = _toggle_route(relation_id, "true")
+
+    assert response.status_code == 303
+    assert "updated" in response.url
+    row = _row(db, relation_id)
+    scope = json.loads(row["scope_json"])
+    assert scope["global_interiority"] is True
+    assert scope["memory"] == "private"
+    history = json.loads(row["metadata_json"])["global_interiority_history"]
+    assert history[-1]["from"] is False and history[-1]["to"] is True
+
+
+def test_toggle_disable_on_a_legacy_string_false_is_a_noop(tmp_path):
+    """Pela regra do gate ``"false"`` ja le como desligado: sem escrita."""
+    db = _db(tmp_path)
+    relation_id = _seed_legacy_scope(db, "alice", "false")
+
+    response = _toggle_route(relation_id, "false")
+
+    assert response.status_code == 303
+    assert "unchanged" in response.url
+    row = _row(db, relation_id)
+    assert json.loads(row["scope_json"])["global_interiority"] == "false"
+    assert "global_interiority_history" not in json.loads(row["metadata_json"])
+
+
+@pytest.mark.parametrize("bad_input", ["false", "true", "1"])
+def test_toggle_core_writer_refuses_a_non_boolean_enabled(tmp_path, bad_input):
+    """Entrada nao booleana recusa — ``bool("false")`` era True (habilitava)."""
+    db = _db(tmp_path)
+    relation_id = _seed(db, "alice")
+
+    with pytest.raises(ValueError, match="ambiguous_flag"):
+        db.set_relation_scope_flag(
+            relation_id=relation_id,
+            flag="global_interiority",
+            enabled=bad_input,
+            admin="master-1",
+        )
+
+    assert "global_interiority" not in json.loads(_row(db, relation_id)["scope_json"])
+
+
+def test_flag_enabled_is_the_non_raising_face_of_the_gate_rule():
+    """``flag_enabled`` faz o mesmo julgamento do ``explicit_flag``."""
+    # Afirma: so True/1 (coerente com json_extract(...) = 1 do SQL).
+    assert flag_enabled(True, absent=False) is True
+    assert flag_enabled(1, absent=False) is True
+    # Nao afirma: False/0/ausencia.
+    assert flag_enabled(False, absent=False) is False
+    assert flag_enabled(0, absent=False) is False
+    assert flag_enabled(None, absent=False) is False
+    # Ambiguo: o gate levanta; a leitura falha fechada para absent.
+    for value in ("false", "true", "0", "1", 1.0, [False]):
+        with pytest.raises(ValueError, match="ambiguous_flag"):
+            explicit_flag(value, param="global_interiority", absent=False)
+        assert flag_enabled(value, absent=False) is False

@@ -398,6 +398,29 @@ def explicit_flag(value: Any, *, param: str, absent: bool) -> bool:
     raise ValueError(f"ambiguous_flag:{param}")
 
 
+def flag_enabled(value: Any, *, absent: bool) -> bool:
+    """Leitura booleana de flag alinhada ao ``explicit_flag``, sem levantar.
+
+    Revisao da PR #114: a interface e a comparacao do toggle usavam
+    ``bool()`` — a string legada ``"false"`` e truthy em Python, entao a
+    tela mostrava ON e um pedido de habilitacao era tratado como sem
+    alteracao, embora o gate recuse o valor como ambiguo. Mesma regua do
+    gate (``explicit_flag``): ``True``/``1`` → ligado; ``False``/``0`` →
+    desligado; ``None`` e qualquer outro tipo (``"false"``, ``"0"``,
+    listas) → ``absent`` — o lado seguro da flag. Em opt-ins
+    (``absent=False``, como ``global_interiority``) string legada
+    ``"false"``/``"true"`` e qualquer lixo leem como desligado, nunca
+    como opt-in: o gate recusa o ambiguo com ``ValueError``; aqui a
+    leitura falha fechada em vez de levantar, para nao derrubar a
+    pagina nem travar o toggle em dado legado. Leitores de UI e de
+    idempotencia usam este; admissao continua em ``explicit_flag``.
+    """
+    try:
+        return explicit_flag(value, param="flag", absent=absent)
+    except ValueError:
+        return absent
+
+
 def assess_global_admission(
     *,
     agent_instance: str,
