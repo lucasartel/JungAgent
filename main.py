@@ -656,9 +656,13 @@ async def health_check():
     }
 
 @app.get("/test/proactive")
-async def test_proactive():
+async def test_proactive(admin: Dict = Depends(require_master)):
     """
     ENDPOINT DE DIAGNÓSTICO DO SISTEMA PROATIVO
+
+    Requer sessão de administrador master (cookie session_id); sem sessão
+    válida a rota responde 401/403 e continua removida quando
+    ENABLE_UNSAFE_ADMIN_ENDPOINTS está desligada.
 
     Acesse: https://seu-railway-url/test/proactive
 
@@ -809,9 +813,13 @@ async def test_proactive():
         }
 
 @app.get("/test/consent")
-async def test_consent():
+async def test_consent(admin: Dict = Depends(require_master)):
     """
     ENDPOINT DE DIAGNÓSTICO DO SISTEMA DE CONSENTIMENTO
+
+    Requer sessão de administrador master (cookie session_id); sem sessão
+    válida a rota responde 401/403 e continua removida quando
+    ENABLE_UNSAFE_ADMIN_ENDPOINTS está desligada.
 
     Acesse: https://seu-railway-url/test/consent
 
