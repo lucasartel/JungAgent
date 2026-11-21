@@ -156,6 +156,11 @@ def _relation_rows(db, relations: List[Dict]) -> List[Dict]:
             })
             view["availability_disposition"] = disposition["disposition"]
             view["availability_effective_reserve"] = round(disposition["effective_reserve"], 1)
+        # Opt-in de material global (R1): visivel na mesma tabela que o resto
+        # do escopo, sem depender de leitura de JSON no template.
+        view["global_interiority"] = bool(
+            (relation.get("scope") or {}).get("global_interiority")
+        )
         rows.append(view)
     return rows
 
@@ -242,6 +247,12 @@ async def create_or_update_relation(
     if memory_scope not in _ALLOWED_SCOPES:
         raise HTTPException(400, "Invalid memory scope")
     try:
+        # Preservar escopo E auditoria ja gravados (R1): gravar so ``memory``
+        # apagaria ``global_interiority`` e substituir ``metadata`` apagaria
+        # ``global_interiority_history``. A fusao acontece dentro da
+        # gravacao (``merge_existing``: leitura sob o lock + CAS) — nunca
+        # contra a leitura desta requisicao. Aqui vai so a intencao deste
+        # formulario: o ``memory`` escolhido e a fonte do cadastro.
         db.register_agent_relation(
             agent_instance=AGENT_INSTANCE, org_id=target_org,
             participant_user_id=participant_user_id.strip(),
@@ -249,6 +260,7 @@ async def create_or_update_relation(
             status="active", consent_status=(consent_status or "pending").strip().lower(),
             scope={"memory": memory_scope},
             metadata={"source": "admin_relations_cockpit"},
+            merge_existing=True,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -268,16 +280,62 @@ async def update_relation_state(
         raise HTTPException(404, "Relation not found")
     _ensure_access(admin, relation)
     try:
+        # ``merge_existing`` sem escopo/metadados da requisicao: a rota
+        # altera so status/consentimento, e o que ja esta gravado (chaves de
+        # escopo, auditoria do opt-in) fica intacto — sem copia stale vinda
+        # da leitura la de cima (R1).
         db.register_agent_relation(
             agent_instance=relation["agent_instance"], org_id=relation.get("org_id"),
             participant_user_id=relation["participant_user_id"],
             relation_type=relation.get("relation_type") or "participant",
             role=relation.get("role"), status=status, consent_status=consent_status,
-            scope=relation.get("scope") or {},
             cadence_baseline_hours=relation.get("cadence_baseline_hours"),
             last_interaction_at=relation.get("last_interaction_at"),
-            metadata=relation.get("metadata") or {},
+            merge_existing=True,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return RedirectResponse("/admin/relations?success=Relation state updated", status_code=303)
+
+
+@router.post("/{relation_id}/global-interiority")
+async def update_global_interiority(
+    relation_id: str,
+    admin: Dict = Depends(require_org_admin),
+    enabled: str = Form(...),
+):
+    """Gestao visivel e auditavel do opt-in ``global_interiority`` (R1).
+
+    O campo ja e consumido pelos gates de admissao global
+    (``assess_global_admission``) mas nao tinha superficie de escrita: sem
+    isto o opt-in so existia como SQL manual. A rota valida e autoriza
+    (``true``/``false`` apenas — mesma disciplina do ``explicit_flag`` dos
+    gates, nada de string ambigua lida como consentimento); a gravacao e do
+    nucleo: ``set_relation_scope_flag`` escreve so escopo/metadados sob CAS
+    (``consented_at``/``revoked_at`` intactos) e registra quem mudou, quando
+    e de qual valor, no ``metadata`` da Relation.
+    """
+    if enabled not in {"true", "false"}:
+        raise HTTPException(400, "Invalid global_interiority value")
+
+    db = get_db()
+    relation = db.get_agent_relation(relation_id)
+    if not relation:
+        raise HTTPException(404, "Relation not found")
+    _ensure_access(admin, relation)
+
+    try:
+        result = db.set_relation_scope_flag(
+            relation_id=relation_id, flag="global_interiority",
+            enabled=enabled == "true",
+            admin=str(admin.get("admin_id") or admin.get("email") or "master"),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not result["changed"]:
+        return RedirectResponse(
+            "/admin/relations?success=Global interiority unchanged", status_code=303
+        )
+    return RedirectResponse(
+        "/admin/relations?success=Global interiority updated", status_code=303
+    )

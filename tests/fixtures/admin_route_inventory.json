@@ -644,7 +644,7 @@
     "path": "",
     "full_path": "/admin/relations",
     "endpoint": "relations_dashboard",
-    "line": 181,
+    "line": 186,
     "migration_bucket": "relations_routes"
   },
   {
@@ -653,7 +653,7 @@
     "path": "/reconciliation",
     "full_path": "/admin/relations/reconciliation",
     "endpoint": "reconciliation_dashboard",
-    "line": 188,
+    "line": 193,
     "migration_bucket": "relations_routes"
   },
   {
@@ -662,7 +662,7 @@
     "path": "/reconciliation",
     "full_path": "/admin/relations/reconciliation",
     "endpoint": "record_reconciliation_decision",
-    "line": 202,
+    "line": 207,
     "migration_bucket": "relations_routes"
   },
   {
@@ -671,7 +671,7 @@
     "path": "",
     "full_path": "/admin/relations",
     "endpoint": "create_or_update_relation",
-    "line": 226,
+    "line": 231,
     "migration_bucket": "relations_routes"
   },
   {
@@ -680,7 +680,16 @@
     "path": "/{relation_id}/state",
     "full_path": "/admin/relations/{relation_id}/state",
     "endpoint": "update_relation_state",
-    "line": 259,
+    "line": 271,
+    "migration_bucket": "relations_routes"
+  },
+  {
+    "module": "admin_web/routes/relations_routes.py",
+    "method": "POST",
+    "path": "/{relation_id}/global-interiority",
+    "full_path": "/admin/relations/{relation_id}/global-interiority",
+    "endpoint": "update_global_interiority",
+    "line": 302,
     "migration_bucket": "relations_routes"
   },
   {
