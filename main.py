@@ -335,6 +335,12 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(knowledge_unit_index_scheduler())
     logger.info("✅ Job de indexação de unidades (R1c-1) agendado!")
 
+    # Ciclo de vida dos anexos Work (C12g): expiração pelo TTL já gravado no
+    # upload, em loop, com auditoria de órfãos sem apagar arquivo.
+    from work.retention import attachment_retention_scheduler
+    asyncio.create_task(attachment_retention_scheduler(bot_state.db))
+    logger.info("✅ Job de ciclo de vida dos anexos (C12g) agendado!")
+
     async def will_pulse_scheduler():
         """Mede pressão psíquica e aciona proatividade endógena quando houver transbordamento."""
         from instance_config import ADMIN_USER_ID

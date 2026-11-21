@@ -13,11 +13,14 @@ propria nunca e removida por um expurgo posterior.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 PURGE_RELATION_COLUMN = "origin_relation_id"
 
@@ -475,3 +478,70 @@ def reconcile_attachment_files(db, *, apply: bool = False) -> Dict:
                 continue
         result["removed_orphans"] = removed
     return result
+
+
+def run_attachment_lifecycle(db) -> Dict:
+    """Um ciclo do vida dos anexos (C12g): expiracao aplicada + auditoria.
+
+    - **expiracao aplicada**: ``cleanup_expired_attachments(apply=True)``. O
+      gatilho ja foi decidido no upload, quando ``expires_at`` recebeu o TTL
+      de ``WORK_ATTACHMENT_TTL_DAYS`` — vencer a prazo e politica existente,
+      nao uma decisao nova de apagamento;
+    - **auditoria sem apagar**: ``reconcile_attachment_files(apply=False)``
+      reporta linhas sem arquivo e arquivos sem linha. Apagar arquivo nao
+      referenciado continua sendo acionamento manual
+      (``scripts/cleanup_work_attachments.py --apply``), porque um arquivo
+      orfao nao prova que ninguem o use fora desta tabela.
+
+    Banco sem ``work_project_attachments`` ou sem a coluna de TTL: os dois
+    helpers reportam e nada acontece (mesmo contrato de antes).
+    """
+    expired = cleanup_expired_attachments(db, apply=True)
+    audit = reconcile_attachment_files(db, apply=False)
+    return {
+        "expired_rows": len(expired.get("expired") or []),
+        "removed_files": int(expired.get("removed_files") or 0),
+        "missing_files": len(audit.get("missing_files") or []),
+        "orphan_files": len(audit.get("orphan_files") or []),
+        "audited_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+async def attachment_retention_scheduler(
+    db,
+    *,
+    warmup_seconds: float = 300,
+    interval_seconds: float = 21600,
+    sleep=None,
+    to_thread=None,
+) -> None:
+    """Roda o ciclo de vida dos anexos em loop (C12g).
+
+    Mesmo desenho dos demais jobs do ``lifespan`` do ``main.py``: espera o
+    aquecimento, executa cada rodada em thread (I/O de arquivo) e nunca derruba
+    o loop por erro de uma rodada. ``sleep`` e ``to_thread`` sao injetaveis
+    para o teste nao precisar de relogio real.
+    """
+    import asyncio
+
+    _sleep = asyncio.sleep if sleep is None else sleep
+    _to_thread = asyncio.to_thread if to_thread is None else to_thread
+
+    logger.info(
+        "⏳ [ANEXOS] Aguardando %ss antes da primeira rodada do ciclo de vida...",
+        warmup_seconds,
+    )
+    await _sleep(warmup_seconds)
+
+    while True:
+        try:
+            result = await _to_thread(run_attachment_lifecycle, db)
+            if any(
+                result.get(key)
+                for key in ("expired_rows", "removed_files", "missing_files", "orphan_files")
+            ):
+                logger.info("🗂️ [ANEXOS] Ciclo de vida: %s", result)
+        except Exception as exc:  # noqa: BLE001 — o loop sobrevive a uma rodada
+            logger.error("❌ Erro no ciclo de vida dos anexos: %s", exc)
+
+        await _sleep(interval_seconds)
