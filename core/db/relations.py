@@ -1,10 +1,27 @@
 """Persistence for scoped relationships between an agent and participants."""
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
+
+try:
+    from core.db.cognitive_ownership import explicit_flag, flag_enabled
+except ImportError:  # Same direct-file guard as core/db/knowledge_gaps.py.
+    _own_path = Path(__file__).with_name("cognitive_ownership.py")
+    _own_spec = importlib.util.spec_from_file_location(
+        "cognitive_ownership_for_relations", _own_path
+    )
+    _own_mod = importlib.util.module_from_spec(_own_spec)
+    assert _own_spec.loader is not None
+    sys.modules[_own_spec.name] = _own_mod
+    _own_spec.loader.exec_module(_own_mod)
+    explicit_flag = _own_mod.explicit_flag
+    flag_enabled = _own_mod.flag_enabled
 
 
 RELATION_STATUSES = {"active", "paused", "revoked", "archived"}
@@ -148,8 +165,18 @@ class RelationsDatabaseMixin:
         cadence_baseline_hours: Optional[float] = None,
         last_interaction_at: Optional[str] = None,
         metadata: Optional[Mapping[str, Any]] = None,
+        merge_existing: bool = False,
     ) -> str:
-        """Create or update the relation for an instance/participant pair."""
+        """Create or update the relation for an instance/participant pair.
+
+        Com ``merge_existing=True`` a fusao de ``scope``/``metadata`` com o
+        que ja esta gravado acontece AQUI, dentro da gravacao (leitura sob o
+        lock + CAS), nunca contra uma leitura stale feita pela requisicao:
+        o ``UPDATE`` so grava se o par ``scope_json``/``metadata_json`` lido
+        ainda for o vigente, e em corrida a fusao e refeita contra o estado
+        novo (maximo 3 tentativas, ``relation_merge_conflict``). Uma escrita
+        concorrente nunca e sobrescrita; a rota passa apenas as chaves da
+        propria intencao (ex.: ``memory`` do cockpit, sua fonte)."""
         clean_instance = (agent_instance or "").strip()
         clean_participant = (participant_user_id or "").strip()
         if not clean_instance:
@@ -172,8 +199,7 @@ class RelationsDatabaseMixin:
 
         with self._lock:
             cursor = self.conn.cursor()
-            cursor.execute(
-                """
+            statement = """
                 INSERT INTO agent_relations (
                     relation_id, agent_instance, org_id, participant_user_id,
                     relation_type, role, status, consent_status, consented_at,
@@ -199,8 +225,40 @@ class RelationsDatabaseMixin:
                     ),
                     metadata_json = excluded.metadata_json,
                     updated_at = excluded.updated_at
-                """,
-                (
+            """
+            if merge_existing:
+                # CAS: so grava se o par lido ainda for o vigente (mesma
+                # disciplina de review_knowledge_unit na PR #104).
+                statement += """
+                    WHERE agent_relations.scope_json = ?
+                      AND agent_relations.metadata_json = ?
+                """
+            for _attempt in range(3):
+                expected_scope: Optional[str] = None
+                expected_metadata: Optional[str] = None
+                if merge_existing:
+                    cursor.execute(
+                        """
+                        SELECT scope_json, metadata_json
+                        FROM agent_relations
+                        WHERE agent_instance = ? AND participant_user_id = ?
+                        """,
+                        (clean_instance, clean_participant),
+                    )
+                    current = cursor.fetchone()
+                    # O que a rota pediu vence; o resto do que esta gravado
+                    # (opt-in, auditoria) entra junto — na leitura vigente.
+                    write_scope = {**(_json_loads(current[0]) if current else {}), **(scope or {})}
+                    write_metadata = {
+                        **(_json_loads(current[1]) if current else {}),
+                        **(metadata or {}),
+                    }
+                    expected_scope = str(current[0]) if current else "{}"
+                    expected_metadata = str(current[1]) if current else "{}"
+                else:
+                    write_scope = dict(scope or {})
+                    write_metadata = dict(metadata or {})
+                params: List[Any] = [
                     relation_id,
                     clean_instance,
                     (org_id or "").strip() or None,
@@ -211,15 +269,26 @@ class RelationsDatabaseMixin:
                     clean_consent,
                     clean_consented_at,
                     clean_revoked_at,
-                    _json_dumps(scope or {}),
+                    _json_dumps(write_scope),
                     cadence_baseline_hours,
                     last_interaction_at,
-                    _json_dumps(metadata or {}),
+                    _json_dumps(write_metadata),
                     now,
                     now,
-                ),
-            )
-            self.conn.commit()
+                ]
+                if merge_existing:
+                    params.extend([expected_scope, expected_metadata])
+                cursor.execute(statement, tuple(params))
+                if cursor.rowcount:
+                    self.conn.commit()
+                    break
+                # Corrida: outra escrita mudou escopo/metadados entre a
+                # leitura e a gravacao. Fecha a transacao vazia e refaz a
+                # fusao contra o estado novo — nada do escritor concorrente
+                # e sobrescrito.
+                self.conn.rollback()
+            else:
+                raise ValueError("relation_merge_conflict")
             cursor.execute(
                 """
                 SELECT relation_id
@@ -237,6 +306,112 @@ class RelationsDatabaseMixin:
             )
             self.conn.commit()
             return resolved_relation_id
+
+    def set_relation_scope_flag(
+        self,
+        *,
+        relation_id: str,
+        flag: str,
+        enabled: bool,
+        admin: str,
+        history_limit: int = 10,
+    ) -> Dict[str, Any]:
+        """Alterna uma flag booleana de ``scope`` com auditoria atomica.
+
+        Escritor do opt-in ``global_interiority`` (R1). Leitura, fusao e
+        gravacao seguem a mesma disciplina de CAS das revisoes aceitas na
+        PR #104: o ``UPDATE`` so grava se ``scope_json`` e ``metadata_json``
+        ainda forem os lidos; em corrida o metodo relê e reaplica (maximo 3
+        tentativas, ``relation_scope_conflict``) — uma escrita concorrente
+        nunca e sobrescrita.
+
+        So ``scope_json``, ``metadata_json`` e ``updated_at`` sao escritos:
+        ``consented_at``, ``revoked_at``, status e consentimento ficam como
+        estao — alternar o opt-in nunca e uma mudanca de consentimento.
+
+        Idempotente: flag ja no valor pedido devolve ``changed=False`` sem
+        gravar nada. Cada mudanca real entra em ``metadata[<flag>_history]``
+        (limite ``history_limit``), calculada sobre a leitura vigente, entao
+        alternancias concorrentes nao se apagam. Devolve
+        ``{"relation": ..., "changed": bool}``.
+        """
+        clean_relation_id = (relation_id or "").strip()
+        if not clean_relation_id:
+            raise ValueError("relation_id_required")
+        clean_flag = (flag or "").strip()
+        if not clean_flag:
+            raise ValueError("flag_required")
+        history_key = f"{clean_flag}_history"
+        limit = max(1, int(history_limit))
+        # Entrada pela regra do gate (explicit_flag): bool("false") era
+        # True e habilitaria sem querer; string ambigua recusa.
+        target = explicit_flag(enabled, param=clean_flag, absent=False)
+        with self._lock:
+            cursor = self.conn.cursor()
+            try:
+                for _attempt in range(3):
+                    cursor.execute(
+                        """
+                        SELECT scope_json, metadata_json
+                        FROM agent_relations
+                        WHERE relation_id = ?
+                        """,
+                        (clean_relation_id,),
+                    )
+                    row = cursor.fetchone()
+                    if row is None:
+                        raise ValueError("relation_not_found")
+                    scope = _json_loads(row[0])
+                    metadata = _json_loads(row[1])
+                    # Leitura pela regra do gate (flag_enabled): valor
+                    # legado "false" conta como desligado, nunca como
+                    # opt-in — bool("false") era True e o enable virava
+                    # "sem alteracao".
+                    previous = flag_enabled(scope.get(clean_flag), absent=False)
+                    if previous == target:
+                        return {
+                            "relation": self.get_agent_relation(clean_relation_id),
+                            "changed": False,
+                        }
+                    now = _now_iso()
+                    scope[clean_flag] = target
+                    history = list(metadata.get(history_key) or [])
+                    history.append({
+                        "at": now + "Z",
+                        "admin": str(admin or "master"),
+                        "from": previous,
+                        "to": target,
+                    })
+                    metadata[history_key] = history[-limit:]
+                    cursor.execute(
+                        """
+                        UPDATE agent_relations
+                        SET scope_json = ?, metadata_json = ?, updated_at = ?
+                        WHERE relation_id = ? AND scope_json = ? AND metadata_json = ?
+                        """,
+                        (
+                            _json_dumps(scope),
+                            _json_dumps(metadata),
+                            now,
+                            clean_relation_id,
+                            row[0],
+                            row[1],
+                        ),
+                    )
+                    if cursor.rowcount == 1:
+                        self.conn.commit()
+                        return {
+                            "relation": self.get_agent_relation(clean_relation_id),
+                            "changed": True,
+                        }
+                    # Corrida: a escrita concorrente venceu entre o SELECT e
+                    # o UPDATE. Fecha a transacao vazia e relê/reaplica contra
+                    # o estado novo — nada do outro escritor e perdido.
+                    self.conn.rollback()
+                raise ValueError("relation_scope_conflict")
+            except Exception:
+                self.conn.rollback()
+                raise
 
     def resolve_relation_id(
         self,
