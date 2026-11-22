@@ -198,11 +198,14 @@ class TestIsolation:
 
 class TestProvenanceQuarantine:
     def test_gap_source_kinds_closed(self):
+        # R1a/Complemento R1: ``work_reading`` entra na taxonomia junto com o
+        # produtor real (questoes candidatas da leitura do Work) —
+        # ``PUBLIC_SOURCE_KINDS`` (F-5a) ja o tratava como fonte publica.
         assert KNOWLEDGE_GAP_SOURCE_KINDS == frozenset(
-            {"conversation", "world", "goal_manager"}
+            {"conversation", "world", "goal_manager", "work_reading"}
         )
 
-    @pytest.mark.parametrize("kind", ["conversation", "world", "goal_manager"])
+    @pytest.mark.parametrize("kind", ["conversation", "world", "goal_manager", "work_reading"])
     def test_known_kinds_accepted(self, kind):
         assert validate_gap_source_kind(kind) == (kind, None)
 
