@@ -24,6 +24,7 @@ Versão: 4.0.1 - HÍBRIDO PREMIUM + PROATIVO (CORRIGIDO)
 import os
 import logging
 import asyncio
+import functools
 from io import BytesIO
 from datetime import datetime, timedelta
 from typing import Optional
@@ -49,6 +50,7 @@ from jung_core import (
     format_archetype_info
 )
 from instance_config import ADMIN_USER_ID as ACTIVE_CONSCIOUSNESS_ADMIN_USER_ID
+from core.db.relations import is_relation_scope_sentinel
 
 # ✅ IMPORTAR SISTEMA PROATIVO AVANÇADO
 from jung_proactive_advanced import ProactiveAdvancedSystem
@@ -72,6 +74,94 @@ async def _reply_instance_private(update: Update):
         await update.message.reply_text(
             "Esta instancia do JungAgent e privada e atende apenas o admin configurado."
         )
+
+
+# ============================================================
+# REVOGACAO GRACIOSA NA CAMADA DE BOT (C12g PR-B)
+# ============================================================
+
+_SCOPE_REFUSAL_TEXT = (
+    "🔒 Este vínculo foi encerrado ou o consentimento foi revogado. "
+    "Não posso mais acessar nem produzir conteúdo desta relação."
+)
+
+
+async def _reply_scope_refusal(
+    update: Update,
+    *,
+    handler: str,
+    sentinel_text: str,
+    detail: str = "",
+) -> None:
+    """Resposta graciosa de recusa de escopo/consentimento da Relation.
+
+    A sentinela e registrada com contexto (sem expor conteudo privado) e o
+    usuario recebe a mensagem canonica de vinculo encerrado. Falha no envio
+    da resposta e logada com contexto, nunca silenciada.
+    """
+    suffix = f" | {detail}" if detail else ""
+    logger.warning(
+        "🔒 %s recusado pelo escopo/consentimento da Relation%s: sentinel=%s",
+        handler,
+        suffix,
+        sentinel_text,
+    )
+    message = getattr(update, "message", None) or getattr(update, "effective_message", None)
+    if message is None:
+        return
+    try:
+        await message.reply_text(_SCOPE_REFUSAL_TEXT)
+    except Exception:
+        logger.error(
+            "Falha ao enviar a resposta de recusa de escopo em %s", handler, exc_info=True
+        )
+
+
+def _graceful_scope_errors(handler):
+    """Decorator de handler: sentinela de escopo vira resposta graciosa.
+
+    Uma recusa de escopo/consentimento (Relation revogada, consentimento
+    retirado, arquivo fora de escopo) nao e erro de aplicacao: responde com
+    o aviso canonico de vinculo encerrado. Qualquer outro erro segue o
+    comportamento original do handler.
+    """
+
+    @functools.wraps(handler)
+    async def guarded(update, context):
+        try:
+            return await handler(update, context)
+        except ValueError as err:
+            if not is_relation_scope_sentinel(err):
+                raise
+            await _reply_scope_refusal(
+                update, handler=handler.__name__, sentinel_text=str(err)
+            )
+            return None
+
+    return guarded
+
+
+def _detect_and_save_patterns_quietly(user_id: str) -> None:
+    """Deteccao de padroes em background com recusa de escopo graciosa.
+
+    Sentinela de escopo/consentimento e recusa prevista (Relation revogada):
+    registra em warning e adia, sem ruido de excecao na thread do executor.
+    Qualquer outra falha continua logada com contexto — nunca silenciada.
+    """
+    try:
+        bot_state.db.detect_and_save_patterns(user_id)
+    except ValueError as err:
+        if is_relation_scope_sentinel(err):
+            logger.warning(
+                "🔒 Deteccao de padroes adiada pelo escopo/consentimento da Relation: "
+                "user_id=%s sentinel=%s",
+                user_id[:8],
+                err,
+            )
+            return
+        logger.error("Falha na deteccao de padroes: %s", err, exc_info=True)
+    except Exception:
+        logger.error("Falha na deteccao de padroes", exc_info=True)
 
 # ============================================================
 # CONFIGURAÇÃO DE LOGGING
@@ -508,6 +598,7 @@ async def _reply_with_audio_response(update: Update, response_text: str) -> bool
 # COMANDOS DO BOT
 # ============================================================
 
+@_graceful_scope_errors
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para /start - entrada privada da instancia."""
 
@@ -653,6 +744,7 @@ Digite NÃO se preferir não continuar
 
 
 
+@_graceful_scope_errors
 async def meu_perfil_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para /meu_perfil — envia o profile.md do usuário"""
     import os
@@ -669,7 +761,12 @@ async def meu_perfil_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     try:
         file_instance, file_relation = relation_file_scope(bot_state.db, user_id)
-    except ValueError:
+    except ValueError as scope_err:
+        if is_relation_scope_sentinel(scope_err):
+            await _reply_scope_refusal(
+                update, handler="meu_perfil_command", sentinel_text=str(scope_err)
+            )
+            return
         await update.message.reply_text("Perfil indisponivel para esta relacao.")
         return
     profile_path = str(participant_dir(
@@ -699,6 +796,7 @@ async def meu_perfil_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 
+@_graceful_scope_errors
 async def minha_jornada_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para /minha_jornada - Mostra evolução do vínculo (Substitui /desenvolvimento e /stats para usuários comuns)"""
 
@@ -803,6 +901,17 @@ async def minha_jornada_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(result, parse_mode='Markdown')
         logger.info(f"Desenvolvimento exibido para {user.first_name}")
 
+    except ValueError as scope_err:
+        if is_relation_scope_sentinel(scope_err):
+            await _reply_scope_refusal(
+                update, handler="minha_jornada_command", sentinel_text=str(scope_err)
+            )
+            return
+        logger.error(f"Erro ao gerar desenvolvimento: {scope_err}", exc_info=True)
+        await update.message.reply_text(
+            "❌ *Erro ao gerar análise de desenvolvimento*\n\n"
+            "Tente novamente mais tarde."
+        )
     except Exception as e:
         logger.error(f"Erro ao gerar desenvolvimento: {e}")
         await update.message.reply_text(
@@ -810,6 +919,7 @@ async def minha_jornada_command(update: Update, context: ContextTypes.DEFAULT_TY
             "Tente novamente mais tarde."
         )
 
+@_graceful_scope_errors
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para /stats - estatísticas completas (Admin Only)"""
 
@@ -889,6 +999,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Comando /stats de {user.first_name}")
 
 
+@_graceful_scope_errors
 async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para /reset - reinicia conversação (Admin-only)"""
 
@@ -924,6 +1035,7 @@ def _clear_work_job_state(context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('pending_work_original_text', None)
 
 
+@_graceful_scope_errors
 async def job_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para /job - cria um brief de trabalho para o modulo Work."""
     user = update.effective_user
@@ -984,6 +1096,7 @@ async def job_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # HANDLER DE MENSAGENS
 # ============================================================
 
+@_graceful_scope_errors
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler principal de mensagens de texto"""
 
@@ -1521,7 +1634,7 @@ O que você decide?
         # Detectar padrões periodicamente (em background para não bloquear)
         if bot_state.total_messages_processed % 10 == 0:
             loop = asyncio.get_event_loop()
-            loop.run_in_executor(None, bot_state.db.detect_and_save_patterns, user_id)
+            loop.run_in_executor(None, _detect_and_save_patterns_quietly, user_id)
 
         bot_state.total_messages_processed += 1
 
@@ -1539,31 +1652,18 @@ O que você decide?
 
     except ValueError as scope_err:
         sentinel_text = str(scope_err)
-        if not sentinel_text.startswith(
-            (
-                "relation_not_eligible",
-                "consent_gate_unavailable_for_relation_scope",
-                "relation_scope_required_for_production",
-                "relation_scope_required_for_conversation",
-                "relation_not_eligible_for_consolidation",
-                "relation_file_scope_required",
-                "relation_scope_required_for_consolidation",
-            )
-        ):
+        if not is_relation_scope_sentinel(scope_err):
             logger.error(f"❌ Erro ao processar mensagem: {scope_err}", exc_info=True)
             await update.message.reply_text(
                 "😔 Desculpe, ocorreu um erro ao processar sua mensagem.\n"
                 "Pode tentar novamente?"
             )
         else:
-            logger.warning(
-                "🔒 Conversa recusada pelo escopo/consentimento da Relation: user_id=%s sentinel=%s",
-                user_id[:8],
-                sentinel_text,
-            )
-            await update.message.reply_text(
-                "🔒 Este vínculo foi encerrado ou o consentimento foi revogado. "
-                "Não posso mais acessar nem produzir conteúdo desta relação."
+            await _reply_scope_refusal(
+                update,
+                handler="handle_message",
+                sentinel_text=sentinel_text,
+                detail=f"user_id={user_id[:8]}",
             )
     except Exception as e:
         logger.error(f"❌ Erro ao processar mensagem: {e}", exc_info=True)
