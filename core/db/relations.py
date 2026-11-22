@@ -75,6 +75,34 @@ def require_eligible_relation(db: Any, relation_id: str) -> Dict[str, Any]:
     return assert_relation_eligible(relation)
 
 
+# Familias fechadas de sentinela de recusa de escopo/consentimento de
+# Relation (C12g). Cobrem os sentinelas emitidos por ``core.db.relations``,
+# ``core.db.relation_scope``, ``core.db.conversations``,
+# ``engines.participant_files``, ``mem0_memory_adapter`` e os leitores de
+# identidade/psicometria/Theory of Mind (``relation_required_for_*``).
+SCOPE_SENTINEL_PREFIXES = (
+    "relation_not_eligible",
+    "relation_scope_required",
+    "relation_scope_unavailable",
+    "relation_required_for_",
+    "relation_file_",
+    "consent_gate_unavailable_for_relation_scope",
+)
+
+
+def is_relation_scope_sentinel(error: Any) -> bool:
+    """True quando o erro e uma sentinela canonica de escopo/consentimento.
+
+    Aceita a propria excecao ou o texto da sentinela. Entradas invalidas
+    (``invalid_participant_file_scope``) e erros de dominio (por exemplo
+    ``question_state_*``) ficam fora: so as familias de
+    ``SCOPE_SENTINEL_PREFIXES`` sao recusa de escopo, nunca erro generico
+    de aplicacao nem permissao concedida por engano.
+    """
+    text = error if isinstance(error, str) else str(error)
+    return text.startswith(SCOPE_SENTINEL_PREFIXES)
+
+
 def _json_dumps(value: Mapping[str, Any]) -> str:
     return json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
 
