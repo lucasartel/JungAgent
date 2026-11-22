@@ -28,19 +28,6 @@ import types
 
 import pytest
 
-_openai_stub = sys.modules.get("openai") or types.ModuleType("openai")
-if not hasattr(_openai_stub, "OpenAI"):
-    _openai_stub.OpenAI = object
-sys.modules["openai"] = _openai_stub
-
-from core.cognitive_context import (  # noqa: E402
-    CognitiveContextAssembler,
-    CognitiveContextContribution,
-    CognitiveContextScope,
-)
-from core.db.relations import is_relation_scope_sentinel  # noqa: E402
-from core.rumination_interiority import global_rumination_influence  # noqa: E402
-
 INSTANCE_A = "c12h-instance-a"
 INSTANCE_B = "c12h-instance-b"
 USER_A = "c12h-user-a"
@@ -74,8 +61,37 @@ _USER_FACTS_V2_DDL = """
 """
 
 
+def _ensure_openai_importable(monkeypatch) -> None:
+    """Deixa ``openai.OpenAI`` importavel apenas na janela do teste.
+
+    Os modulos ``core.*`` fazem ``from openai import OpenAI`` no proprio import
+    e o ``conftest`` deixa um stub VAZIO de ``openai`` em ``sys.modules``. O
+    ``monkeypatch`` entra com o atributo (ou com um stub minimo, quando o
+    pacote real nao esta disponivel) e devolve o estado anterior ao fim do
+    teste: nada vaza para os demais testes da sessao — inclusive para os que
+    importam o ``openai`` real.
+    """
+    module = sys.modules.get("openai")
+    if module is None:
+        try:
+            import openai
+        except ImportError:
+            module = types.ModuleType("openai")
+        else:
+            module = openai
+        monkeypatch.setitem(sys.modules, "openai", module)
+    if not hasattr(module, "OpenAI"):
+        monkeypatch.setattr(module, "OpenAI", object, raising=False)
+
+
 @pytest.fixture()
-def db(tmp_path, monkeypatch):
+def openai_stub(monkeypatch):
+    """Janela de import de ``openai`` para os modulos ``core.*`` deste corte."""
+    _ensure_openai_importable(monkeypatch)
+
+
+@pytest.fixture()
+def db(tmp_path, monkeypatch, openai_stub):
     """Fachada REAL de producao sobre um banco novo, na instancia A."""
     from core.config import Config
 
@@ -198,6 +214,12 @@ def _fragment_visibility(database, scope):
 
 
 def test_duas_relations_com_material_distinto_nao_cruzam_contexto(db, admin_id):
+    from core.cognitive_context import (
+        CognitiveContextAssembler,
+        CognitiveContextContribution,
+        CognitiveContextScope,
+    )
+
     rel_a = _register(db, instance=INSTANCE_A, user=USER_A)
     rel_b = _register(db, instance=INSTANCE_A, user=USER_B)
     _seed_fact(db, instance=INSTANCE_A, user=USER_A, relation_id=rel_a, marker=MARKER_A)
@@ -265,6 +287,13 @@ def test_duas_relations_com_material_distinto_nao_cruzam_contexto(db, admin_id):
 
 
 def test_influencia_global_e_text_free_auditavel_e_recalculada_na_revogacao(db, admin_id):
+    from core.cognitive_context import (
+        CognitiveContextAssembler,
+        CognitiveContextContribution,
+        CognitiveContextScope,
+    )
+    from core.rumination_interiority import global_rumination_influence
+
     _register(db, instance=INSTANCE_A, user=admin_id)
     rel_a = _register(db, instance=INSTANCE_A, user=USER_A)
     rel_b = _register(db, instance=INSTANCE_A, user=USER_B)
@@ -318,6 +347,9 @@ def test_influencia_global_e_text_free_auditavel_e_recalculada_na_revogacao(db, 
 
 
 def test_revogacao_falha_fechada_em_todos_os_caminhos_sem_travar_a_outra_relation(db, admin_id):
+    from core.cognitive_context import CognitiveContextScope
+    from core.db.relations import is_relation_scope_sentinel
+
     rel_a = _register(db, instance=INSTANCE_A, user=USER_A)
     rel_b = _register(db, instance=INSTANCE_A, user=USER_B)
     _seed_fact(db, instance=INSTANCE_A, user=USER_A, relation_id=rel_a, marker=MARKER_A)
@@ -379,6 +411,13 @@ def test_apagamento_verificavel_remove_somente_a_relation_alvo(db, admin_id):
 
 
 def test_isolamento_entre_instancias_com_o_mesmo_participante(db, admin_id):
+    from core.cognitive_context import (
+        CognitiveContextAssembler,
+        CognitiveContextContribution,
+        CognitiveContextScope,
+    )
+    from core.rumination_interiority import global_rumination_influence
+
     rel_a = _register(db, instance=INSTANCE_A, user=USER_A)
     rel_x = _register(db, instance=INSTANCE_B, user=USER_A)
     _seed_fact(db, instance=INSTANCE_A, user=USER_A, relation_id=rel_a, marker=MARKER_A)
@@ -425,3 +464,30 @@ def test_isolamento_entre_instancias_com_o_mesmo_participante(db, admin_id):
     influence_b = global_rumination_influence(db, INSTANCE_B, admin_id)
     assert "tensoes ainda abertas" in influence_b
     assert MARKER_X not in influence_b
+
+
+def test_janela_de_openai_e_restaurada_sem_vazar_para_a_sessao():
+    """Regressao da revisao: o stub de ``openai`` nao pode vazar para a sessao.
+
+    O estado de ``sys.modules`` (e do proprio modulo) deve ser exatamente o
+    mesmo antes e depois da janela de uso — inclusive quando executado junto de
+    testes que importam o ``openai`` real.
+    """
+    from _pytest.monkeypatch import MonkeyPatch
+
+    before = sys.modules.get("openai")
+    had_openai_attr = before is not None and hasattr(before, "OpenAI")
+
+    window = MonkeyPatch()
+    try:
+        _ensure_openai_importable(window)
+        during = sys.modules.get("openai")
+        assert during is not None and hasattr(during, "OpenAI")
+    finally:
+        window.undo()
+
+    assert sys.modules.get("openai") is before
+    if before is None:
+        assert "openai" not in sys.modules
+    else:
+        assert hasattr(before, "OpenAI") == had_openai_attr
