@@ -194,6 +194,27 @@ class RuminationEngine:
         except sqlite3.OperationalError:
             pass
 
+        # Estado proprio do registro de questoes candidatas (Complemento R1):
+        # separado de ``processed``/``detection_attempts`` (deteccao de
+        # tensoes). Registrar nunca marca o fragmento antes da deteccao e a
+        # deteccao — inclusive a exaustao de tentativas — nunca torna a
+        # pergunta inelegivel para registro.
+        try:
+            cursor.execute("ALTER TABLE rumination_fragments ADD COLUMN question_promotion_state TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE rumination_fragments ADD COLUMN question_promotion_at DATETIME")
+        except sqlite3.OperationalError:
+            pass
+
+        # Depois das colunas proprias da promocao existirem.
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rumination_question_promotion"
+            " ON rumination_fragments(user_id, fragment_type, question_promotion_state)"
+        )
+
         for column_def in [
             "source_kind TEXT DEFAULT 'conversation'",
             "source_table TEXT",
@@ -738,8 +759,21 @@ class RuminationEngine:
           classificacao nunca e inventada em silencio. Falha operacional
           (leitura bloqueada) nunca emite ``knowledge_question``: bloqueio
           tecnico nao e incompreensao nem progresso de aprendizagem.
+        * Sem janela de recencia: a selecao varre todos os fragmentos
+          pendentes (os mais recentes primeiro) enquanto houver orcamento de
+          registro — perguntas sem classificacao registravel ou recusadas
+          nunca empurram perguntas validas mais antigas para fora do
+          horizonte. O orcamento ``limit`` so e consumido por registros.
+        * Estado proprio (``question_promotion_state``), separado do estado
+          da deteccao de tensoes: registrar nunca marca ``processed`` nem
+          consome ``detection_attempts`` (o fragmento continua elegivel para
+          a deteccao), e a deteccao — inclusive a exaustao de tentativas —
+          nunca torna a pergunta inelegivel para registro. Cada exame deixa
+          um estado terminal explicito e auditavel (``registered``,
+          ``unclassified``, ``refused``); falha operacional no registro
+          permanece pendente (retry) e nunca vira incompreensao nem recusa.
         * Retry/reinicio nunca duplicam: o dedup R1a-4 reutiliza a linha e o
-          fragmento tratado e marcado processado uma unica vez.
+          fragmento tratado e marcado uma unica vez.
         * Origem/escopo vem do fragmento: com Relation, material
           ``relation_private`` sob a Relation do fragmento (gate C12g dentro
           do registro); sem Relation, so nasce global pela rota publica F-5
@@ -762,9 +796,13 @@ class RuminationEngine:
         resolved_relation, relation_clause, relation_params = self._relation_scope(
             "rumination_fragments", user_id, relation_id
         )
-        # Janela limitada de varredura: fragmentos sem classificacao nao
-        # consomem o budget de registro (nada de progresso ficticio) e
-        # tambem nao empurram os demais para fora do horizonte.
+        # Selecao sem janela de recencia e sem filtro do estado da deteccao:
+        # o registro de questoes e uma dimensao propria
+        # (``question_promotion_state``). Fragmentos sem classificacao
+        # registravel ou recusados nao consomem orcamento e nunca empurram
+        # perguntas validas mais antigas para fora do horizonte;
+        # ``processed``/``detection_attempts`` (deteccao de tensoes) nunca
+        # tornam a pergunta inelegivel para registro.
         cursor.execute(
             f"""
             SELECT id, user_id, agent_instance, relation_id, content,
@@ -772,19 +810,19 @@ class RuminationEngine:
             FROM rumination_fragments
             WHERE user_id = ?{relation_clause}
               AND fragment_type = 'knowledge_question'
-              AND processed = 0
-              AND COALESCE(detection_attempts, 0) < ?
+              AND question_promotion_state IS NULL
             ORDER BY created_at DESC, id DESC
-            LIMIT ?
             """,
-            (user_id, *relation_params, MAX_DETECTION_ATTEMPTS_WITHOUT_TENSION, 100),
+            (user_id, *relation_params),
         )
         rows = cursor.fetchall()
 
         registered = 0
+        examined = 0
         for row in rows:
             if registered >= max(0, int(limit)):
                 break
+            examined += 1
             fragment_id = int(row["id"])
             metadata: Dict = {}
             try:
@@ -792,15 +830,18 @@ class RuminationEngine:
             except (TypeError, ValueError):
                 metadata = {}
             kind = str(metadata.get("question_kind") or "").strip().lower()
-            if kind not in QUESTION_KINDS:
+            content = str(row["content"] or "").strip()
+            if kind not in QUESTION_KINDS or not content:
+                # Incompreensao (classificacao ausente/desconhecida ou sem
+                # texto): sem registro e sem progresso ficticio. Estado
+                # terminal explicito — nunca recusa e nunca descarte do
+                # fragmento, que segue sua vida ruminal normal.
                 logger.warning(
                     "questao candidata nao registrada: classificacao ausente "
-                    "fragment_id=%s — o fragmento segue na ruminação",
+                    "ou texto vazio fragment_id=%s — o fragmento segue na ruminação",
                     fragment_id,
                 )
-                continue
-            content = str(row["content"] or "").strip()
-            if not content:
+                self._mark_question_promotion(cursor, [fragment_id], "unclassified")
                 continue
 
             fragment_relation = str(row["relation_id"]).strip() if row["relation_id"] else None
@@ -824,6 +865,7 @@ class RuminationEngine:
                         "sem Relation fragment_id=%s source_kind=%s",
                         fragment_id, source_kind,
                     )
+                    self._mark_question_promotion(cursor, [fragment_id], "refused")
                     continue
                 origin_class = "authorized_aggregate"
                 provenance["private_derived"] = False
@@ -838,37 +880,48 @@ class RuminationEngine:
                 relevance += f" (paginas {page_marks})"
             relevance += "; nenhuma resposta no material lido."
 
-            result = register_candidate_question(
-                self.db,
-                user_id=str(row["user_id"] or user_id),
-                topic=topic,
-                the_gap=content,
-                question_kind=kind,
-                source_kind=str(source_kind or ""),
-                relevance_justification=relevance,
-                source_refs=[f"rumination_fragment#{fragment_id}"],
-                relation_id=fragment_relation,
-                origin_class=origin_class,
-                agent_instance=fragment_instance,
-                provenance=provenance,
-            )
+            try:
+                result = register_candidate_question(
+                    self.db,
+                    user_id=str(row["user_id"] or user_id),
+                    topic=topic,
+                    the_gap=content,
+                    question_kind=kind,
+                    source_kind=str(source_kind or ""),
+                    relevance_justification=relevance,
+                    source_refs=[f"rumination_fragment#{fragment_id}"],
+                    relation_id=fragment_relation,
+                    origin_class=origin_class,
+                    agent_instance=fragment_instance,
+                    provenance=provenance,
+                )
+            except Exception:
+                # Falha operacional nunca vira incompreensao nem recusa: o
+                # fragmento permanece pendente e e reexaminado no proximo
+                # dreno (retry), sem falso sucesso e sem bloquear os demais.
+                logger.warning(
+                    "falha operacional ao registrar questao candidata "
+                    "fragment_id=%s — fragmento permanece pendente",
+                    fragment_id,
+                    exc_info=True,
+                )
+                continue
             if result is None:
                 logger.warning(
                     "questao candidata recusada pela politica fragment_id=%s "
                     "— sem falso sucesso e sem descarte do fragmento",
                     fragment_id,
                 )
+                self._mark_question_promotion(cursor, [fragment_id], "refused")
                 continue
-            if not result.get("reused"):
-                registered += 1
             # Registrada (nova ou reaproveitada): a pergunta vive no registro
             # canonico com a ancora no fragmento; o fragmento nao precisa mais
-            # ser revisitado por este caminho.
-            self._register_detection_attempts(
-                cursor,
-                [fragment_id],
-                mark_processed=True,
-            )
+            # ser revisitado por este caminho. So o estado proprio da promocao
+            # e marcado — ``processed``/``detection_attempts`` ficam intocados
+            # e o fragmento continua elegivel para a deteccao de tensoes.
+            self._mark_question_promotion(cursor, [fragment_id], "registered")
+            if not result.get("reused"):
+                registered += 1
 
         self.db.conn.commit()
         if registered:
@@ -876,7 +929,7 @@ class RuminationEngine:
                 "detecção",
                 user_id,
                 relation_id=resolved_relation,
-                input_summary=f"{len(rows)} fragmentos de pergunta examinados",
+                input_summary=f"{examined} fragmentos de pergunta examinados",
                 output_summary=f"{registered} questoes candidatas registradas",
             )
         return registered
@@ -977,6 +1030,33 @@ class RuminationEngine:
         affective_score = affective_charge if affective_charge <= 1.0 else affective_charge / 100.0
 
         return min(1.0, max(tension, existential_depth, affective_score))
+
+    def _mark_question_promotion(
+        self,
+        cursor,
+        fragment_ids: List[int],
+        state: str,
+    ) -> None:
+        """Marca o estado proprio do registro de questoes candidatas.
+
+        Nunca toca o estado da deteccao de tensoes
+        (``processed``/``detection_attempts``): dimensoes separadas —
+        registrar nao antecipa a deteccao e a deteccao (inclusive a exaustao
+        de tentativas) nao torna a pergunta inelegivel para registro.
+        """
+        if not fragment_ids:
+            return
+
+        placeholders = ",".join(["?"] * len(fragment_ids))
+        cursor.execute(
+            f"""
+            UPDATE rumination_fragments
+            SET question_promotion_state = ?,
+                question_promotion_at = ?
+            WHERE id IN ({placeholders})
+            """,
+            (state, datetime.now().isoformat(), *fragment_ids),
+        )
 
     def _register_detection_attempts(
         self,

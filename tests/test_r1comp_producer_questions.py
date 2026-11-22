@@ -29,6 +29,7 @@ from core.database import HybridDatabaseManager  # noqa: E402
 from core.db import knowledge_questions as kq  # noqa: E402
 from jung_rumination import RuminationEngine  # noqa: E402
 from instance_config import ADMIN_USER_ID  # noqa: E402
+from rumination_config import MAX_DETECTION_ATTEMPTS_WITHOUT_TENSION  # noqa: E402
 
 _INSTANCE = "jung_v1"
 _OTHER_INSTANCE = "jung_v2"
@@ -107,6 +108,38 @@ def _question_rows(db):
     ).fetchall()
 
 
+def _insert_thought_fragment(db, user_id, content):
+    """Fragmento comum (pensamento) — preenche o lote da deteccao de tensoes."""
+    cursor = db.conn.execute(
+        """
+        INSERT INTO rumination_fragments (
+            user_id, agent_instance, fragment_type, content
+        ) VALUES (?, ?, 'thought', ?)
+        """,
+        (user_id, _INSTANCE, content),
+    )
+    db.conn.commit()
+    return cursor.lastrowid
+
+
+class _StubLLM:
+    """Provedor minimo para o detector de tensoes (offline, sem rede)."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def get_response(self, prompt, temperature=0.4, max_tokens=1500):
+        return json.dumps(self._payload)
+
+
+def _stub_detection(monkeypatch, payload):
+    import llm_providers
+
+    monkeypatch.setattr(
+        llm_providers, "create_llm_provider", lambda name: _StubLLM(payload)
+    )
+
+
 class TestProducerContactPoint:
     def test_reading_question_promotes_to_candidate_question(self, tmp_path):
         """A pergunta classificada da leitura vira questao candidata com
@@ -147,9 +180,10 @@ class TestProducerContactPoint:
         engine = RuminationEngine(db)
         assert engine.promote_pending_knowledge_questions() == 1
 
-        # Replay do mesmo fragmento (interrupcao entre registro e marcacao).
+        # Replay do mesmo fragmento (interrupcao entre registro e marcacao do
+        # estado proprio da promocao).
         db.conn.execute(
-            "UPDATE rumination_fragments SET processed = 0 WHERE 1 = 1"
+            "UPDATE rumination_fragments SET question_promotion_state = NULL"
         )
         db.conn.commit()
         assert engine.promote_pending_knowledge_questions() == 0
@@ -159,6 +193,11 @@ class TestProducerContactPoint:
             "SELECT COUNT(*) FROM knowledge_gap_revisions"
         ).fetchone()[0]
         assert revisions == 1
+        marked = db.conn.execute(
+            "SELECT COUNT(*) FROM rumination_fragments"
+            " WHERE question_promotion_state = 'registered'"
+        ).fetchone()[0]
+        assert marked == 1
 
     def test_same_question_from_two_readings_reuses_one_row(self, tmp_path):
         db = _db(tmp_path)
@@ -168,10 +207,18 @@ class TestProducerContactPoint:
         promoted = RuminationEngine(db).promote_pending_knowledge_questions()
         assert promoted == 1
         assert len(_question_rows(db)) == 1
+        # A promocao marca apenas o estado proprio dela nos dois fragmentos;
+        # o estado da deteccao fica intocado — os fragmentos seguem elegiveis
+        # para a deteccao de tensoes (dimensoes separadas).
+        marked = db.conn.execute(
+            "SELECT COUNT(*) FROM rumination_fragments"
+            " WHERE question_promotion_state = 'registered'"
+        ).fetchone()[0]
+        assert marked == 2
         processed = db.conn.execute(
             "SELECT COUNT(*) FROM rumination_fragments WHERE processed = 1"
         ).fetchone()[0]
-        assert processed == 2
+        assert processed == 0
 
     def test_unclassified_question_is_not_registered(self, tmp_path):
         """Sem classificacao nao ha registro: fail-closed, sem tipo inventado,
@@ -182,9 +229,12 @@ class TestProducerContactPoint:
         assert RuminationEngine(db).promote_pending_knowledge_questions() == 0
         assert _question_rows(db) == []
         pending = db.conn.execute(
-            "SELECT processed FROM rumination_fragments"
+            "SELECT processed, question_promotion_state FROM rumination_fragments"
         ).fetchone()
         assert pending["processed"] == 0
+        # Estado terminal explicito: examinado sem classificacao registravel —
+        # sem descarte do fragmento, sem progresso ficticio e sem reexame.
+        assert pending["question_promotion_state"] == "unclassified"
 
     def test_unknown_question_kind_is_refused(self, tmp_path):
         db = _db(tmp_path)
@@ -192,6 +242,12 @@ class TestProducerContactPoint:
 
         assert RuminationEngine(db).promote_pending_knowledge_questions() == 0
         assert _question_rows(db) == []
+        state = db.conn.execute(
+            "SELECT question_promotion_state FROM rumination_fragments"
+        ).fetchone()
+        # Classificacao desconhecida e incompreensao (fail-closed), nao
+        # recusa de politica: o fragmento segue na ruminação.
+        assert state["question_promotion_state"] == "unclassified"
 
     def test_operational_failure_never_becomes_incomprehension(self, tmp_path):
         """Leitura bloqueada e falha operacional: nao emite pergunta e nunca
@@ -219,6 +275,60 @@ class TestProducerContactPoint:
         # O bloqueio continua operacional (motivo tecnico), nao vira lacuna.
         gaps = db.conn.execute("SELECT COUNT(*) FROM knowledge_gaps").fetchone()[0]
         assert gaps == 0
+
+    def test_registry_refusal_is_quarantined_explicitly(self, tmp_path, monkeypatch):
+        """Recusa da politica no registro canonico vira quarentena explicita:
+        sem falso sucesso, sem descarte do fragmento e sem reexame em loop.
+        (Os casos reais de recusa do contrato de admissao estao cobertos
+        acima; aqui a recusa do registro e isolada na maquina de estados.)"""
+        db = _db(tmp_path)
+        _record_reading_question(db)
+        monkeypatch.setattr(kq, "register_candidate_question", lambda *a, **k: None)
+
+        engine = RuminationEngine(db)
+        assert engine.promote_pending_knowledge_questions() == 0
+        assert _question_rows(db) == []
+        row = db.conn.execute(
+            "SELECT processed, question_promotion_state FROM rumination_fragments"
+        ).fetchone()
+        assert row["processed"] == 0
+        assert row["question_promotion_state"] == "refused"
+        # Examinado uma unica vez: a recusa sai da selecao.
+        assert engine.promote_pending_knowledge_questions() == 0
+
+    def test_operational_registration_failure_stays_pending_and_blocks_nothing(
+        self, tmp_path, monkeypatch
+    ):
+        """Falha operacional no registro permanece pendente (retry) — nunca
+        vira incompreensao nem recusa — e nunca impede os demais registros."""
+        db = _db(tmp_path)
+        failing = _insert_question_fragment(
+            db, ADMIN_USER_ID, "Pergunta que falha no registro?", kind="sense_question"
+        )
+        ok = _insert_question_fragment(
+            db, ADMIN_USER_ID, "Pergunta que registra?", kind="factual_absence"
+        )
+
+        real_register = kq.register_candidate_question
+
+        def flaky_register(*args, **kwargs):
+            if kwargs.get("source_refs") == [f"rumination_fragment#{failing}"]:
+                raise sqlite3.OperationalError("disk I/O error (teste)")
+            return real_register(*args, **kwargs)
+
+        monkeypatch.setattr(kq, "register_candidate_question", flaky_register)
+
+        assert RuminationEngine(db).promote_pending_knowledge_questions() == 1
+
+        states = {
+            row["id"]: row["question_promotion_state"]
+            for row in db.conn.execute(
+                "SELECT id, question_promotion_state FROM rumination_fragments"
+            )
+        }
+        assert states[failing] is None  # pendente: reexaminado no proximo dreno
+        assert states[ok] == "registered"
+        assert len(_question_rows(db)) == 1
 
 
 class TestScopePreservation:
@@ -271,6 +381,12 @@ class TestScopePreservation:
         assert RuminationEngine(db).promote_pending_knowledge_questions(
             "alice", relation_id=rel) == 0
         assert _question_rows(db) == []
+        state = db.conn.execute(
+            "SELECT question_promotion_state FROM rumination_fragments"
+        ).fetchone()
+        # A recusa da Relation revogada acontece no gate de escopo (C12g),
+        # antes do exame: o fragmento nem entra na selecao (fail-closed).
+        assert state["question_promotion_state"] is None
 
     def test_foreign_instance_material_is_never_registered(self, tmp_path):
         db = _db(tmp_path)
@@ -290,9 +406,11 @@ class TestScopePreservation:
         assert _question_rows(db) == []
         # Material alheio nao foi tocado (nem marcado processado).
         row = db.conn.execute(
-            "SELECT processed FROM rumination_fragments WHERE id = ?", (foreign_fragment,)
+            "SELECT processed, question_promotion_state FROM rumination_fragments"
+            " WHERE id = ?", (foreign_fragment,)
         ).fetchone()
         assert row["processed"] == 0
+        assert row["question_promotion_state"] is None
         assert kq.list_candidate_questions(db, "alice", agent_instance=_OTHER_INSTANCE) == []
 
     def test_unclassified_origin_without_relation_never_becomes_legacy(self, tmp_path):
@@ -310,6 +428,11 @@ class TestScopePreservation:
             "SELECT COUNT(*) FROM knowledge_gaps WHERE ownership_class = 'legacy_unscoped'"
         ).fetchone()[0]
         assert legacy == 0
+        state = db.conn.execute(
+            "SELECT question_promotion_state FROM rumination_fragments"
+        ).fetchone()
+        # Recusa do contrato de admissao preservada como quarentena explicita.
+        assert state["question_promotion_state"] == "refused"
 
 
 class TestQuestionKindContract:
@@ -340,3 +463,125 @@ class TestQuestionKindContract:
             "factual_absence", "interpretation_limit",
             "sense_question", "source_controversy",
         ]
+
+
+class TestPromotionScanWithoutStarvation:
+    def test_hundred_unclassified_and_refused_do_not_starve_older_valid_questions(self, tmp_path):
+        """Revisao: cem perguntas sem classificacao valida ou recusadas nao
+        impedem o registro de perguntas validas mais antigas — a selecao nao
+        tem janela de recencia e cada exame deixa estado terminal explicito."""
+        db = _db(tmp_path)
+        _insert_question_fragment(db, ADMIN_USER_ID, _QUESTION, kind="sense_question")
+        for index in range(50):
+            _insert_question_fragment(
+                db, ADMIN_USER_ID, f"Pergunta sem classificacao {index}?", kind=None
+            )
+        for index in range(50):
+            _insert_question_fragment(
+                db, ADMIN_USER_ID, f"Pergunta de origem nao publica {index}?",
+                source_kind="conversation",
+            )
+
+        engine = RuminationEngine(db)
+        assert engine.promote_pending_knowledge_questions() == 1
+
+        rows = _question_rows(db)
+        assert [row["the_gap"] for row in rows] == [_QUESTION]
+        counts = {
+            row["question_promotion_state"]: row["n"]
+            for row in db.conn.execute(
+                "SELECT question_promotion_state, COUNT(*) AS n"
+                " FROM rumination_fragments GROUP BY question_promotion_state"
+            )
+        }
+        assert counts == {"registered": 1, "unclassified": 50, "refused": 50}
+        # Nada e reexaminado: quem ja foi examinado saiu da selecao.
+        assert engine.promote_pending_knowledge_questions() == 0
+
+    def test_unregistrable_rows_never_consume_registration_budget(self, tmp_path):
+        """O orcamento so e consumido por registros: perguntas sem
+        classificacao registravel sao examinadas sem empurrar as validas para
+        o proximo dreno."""
+        db = _db(tmp_path)
+        for index in range(5):
+            _insert_question_fragment(
+                db, ADMIN_USER_ID, f"Pergunta valida {index}?", kind="sense_question"
+            )
+        for index in range(3):
+            _insert_question_fragment(
+                db, ADMIN_USER_ID, f"Pergunta sem classificacao {index}?", kind=None
+            )
+
+        engine = RuminationEngine(db)
+        assert engine.promote_pending_knowledge_questions() == 4
+        assert engine.promote_pending_knowledge_questions() == 1
+        assert len(_question_rows(db)) == 5
+
+
+class TestPromotionStateSeparation:
+    def test_registration_first_never_marks_the_fragment_processed(self, tmp_path, monkeypatch):
+        """Ordem 1 (registro -> deteccao): registrar nunca marca o fragmento
+        processado nem consome tentativas; a deteccao de tensoes ainda o
+        enxerga e e so ela que marca o estado da deteccao."""
+        db = _db(tmp_path)
+        assert _record_reading_question(db) is not None
+        thought_id = _insert_thought_fragment(
+            db, ADMIN_USER_ID, "Contexto comum para o lote de deteccao."
+        )
+        engine = RuminationEngine(db)
+        assert engine.promote_pending_knowledge_questions() == 1
+
+        row = db.conn.execute(
+            "SELECT id, processed, detection_attempts, question_promotion_state"
+            " FROM rumination_fragments WHERE source_id = '7:question:1'"
+        ).fetchone()
+        fragment_id = row["id"]
+        assert row["question_promotion_state"] == "registered"
+        assert row["processed"] == 0
+        assert row["detection_attempts"] == 0
+
+        _stub_detection(monkeypatch, {
+            "tensions": [{
+                "type": "dialectic",
+                "intensity": 0.8,
+                "description": "tensao de teste entre pergunta e contexto",
+                "pole_a": {"content": "pergunta em aberto",
+                           "fragment_ids": [fragment_id]},
+                "pole_b": {"content": "contexto observado",
+                           "fragment_ids": [thought_id]},
+            }]
+        })
+        assert engine.detect_tensions(ADMIN_USER_ID)  # ainda enxerga o registrado
+
+        after = db.conn.execute(
+            "SELECT processed FROM rumination_fragments WHERE id = ?", (fragment_id,)
+        ).fetchone()
+        # Somente a deteccao marca o estado da deteccao (nunca a promocao).
+        assert after["processed"] == 1
+
+    def test_detection_first_never_makes_the_question_ineligible(self, tmp_path, monkeypatch):
+        """Ordem 2 (deteccao -> registro): mesmo com o estado da deteccao
+        esgotado (``processed = 1`` e tentativas no limite), a pergunta
+        continua elegivel para registro."""
+        db = _db(tmp_path)
+        assert _record_reading_question(db) is not None
+        _insert_thought_fragment(db, ADMIN_USER_ID, "Contexto comum para o lote de deteccao.")
+        engine = RuminationEngine(db)
+        _stub_detection(monkeypatch, {"tensions": []})
+
+        for _ in range(MAX_DETECTION_ATTEMPTS_WITHOUT_TENSION):
+            engine.detect_tensions(ADMIN_USER_ID)
+
+        row = db.conn.execute(
+            "SELECT processed, detection_attempts FROM rumination_fragments"
+            " WHERE source_id = '7:question:1'"
+        ).fetchone()
+        assert row["processed"] == 1
+        assert row["detection_attempts"] >= MAX_DETECTION_ATTEMPTS_WITHOUT_TENSION
+
+        assert engine.promote_pending_knowledge_questions() == 1
+        state = db.conn.execute(
+            "SELECT question_promotion_state FROM rumination_fragments"
+            " WHERE source_id = '7:question:1'"
+        ).fetchone()
+        assert state["question_promotion_state"] == "registered"
