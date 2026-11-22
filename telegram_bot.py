@@ -79,6 +79,11 @@ async def _reply_instance_private(update: Update):
 # ============================================================
 # REVOGACAO GRACIOSA NA CAMADA DE BOT (C12g PR-B)
 # ============================================================
+# Invariante: sentinela de escopo/consentimento nunca e engolida por um
+# `except` interno de handler — cada bloco re-propaga a sentinela ate o
+# tratamento canonico (resposta de vinculo encerrado). Excecao unica: o
+# cleanup do heartbeat de typing, que nao tem fonte de sentinela e nunca
+# mascara o resultado principal.
 
 _SCOPE_REFUSAL_TEXT = (
     "🔒 Este vínculo foi encerrado ou o consentimento foi revogado. "
@@ -130,7 +135,10 @@ def _graceful_scope_errors(handler):
     async def guarded(update, context):
         try:
             return await handler(update, context)
-        except ValueError as err:
+        except Exception as err:
+            # A familia canonica de sentinelas nao se limita a ValueError:
+            # qualquer excecao cujo texto e sentinela vira recusa graciosa;
+            # os demais erros mantem o comportamento original do handler.
             if not is_relation_scope_sentinel(err):
                 raise
             await _reply_scope_refusal(
@@ -1160,6 +1168,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     bot_state.db.conn.commit()
                     logger.info(f"✅ Consentimento salvo no banco para {user.first_name}")
                 except Exception as db_error:
+                    if is_relation_scope_sentinel(db_error):
+                        raise
                     # Se falhar (colunas não existem), apenas logar mas continuar
                     logger.warning(f"⚠️ Não foi possível salvar consentimento no banco: {db_error}")
                     logger.warning(f"⚠️ Execute migrate_add_consent.py no Railway!")
@@ -1179,6 +1189,8 @@ Excelente! Para calibrar o meu sistema e termos um ponto de partida para a pesqu
                 return
 
             except Exception as e:
+                if is_relation_scope_sentinel(e):
+                    raise
                 logger.error(f"❌ Erro ao processar consentimento: {e}", exc_info=True)
                 await update.message.reply_text(
                     "❌ Erro ao processar consentimento. Tente novamente ou contate o suporte."
@@ -1225,7 +1237,9 @@ O que você decide?
                 score = int(message_text.strip())
                 if score < 1 or score > 5:
                     raise ValueError
-            except ValueError:
+            except ValueError as parse_err:
+                if is_relation_scope_sentinel(parse_err):
+                    raise
                 await update.message.reply_text("⚠️ Por favor, responda apenas com um número entre 1 e 5.", parse_mode='Markdown')
                 return
                 
@@ -1264,6 +1278,8 @@ O que você decide?
                 )
                 logger.info(f"✅ Dados base do piloto salvos para {user_id[:8]}")
             except Exception as e:
+                if is_relation_scope_sentinel(e):
+                    raise
                 logger.error(f"❌ Erro ao salvar unesco_pilot_data: {e}")
                 
             context.user_data['onboarding_step'] = None
@@ -1301,6 +1317,8 @@ O que você decide?
                         )
                         logger.info(f"🗑️ {len(results['ids'])} documentos removidos do ChromaDB")
                 except Exception as e:
+                    if is_relation_scope_sentinel(e):
+                        raise
                     logger.error(f"❌ Erro ao deletar do ChromaDB: {e}")
 
             # ✅ Não precisa limpar cache (Just-in-Time busca do banco)
@@ -1475,13 +1493,17 @@ O que você decide?
                                 bot_state.db.conn.commit()
                                 logger.info(f"✅ Offboarding concluído e dados salvos para {user_id[:8]}")
                             except Exception as db_err:
+                                if is_relation_scope_sentinel(db_err):
+                                    raise
                                 logger.error(f"❌ Erro ao salvar dados finais: {db_err}")
-                                
+
                             context.user_data['offboarding_step'] = None
                             
                             await update.message.reply_text("Muito obrigado por participar e ajudar a democratizar o acesso ao autoconhecimento no Brasil!\n\nOs teus dados (totalmente anonimizados) estão seguros. A tua avaliação psicológica está salva em /meu_perfil. Até à próxima jornada! ✨")
                             return
-                        except ValueError:
+                        except ValueError as parse_err:
+                            if is_relation_scope_sentinel(parse_err):
+                                raise
                             await update.message.reply_text("⚠️ Por favor, responda com um número entre 1 e 5.")
                             return
 
@@ -1521,6 +1543,8 @@ O que você decide?
                 bot_state.db.conn.commit()
 
         except Exception as e:
+            if is_relation_scope_sentinel(e):
+                raise
             logger.error(f"❌ Erro ao verificar limites gratuitos: {e}", exc_info=True)
             # Em caso de erro no banco, permitimos a mensagem para não travar o usuário
     # ---------------------------------------------------------
@@ -1532,6 +1556,18 @@ O que você decide?
     red_line_keywords = r"\b(suicídio|me matar|me machucar|tirar a própria vida|tirar minha vida|não aguento mais viver|desistir de tudo|acabar com tudo|cortar os pulsos|desespero extremo)\b"
     if re.search(red_line_keywords, message_text.lower()):
         logger.warning(f"🚨 RED LINE ACIONADA para usuário {user_id[:8]}!")
+
+        cvv_message = (
+            "Percebo que estás a passar por um momento de dor imensa. Como IA, tenho limitações na ajuda que posso "
+            "oferecer. Por favor, liga agora para o CVV (Centro de Valorização da Vida) no número 188 ou acede a "
+            "cvv.org.br. Há profissionais humanos prontos para te ouvir 24 horas por dia."
+        )
+        await update.message.reply_text(cvv_message, parse_mode='Markdown')
+
+        # Contador de segurança em melhor esforço: a mensagem de crise já foi
+        # enviada e nunca é suprimida. Sentinela de escopo não vira erro
+        # genérico — segue para o tratamento canônico depois da mensagem de
+        # segurança.
         try:
             cursor = bot_state.db.conn.cursor()
             cursor.execute("""
@@ -1542,14 +1578,9 @@ O que você decide?
             bot_state.db.conn.commit()
             logger.info("Métrica safety_triggers_count incrementada.")
         except Exception as e:
+            if is_relation_scope_sentinel(e):
+                raise
             logger.error(f"Erro ao incrementar Red Line no banco: {e}")
-            
-        cvv_message = (
-            "Percebo que estás a passar por um momento de dor imensa. Como IA, tenho limitações na ajuda que posso "
-            "oferecer. Por favor, liga agora para o CVV (Centro de Valorização da Vida) no número 188 ou acede a "
-            "cvv.org.br. Há profissionais humanos prontos para te ouvir 24 horas por dia."
-        )
-        await update.message.reply_text(cvv_message, parse_mode='Markdown')
         return
 
     try:
@@ -1586,6 +1617,8 @@ O que você decide?
                 try:
                     await typing_task
                 except Exception:
+                    # Heartbeat de typing: sem acesso a escopo e nunca mascara
+                    # o resultado principal.
                     pass
         else:
             result = bot_state.jung_engine.process_message(
@@ -1608,6 +1641,8 @@ O que você decide?
                 try:
                     await update.message.reply_text(chunk, parse_mode=None)
                 except Exception as e:
+                    if is_relation_scope_sentinel(e):
+                        raise
                     logger.warning(f"⚠️ Erro ao enviar resposta no Telegram, tentando texto sanitizado: {e}")
                     safe_chunk = chunk.replace("`", "'").replace("\x00", "")
                     await update.message.reply_text(safe_chunk[:max_length], parse_mode=None)
@@ -1629,6 +1664,8 @@ O que você decide?
                 else:
                     logger.info(f"🧬 TRI: Nenhum fragmento detectado nesta mensagem")
             except Exception as tri_err:
+                if is_relation_scope_sentinel(tri_err):
+                    raise
                 logger.warning(f"⚠️ TRI: Erro na detecção (não crítico): {tri_err}")
 
         # Detectar padrões periodicamente (em background para não bloquear)
@@ -1666,6 +1703,14 @@ O que você decide?
                 detail=f"user_id={user_id[:8]}",
             )
     except Exception as e:
+        if is_relation_scope_sentinel(e):
+            await _reply_scope_refusal(
+                update,
+                handler="handle_message",
+                sentinel_text=str(e),
+                detail=f"user_id={user_id[:8]}",
+            )
+            return
         logger.error(f"❌ Erro ao processar mensagem: {e}", exc_info=True)
 
         await update.message.reply_text(

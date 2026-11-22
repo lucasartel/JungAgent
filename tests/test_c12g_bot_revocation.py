@@ -16,6 +16,7 @@ Sentinelas preservados: ``relation_not_eligible:status=...,consent=...``,
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import sqlite3
@@ -59,17 +60,46 @@ class _StubClient:
         pass
 
 
-# Atributo (sem trocar o módulo): a construção de ``JungianEngine`` no import
-# de ``telegram_bot`` instancia os clientes de LLM com argumentos, então o
-# stub precisa aceitar kwargs — inclusive quando outro teste o deixou ``object``.
-for _mod_name, _attr in (("openai", "OpenAI"), ("anthropic", "Anthropic")):
-    _mod = sys.modules.get(_mod_name)
-    if _mod is None:
-        _mod = types.ModuleType(_mod_name)
-        sys.modules[_mod_name] = _mod
-    setattr(_mod, _attr, _StubClient)
+_MISSING = object()
+_LLM_CLIENT_ATTRS = (("openai", "OpenAI"), ("anthropic", "Anthropic"))
 
-import telegram_bot
+
+@contextlib.contextmanager
+def _llm_client_stubs(attrs=_LLM_CLIENT_ATTRS):
+    """Instala stubs de cliente de LLM e restaura o estado anterior na saida.
+
+    A construcao de ``JungianEngine`` no import de ``telegram_bot`` instancia
+    os clientes de LLM com argumentos, entao o atributo precisa aceitar kwargs
+    — inclusive quando outro teste o deixou ``object``. Os atributos trocados
+    (e os modulos criados quando ausentes) sao restaurados/removidos ao final,
+    para que a coleta deste arquivo nao altere o comportamento dos demais
+    testes da suite.
+    """
+    saved_attrs = []
+    created_modules = []
+    try:
+        for mod_name, attr in attrs:
+            mod = sys.modules.get(mod_name)
+            if mod is None:
+                mod = types.ModuleType(mod_name)
+                sys.modules[mod_name] = mod
+                created_modules.append(mod_name)
+            saved_attrs.append((mod, attr, getattr(mod, attr, _MISSING)))
+            setattr(mod, attr, _StubClient)
+        yield
+    finally:
+        for mod, attr, previous in reversed(saved_attrs):
+            if previous is _MISSING:
+                delattr(mod, attr)
+            else:
+                setattr(mod, attr, previous)
+        for mod_name in created_modules:
+            sys.modules.pop(mod_name, None)
+
+
+with _llm_client_stubs():
+    import telegram_bot
+
 from core.db.relations import is_relation_scope_sentinel
 
 
@@ -80,8 +110,22 @@ REVOKED_SENTINEL = "relation_not_eligible:status=revoked,consent=granted"
 # ---------------------------------------------------------------------------
 
 
-class FakeMessage:
+class FakeChat:
     def __init__(self):
+        self.actions = []
+
+    async def send_action(self, action=None, **kwargs):
+        self.actions.append(action)
+
+
+class FakeMessage:
+    def __init__(self, text=""):
+        self.text = text
+        self.caption = None
+        self.voice = None
+        self.audio = None
+        self.message_id = 1
+        self.chat = FakeChat()
         self.replies = []
 
     async def reply_text(self, text, **kwargs):
@@ -99,9 +143,9 @@ class FakeUser:
 
 
 class FakeUpdate:
-    def __init__(self):
+    def __init__(self, text=""):
         self.effective_user = FakeUser()
-        self.message = FakeMessage()
+        self.message = FakeMessage(text)
         self.effective_message = self.message
 
 
@@ -215,9 +259,39 @@ class _RevokedDB:
                 user_id TEXT,
                 confidence_score REAL
             );
+            CREATE TABLE conversations (
+                id INTEGER PRIMARY KEY,
+                user_id TEXT
+            );
+            CREATE TABLE archetype_conflicts (
+                id INTEGER PRIMARY KEY,
+                user_id TEXT
+            );
+            CREATE TABLE user_milestones (
+                id INTEGER PRIMARY KEY,
+                user_id TEXT
+            );
+            CREATE TABLE users (
+                user_id TEXT PRIMARY KEY,
+                registration_date TEXT
+            );
+            CREATE TABLE unesco_pilot_data (
+                id INTEGER PRIMARY KEY,
+                user_id TEXT,
+                post_test_stress_score REAL,
+                completed_at TEXT,
+                safety_triggers_count INTEGER DEFAULT 0
+            );
+            CREATE TABLE user_daily_usage (
+                id INTEGER PRIMARY KEY,
+                user_id TEXT,
+                date_str TEXT,
+                message_count INTEGER DEFAULT 0
+            );
             """
         )
         self.detect_calls = []
+        self.vectorstore = None
 
     def get_user(self, user_id):
         return {"user_id": user_id, "total_sessions": 1}
@@ -235,8 +309,11 @@ class _RevokedDB:
             "total_interactions": 7,
         }
 
-    def get_user_conversations(self, user_id, limit=1000):
+    def get_user_conversations(self, user_id, limit=1000, **kwargs):
         raise ValueError(REVOKED_SENTINEL)
+
+    def conversations_to_chat_history(self, conversations):
+        return []
 
     def detect_and_save_patterns(self, user_id):
         self.detect_calls.append(user_id)
@@ -323,3 +400,336 @@ def test_pattern_detection_logs_other_failures(bot_env, monkeypatch, caplog):
     assert any(
         "Falha na deteccao de padroes" in record.getMessage() for record in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# Isolamento dos stubs de cliente de LLM
+# ---------------------------------------------------------------------------
+
+
+def test_llm_client_stubs_restore_previous_attribute_state():
+    fake_name = "c12g_fake_llm_present_module"
+    fake_mod = types.ModuleType(fake_name)
+    previous = object()
+    fake_mod.OpenAI = previous
+    sys.modules[fake_name] = fake_mod
+    try:
+        with _llm_client_stubs(((fake_name, "OpenAI"),)):
+            assert fake_mod.OpenAI is _StubClient
+        assert fake_mod.OpenAI is previous
+    finally:
+        sys.modules.pop(fake_name, None)
+
+
+def test_llm_client_stubs_delete_attributes_they_added():
+    fake_name = "c12g_fake_llm_attrless_module"
+    fake_mod = types.ModuleType(fake_name)
+    sys.modules[fake_name] = fake_mod
+    try:
+        with _llm_client_stubs(((fake_name, "OpenAI"),)):
+            assert fake_mod.OpenAI is _StubClient
+        assert not hasattr(fake_mod, "OpenAI")
+    finally:
+        sys.modules.pop(fake_name, None)
+
+
+def test_llm_client_stubs_remove_modules_they_created():
+    fake_name = "c12g_fake_llm_absent_module"
+    sys.modules.pop(fake_name, None)
+    with _llm_client_stubs(((fake_name, "Anthropic"),)):
+        assert getattr(sys.modules[fake_name], "Anthropic") is _StubClient
+    assert fake_name not in sys.modules
+
+
+# ---------------------------------------------------------------------------
+# Decorator gracioso: sentinela fora de ValueError
+# ---------------------------------------------------------------------------
+
+
+def test_decorator_replies_gracefully_on_non_value_error_sentinel():
+    update = FakeUpdate()
+    context = FakeContext()
+
+    @telegram_bot._graceful_scope_errors
+    async def handler(update, context):
+        raise RuntimeError("relation_file_access_revoked")
+
+    assert _run(handler(update, context)) is None
+    assert update.message.replies == [telegram_bot._SCOPE_REFUSAL_TEXT]
+
+
+# ---------------------------------------------------------------------------
+# handle_message: sentinela nunca e engolida pelos except internos
+# ---------------------------------------------------------------------------
+
+
+class _SQLFaultConn:
+    """Conexao delegada que recusa SQLs contendo ``pattern`` com ``exc``.
+
+    Simula uma recusa de escopo/consentimento (ou falha generica) exatamente
+    na sentenca que o caminho do handler executa.
+    """
+
+    def __init__(self, conn, pattern, exc):
+        self._conn = conn
+        self._pattern = pattern
+        self._exc = exc
+
+    def cursor(self):
+        return _SQLFaultCursor(self)
+
+    def commit(self):
+        self._conn.commit()
+
+
+class _SQLFaultCursor:
+    def __init__(self, owner):
+        self._owner = owner
+        self._cursor = owner._conn.cursor()
+
+    def execute(self, sql, *args, **kwargs):
+        if self._owner._pattern in sql:
+            raise self._owner._exc
+        return self._cursor.execute(sql, *args, **kwargs)
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+
+class _FakeProactive:
+    """Proactive stub: sem timers/rede; TRI desligado por padrao."""
+
+    tri_enabled = False
+
+    def __init__(self):
+        self.reset_calls = []
+        self.tri_error = None
+
+    def reset_timer(self, user_id):
+        self.reset_calls.append(user_id)
+
+    def detect_fragments_in_message(self, **kwargs):
+        if self.tri_error is not None:
+            raise self.tri_error
+        return {"fragments_detected": 0, "fragments_saved": 0}
+
+
+@pytest.fixture
+def handle_env(bot_env, monkeypatch):
+    """bot_env + fakes dos apoios de handle_message (proactive/engine)."""
+    proactive = _FakeProactive()
+    monkeypatch.setattr(telegram_bot.bot_state, "proactive", proactive)
+    monkeypatch.setattr(telegram_bot.bot_state, "total_messages_processed", 5)
+    monkeypatch.setattr(
+        telegram_bot.bot_state,
+        "jung_engine",
+        types.SimpleNamespace(process_message=lambda **kwargs: {"response": "ok"}),
+    )
+    return types.SimpleNamespace(db=bot_env, proactive=proactive)
+
+
+def _simulate_free_tier_user(monkeypatch):
+    """Passa o gate de admin mas mantem o trecho de limites gratuitos ativo."""
+    monkeypatch.setattr(telegram_bot, "ADMIN_IDS", set())
+    monkeypatch.setattr(telegram_bot, "_is_admin_telegram_user", lambda user: True)
+
+
+def test_handle_message_history_scope_sentinel_replies_canonically(handle_env):
+    update = FakeUpdate("ola")
+    _run(telegram_bot.handle_message(update, FakeContext()))
+    assert update.message.replies == [telegram_bot._SCOPE_REFUSAL_TEXT]
+
+
+def test_handle_message_non_value_error_scope_sentinel_replies_canonically(
+    handle_env, monkeypatch
+):
+    monkeypatch.setattr(handle_env.db, "get_user_conversations", lambda *a, **k: [])
+
+    def _boom(**kwargs):
+        raise RuntimeError(REVOKED_SENTINEL)
+
+    monkeypatch.setattr(telegram_bot.bot_state.jung_engine, "process_message", _boom)
+    update = FakeUpdate("ola")
+    _run(telegram_bot.handle_message(update, FakeContext()))
+    assert update.message.replies == [telegram_bot._SCOPE_REFUSAL_TEXT]
+
+
+def test_handle_message_consent_save_scope_sentinel_replies_canonically(
+    handle_env, monkeypatch
+):
+    monkeypatch.setattr(
+        handle_env.db,
+        "conn",
+        _SQLFaultConn(handle_env.db.conn, "UPDATE users", ValueError(REVOKED_SENTINEL)),
+    )
+    context = FakeContext()
+    context.user_data["awaiting_consent"] = True
+    update = FakeUpdate("SIM")
+    _run(telegram_bot.handle_message(update, context))
+    assert update.message.replies == [telegram_bot._SCOPE_REFUSAL_TEXT]
+
+
+def test_handle_message_consent_save_generic_error_keeps_consent_flow(
+    handle_env, monkeypatch
+):
+    monkeypatch.setattr(
+        handle_env.db,
+        "conn",
+        _SQLFaultConn(handle_env.db.conn, "UPDATE users", RuntimeError("disk full")),
+    )
+    context = FakeContext()
+    context.user_data["awaiting_consent"] = True
+    update = FakeUpdate("SIM")
+    _run(telegram_bot.handle_message(update, context))
+    assert len(update.message.replies) == 1
+    assert "Consentimento registrado" in update.message.replies[0]
+
+
+def test_handle_message_onboarding_save_scope_sentinel_replies_canonically(
+    handle_env, monkeypatch
+):
+    import core.db.unesco_pilot as unesco_pilot
+
+    def _boom(*args, **kwargs):
+        raise ValueError(REVOKED_SENTINEL)
+
+    monkeypatch.setattr(unesco_pilot, "save_unesco_pilot_baseline", _boom)
+    context = FakeContext()
+    context.user_data.update(
+        {
+            "onboarding_step": 3,
+            "baseline_stress_score": 3,
+            "baseline_trait_challenge": "prazos",
+        }
+    )
+    update = FakeUpdate("quero mais foco")
+    _run(telegram_bot.handle_message(update, context))
+    assert update.message.replies == [telegram_bot._SCOPE_REFUSAL_TEXT]
+
+
+def test_handle_message_reset_chroma_scope_sentinel_replies_canonically(
+    handle_env, monkeypatch
+):
+    class _RevokedCollection:
+        def get(self, *args, **kwargs):
+            raise ValueError(REVOKED_SENTINEL)
+
+    monkeypatch.setattr(handle_env.db, "chroma_enabled", True)
+    monkeypatch.setattr(
+        handle_env.db,
+        "vectorstore",
+        types.SimpleNamespace(_collection=_RevokedCollection()),
+    )
+    context = FakeContext()
+    context.user_data["awaiting_reset_confirmation"] = True
+    update = FakeUpdate("CONFIRMAR RESET")
+    _run(telegram_bot.handle_message(update, context))
+    assert update.message.replies == [telegram_bot._SCOPE_REFUSAL_TEXT]
+
+
+def test_handle_message_reset_chroma_generic_error_still_finishes_reset(
+    handle_env, monkeypatch
+):
+    class _BrokenCollection:
+        def get(self, *args, **kwargs):
+            raise RuntimeError("chroma down")
+
+    monkeypatch.setattr(handle_env.db, "chroma_enabled", True)
+    monkeypatch.setattr(
+        handle_env.db,
+        "vectorstore",
+        types.SimpleNamespace(_collection=_BrokenCollection()),
+    )
+    context = FakeContext()
+    context.user_data["awaiting_reset_confirmation"] = True
+    update = FakeUpdate("CONFIRMAR RESET")
+    _run(telegram_bot.handle_message(update, context))
+    assert len(update.message.replies) == 1
+    assert "Reset executado" in update.message.replies[0]
+
+
+def test_handle_message_offboarding_scope_sentinel_is_not_masked_as_parse_error(
+    handle_env, monkeypatch
+):
+    _simulate_free_tier_user(monkeypatch)
+    conn = handle_env.db.conn
+    conn.execute(
+        "INSERT INTO users (user_id, registration_date) VALUES (?, ?)",
+        ("user-1", "2020-01-01 00:00:00"),
+    )
+    conn.execute("INSERT INTO unesco_pilot_data (user_id) VALUES (?)", ("user-1",))
+    conn.commit()
+    monkeypatch.setattr(
+        handle_env.db,
+        "conn",
+        _SQLFaultConn(conn, "UPDATE unesco_pilot_data", ValueError(REVOKED_SENTINEL)),
+    )
+    context = FakeContext()
+    context.user_data["offboarding_step"] = 1
+    update = FakeUpdate("3")
+    _run(telegram_bot.handle_message(update, context))
+    assert update.message.replies == [telegram_bot._SCOPE_REFUSAL_TEXT]
+    assert not any("número entre 1 e 5" in reply for reply in update.message.replies)
+
+
+def test_handle_message_free_limits_scope_sentinel_replies_canonically(
+    handle_env, monkeypatch
+):
+    _simulate_free_tier_user(monkeypatch)
+    monkeypatch.setattr(
+        handle_env.db,
+        "conn",
+        _SQLFaultConn(
+            handle_env.db.conn, "SELECT registration_date", ValueError(REVOKED_SENTINEL)
+        ),
+    )
+    update = FakeUpdate("ola")
+    _run(telegram_bot.handle_message(update, FakeContext()))
+    assert update.message.replies == [telegram_bot._SCOPE_REFUSAL_TEXT]
+
+
+def test_handle_message_red_line_keeps_safety_reply_before_scope_refusal(
+    handle_env, monkeypatch
+):
+    monkeypatch.setattr(
+        handle_env.db,
+        "conn",
+        _SQLFaultConn(
+            handle_env.db.conn, "UPDATE unesco_pilot_data", ValueError(REVOKED_SENTINEL)
+        ),
+    )
+    update = FakeUpdate("me matar")
+    _run(telegram_bot.handle_message(update, FakeContext()))
+    assert len(update.message.replies) == 2
+    assert "188" in update.message.replies[0]
+    assert update.message.replies[1] == telegram_bot._SCOPE_REFUSAL_TEXT
+
+
+def test_handle_message_red_line_keeps_safety_reply_on_generic_db_error(
+    handle_env, monkeypatch
+):
+    monkeypatch.setattr(
+        handle_env.db,
+        "conn",
+        _SQLFaultConn(
+            handle_env.db.conn, "UPDATE unesco_pilot_data", RuntimeError("db down")
+        ),
+    )
+    update = FakeUpdate("me matar")
+    _run(telegram_bot.handle_message(update, FakeContext()))
+    assert len(update.message.replies) == 1
+    assert "188" in update.message.replies[0]
+
+
+def test_handle_message_tri_scope_sentinel_reaches_canonical_reply(
+    handle_env, monkeypatch
+):
+    monkeypatch.setattr(handle_env.db, "get_user_conversations", lambda *a, **k: [])
+    handle_env.proactive.tri_enabled = True
+    handle_env.proactive.tri_error = ValueError(REVOKED_SENTINEL)
+    update = FakeUpdate("ola")
+    _run(telegram_bot.handle_message(update, FakeContext()))
+    assert update.message.replies == ["ok", telegram_bot._SCOPE_REFUSAL_TEXT]
