@@ -227,6 +227,35 @@ class KnowledgeUnitDatabaseMixin:
             return
         for uid in (unit_id, *more):
             refresh_unit_index(self, int(uid))
+        self._refresh_question_links_after_commit(unit_id, *more)
+
+    def _refresh_question_links_after_commit(self, unit_id: int, *more: int) -> None:
+        """Pos-commit R1c: o vinculo das questoes acompanha a unidade.
+
+        Mesmo contrato do refresh da projecao de indexacao: roda depois do
+        commit e nunca propaga — falha vira log, e o proximo evento de
+        unidade ou o rebuild idempotente por questao completa.
+        """
+        try:
+            from core.db.knowledge_question_links import (
+                refresh_question_links_for_unit,
+            )
+        except Exception as exc:
+            logger.warning(
+                "knowledge_units: modulo de vinculos de questao indisponivel tipo=%s",
+                type(exc).__name__,
+            )
+            return
+        for uid in (unit_id, *more):
+            try:
+                refresh_question_links_for_unit(self, int(uid))
+            except Exception as exc:
+                logger.warning(
+                    "knowledge_question_links: refresh pos-commit falhou "
+                    "unit_id=%s tipo=%s",
+                    uid,
+                    type(exc).__name__,
+                )
 
     # ------------------------------------------------------------------
     # Admissao (R1b)

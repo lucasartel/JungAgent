@@ -27,6 +27,12 @@ Contrato:
   (fail-closed como a do R1a).
 * **Expurgo**: conteudo novo redigido em ``_ERASE_FIELDS``;
   ``knowledge_gap_revisions`` apagada com a Relation.
+* **R1c**: o vinculo com unidades e versionado na projecao
+  ``knowledge_question_unit_links``
+  (``core/db/knowledge_question_links.py``) e a recuperacao de questoes
+  pertinentes e ``search_knowledge_questions`` — ranking lexico local
+  SEM idade, leitura pura; o ranker vetorial continua retido por decisao
+  de custo do mantenedor.
 
 Fora do escopo: efeito volitivo, prompt, envio, custo, politica
 sensivel, migracao de producao e qualquer chamada de LLM/provedor.
@@ -37,6 +43,7 @@ import json
 import logging
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional
 
 from core.db.cognitive_ownership import is_globally_readable
@@ -283,6 +290,9 @@ def register_candidate_question(
             logger.exception("falha ao registrar questao gap_id=%s", gap_id)
             raise
         if updated == 1:
+            # R1c: a projecao de vinculos nasce junto com o registro (a
+            # questao canonica ja esta commitada; falha aqui nunca propaga).
+            _refresh_question_links_quietly(db, gap_id)
             return {
                 "gap_id": gap_id,
                 "reused": False,
@@ -460,6 +470,249 @@ def transition_question_state(
     raise ValueError(f"question_transition_conflict:{gap_id}")
 
 
+def question_read_scope(
+    db: Any,
+    user_id: str,
+    *,
+    relation_id: Optional[str] = None,
+    agent_instance: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Resolve o escopo fail-closed de leitura das questoes (R1a/R1c).
+
+    Mesmo contrato de ``list_candidate_questions``: gate de elegibilidade
+    da Relation ANTES de qualquer leitura; sem elegibilidade devolve
+    ``None`` (o chamador decide o vazio), sem fallback global.
+    """
+    instance = cognitive_agent_instance(db, agent_instance)
+    resolved_relation = None
+    resolver = getattr(db, "resolve_relation_id", None)
+    try:
+        if callable(resolver):
+            resolved_relation = resolver(
+                agent_instance=instance,
+                participant_user_id=user_id,
+                relation_id=relation_id,
+            )
+        elif relation_id:
+            resolved_relation = relation_id
+        if resolved_relation:
+            require_eligible_relation(db, resolved_relation)
+    except ValueError as exc:
+        logger.warning(
+            "question_read_scope: escopo de Relation recusado "
+            "user_id=%s relation=%s motivo=%s",
+            user_id, relation_id, exc,
+        )
+        return None
+    visibility = "origin_class IN (?, ?)"
+    params: List[Any] = [instance, INSTANCE_GLOBAL, AUTHORIZED_AGGREGATE]
+    if resolved_relation:
+        visibility = f"({visibility} OR origin_relation_id = ?)"
+        params.append(resolved_relation)
+    else:
+        from instance_config import ADMIN_USER_ID
+        if str(user_id) == str(ADMIN_USER_ID):
+            visibility = (
+                f"({visibility} OR (origin_relation_id IS NULL AND user_id = ?))"
+            )
+            params.append(user_id)
+    return {
+        "instance": instance,
+        "relation": resolved_relation,
+        "visibility": visibility,
+        "params": params,
+    }
+
+
+def _question_item(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Apresenta a linha canonica com os campos decodificados."""
+    item = dict(row)
+    item["source_refs"] = json.loads(item.pop("source_refs_json") or "[]")
+    item["provenance"] = json.loads(item.pop("provenance_json") or "{}")
+    item["question_interpretation"] = json.loads(
+        item.pop("question_interpretation_json") or "{}"
+    )
+    item["linked_unit_ids"] = json.loads(item.pop("linked_unit_ids") or "[]")
+    item["question_support"] = json.loads(item.pop("question_support_json") or "{}")
+    return item
+
+
+def _refresh_question_links_quietly(db: Any, gap_id: int) -> None:
+    """Pos-commit R1c: a projecao de vinculos acompanha o registro.
+
+    Nunca propaga — falha vira log e o proximo evento de unidade ou o
+    rebuild idempotente completa.
+    """
+    try:
+        from core.db.knowledge_question_links import rebuild_question_unit_links
+
+        rebuild_question_unit_links(db, int(gap_id))
+    except Exception as exc:
+        logger.warning(
+            "knowledge_questions: projecao de vinculos falhou gap_id=%s tipo=%s",
+            gap_id, type(exc).__name__,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Recuperacao de questoes pertinentes (R1c — Complemento R1)
+# ---------------------------------------------------------------------------
+# Estados conceituais recuperaveis por padrao: os encerrados
+# (answered/abandoned/blocked) so entram por pedido explicito.
+DEFAULT_RETRIEVAL_STATES = ("active", "investigating", "postponed", "reformulated")
+
+# Mesma tecnica lexica local do R1c-1 (NFKC, caixa baixa, sem acentos);
+# o ranker vetorial continua retido por decisao de custo do mantenedor.
+MAX_QUESTION_CANDIDATES = 200
+MAX_QUESTION_SEARCH_LIMIT = 50
+
+
+def search_knowledge_questions(
+    db: Any,
+    user_id: str,
+    query: Optional[str] = None,
+    *,
+    limit: int = 10,
+    relation_id: Optional[str] = None,
+    agent_instance: Optional[str] = None,
+    states: Optional[Any] = None,
+) -> List[Dict[str, Any]]:
+    """Recupera questoes pertinentes alem da janela de recencia (R1c).
+
+    Ranking por pertinencia lexica LOCAL sobre o texto da questao e o
+    texto das unidades vinculadas VIVAS (projecao ``active``); zero de
+    sobreposicao com a consulta nao entra. **Idade nunca participa do
+    ranking** (mestre: questao antiga nao ganha urgencia pelo tempo) e
+    nada e gravado: leitura pura, ``importance_score`` intocado;
+    ``age_days`` aparece so como metadado observavel. O suporte de cada
+    resposta vem da projecao de vinculos (``support_state``): vinculo
+    superado/em revisao nunca e apresentado como evidencia fresca.
+
+    Escopo fail-closed igual ao de ``list_candidate_questions``;
+    ``states`` aceita subconjunto de ``QUESTION_STATES``.
+    """
+    if states is None:
+        wanted_states = DEFAULT_RETRIEVAL_STATES
+    else:
+        wanted_states = tuple(states)
+        for state in wanted_states:
+            if state not in QUESTION_STATES:
+                raise ValueError(f"question_state_unknown:{state}")
+        if not wanted_states:
+            return []
+    max_limit = max(1, min(int(limit), MAX_QUESTION_SEARCH_LIMIT))
+    query_text = str(query or "").strip()
+    with _db_lock(db):
+        scope = question_read_scope(
+            db, user_id, relation_id=relation_id, agent_instance=agent_instance
+        )
+        if scope is None:
+            return []
+        cursor = db.conn.cursor()
+        state_marks = ",".join("?" * len(wanted_states))
+        candidates: List[Dict[str, Any]] = []
+        offset = 0
+        batch = 50
+        while len(candidates) < MAX_QUESTION_CANDIDATES:
+            cursor.execute(
+                f"""
+                SELECT * FROM knowledge_gaps
+                WHERE agent_instance = ? AND question_kind IS NOT NULL
+                  AND {scope["visibility"]} AND origin_quarantined = 0
+                  AND question_state IN ({state_marks})
+                ORDER BY id
+                LIMIT ? OFFSET ?
+                """,
+                (*scope["params"], *wanted_states, batch, offset),
+            )
+            rows = cursor.fetchall()
+            for row in rows:
+                item = dict(row)
+                # F-5e: afirmacao global passa pelo contrato REAL; a
+                # recusa e exclusao na leitura, linha intacta.
+                if not is_globally_readable(item, agent_instance=scope["instance"]):
+                    continue
+                candidates.append(item)
+                if len(candidates) >= MAX_QUESTION_CANDIDATES:
+                    break
+            if len(rows) < batch:
+                break
+            offset += batch
+
+        from core.db.knowledge_question_links import question_link_snapshot
+        from core.db.knowledge_unit_index import search_tokens
+
+        query_tokens = set(search_tokens(query_text)) if query_text else set()
+        scored: List[Dict[str, Any]] = []
+        for item in candidates:
+            presented = _question_item(item)
+            snapshot = question_link_snapshot(db, presented["id"])
+            score = 0.0
+            if query_text:
+                own_tokens = set(
+                    search_tokens(
+                        " ".join(
+                            str(presented.get(field) or "")
+                            for field in (
+                                "topic",
+                                "the_gap",
+                                "public_question",
+                                "relevance_justification",
+                            )
+                        )
+                    )
+                )
+                score = float(len(query_tokens & own_tokens))
+                best_unit = 0.0
+                for link in snapshot["links"]:
+                    if str(link.get("link_state") or "") != "active":
+                        continue
+                    row = cursor.execute(
+                        "SELECT search_text FROM knowledge_unit_index WHERE id = ?",
+                        (int(link["unit_id"]),),
+                    ).fetchone()
+                    if row is None:
+                        continue
+                    overlap = len(query_tokens & set(search_tokens(row["search_text"])))
+                    best_unit = max(best_unit, float(overlap))
+                score += 0.5 * best_unit
+                if score <= 0.0:
+                    # Sem pertinencia lexical a questao nao entra.
+                    continue
+            presented["pertinence_score"] = score
+            presented["link_summary"] = snapshot["links"]
+            presented["support_state"] = snapshot["support_state"]
+            presented["age_days"] = _age_days(item.get("created_at"))
+            scored.append(presented)
+
+        # Ordenacao SEM idade: pertinencia, depois importancia persistente,
+        # desempate deterministico por id. created_at nunca participa.
+        scored.sort(
+            key=lambda row: (
+                -float(row.get("pertinence_score") or 0.0),
+                -float(row.get("importance_score") or 0.0),
+                int(row.get("id") or 0),
+            )
+        )
+        return scored[:max_limit]
+
+
+def _age_days(created_at: Any) -> Optional[int]:
+    if not created_at:
+        return None
+    text = str(created_at).replace("Z", "+00:00")
+    if "T" not in text:
+        # CURRENT_TIMESTAMP do SQLite vem "YYYY-MM-DD HH:MM:SS".
+        text = text.replace(" ", "T", 1)
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return max(0, int((datetime.now(timezone.utc) - moment).total_seconds() // 86400))
+
+
 def list_candidate_questions(
     db: Any,
     user_id: str,
@@ -476,39 +729,12 @@ def list_candidate_questions(
     """
     with _db_lock(db):
         cursor = db.conn.cursor()
-        instance = cognitive_agent_instance(db, agent_instance)
-        resolved_relation = None
-        resolver = getattr(db, "resolve_relation_id", None)
-        try:
-            if callable(resolver):
-                resolved_relation = resolver(
-                    agent_instance=instance,
-                    participant_user_id=user_id,
-                    relation_id=relation_id,
-                )
-            elif relation_id:
-                resolved_relation = relation_id
-            if resolved_relation:
-                require_eligible_relation(db, resolved_relation)
-        except ValueError as exc:
-            logger.warning(
-                "list_candidate_questions: escopo de Relation recusado "
-                "user_id=%s relation=%s motivo=%s",
-                user_id, resolved_relation, exc,
-            )
+        scope = question_read_scope(
+            db, user_id, relation_id=relation_id, agent_instance=agent_instance
+        )
+        if scope is None:
             return []
-        visibility = "origin_class IN (?, ?)"
-        params: List[Any] = [instance, INSTANCE_GLOBAL, AUTHORIZED_AGGREGATE]
-        if resolved_relation:
-            visibility = f"({visibility} OR origin_relation_id = ?)"
-            params.append(resolved_relation)
-        else:
-            from instance_config import ADMIN_USER_ID
-            if str(user_id) == str(ADMIN_USER_ID):
-                visibility = (
-                    f"({visibility} OR (origin_relation_id IS NULL AND user_id = ?))"
-                )
-                params.append(user_id)
+        params = scope["params"]
 
         questions: List[Dict[str, Any]] = []
         offset = 0
@@ -518,7 +744,7 @@ def list_candidate_questions(
                 f"""
                 SELECT * FROM knowledge_gaps
                 WHERE agent_instance = ? AND question_kind IS NOT NULL
-                  AND {visibility} AND origin_quarantined = 0
+                  AND {scope["visibility"]} AND origin_quarantined = 0
                 ORDER BY created_at DESC, id DESC
                 LIMIT ? OFFSET ?
                 """,
@@ -529,18 +755,9 @@ def list_candidate_questions(
                 item = dict(row)
                 # F-5e: afirmacao global passa pelo contrato REAL; a
                 # recusa e exclusao na leitura, linha intacta.
-                if not is_globally_readable(item, agent_instance=instance):
+                if not is_globally_readable(item, agent_instance=scope["instance"]):
                     continue
-                item["source_refs"] = json.loads(item.pop("source_refs_json") or "[]")
-                item["provenance"] = json.loads(item.pop("provenance_json") or "{}")
-                item["question_interpretation"] = json.loads(
-                    item.pop("question_interpretation_json") or "{}"
-                )
-                item["linked_unit_ids"] = json.loads(item.pop("linked_unit_ids") or "[]")
-                item["question_support"] = json.loads(
-                    item.pop("question_support_json") or "{}"
-                )
-                questions.append(item)
+                questions.append(_question_item(item))
                 if len(questions) >= int(limit):
                     break
             if len(rows) < batch:

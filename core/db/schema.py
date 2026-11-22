@@ -834,6 +834,42 @@ class SchemaDatabaseMixin:
             "ON knowledge_gap_revisions(gap_id, question_version)"
         )
 
+        # R1c (lado de questoes do Complemento R1): projecao derivada do
+        # vinculo questao<->unidade, com versao carimbada e estado do
+        # suporte. O canonico continua sendo
+        # ``knowledge_gaps.linked_unit_ids``; a linha e APAGADA com a
+        # Relation no expurgo (``_ERASE_DELETE_TABLES``). Escrita:
+        # ``core/db/knowledge_question_links.py``.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_question_unit_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                gap_id INTEGER NOT NULL,
+                unit_id INTEGER NOT NULL,
+                agent_instance TEXT,
+                origin_relation_id TEXT,
+                pinned_content_version INTEGER,
+                unit_content_version INTEGER,
+                unit_status TEXT,
+                link_state TEXT NOT NULL,
+                stale_reason TEXT,
+                superseded_by INTEGER,
+                linked_at DATETIME,
+                refreshed_at DATETIME
+            )
+        """)
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_question_unit_links "
+            "ON knowledge_question_unit_links(gap_id, unit_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_question_unit_links_scope "
+            "ON knowledge_question_unit_links(agent_instance, origin_relation_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_question_unit_links_unit "
+            "ON knowledge_question_unit_links(unit_id)"
+        )
+
         # ========== UNIDADES DE CONHECIMENTO (R1b — consolidacao conceitual) ==========
         # Registro canonico da consolidacao: cada unidade tem identidade,
         # versao, escopo de propriedade, proveniencia e estado epistemico.
