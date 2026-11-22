@@ -2,7 +2,20 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timedelta
+
+# `core/__init__` importa `core.embeddings` (`from openai import OpenAI`);
+# o stub do conftest nao traz o atributo. Mesmo padrao dos demais testes —
+# necessario desde que o dreno passou a registrar questoes candidatas
+# (import de `core.db.knowledge_questions` em tempo de chamada).
+if "openai" in sys.modules:
+    if not hasattr(sys.modules["openai"], "OpenAI"):
+        sys.modules["openai"].OpenAI = object
+else:
+    _oai = type(sys)("openai")
+    _oai.OpenAI = object
+    sys.modules["openai"] = _oai
 
 from jung_rumination import RuminationEngine
 
@@ -364,6 +377,7 @@ def test_drain_detection_backlog_retries_bounded_batches(rumination_db, monkeypa
         "batches_processed": 3,
         "tensions_created": 0,
         "knowledge_tensions_promoted": 0,
+        "candidate_questions_registered": 0,
         "pending_fragments": 12,
     }
     assert conn.execute(

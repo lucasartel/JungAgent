@@ -18,6 +18,22 @@ from work.common import (
 logger = logging.getLogger(__name__)
 
 
+def _validated_question_kind(value: Any) -> Optional[str]:
+    """Classificacao da pergunta aberta no conjunto fechado do mestre.
+
+    R1a/Complemento R1: a pergunta so vira questao candidata com tipo
+    DECLARADO pela extracao (``factual_absence``/``source_controversy``/
+    ``interpretation_limit``/``sense_question``) — os tipos sao distintos e
+    nao recebem o mesmo criterio de conclusao. Ausente ou desconhecido
+    devolve ``None`` (fail-closed): a pergunta continua no pacote de leitura
+    e no fragmento ruminal, mas nunca ganha tipo inventado em silencio.
+    """
+    from core.db.knowledge_questions import QUESTION_KINDS
+
+    kind = str(value or "").strip().lower()
+    return kind if kind in QUESTION_KINDS else None
+
+
 class WorkPackageBuilderMixin:
     @staticmethod
     def _reading_passage_is_usable(text: str) -> bool:
@@ -144,12 +160,15 @@ Arquivo: {source.get('filename')}
 Paginas verificadas: {source.get('start_page')}-{source.get('end_page')}
 Produza uma sintese de 120 a 220 palavras, de 3 a 6 ideias-chave, no maximo
 4 tensoes, no maximo 4 perguntas e no maximo 8 conceitos.
+Classifique cada pergunta em um unico tipo: factual_absence (a fonte nao
+informa o fato), source_controversy (fontes em conflito), interpretation_limit
+(limite do que a fonte sustenta) ou sense_question (pergunta de sentido).
 Responda APENAS em JSON valido:
 {{
   "summary": "sintese fiel e substancial",
   "key_ideas": [{{"idea": "ideia em suas palavras", "pages": [1], "significance": "por que importa"}}],
   "tensions": [{{"pole_a": "polo", "pole_b": "contrapolo", "pages": [1]}}],
-  "open_questions": [{{"question": "pergunta viva", "pages": [1]}}],
+  "open_questions": [{{"question": "pergunta viva", "pages": [1], "kind": "factual_absence"}}],
   "concepts": ["conceito"]
 }}
 SOURCE START
@@ -169,6 +188,11 @@ SOURCE END
             key_ideas = [item for item in (parsed.get("key_ideas") or []) if isinstance(item, dict) and str(item.get("idea") or "").strip()]
             tensions = [item for item in (parsed.get("tensions") or []) if isinstance(item, dict) and item.get("pole_a") and item.get("pole_b")]
             questions = [item for item in (parsed.get("open_questions") or []) if isinstance(item, dict) and item.get("question")]
+            # R1a/Complemento R1: tipo so com classificacao valida; ausente ou
+            # desconhecido fica None (fail-closed) e a pergunta nao vira
+            # questao candidata.
+            for item in questions:
+                item["kind"] = _validated_question_kind(item.get("kind"))
             concepts = [str(item).strip() for item in (parsed.get("concepts") or []) if str(item).strip()]
             return summary, key_ideas, tensions, questions, concepts
 
@@ -181,7 +205,9 @@ SOURCE END
             retry_prompt = f"""
 A resposta anterior nao cumpriu o contrato. Releia a fonte e devolva somente
 um objeto JSON compacto, sem markdown nem comentario. Use as chaves summary,
-key_ideas, tensions, open_questions e concepts. Summary deve ter ao menos 120
+key_ideas, tensions, open_questions e concepts, com kind em cada open_question
+(factual_absence, source_controversy, interpretation_limit ou sense_question).
+Summary deve ter ao menos 120
 palavras e key_ideas deve conter de 3 a 6 objetos com idea, pages e significance.
 Toda pagina citada deve estar entre {source.get('start_page')} e {source.get('end_page')}.
 SOURCE START

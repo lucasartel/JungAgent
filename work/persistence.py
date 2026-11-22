@@ -225,7 +225,8 @@ class WorkPersistenceMixin:
                 source_table="work_artifacts",
                 source_id=f"{artifact_id}:question:{index}",
                 source_kind="work_reading",
-                metadata={**provenance, "pages": question.get("pages")},
+                metadata={**provenance, "pages": question.get("pages"),
+                          "question_kind": question.get("kind")},
                 emotional_weight=0.6,
                 tension_level=0.58,
             )
@@ -248,6 +249,27 @@ class WorkPersistenceMixin:
             )
             rumination_warnings.append("reading_rumination_promotion_failed")
 
+        # R1a/Complemento R1: as perguntas que permanecem viram questoes
+        # candidatas no ponto de contato do produtor (preservando origem e
+        # escopo). Registro idempotente (dedup R1a-4): retry/reinicio nunca
+        # duplica. Pergunta sem classificacao valida nao e registrada.
+        questions_registered = 0
+        try:
+            from jung_rumination import RuminationEngine
+
+            questions_registered = RuminationEngine(
+                self.db
+            ).promote_pending_knowledge_questions(
+                self.admin_user_id,
+                limit=6,
+            )
+        except Exception as exc:
+            logger.warning(
+                "reading_assimilation: candidate question promotion failed: %s",
+                exc,
+            )
+            rumination_warnings.append("reading_question_promotion_failed")
+
         pages_read = int(reading.get("pages_read") or 0)
         output = (
             f"Work assimilou {pages_read} pagina(s) de "
@@ -261,6 +283,7 @@ class WorkPersistenceMixin:
                 "source_hash": reading.get("source_hash"),
                 "assimilation_mode": reading.get("assimilation_mode"),
                 "rumination_tensions_promoted": rumination_tensions_promoted,
+                "candidate_questions_registered": questions_registered,
             },
         )
         return {
@@ -269,6 +292,7 @@ class WorkPersistenceMixin:
             "ticket_id": None, "pages_read": pages_read,
             "output_summary": output, "warnings": rumination_warnings,
             "rumination_tensions_promoted": rumination_tensions_promoted,
+            "candidate_questions_registered": questions_registered,
         }
     def create_artifact_for_brief(
         self,

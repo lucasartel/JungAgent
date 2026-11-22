@@ -357,6 +357,10 @@ _ERASE_FIELDS: Dict[str, list] = {
         "source_metadata_json",
         "emotional_weight",
         "tension_level",
+        # Complemento R1: estado do registro de questoes candidatas e
+        # derivado do material privado do fragmento (mesmo criterio de
+        # ``question_state``/``link_state``) — redigido junto com ele.
+        "question_promotion_state",
     ],
     "rumination_tensions": [
         "pole_a_content",

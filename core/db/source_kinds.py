@@ -137,9 +137,15 @@ def validate_source_kind(value: Any, *, allow_null: bool = False) -> Optional[st
 CONVERSATION_GAP = "conversation"
 WORLD_GAP = "world"
 GOAL_MANAGER_GAP = "goal_manager"
+# R1a/Complemento R1: a leitura do Work e o produtor das questoes candidatas
+# ("perguntas que permanecem" da assimilacao). Adicionar o valor aqui e
+# mudanca de contrato deliberada: ``PUBLIC_SOURCE_KINDS`` (F-5a) ja lista
+# ``work_reading`` como fonte publica de criterio proprio — o produtor real
+# agora existe e a taxonomia o acompanha.
+WORK_READING_GAP = "work_reading"
 
 KNOWLEDGE_GAP_SOURCE_KINDS: FrozenSet[str] = frozenset(
-    {CONVERSATION_GAP, WORLD_GAP, GOAL_MANAGER_GAP}
+    {CONVERSATION_GAP, WORLD_GAP, GOAL_MANAGER_GAP, WORK_READING_GAP}
 )
 
 

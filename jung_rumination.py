@@ -18,7 +18,7 @@ import json
 import re
 import os
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import sqlite3
 
 from rumination_config import *
@@ -193,6 +193,27 @@ class RuminationEngine:
             cursor.execute("ALTER TABLE rumination_fragments ADD COLUMN last_detection_attempt_at DATETIME")
         except sqlite3.OperationalError:
             pass
+
+        # Estado proprio do registro de questoes candidatas (Complemento R1):
+        # separado de ``processed``/``detection_attempts`` (deteccao de
+        # tensoes). Registrar nunca marca o fragmento antes da deteccao e a
+        # deteccao — inclusive a exaustao de tentativas — nunca torna a
+        # pergunta inelegivel para registro.
+        try:
+            cursor.execute("ALTER TABLE rumination_fragments ADD COLUMN question_promotion_state TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE rumination_fragments ADD COLUMN question_promotion_at DATETIME")
+        except sqlite3.OperationalError:
+            pass
+
+        # Depois das colunas proprias da promocao existirem.
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rumination_question_promotion"
+            " ON rumination_fragments(user_id, fragment_type, question_promotion_state)"
+        )
 
         for column_def in [
             "source_kind TEXT DEFAULT 'conversation'",
@@ -715,6 +736,204 @@ class RuminationEngine:
             )
         return promoted
 
+    def promote_pending_knowledge_questions(
+        self,
+        user_id: str = None,
+        relation_id: Optional[str] = None,
+        limit: int = 4,
+    ) -> int:
+        """Registra questoes candidatas vindas dos produtores (Complemento R1).
+
+        Ponto de contato entre os produtores de fragmentos
+        ``knowledge_question`` (a leitura do Work hoje) e o registro canonico
+        de questoes candidatas (``core/db/knowledge_questions``), preservando
+        origem e escopo do proprio fragmento — mestre, distribuicao R1a do
+        Complemento R1: "preservar origem e escopo de questoes candidatas nos
+        produtores e filas; distinguir incompreensao de falha operacional".
+
+        Regras:
+
+        * So a pergunta CLASSIFICADA pelo produtor (``question_kind`` na
+          metadado, conjunto fechado) vira registro. Ausente ou desconhecido
+          nao e registrado e o fragmento segue sua vida ruminal normal —
+          classificacao nunca e inventada em silencio. Falha operacional
+          (leitura bloqueada) nunca emite ``knowledge_question``: bloqueio
+          tecnico nao e incompreensao nem progresso de aprendizagem.
+        * Sem janela de recencia: a selecao varre todos os fragmentos
+          pendentes (os mais recentes primeiro) enquanto houver orcamento de
+          registro — perguntas sem classificacao registravel ou recusadas
+          nunca empurram perguntas validas mais antigas para fora do
+          horizonte. O orcamento ``limit`` so e consumido por registros.
+        * Estado proprio (``question_promotion_state``), separado do estado
+          da deteccao de tensoes: registrar nunca marca ``processed`` nem
+          consome ``detection_attempts`` (o fragmento continua elegivel para
+          a deteccao), e a deteccao — inclusive a exaustao de tentativas —
+          nunca torna a pergunta inelegivel para registro. Cada exame deixa
+          um estado terminal explicito e auditavel (``registered``,
+          ``unclassified``, ``refused``); falha operacional no registro
+          permanece pendente (retry) e nunca vira incompreensao nem recusa.
+        * Retry/reinicio nunca duplicam: o dedup R1a-4 reutiliza a linha e o
+          fragmento tratado e marcado uma unica vez.
+        * Origem/escopo vem do fragmento: com Relation, material
+          ``relation_private`` sob a Relation do fragmento (gate C12g dentro
+          do registro); sem Relation, so nasce global pela rota publica F-5
+          (``source_kind`` publico + ancora), decidida pelo contrato de
+          admissao — recusa vira quarentena explicita, nunca
+          ``legacy_unscoped``.
+
+        Fora do escopo: efeito volitivo, prompt, envio, custo e qualquer
+        chamada de LLM/provedor.
+        """
+        user_id = user_id or self.admin_user_id
+        relation_id = self._resolve_relation_id(user_id, relation_id)
+        if not self._relation_allowed(user_id, relation_id):
+            return 0
+
+        from core.db.cognitive_ownership import PUBLIC_SOURCE_KINDS
+        from core.db.knowledge_questions import QUESTION_KINDS, register_candidate_question
+
+        cursor = self.db.conn.cursor()
+        resolved_relation, relation_clause, relation_params = self._relation_scope(
+            "rumination_fragments", user_id, relation_id
+        )
+        # Selecao sem janela de recencia e sem filtro do estado da deteccao:
+        # o registro de questoes e uma dimensao propria
+        # (``question_promotion_state``). Fragmentos sem classificacao
+        # registravel ou recusados nao consomem orcamento e nunca empurram
+        # perguntas validas mais antigas para fora do horizonte;
+        # ``processed``/``detection_attempts`` (deteccao de tensoes) nunca
+        # tornam a pergunta inelegivel para registro.
+        cursor.execute(
+            f"""
+            SELECT id, user_id, agent_instance, relation_id, content,
+                   source_kind, source_table, source_id, source_metadata_json
+            FROM rumination_fragments
+            WHERE user_id = ?{relation_clause}
+              AND fragment_type = 'knowledge_question'
+              AND question_promotion_state IS NULL
+            ORDER BY created_at DESC, id DESC
+            """,
+            (user_id, *relation_params),
+        )
+        rows = cursor.fetchall()
+
+        registered = 0
+        examined = 0
+        for row in rows:
+            if registered >= max(0, int(limit)):
+                break
+            examined += 1
+            fragment_id = int(row["id"])
+            metadata: Dict = {}
+            try:
+                metadata = json.loads(row["source_metadata_json"] or "{}") or {}
+            except (TypeError, ValueError):
+                metadata = {}
+            kind = str(metadata.get("question_kind") or "").strip().lower()
+            content = str(row["content"] or "").strip()
+            if kind not in QUESTION_KINDS or not content:
+                # Incompreensao (classificacao ausente/desconhecida ou sem
+                # texto): sem registro e sem progresso ficticio. Estado
+                # terminal explicito — nunca recusa e nunca descarte do
+                # fragmento, que segue sua vida ruminal normal.
+                logger.warning(
+                    "questao candidata nao registrada: classificacao ausente "
+                    "ou texto vazio fragment_id=%s — o fragmento segue na ruminação",
+                    fragment_id,
+                )
+                self._mark_question_promotion(cursor, [fragment_id], "unclassified")
+                continue
+
+            fragment_relation = str(row["relation_id"]).strip() if row["relation_id"] else None
+            fragment_instance = str(row["agent_instance"]).strip() if row["agent_instance"] else None
+            source_kind = row["source_kind"]
+            origin_class = None
+            provenance: Dict[str, Any] = {
+                "producer": "work_reading_question_promotion",
+                "fragment_id": fragment_id,
+                "source_table": row["source_table"],
+                "source_id": row["source_id"],
+            }
+            if not fragment_relation:
+                # Sem Relation a rota publica e a unica possivel (condicao 2
+                # do F-5): ``source_kind`` publico comprovado + ancora. A
+                # declaracao pede; o contrato de admissao decide. Nova
+                # material nunca nasce ``legacy_unscoped`` (condicao 1).
+                if str(source_kind or "") not in PUBLIC_SOURCE_KINDS:
+                    logger.warning(
+                        "questao candidata nao registrada: origem nao publica "
+                        "sem Relation fragment_id=%s source_kind=%s",
+                        fragment_id, source_kind,
+                    )
+                    self._mark_question_promotion(cursor, [fragment_id], "refused")
+                    continue
+                origin_class = "authorized_aggregate"
+                provenance["private_derived"] = False
+                provenance["extraction"] = "source_only_reading"
+
+            filename = str(metadata.get("filename") or "").strip()
+            topic = filename or "leitura"
+            pages = metadata.get("pages") or []
+            page_marks = ", ".join(str(page) for page in pages if str(page).strip())
+            relevance = f"Permanece aberta apos a leitura '{topic}'"
+            if page_marks:
+                relevance += f" (paginas {page_marks})"
+            relevance += "; nenhuma resposta no material lido."
+
+            try:
+                result = register_candidate_question(
+                    self.db,
+                    user_id=str(row["user_id"] or user_id),
+                    topic=topic,
+                    the_gap=content,
+                    question_kind=kind,
+                    source_kind=str(source_kind or ""),
+                    relevance_justification=relevance,
+                    source_refs=[f"rumination_fragment#{fragment_id}"],
+                    relation_id=fragment_relation,
+                    origin_class=origin_class,
+                    agent_instance=fragment_instance,
+                    provenance=provenance,
+                )
+            except Exception:
+                # Falha operacional nunca vira incompreensao nem recusa: o
+                # fragmento permanece pendente e e reexaminado no proximo
+                # dreno (retry), sem falso sucesso e sem bloquear os demais.
+                logger.warning(
+                    "falha operacional ao registrar questao candidata "
+                    "fragment_id=%s — fragmento permanece pendente",
+                    fragment_id,
+                    exc_info=True,
+                )
+                continue
+            if result is None:
+                logger.warning(
+                    "questao candidata recusada pela politica fragment_id=%s "
+                    "— sem falso sucesso e sem descarte do fragmento",
+                    fragment_id,
+                )
+                self._mark_question_promotion(cursor, [fragment_id], "refused")
+                continue
+            # Registrada (nova ou reaproveitada): a pergunta vive no registro
+            # canonico com a ancora no fragmento; o fragmento nao precisa mais
+            # ser revisitado por este caminho. So o estado proprio da promocao
+            # e marcado — ``processed``/``detection_attempts`` ficam intocados
+            # e o fragmento continua elegivel para a deteccao de tensoes.
+            self._mark_question_promotion(cursor, [fragment_id], "registered")
+            if not result.get("reused"):
+                registered += 1
+
+        self.db.conn.commit()
+        if registered:
+            self._log_operation(
+                "detecção",
+                user_id,
+                relation_id=resolved_relation,
+                input_summary=f"{examined} fragmentos de pergunta examinados",
+                output_summary=f"{registered} questoes candidatas registradas",
+            )
+        return registered
+
     def drain_detection_backlog(
         self,
         user_id: str = None,
@@ -755,6 +974,12 @@ class RuminationEngine:
             user_id,
             relation_id=relation_id,
         )
+        # R1a/Complemento R1: retomada periodica do registro de questoes
+        # candidatas — idempotente (dedup R1a-4), sem repetir cognicao.
+        registered_questions = self.promote_pending_knowledge_questions(
+            user_id,
+            relation_id=relation_id,
+        )
         batches_processed = 0
         tensions_created = promoted_knowledge_tensions
         previous_pending, previous_attempts = pending_state()
@@ -781,6 +1006,7 @@ class RuminationEngine:
             "batches_processed": batches_processed,
             "tensions_created": tensions_created,
             "knowledge_tensions_promoted": promoted_knowledge_tensions,
+            "candidate_questions_registered": registered_questions,
             "pending_fragments": previous_pending,
         }
 
@@ -804,6 +1030,33 @@ class RuminationEngine:
         affective_score = affective_charge if affective_charge <= 1.0 else affective_charge / 100.0
 
         return min(1.0, max(tension, existential_depth, affective_score))
+
+    def _mark_question_promotion(
+        self,
+        cursor,
+        fragment_ids: List[int],
+        state: str,
+    ) -> None:
+        """Marca o estado proprio do registro de questoes candidatas.
+
+        Nunca toca o estado da deteccao de tensoes
+        (``processed``/``detection_attempts``): dimensoes separadas —
+        registrar nao antecipa a deteccao e a deteccao (inclusive a exaustao
+        de tentativas) nao torna a pergunta inelegivel para registro.
+        """
+        if not fragment_ids:
+            return
+
+        placeholders = ",".join(["?"] * len(fragment_ids))
+        cursor.execute(
+            f"""
+            UPDATE rumination_fragments
+            SET question_promotion_state = ?,
+                question_promotion_at = ?
+            WHERE id IN ({placeholders})
+            """,
+            (state, datetime.now().isoformat(), *fragment_ids),
+        )
 
     def _register_detection_attempts(
         self,
