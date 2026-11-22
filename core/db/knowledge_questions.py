@@ -44,7 +44,7 @@ import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from core.db.cognitive_ownership import is_globally_readable
 from core.db.cognitive_provenance import (
@@ -563,8 +563,25 @@ DEFAULT_RETRIEVAL_STATES = ("active", "investigating", "postponed", "reformulate
 
 # Mesma tecnica lexica local do R1c-1 (NFKC, caixa baixa, sem acentos);
 # o ranker vetorial continua retido por decisao de custo do mantenedor.
+# MAX_QUESTION_CANDIDATES e a janela de retencao APOS a pontuacao
+# (revisao da PR #115): a selecao pontua TODA linha do escopo — o
+# pre-filtro pelos primeiros 200 por id escondia questao pertinente de id
+# posterior mesmo sem outras correspondencias. A janela guarda as
+# melhores JA PONTUADAS (ordem de ranking, nunca de id) e sempre cobre o
+# teto de saida (MAX_QUESTION_SEARCH_LIMIT), entao o corte nunca muda o
+# resultado devolvido.
 MAX_QUESTION_CANDIDATES = 200
 MAX_QUESTION_SEARCH_LIMIT = 50
+
+
+def _question_rank(row: Dict[str, Any]) -> Tuple[float, float, int]:
+    """Chave de ranking SEM idade: pertinencia, importancia persistente,
+    desempate deterministico por id. ``created_at`` nunca participa."""
+    return (
+        -float(row.get("pertinence_score") or 0.0),
+        -float(row.get("importance_score") or 0.0),
+        int(row.get("id") or 0),
+    )
 
 
 def search_knowledge_questions(
@@ -585,8 +602,11 @@ def search_knowledge_questions(
     ranking** (mestre: questao antiga nao ganha urgencia pelo tempo) e
     nada e gravado: leitura pura, ``importance_score`` intocado;
     ``age_days`` aparece so como metadado observavel. O suporte de cada
-    resposta vem da projecao de vinculos (``support_state``): vinculo
-    superado/em revisao nunca e apresentado como evidencia fresca.
+    resposta vem da projecao de vinculos (``support_state``), com a
+    leitura reconfirmando o estado atual da unidade antes de tratar o
+    vinculo como ativo: vinculo superado/em revisao nunca e apresentado
+    como evidencia fresca. A selecao pontua TODA linha do escopo — nunca
+    um pre-filtro por id — e o corte final e o ``limit`` do chamador.
 
     Escopo fail-closed igual ao de ``list_candidate_questions``;
     ``states`` aceita subconjunto de ``QUESTION_STATES``.
@@ -608,12 +628,21 @@ def search_knowledge_questions(
         )
         if scope is None:
             return []
+        from core.db.knowledge_question_links import question_link_snapshot
+        from core.db.knowledge_unit_index import search_tokens
+
         cursor = db.conn.cursor()
         state_marks = ",".join("?" * len(wanted_states))
-        candidates: List[Dict[str, Any]] = []
+        query_tokens = set(search_tokens(query_text)) if query_text else set()
+        scored: List[Dict[str, Any]] = []
         offset = 0
         batch = 50
-        while len(candidates) < MAX_QUESTION_CANDIDATES:
+        # Varredura COMPLETA do escopo: cada linha e pontuada na hora e a
+        # janela retem as melhores por ranking (revisao da PR #115 — o
+        # pre-filtro pelos primeiros 200 por id escondia a pertinente de id
+        # posterior). A janela cobre o teto de saida, entao nunca corta
+        # resultado que o chamador veria.
+        while True:
             cursor.execute(
                 f"""
                 SELECT * FROM knowledge_gaps
@@ -632,68 +661,58 @@ def search_knowledge_questions(
                 # recusa e exclusao na leitura, linha intacta.
                 if not is_globally_readable(item, agent_instance=scope["instance"]):
                     continue
-                candidates.append(item)
-                if len(candidates) >= MAX_QUESTION_CANDIDATES:
-                    break
+                presented = _question_item(item)
+                snapshot = question_link_snapshot(db, presented["id"])
+                score = 0.0
+                if query_text:
+                    own_tokens = set(
+                        search_tokens(
+                            " ".join(
+                                str(presented.get(field) or "")
+                                for field in (
+                                    "topic",
+                                    "the_gap",
+                                    "public_question",
+                                    "relevance_justification",
+                                )
+                            )
+                        )
+                    )
+                    score = float(len(query_tokens & own_tokens))
+                    best_unit = 0.0
+                    for link in snapshot["links"]:
+                        if str(link.get("link_state") or "") != "active":
+                            continue
+                        idx_row = cursor.execute(
+                            "SELECT search_text FROM knowledge_unit_index"
+                            " WHERE id = ?",
+                            (int(link["unit_id"]),),
+                        ).fetchone()
+                        if idx_row is None:
+                            continue
+                        overlap = len(
+                            query_tokens & set(search_tokens(idx_row["search_text"]))
+                        )
+                        best_unit = max(best_unit, float(overlap))
+                    score += 0.5 * best_unit
+                    if score <= 0.0:
+                        # Sem pertinencia lexical a questao nao entra.
+                        continue
+                presented["pertinence_score"] = score
+                presented["link_summary"] = snapshot["links"]
+                presented["support_state"] = snapshot["support_state"]
+                presented["age_days"] = _age_days(item.get("created_at"))
+                scored.append(presented)
+                if len(scored) > MAX_QUESTION_CANDIDATES:
+                    scored.sort(key=_question_rank)
+                    del scored[MAX_QUESTION_CANDIDATES:]
             if len(rows) < batch:
                 break
             offset += batch
 
-        from core.db.knowledge_question_links import question_link_snapshot
-        from core.db.knowledge_unit_index import search_tokens
-
-        query_tokens = set(search_tokens(query_text)) if query_text else set()
-        scored: List[Dict[str, Any]] = []
-        for item in candidates:
-            presented = _question_item(item)
-            snapshot = question_link_snapshot(db, presented["id"])
-            score = 0.0
-            if query_text:
-                own_tokens = set(
-                    search_tokens(
-                        " ".join(
-                            str(presented.get(field) or "")
-                            for field in (
-                                "topic",
-                                "the_gap",
-                                "public_question",
-                                "relevance_justification",
-                            )
-                        )
-                    )
-                )
-                score = float(len(query_tokens & own_tokens))
-                best_unit = 0.0
-                for link in snapshot["links"]:
-                    if str(link.get("link_state") or "") != "active":
-                        continue
-                    row = cursor.execute(
-                        "SELECT search_text FROM knowledge_unit_index WHERE id = ?",
-                        (int(link["unit_id"]),),
-                    ).fetchone()
-                    if row is None:
-                        continue
-                    overlap = len(query_tokens & set(search_tokens(row["search_text"])))
-                    best_unit = max(best_unit, float(overlap))
-                score += 0.5 * best_unit
-                if score <= 0.0:
-                    # Sem pertinencia lexical a questao nao entra.
-                    continue
-            presented["pertinence_score"] = score
-            presented["link_summary"] = snapshot["links"]
-            presented["support_state"] = snapshot["support_state"]
-            presented["age_days"] = _age_days(item.get("created_at"))
-            scored.append(presented)
-
         # Ordenacao SEM idade: pertinencia, depois importancia persistente,
         # desempate deterministico por id. created_at nunca participa.
-        scored.sort(
-            key=lambda row: (
-                -float(row.get("pertinence_score") or 0.0),
-                -float(row.get("importance_score") or 0.0),
-                int(row.get("id") or 0),
-            )
-        )
+        scored.sort(key=_question_rank)
         return scored[:max_limit]
 
 

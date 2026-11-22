@@ -26,7 +26,9 @@ propaga) e e reconstruida de forma idempotente por questao
 (``rebuild_question_unit_links``). Nada aqui reescreve a questao canonica
 — o ``superseded_by`` da linhagem e sugestao revisavel, nao relink
 automatico. No expurgo da Relation as linhas sao APAGADAS, nao redigidas
-(``core/db/erase.py``).
+(``core/db/erase.py``). Na LEITURA o estado atual da unidade e conferido
+antes de tratar o vinculo como suporte ativo: projecao atrasada por falha
+do refresh pos-commit nunca vira evidencia fresca.
 
 A recuperacao de questoes pertinentes (alem da recencia, ranking lexico
 local sem idade) fica em ``core/db/knowledge_questions.py``.
@@ -62,6 +64,9 @@ REASON_RETRACTED = "unit_retracted"
 REASON_MISSING = "unit_missing"
 REASON_ERASED = "unit_erased"
 REASON_OUT_OF_SCOPE = "unit_out_of_scope"
+# Somente de LEITURA: a verificacao da unidade nao confirmou o suporte e
+# o vinculo e apresentado no lado seguro (nunca ``active``).
+REASON_UNVERIFIED = "unit_unverified"
 
 # PK ``id`` autoincrement: mesmo padrao das tabelas filhas do schema — o
 # inventario de colunas do expurgo ignora a PK e inseriria texto numa
@@ -351,11 +356,47 @@ def refresh_question_links_for_unit(
     return {"unit_id": int(unit_id), "gaps": refreshed}
 
 
+def _verified_link_state(
+    db: Any, item: Dict[str, Any]
+) -> Tuple[str, Optional[str], Optional[int], Optional[int], Optional[str]]:
+    """Estado VIGENTE do vinculo, conferido na unidade canonica (leitura).
+
+    A projecao e derivada e pode ter ficado para tras quando o refresh
+    pos-commit falha (a falha vira so log). Antes de tratar o vinculo
+    como suporte ativo a leitura reconfere a unidade AGORA, com o mesmo
+    ``_link_verdict`` da escrita. Sem confirmacao o lado seguro e
+    ``stale``/``unit_unverified`` — nunca ``active``.
+    """
+    pinned = item.get("pinned_content_version")
+    pinned_int = int(pinned) if pinned is not None else None
+    try:
+        unit = _unit_row(db, int(item.get("unit_id")))
+    except Exception as exc:
+        logger.warning(
+            "knowledge_question_links: verificacao da unidade falhou "
+            "unit_id=%s tipo=%s",
+            item.get("unit_id"), type(exc).__name__,
+        )
+        return LINK_STALE, REASON_UNVERIFIED, None, None, None
+    return _link_verdict(
+        unit,
+        agent_instance=str(item.get("agent_instance") or ""),
+        relation_id=item.get("origin_relation_id"),
+        pinned_version=pinned_int,
+    )
+
+
 def question_link_snapshot(db: Any, gap_id: int) -> Dict[str, Any]:
     """Estado do suporte de uma questao a partir da projecao derivada.
 
-    Leitura pura (sem ``ensure_schema``: a projecao nasce no init do
-    schema); tabela ausente vira ``unlinked``, nunca excecao na leitura.
+    Leitura pura e SEGURA: cada vinculo e conferido na unidade canonica
+    antes de ser tratado como suporte ativo, e o estado apresentado e o
+    VIGENTE (nunca o atrasado de uma projecao cujo refresh pos-commit
+    falhou). ``projection_outdated`` sinaliza a projecao desencontrada que
+    o proximo evento de unidade ou o rebuild idempotente completa; a
+    leitura nao conserta nada. Sem ``ensure_schema``: a projecao nasce no
+    init do schema; tabela ausente vira ``unlinked``, nunca excecao na
+    leitura.
     """
     try:
         cursor = db.conn.cursor()
@@ -372,7 +413,20 @@ def question_link_snapshot(db: Any, gap_id: int) -> Dict[str, Any]:
     for row in rows:
         item = dict(row)
         item.pop("id", None)
-        state = str(item.get("link_state") or "")
+        stored_state = str(item.get("link_state") or "")
+        stored_reason = item.get("stale_reason")
+        state, reason, version, superseded_by, status = _verified_link_state(
+            db, item
+        )
+        item["link_state"] = state
+        item["stale_reason"] = reason
+        item["unit_content_version"] = version
+        item["unit_status"] = status
+        item["superseded_by"] = superseded_by
+        item["projection_outdated"] = (state, reason) != (
+            stored_state,
+            stored_reason,
+        )
         counts[state] = counts.get(state, 0) + 1
         links.append(item)
     if counts[LINK_ACTIVE]:

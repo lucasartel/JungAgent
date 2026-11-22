@@ -28,6 +28,7 @@ else:
     sys.modules["openai"] = _oai
 
 from core.database import HybridDatabaseManager  # noqa: E402
+from core.db import knowledge_question_links as qlinks  # noqa: E402
 from core.db import knowledge_questions as kq  # noqa: E402
 from core.db.erase import erase_relation, verify_relation_erase  # noqa: E402
 from core.db.knowledge_question_links import (  # noqa: E402
@@ -360,6 +361,82 @@ def test_suporte_em_revisao_nao_aparece_como_evidencia_fresca(tmp_path):
     item = found[0]
     assert item["support_state"] == "pending_revision"
     assert all(link["link_state"] != LINK_ACTIVE for link in item["link_summary"])
+
+
+def test_leitura_segura_ignora_projecao_atrasada_por_falha_de_refresh(
+    tmp_path, monkeypatch
+):
+    """Revisao PR #115: falha do refresh pos-commit nunca vira evidencia
+    fresca — a leitura confere o estado atual da unidade antes de tratar
+    o vinculo como suporte ativo."""
+    db = _db(tmp_path)
+    rel = _register(db)
+    conv = _conversation(db, rel)
+    unit = _unit(db, rel)
+    result = _question(db, rel, num=conv, linked_unit_ids=[unit["unit_id"]])
+
+    def _boom(db_obj, unit_id, *, now=None):
+        raise RuntimeError("refresh pos-commit falhou")
+
+    monkeypatch.setattr(qlinks, "refresh_question_links_for_unit", _boom)
+    _unit(
+        db,
+        rel,
+        content=_UNIT_CONTENT_V2,
+        source="conversation#6",
+        supersedes_unit_id=unit["unit_id"],
+    )
+
+    # A projecao ficou para tras: a falha virou so log, linha segue "active".
+    links = _link_rows(db, result["gap_id"])
+    assert links[0]["link_state"] == LINK_ACTIVE
+
+    # Leitura segura: o estado atual da unidade manda, nao a projecao.
+    snapshot = question_link_snapshot(db, result["gap_id"])
+    assert snapshot["active"] == 0 and snapshot["stale"] == 1
+    assert snapshot["support_state"] == "pending_revision"
+    assert snapshot["links"][0]["link_state"] == LINK_STALE
+    assert snapshot["links"][0]["stale_reason"] == "unit_superseded"
+    assert snapshot["links"][0]["projection_outdated"] is True
+
+    found = kq.search_knowledge_questions(db, "alice", "fonte inferencia sustentada")
+
+    assert [item["id"] for item in found] == [result["gap_id"]]
+    item = found[0]
+    assert item["support_state"] == "pending_revision"
+    assert all(link["link_state"] != LINK_ACTIVE for link in item["link_summary"])
+
+    # Leitura pura: a leitura nao conserta a projecao atrasada.
+    assert _link_rows(db, result["gap_id"]) == links
+
+
+def test_busca_alcanca_questao_pertinente_apos_mais_de_duzentas(tmp_path):
+    """Revisao PR #115: a selecao nao corta por id antes da pertinencia —
+    com mais de 200 questoes, a pertinente de id posterior continua
+    visivel mesmo sem outras correspondencias."""
+    db = _db(tmp_path)
+    rel = _register(db)
+    conv = _conversation(db, rel)
+    for num in range(1, 251):
+        _question(
+            db,
+            rel,
+            num=conv,
+            topic=f"ruido{num}",
+            the_gap=f"nota de ruido numero {num} sem termos da consulta",
+            relevance_justification="classificacao de ruido sem termos da consulta",
+        )
+    target = _question(
+        db,
+        rel,
+        num=conv,
+        topic="alvo",
+        the_gap="fonte inferencia sustentada da questao alvo",
+    )
+
+    found = kq.search_knowledge_questions(db, "alice", "fonte inferencia sustentada")
+
+    assert [item["id"] for item in found] == [target["gap_id"]]
 
 
 def test_duas_relations_e_duas_instancias_se_isolam(tmp_path):
