@@ -51,6 +51,21 @@ class KnowledgeUnitReviewMixin:
             )
             return
         refresh_unit_index(self, unit_id)
+        # R1c: o vinculo das questoes tambem acompanha a transicao —
+        # sair de ``active`` marca o suporte em revisao/retracao na hora.
+        try:
+            from core.db.knowledge_question_links import (
+                refresh_question_links_for_unit,
+            )
+
+            refresh_question_links_for_unit(self, unit_id)
+        except Exception as exc:
+            logger.warning(
+                "knowledge_unit_review: refresh de vinculos de questao "
+                "falhou unit_id=%s tipo=%s",
+                unit_id,
+                type(exc).__name__,
+            )
 
     def review_knowledge_unit(
         self,

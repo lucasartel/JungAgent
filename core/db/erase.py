@@ -92,14 +92,16 @@ _ERASE_CHILD_FIELDS: Dict[str, list] = {
 # trabalho pendente sobre conteudo ja apagado. Linha apagada, nao redigida.
 #
 # R1c-1 + Complemento R1: projecoes/derivados apagados por inteiro com a
-# Relation (knowledge_unit_index das unidades e knowledge_gap_revisions
-# do historico de revisoes das questoes). As linhas tombstone canonicas
+# Relation (knowledge_unit_index das unidades, knowledge_gap_revisions
+# do historico de revisoes das questoes e knowledge_question_unit_links
+# do vinculo versionado questao<->unidade). As linhas tombstone canonicas
 # permanecem em ``knowledge_units`` e ``knowledge_gaps``.
 _ERASE_DELETE_TABLES = (
     "symbolic_triples",
     "processing_queue",
     "knowledge_unit_index",
     "knowledge_gap_revisions",
+    "knowledge_question_unit_links",
 )
 
 # Revisao da PR #59 (Rodada 5, conferencia de produtores): conteudo
@@ -321,6 +323,11 @@ _ERASE_FIELDS: Dict[str, list] = {
     # (``_ERASE_DELETE_TABLES``); o mapa cobre a coluna de conteudo para a
     # inventario de colunas sem decisao continuar fechado.
     "knowledge_unit_index": ["search_text"],
+    # R1c (Complemento R1): projecao do vinculo versionado questao<->unidade
+    # — linha inteira apagada com a Relation; o mapa cobre os
+    # classificadores de estado do vinculo para o inventario continuar
+    # fechado (mesmo precedente de ``question_state``).
+    "knowledge_question_unit_links": ["link_state", "stale_reason"],
     "scholar_runs": [
         "topic",
         "history_excerpt",
