@@ -118,6 +118,36 @@ class WorkPackageBuilderMixin:
             end_page = start_page
         return {"start_page": start_page, "end_page": end_page}
 
+    def _living_questions_for_reading(self, project: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Selecao R1 de questoes vivas para orientar a leitura.
+
+        Fronteira "selecao das questoes para Work/ruminacao": material de
+        ANALISE (fail-closed, leitura pura, estados vivos, sem idade).
+        Nunca e ordem de busca, efeito volitivo nem progresso de
+        aprendizagem; a leitura continua fiel a fonte. Falha na selecao
+        nunca bloqueia a leitura — loga e segue sem o bloco.
+        """
+        db = getattr(self, "db", None)
+        if db is None:
+            return []
+        try:
+            from core.db.knowledge_question_selection import select_questions_for_material
+
+            focus = " ".join(
+                str(project.get(field) or "") for field in ("name", "directive")
+            )
+            return select_questions_for_material(
+                db,
+                str(getattr(self, "admin_user_id", "") or ""),
+                focus=focus,
+                limit=3,
+            )
+        except Exception as exc:
+            logger.warning(
+                "reading_assimilation: selecao de questoes vivas falhou: %s", exc
+            )
+            return []
+
     def _blocked_reading_package(self, brief: Dict[str, Any], project: Dict[str, Any], source: Dict[str, Any]) -> Dict[str, Any]:
         reason = source.get("reason") or "reading_source_unavailable"
         title = _truncate(f"Leitura bloqueada: {project.get('name') or 'material'}", 100)
@@ -152,12 +182,30 @@ class WorkPackageBuilderMixin:
             source.update({"verified": False, "reason": "reading_source_unreadable"})
             return self._blocked_reading_package(brief, project, source)
 
+        # R1: questoes vivas da investigacao entram como MATERIAL DE
+        # ANALISE do prompt de extracao (selecao fail-closed, leitura
+        # pura, estados vivos, sem idade). O contrato JSON nao muda.
+        living_questions = self._living_questions_for_reading(project)
+        questions_section = ""
+        if living_questions:
+            from core.db.knowledge_question_selection import format_questions_for_prompt
+
+            questions_section = (
+                format_questions_for_prompt(
+                    living_questions, heading="PERGUNTAS VIVAS DESTA INVESTIGACAO"
+                )
+                + "\nSe o trecho responder, avancar ou refinar uma pergunta viva, "
+                "registre a pergunta refinada em open_questions com o kind "
+                "correspondente; nao repita pergunta viva sem avanco real.\n"
+            )
+
         prompt = f"""
 Leia somente o texto entre SOURCE START e SOURCE END. Nao use memoria de
 treinamento para completar lacunas, nao invente citacoes e parafraseie.
 Livro: {project.get('name')}
 Arquivo: {source.get('filename')}
 Paginas verificadas: {source.get('start_page')}-{source.get('end_page')}
+{questions_section}
 Produza uma sintese de 120 a 220 palavras, de 3 a 6 ideias-chave, no maximo
 4 tensoes, no maximo 4 perguntas e no maximo 8 conceitos.
 Classifique cada pergunta em um unico tipo: factual_absence (a fonte nao
@@ -210,6 +258,7 @@ key_ideas, tensions, open_questions e concepts, com kind em cada open_question
 Summary deve ter ao menos 120
 palavras e key_ideas deve conter de 3 a 6 objetos com idea, pages e significance.
 Toda pagina citada deve estar entre {source.get('start_page')} e {source.get('end_page')}.
+{questions_section}
 SOURCE START
 {source.get('text')}
 SOURCE END
@@ -278,6 +327,13 @@ SOURCE END
             "concepts": concepts[:12],
             "assimilation_mode": "extractive_fallback" if extractive_fallback else "llm_structured",
             "llm_attempts": llm_attempts,
+            # R1 (observabilidade, so ids e base — nunca texto de questao
+            # privada fora do escopo): o que foi selecionado como material
+            # de analise desta leitura e por qual base.
+            "selected_question_ids": [int(item.get("gap_id") or 0) for item in living_questions],
+            "question_selection_basis": (
+                living_questions[0].get("selection_basis") if living_questions else None
+            ),
         })
         title = _truncate(f"Leitura: {project.get('name')} (p. {start_page}-{end_page})", 120)
         return {

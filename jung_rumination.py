@@ -1823,6 +1823,45 @@ class RuminationEngine:
 
         return insight_ids
 
+    def _living_questions_for_synthesis(
+        self, user_id: str, relation_id: Optional[str], tension: Dict
+    ) -> str:
+        """Selecao R1 de questoes vivas para a sintese (material de analise).
+
+        Fronteira "selecao das questoes para Work/ruminacao": o bloco vai
+        para o slot de conexoes do ``SYNTHESIS_PROMPT`` — a ruminacao pode
+        aprofundar, conectar ou contestar questoes ao longo dos dias, sem
+        que a selecao responda, adie, reabra ou encerra questao alguma
+        (leitura pura; transicao so por ``transition_question_state``).
+        Escopo fail-closed da propria sintese (Relation elegivel); falha
+        nunca bloqueia a sintese — loga com contexto e segue sem o bloco.
+        """
+        try:
+            from core.db.knowledge_question_selection import (
+                format_questions_for_prompt,
+                select_questions_for_material,
+            )
+
+            focus = " ".join(
+                str(tension.get(field) or "")
+                for field in ("tension_description", "pole_a_content", "pole_b_content")
+            )
+            items = select_questions_for_material(
+                self.db,
+                user_id,
+                focus=focus,
+                limit=3,
+                relation_id=relation_id,
+                agent_instance=self._agent_instance(),
+            )
+            return format_questions_for_prompt(items)
+        except Exception as exc:
+            logger.warning(
+                "sintese: selecao de questoes vivas falhou user_id=%s tipo=%s",
+                user_id, type(exc).__name__,
+            )
+            return ""
+
     def _synthesize_tension(self, tension: Dict, relation_id: Optional[str] = None) -> Optional[int]:
         """
         Gera símbolo/insight a partir de tensão madura.
@@ -1861,7 +1900,9 @@ class RuminationEngine:
             tension_description=tension['tension_description'],
             intensity=tension['intensity'],
             maturity=tension['maturity_score'],
-            connected_info="",  # Por enquanto vazio
+            connected_info=self._living_questions_for_synthesis(
+                user_id, relation_id, tension
+            ),
             recent_conversations=recent_text
         )
 
