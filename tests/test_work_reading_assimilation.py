@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
+import threading
 import types
 from pathlib import Path
 from typing import Any, Dict
+
+# `core/__init__` importa `core.embeddings` (`from openai import OpenAI`);
+# o stub do conftest nao traz o atributo. Mesmo padrao dos demais testes.
+if "openai" in sys.modules:
+    if not hasattr(sys.modules["openai"], "OpenAI"):
+        sys.modules["openai"].OpenAI = object
+else:
+    _oai = type(sys)("openai")
+    _oai.OpenAI = object
+    sys.modules["openai"] = _oai
 
 from work.attachments import WorkAttachmentMixin
 from work.package_builder import WorkPackageBuilderMixin
@@ -361,3 +373,139 @@ def test_read_project_pages_reports_unavailable_pdf(tmp_path):
     assert result["reason"] == "reading_pdf_unavailable"
     assert result["error_type"] == "file_not_found"
     assert result["requested_start_page"] == 1
+
+
+# ---------------------------------------------------------------------------
+# R1 — selecao das questoes vivas como material de ANALISE da leitura
+# ---------------------------------------------------------------------------
+
+
+def _selection_db(tmp_path):
+    """Banco real: schema completo, mixins reais (gaps, Relations)."""
+    from core.database import HybridDatabaseManager
+
+    db = HybridDatabaseManager.__new__(HybridDatabaseManager)
+    db.conn = sqlite3.connect(str(tmp_path / "reading_selection.db"),
+                              check_same_thread=False)
+    db.conn.row_factory = sqlite3.Row
+    db._lock = threading.Lock()
+    db.agent_instance = "jung_v1"
+    db._init_sqlite_schema()
+    return db
+
+
+def _admin_question(db, text, question_id_source="conversation"):
+    """Questao candidata viva no caminho real do admin (sem Relation):
+    rota publica F-5 com ancora verificavel (mesma forma do produtor)."""
+    from core.db import knowledge_questions as kq
+    from instance_config import ADMIN_USER_ID
+
+    db.conn.execute(
+        "INSERT INTO conversations"
+        " (user_id, user_name, user_input, ai_response, agent_instance)"
+        " VALUES (?, 'Admin', 'pergunta', 'resposta', 'jung_v1')",
+        (ADMIN_USER_ID,),
+    )
+    db.conn.commit()
+    conv_id = int(db.conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+    gap = kq.register_candidate_question(
+        db,
+        user_id=ADMIN_USER_ID,
+        topic="leitura",
+        the_gap=text,
+        question_kind="factual_absence",
+        source_kind="work_reading",
+        relevance_justification="orienta a leitura desta investigacao",
+        source_refs=[f"{question_id_source}#{conv_id}"],
+        origin_class="authorized_aggregate",
+        provenance={"private_derived": False, "producer": "test_reading"},
+    )
+    return gap
+
+
+def _reading_payload():
+    return {
+        "summary": "Uma sintese suficientemente longa para representar com fidelidade o intervalo real que foi lido no arquivo.",
+        "key_ideas": [{"idea": "A primeira ideia do texto.", "pages": [1], "significance": "Orienta a elaboracao."}],
+        "tensions": [{"pole_a": "continuidade", "pole_b": "mudanca", "pages": [2]}],
+        "open_questions": [{"question": "Como sustentar a mudanca?", "pages": [2]}],
+        "concepts": ["duracao"],
+    }
+
+
+def test_reading_package_carries_living_questions_as_analysis_material(
+    tmp_path, monkeypatch
+):
+    """O bloco de perguntas vivas entra no prompt como material de analise
+    (com o aviso), o contrato JSON nao muda e a selecao so registra ids."""
+    from core.db import knowledge_question_selection as kqs
+    from instance_config import ADMIN_USER_ID
+
+    db = _selection_db(tmp_path)
+    question_text = "O que a fonte informa sobre a transicao dos capitulos?"
+    gap = _admin_question(db, question_text)
+    assert gap is not None and gap["question_state"] == "active"
+
+    captured = {}
+
+    def _fake_llm(prompt, **kwargs):
+        captured["prompt"] = prompt
+        return json.dumps(_reading_payload())
+
+    monkeypatch.setattr("work.package_builder.get_llm_response", _fake_llm)
+
+    class _Engine(_ReadingEngine):
+        def get_project(self, project_id: int) -> Dict[str, Any]:
+            return {"id": project_id, "name": "Transicao dos capitulos",
+                    "progress_value": 0}
+
+    engine = _Engine()
+    engine.db = db
+    engine.admin_user_id = ADMIN_USER_ID
+
+    package = engine._build_work_package({
+        "project_id": 10,
+        "action_type": "reading",
+        "objective": "Ler paginas 1 a 2",
+        "extracted_json": json.dumps({"reading_plan": {"start_page": 1, "end_page": 2}}),
+    })
+
+    assert package["generation_mode"] == "reading_assimilation"
+    prompt = captured["prompt"]
+    assert "PERGUNTAS VIVAS DESTA INVESTIGACAO" in prompt
+    assert question_text in prompt
+    assert kqs.MATERIAL_QUESTIONS_NOTICE in prompt
+    assert "registre a pergunta refinada em open_questions" in prompt
+    # So ids e base sao registrados (observabilidade sem texto privado).
+    assert package["reading_assimilation"]["selected_question_ids"] == [gap["gap_id"]]
+    assert package["reading_assimilation"]["question_selection_basis"] == "focus"
+    # Leitura pura: a selecao nao transicionou a questao.
+    row = db.conn.execute(
+        "SELECT question_state FROM knowledge_gaps WHERE id = ?", (gap["gap_id"],)
+    ).fetchone()
+    assert row["question_state"] == "active"
+
+
+def test_reading_package_without_selection_source_keeps_contract(monkeypatch):
+    """Sem fonte de selecao (engine sem db) a leitura segue identica: sem
+    bloco no prompt e sem ids registrados — nada de secao vazia fantasma."""
+    captured = {}
+
+    def _fake_llm(prompt, **kwargs):
+        captured["prompt"] = prompt
+        return json.dumps(_reading_payload())
+
+    monkeypatch.setattr("work.package_builder.get_llm_response", _fake_llm)
+    engine = _ReadingEngine()
+
+    package = engine._build_work_package({
+        "project_id": 10,
+        "action_type": "reading",
+        "objective": "Ler paginas 1 a 2",
+        "extracted_json": json.dumps({"reading_plan": {"start_page": 1, "end_page": 2}}),
+    })
+
+    assert package["generation_mode"] == "reading_assimilation"
+    assert "PERGUNTAS VIVAS" not in captured["prompt"]
+    assert package["reading_assimilation"]["selected_question_ids"] == []
+    assert package["reading_assimilation"]["question_selection_basis"] is None
